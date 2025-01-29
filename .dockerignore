@@ -1,0 +1,15 @@
+.dockerignore
+.editorconfig
+.env
+.git
+.gitignore
+.idea
+.vscode
+CODE_OF_CONDUCT.md
+CONTRIBUTING.md
+coverage*
+docker-compose*
+Dockerfile*
+LICENSE
+node_modules
+README.md

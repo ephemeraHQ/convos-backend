@@ -1,0 +1,20 @@
+name: Validate code quality
+
+on:
+  push:
+    branches:
+      - main
+
+  pull_request:
+
+jobs:
+  check:
+    name: Typecheck, format check, lint
+    runs-on: warp-ubuntu-latest-x64-8x
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: ".bun-version"
+      - run: bun install
+      - run: bun check
