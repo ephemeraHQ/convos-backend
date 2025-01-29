@@ -9,7 +9,7 @@
     "check": "bun typecheck && bun format:check && bun lint",
     "clean": "bun clean:dbs && rimraf node_modules",
     "clean:dbs": "rimraf *.db3* ||:",
-    "dev": "bun run start --watch",
+    "dev": "bun --watch run src/index.ts",
     "format": "prettier -w .",
     "format:check": "prettier -c .",
     "lint": "eslint .",
