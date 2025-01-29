@@ -16,6 +16,11 @@
     "start": "bun run src/index.ts",
     "typecheck": "tsc"
   },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "express": "^5.0.1",
+    "helmet": "^8.0.0"
+  },
   "devDependencies": {
     "@eslint/compat": "^1.2.5",
     "@eslint/js": "^9.18.0",
@@ -33,10 +38,5 @@
     "rimraf": "^6.0.1",
     "typescript": "^5.7.3",
     "typescript-eslint": "^8.20.0"
-  },
-  "dependencies": {
-    "cors": "^2.8.5",
-    "express": "^5.0.1",
-    "helmet": "^8.0.0"
   }
 }
