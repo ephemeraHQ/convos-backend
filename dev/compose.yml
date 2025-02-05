@@ -3,8 +3,8 @@ services:
     image: postgres:16
     environment:
       POSTGRES_DB: convos-backend
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
+      POSTGRES_USER: xmtp
+      POSTGRES_PASSWORD: xmtp
       POSTGRES_PORT: 5432
     ports:
       - 5432:5432
