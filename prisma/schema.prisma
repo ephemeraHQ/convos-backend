@@ -1,0 +1,84 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id          String   @id @default(uuid())
+  privyUserId String   @unique
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  devices     Device[]
+}
+
+enum DeviceOS {
+  ios
+  android
+  web
+}
+
+model Device {
+  id         String               @id @default(uuid())
+  userId     String
+  name       String?
+  os         DeviceOS
+  pushToken  String?
+  expoToken  String?
+  createdAt  DateTime             @default(now())
+  updatedAt  DateTime             @updatedAt
+  user       User                 @relation(fields: [userId], references: [id])
+  identities IdentitiesOnDevice[]
+}
+
+model DeviceIdentity {
+  id                   String                 @id @default(uuid())
+  xmtpId               String
+  privyAddress         String
+  createdAt            DateTime               @default(now())
+  updatedAt            DateTime               @updatedAt
+  profile              Profile?
+  conversationMetadata ConversationMetadata[]
+  devices              IdentitiesOnDevice[]
+}
+
+model IdentitiesOnDevice {
+  deviceId   String
+  device     Device         @relation(fields: [deviceId], references: [id])
+  identityId String
+  identity   DeviceIdentity @relation(fields: [identityId], references: [id])
+
+  @@id([deviceId, identityId])
+}
+
+model Profile {
+  id               String         @id @default(uuid())
+  deviceIdentityId String         @unique
+  name             String
+  description      String?
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+  deviceIdentity   DeviceIdentity @relation(fields: [deviceIdentityId], references: [id])
+}
+
+model ConversationMetadata {
+  id               String         @id @default(uuid())
+  deviceIdentityId String
+  conversationId   String
+  pinned           Boolean        @default(false)
+  unread           Boolean        @default(false)
+  deleted          Boolean        @default(false)
+  readUntil        DateTime?
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+  deviceIdentity   DeviceIdentity @relation(fields: [deviceIdentityId], references: [id])
+}
