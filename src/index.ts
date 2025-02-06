@@ -42,6 +42,18 @@ app.get("/", (_req: Request, res: Response): void => {
   res.send("Hello, world!");
 });
 
-app.listen(port, () => {
-  console.log(`Server is running at http://localhost:${port}`);
+// GET /healthcheck - Healthcheck endpoint
+app.get("/healthcheck", (_req: Request, res: Response): void => {
+  res.status(200).send("OK");
+});
+
+const server = app.listen(port, () => {
+  console.log(`Convos API service is running on port ${port}`);
+});
+
+process.on("SIGTERM", () => {
+  console.log("SIGTERM signal received: closing Convos API service");
+  server.close(() => {
+    console.log("Convos API service closed");
+  });
 });
