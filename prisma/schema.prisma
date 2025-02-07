@@ -14,11 +14,12 @@ datasource db {
 }
 
 model User {
-  id          String   @id @default(uuid())
-  privyUserId String   @unique
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-  devices     Device[]
+  id             String           @id @default(uuid())
+  privyUserId    String           @unique
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+  devices        Device[]
+  DeviceIdentity DeviceIdentity[]
 }
 
 enum DeviceOS {
@@ -42,6 +43,7 @@ model Device {
 
 model DeviceIdentity {
   id                   String                 @id @default(uuid())
+  userId               String
   xmtpId               String?
   privyAddress         String
   createdAt            DateTime               @default(now())
@@ -49,6 +51,7 @@ model DeviceIdentity {
   profile              Profile?
   conversationMetadata ConversationMetadata[]
   devices              IdentitiesOnDevice[]
+  user                 User                   @relation(fields: [userId], references: [id])
 }
 
 model IdentitiesOnDevice {
