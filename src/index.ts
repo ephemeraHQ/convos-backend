@@ -1,6 +1,7 @@
 import cors from "cors";
 import express, { type Request, type Response } from "express";
 import helmet from "helmet";
+import apiRouter from "./api";
 import { errorMiddleware } from "./middleware/error";
 import { jsonMiddleware } from "./middleware/json";
 import { logMiddleware } from "./middleware/log";
@@ -26,6 +27,9 @@ app.use(rateLimitMiddleware);
 app.get("/healthcheck", (_req: Request, res: Response): void => {
   res.status(200).send("OK");
 });
+
+// add api routes
+app.use("/api", apiRouter);
 
 const server = app.listen(port, () => {
   console.log(`Convos API service is running on port ${port}`);
