@@ -4,6 +4,7 @@ import helmet from "helmet";
 import { errorMiddleware } from "./middleware/error";
 import { jsonMiddleware } from "./middleware/json";
 import { logMiddleware } from "./middleware/log";
+import { rateLimitMiddleware } from "./middleware/rateLimit";
 
 const app = express();
 app.use(cors());
@@ -17,6 +18,9 @@ app.use(logMiddleware);
 
 // handle errors
 app.use(errorMiddleware);
+
+// rate limit all requests
+app.use(rateLimitMiddleware);
 
 // GET /healthcheck - Healthcheck endpoint
 app.get("/healthcheck", (_req: Request, res: Response): void => {
