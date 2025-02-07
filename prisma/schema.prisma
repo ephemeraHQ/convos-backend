@@ -42,7 +42,7 @@ model Device {
 
 model DeviceIdentity {
   id                   String                 @id @default(uuid())
-  xmtpId               String
+  xmtpId               String?
   privyAddress         String
   createdAt            DateTime               @default(now())
   updatedAt            DateTime               @updatedAt
