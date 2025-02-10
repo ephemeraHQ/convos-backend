@@ -13,6 +13,8 @@
     "format": "prettier -w .",
     "format:check": "prettier -c .",
     "lint": "eslint .",
+    "migrate:deploy": "prisma migrate deploy",
+    "migrate:dev": "prisma migrate dev",
     "start": "bun run src/index.ts",
     "typecheck": "tsc"
   },
@@ -20,8 +22,11 @@
     "@prisma/client": "^6.3.1",
     "cors": "^2.8.5",
     "express": "^5.0.1",
+    "express-rate-limit": "^7.5.0",
+    "firebase-admin": "^13.1.0",
     "helmet": "^8.0.0",
-    "prisma": "^6.3.1"
+    "prisma": "^6.3.1",
+    "zod": "^3.24.1"
   },
   "devDependencies": {
     "@eslint/compat": "^1.2.5",
