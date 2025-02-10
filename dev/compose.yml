@@ -7,4 +7,4 @@ services:
       POSTGRES_PASSWORD: xmtp
       POSTGRES_PORT: 5432
     ports:
-      - "5433:5432"
+      - 5432:5432
