@@ -4,7 +4,7 @@ const environment = process.env.ENV || "dev";
 
 export const logMiddleware = (
   req: Request,
-  res: Response,
+  _res: Response,
   next: NextFunction,
 ) => {
   if (environment === "dev") {

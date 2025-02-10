@@ -5,6 +5,7 @@ import apiRouter from "./api";
 import { errorMiddleware } from "./middleware/error";
 import { jsonMiddleware } from "./middleware/json";
 import { logMiddleware } from "./middleware/log";
+import { noRouteMiddleware } from "./middleware/noRoute";
 import { rateLimitMiddleware } from "./middleware/rateLimit";
 
 const app = express();
@@ -30,6 +31,9 @@ app.get("/healthcheck", (_req: Request, res: Response): void => {
 
 // add api routes
 app.use("/api", apiRouter);
+
+// handle non-existent routes with 404 response
+app.use(noRouteMiddleware);
 
 const server = app.listen(port, () => {
   console.log(`Convos API service is running on port ${port}`);
