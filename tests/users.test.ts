@@ -1,5 +1,5 @@
 import type { Server } from "http";
-import { PrismaClient, type User } from "@prisma/client";
+import { DeviceOS, PrismaClient, type User } from "@prisma/client";
 import {
   afterAll,
   beforeAll,
@@ -9,7 +9,7 @@ import {
   test,
 } from "bun:test";
 import express from "express";
-import usersRouter from "@/api/v1/users";
+import usersRouter, { type CreatedUser } from "@/api/v1/users";
 import { jsonMiddleware } from "@/middleware/json";
 
 const app = express();
@@ -33,6 +33,9 @@ afterAll(async () => {
 
 beforeEach(async () => {
   // clean up the database before each test
+  await prisma.identitiesOnDevice.deleteMany();
+  await prisma.deviceIdentity.deleteMany();
+  await prisma.device.deleteMany();
   await prisma.user.deleteMany();
 });
 
@@ -45,13 +48,27 @@ describe("/users API", () => {
       },
       body: JSON.stringify({
         privyUserId: "test-privy-user-id",
+        device: {
+          os: DeviceOS.ios,
+          name: "iPhone 14",
+        },
+        identity: {
+          privyAddress: "test-privy-address",
+          xmtpId: "test-xmtp-id",
+        },
       }),
     });
-    const user = (await response.json()) as User;
+    const user = (await response.json()) as CreatedUser;
 
     expect(response.status).toBe(201);
     expect(user.privyUserId).toBe("test-privy-user-id");
     expect(user.id).toBeDefined();
+    expect(user.device.id).toBeDefined();
+    expect(user.device.os).toBe(DeviceOS.ios);
+    expect(user.device.name).toBe("iPhone 14");
+    expect(user.identity.id).toBeDefined();
+    expect(user.identity.privyAddress).toBe("test-privy-address");
+    expect(user.identity.xmtpId).toBe("test-xmtp-id");
   });
 
   test("GET /users/:id returns 404 for non-existent user", async () => {
@@ -71,9 +88,17 @@ describe("/users API", () => {
       },
       body: JSON.stringify({
         privyUserId: "test-privy-user-id",
+        device: {
+          os: DeviceOS.ios,
+          name: "iPhone 14",
+        },
+        identity: {
+          privyAddress: "test-privy-address",
+          xmtpId: "test-xmtp-id",
+        },
       }),
     });
-    const createdUser = (await createResponse.json()) as User;
+    const createdUser = (await createResponse.json()) as CreatedUser;
 
     // fetch the user
     const response = await fetch(
@@ -95,9 +120,17 @@ describe("/users API", () => {
       },
       body: JSON.stringify({
         privyUserId: "old-privy-user-id",
+        device: {
+          os: DeviceOS.ios,
+          name: "iPhone 14",
+        },
+        identity: {
+          privyAddress: "old-privy-address",
+          xmtpId: "old-xmtp-id",
+        },
       }),
     });
-    const createdUser = (await createResponse.json()) as User;
+    const createdUser = (await createResponse.json()) as CreatedUser;
 
     // update the user
     const updateResponse = await fetch(
