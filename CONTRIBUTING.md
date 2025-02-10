@@ -20,26 +20,6 @@ PRs are encouraged, but consider starting with a feature request to temperature-
 
 After a pull request is submitted, a single approval is required to merge it.
 
-## 🔧 Developing
-
-### Prerequisites
-
-#### Bun
-
-See [Bun's documentation](https://bun.sh/docs/installation) for installation instructions.
-
-### Useful commands
-
-- `bun clean`: Removes `node_modules` folder and `*.db3*` files
-- `bun dev`: Run the app in watch mode
-- `bun format:check`: Run prettier format check
-- `bun format`: Run prettier format and write changes
-- `bun install`: Installs all dependencies
-- `bun lint`: Lint with ESLint
-- `bun run build`: Builds the app
-- `bun start`: Run the app
-- `bun typecheck`: Typecheck with `tsc`
-
-### Testing
+## 🧪 Testing
 
 Please add unit tests when appropriate and ensure that all unit tests are passing before submitting a pull request. Note that some unit tests require a backend service to be running locally. The `./dev/up` script can be run a single time to start the service in the background using Docker.
