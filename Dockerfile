@@ -8,12 +8,22 @@ WORKDIR /usr/src/app
 FROM base AS install
 RUN mkdir -p /temp/dev
 COPY package.json bun.lock /temp/dev/
+RUN mkdir -p /temp/dev/prisma
+COPY prisma/schema.prisma /temp/dev/prisma/schema.prisma
 RUN cd /temp/dev && bun install --frozen-lockfile
+
+# generate Prisma client (dev)
+RUN cd /temp/dev && bun prisma generate
 
 # install with --production (exclude devDependencies)
 RUN mkdir -p /temp/prod
 COPY package.json bun.lock /temp/prod/
+RUN mkdir -p /temp/prod/prisma
+COPY prisma/schema.prisma /temp/prod/prisma/schema.prisma
 RUN cd /temp/prod && bun install --frozen-lockfile --production
+
+# generate Prisma client (prod)
+RUN cd /temp/prod && bun prisma generate
 
 # copy node_modules from temp directory
 # then copy all (non-ignored) project files into the image
