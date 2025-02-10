@@ -1,4 +1,4 @@
-import { PrismaClient } from "@prisma/client";
+import { DeviceOS, PrismaClient, type Prisma } from "@prisma/client";
 import { Router, type Request, type Response } from "express";
 import { z } from "zod";
 
@@ -35,6 +35,10 @@ usersRouter.get(
 // schema for creating and updating a user
 const userSchema = z.object({
   privyUserId: z.string(),
+  privyAddress: z.string(),
+  inboxId: z.string(),
+  deviceOS: z.enum(Object.keys(DeviceOS) as [DeviceOS, ...DeviceOS[]]),
+  deviceName: z.string().optional(),
 });
 
 type CreateOrUpdateUserRequestBody = z.infer<typeof userSchema>;
@@ -47,10 +51,35 @@ usersRouter.post(
     res: Response,
   ) => {
     try {
-      const validatedData = userSchema.parse(req.body);
+      const { privyUserId, deviceOS, deviceName, privyAddress, inboxId } =
+        userSchema.parse(req.body);
+      const userCreateInput: Prisma.UserCreateInput = {
+        privyUserId,
+        devices: {
+          create: {
+            os: deviceOS,
+            name: deviceName,
+            identities: {
+              create: {
+                identity: {
+                  create: {
+                    privyAddress,
+                    xmtpId: inboxId,
+                    user: {
+                      connect: {
+                        privyUserId,
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      };
 
       const user = await prisma.user.create({
-        data: validatedData,
+        data: userCreateInput,
       });
 
       res.status(201).json(user);
