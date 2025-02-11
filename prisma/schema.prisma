@@ -76,7 +76,7 @@ model Profile {
 model ConversationMetadata {
   id               String         @id @default(uuid())
   deviceIdentityId String
-  conversationId   String
+  conversationId   String         @unique
   pinned           Boolean        @default(false)
   unread           Boolean        @default(false)
   deleted          Boolean        @default(false)
