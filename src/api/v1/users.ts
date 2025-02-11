@@ -25,8 +25,7 @@ usersRouter.get(
       }
 
       res.json(user);
-    } catch (error) {
-      console.error(error);
+    } catch {
       res.status(500).json({ error: "Failed to fetch user" });
     }
   },
@@ -146,7 +145,6 @@ usersRouter.post(
 
       res.status(201).json(user);
     } catch (error) {
-      console.error(error);
       if (error instanceof z.ZodError) {
         res.status(400).json({ error: "Invalid request body" });
         return;
@@ -181,7 +179,6 @@ usersRouter.put(
 
       res.json(user);
     } catch (error) {
-      console.error(error);
       if (error instanceof z.ZodError) {
         res.status(400).json({ error: "Invalid request body" });
         return;
