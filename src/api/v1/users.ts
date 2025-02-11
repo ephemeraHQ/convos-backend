@@ -45,7 +45,7 @@ const userCreateSchema = z.object({
   }),
 });
 
-type CreateUserRequestBody = z.infer<typeof userCreateSchema>;
+export type CreateUserRequestBody = z.infer<typeof userCreateSchema>;
 
 export type CreatedUser = {
   id: string;
