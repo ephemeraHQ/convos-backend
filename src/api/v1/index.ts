@@ -3,6 +3,7 @@ import metadataRouter from "@/api/v1/metadata";
 import profilesRouter from "@/api/v1/profiles";
 import devicesRouter from "./devices";
 import identitiesRouter from "./identities";
+import lookupRouter from "./lookup";
 import usersRouter from "./users";
 
 const v1Router = Router();
@@ -21,5 +22,8 @@ v1Router.use("/profiles", profilesRouter);
 
 // mount metadata routes under /metadata
 v1Router.use("/metadata", metadataRouter);
+
+// mount lookup routes under /lookup
+v1Router.use("/lookup", lookupRouter);
 
 export default v1Router;
