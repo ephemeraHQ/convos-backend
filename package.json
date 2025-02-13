@@ -26,6 +26,7 @@
     "firebase-admin": "^13.1.0",
     "helmet": "^8.0.0",
     "prisma": "^6.3.1",
+    "thirdweb": "^5.88.2",
     "zod": "^3.24.1"
   },
   "devDependencies": {
