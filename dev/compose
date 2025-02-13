@@ -1,4 +1,0 @@
-#!/bin/bash
-set -eou pipefail
-
-docker compose -f dev/compose.yml -p "convos-backend-db" "$@"
