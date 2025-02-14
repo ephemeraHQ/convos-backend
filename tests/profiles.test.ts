@@ -502,4 +502,91 @@ describe("/profiles API", () => {
     expect(searchResponse.status).toBe(200);
     expect(results).toHaveLength(0);
   });
+
+  describe("GET /profiles/username/valid", () => {
+    test("returns success true when username is available", async () => {
+      const response = await fetch(
+        "http://localhost:3004/profiles/username/valid?username=newusername",
+      );
+      const result = await response.json();
+
+      expect(response.status).toBe(200);
+      expect(result).toEqual({
+        success: true,
+        message: "Username is available",
+      });
+    });
+
+    test("returns success false when username is taken", async () => {
+      // Create a user first
+      const createUserResponse = await fetch("http://localhost:3004/users", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          privyUserId: "test-privy-user-id",
+          device: {
+            os: DeviceOS.ios,
+            name: "iPhone 14",
+          },
+          identity: {
+            privyAddress: "test-privy-address",
+            xmtpId: "test-xmtp-id",
+          },
+        }),
+      });
+      const createdUser = (await createUserResponse.json()) as CreatedUser;
+
+      // Create a profile with the username we want to check
+      await fetch(`http://localhost:3004/profiles/${createdUser.identity.id}`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          name: "takenusername",
+          description: "Test Description",
+        }),
+      });
+
+      // Check if the username is available
+      const response = await fetch(
+        "http://localhost:3004/profiles/username/valid?username=takenusername",
+      );
+      const result = await response.json();
+
+      expect(response.status).toBe(200);
+      expect(result).toEqual({
+        success: false,
+        message: "Username is already taken",
+      });
+    });
+
+    test("returns error for empty username", async () => {
+      const response = await fetch(
+        "http://localhost:3004/profiles/username/valid?username=",
+      );
+      const result = await response.json();
+
+      expect(response.status).toBe(400);
+      expect(result).toEqual({
+        success: false,
+        message: "Username is required",
+      });
+    });
+
+    test("returns error for missing username parameter", async () => {
+      const response = await fetch(
+        "http://localhost:3004/profiles/username/valid",
+      );
+      const result = await response.json();
+
+      expect(response.status).toBe(400);
+      expect(result).toEqual({
+        success: false,
+        message: "Username is required",
+      });
+    });
+  });
 });

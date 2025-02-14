@@ -20,6 +20,52 @@ export type SearchProfilesResult = Pick<
   xmtpId: string;
 };
 
+// GET /profiles/username/valid - Check if a username is available
+profilesRouter.get(
+  "/username/valid",
+  async (
+    req: Request<unknown, unknown, unknown, { username: string }>,
+    res: Response,
+  ) => {
+    try {
+      const { username } = req.query;
+
+      if (!username || username.trim().length === 0) {
+        res.status(400).json({
+          success: false,
+          message: "Username is required",
+        });
+        return;
+      }
+
+      // Check if username exists
+      const existingProfile = await prisma.profile.findFirst({
+        where: {
+          name: username,
+        },
+      });
+
+      if (existingProfile) {
+        res.json({
+          success: false,
+          message: "Username is already taken",
+        });
+        return;
+      }
+
+      res.json({
+        success: true,
+        message: "Username is available",
+      });
+    } catch {
+      res.status(500).json({
+        success: false,
+        message: "Failed to check username availability",
+      });
+    }
+  },
+);
+
 // GET /profiles/search - Search profiles by name
 profilesRouter.get(
   "/search",
@@ -141,6 +187,8 @@ profilesRouter.post(
         where: { deviceIdentityId: deviceIdentityId },
       });
 
+      // Return 409 Conflict status code since this is a conflict with an existing resource
+      // A device identity can only have one profile, so creating a second one would conflict
       if (existingProfile) {
         res
           .status(409)

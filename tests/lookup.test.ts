@@ -26,11 +26,12 @@ describe("/lookup API", () => {
    * on an address.
    */
   // test("GET /lookup/address/:address returns social profiles", async () => {
+  //   const michaellustigcbidaddress = "0x0aF89d2778f6ccE4A2641438B6207DC4750a82B";
+  //   const shaneaddress = "0xa64af7f78de39a238ecd4fff7d6d410dbace2df0";
   //   const response = await fetch(
-  //     "http://localhost:3006/lookup/address/address-goes-here",
+  //     `http://localhost:3006/lookup/address/${shaneaddress}`,
   //   );
   //   const data = await response.json();
-  //   console.log(data);
 
   //   expect(response.status).toBe(200);
   //   expect(data).toBeDefined();
