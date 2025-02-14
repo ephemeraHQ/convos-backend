@@ -19,11 +19,13 @@ jobs:
           bun-version-file: ".bun-version"
       - run: bun install
       - run: bun check
-      - run: ./dev/up
-      - run: sleep 3s
+      - run: ./dev/convos-db/up
+      - run: ./dev/xmtp/up
+      - run: sleep 5s
       - run: bun migrate:dev
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
       - run: bun test
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          XMTP_ENV: local
