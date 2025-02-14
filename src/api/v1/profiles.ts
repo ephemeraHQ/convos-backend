@@ -20,47 +20,121 @@ export type SearchProfilesResult = Pick<
   xmtpId: string;
 };
 
-// GET /profiles/username/valid - Check if a username is available
-profilesRouter.get(
-  "/username/valid",
+// Define validation response type
+export type ProfileValidationResponse = {
+  success: boolean;
+  errors?: {
+    username?: string;
+    description?: string;
+    name?: string;
+  };
+  message?: string;
+};
+
+// Define validation request type
+type ProfileValidationRequest = Partial<Pick<Profile, "name" | "description">>;
+
+// Define query parameters type for validation endpoint
+type ProfileValidationQueryParams = {
+  username?: string;
+};
+
+/**
+ * Schema for profile validation with detailed error messages
+ * @description Validates profile information before creation or update
+ */
+const profileValidationSchema = z.object({
+  name: z
+    .string()
+    .min(3, { message: "Name must be at least 3 characters long" })
+    .max(50, { message: "Name cannot exceed 50 characters" })
+    .optional(),
+  description: z
+    .string()
+    .max(500, { message: "Description cannot exceed 500 characters" })
+    .optional(),
+  username: z
+    .string()
+    .min(3, { message: "Username must be at least 3 characters long" })
+    .max(30, { message: "Username cannot exceed 30 characters" })
+    .regex(/^[a-zA-Z0-9_-]+$/, {
+      message:
+        "Username can only contain letters, numbers, underscores, and hyphens",
+    })
+    .optional(),
+});
+
+/**
+ * POST /profiles/validate - Validate profile information
+ * @description Validates profile information before creation or update
+ * @param {ProfileValidationRequest} req.body - Profile information to validate
+ * @returns {ProfileValidationResponse} Validation result with any errors
+ */
+profilesRouter.post(
+  "/validate",
   async (
-    req: Request<unknown, unknown, unknown, { username: string }>,
-    res: Response,
+    req: Request<
+      unknown,
+      ProfileValidationResponse,
+      ProfileValidationRequest,
+      ProfileValidationQueryParams
+    >,
+    res: Response<ProfileValidationResponse>,
   ) => {
     try {
       const { username } = req.query;
+      const profileData = req.body;
 
-      if (!username || username.trim().length === 0) {
-        res.status(400).json({
-          success: false,
-          message: "Username is required",
-        });
-        return;
-      }
-
-      // Check if username exists
-      const existingProfile = await prisma.profile.findFirst({
-        where: {
-          name: username,
-        },
-      });
-
-      if (existingProfile) {
-        res.json({
-          success: false,
-          message: "Username is already taken",
-        });
-        return;
-      }
-
-      res.json({
+      const validationResult: ProfileValidationResponse = {
         success: true,
-        message: "Username is available",
-      });
-    } catch {
-      res.status(500).json({
+        errors: {},
+      };
+
+      // Check for existing username (case-insensitive) first
+      if (username) {
+        const existingProfile = await prisma.profile.findFirst({
+          where: {
+            name: {
+              equals: username,
+              mode: "insensitive",
+            },
+          },
+        });
+
+        if (existingProfile) {
+          validationResult.success = false;
+          validationResult.errors = {
+            username: "This username is already taken",
+          };
+          return res.status(409).json(validationResult);
+        }
+      }
+
+      // Then validate payload against schema
+      try {
+        profileValidationSchema.parse({ ...profileData, username });
+      } catch (validationError) {
+        if (validationError instanceof z.ZodError) {
+          validationResult.success = false;
+          validationResult.errors = validationError.errors.reduce(
+            (acc, error) => ({
+              ...acc,
+              [error.path[0]]: error.message,
+            }),
+            {},
+          );
+          return res.status(400).json(validationResult);
+        }
+      }
+
+      // If we reach here, all validations passed
+      validationResult.message = "Profile information is valid";
+      return res.status(200).json(validationResult);
+    } catch (error) {
+      console.error("Profile validation error:", error);
+      return res.status(500).json({
         success: false,
-        message: "Failed to check username availability",
+        message: "An error occurred while validating profile information",
       });
     }
   },
@@ -74,9 +148,10 @@ profilesRouter.get(
     res: Response,
   ) => {
     try {
-      const query = req.query.query.trim();
+      const query = req.query.query || "";
+      const trimmedQuery = query.trim();
 
-      if (query.length === 0) {
+      if (trimmedQuery.length === 0) {
         res.status(400).json({ error: "Invalid search query" });
         return;
       }
@@ -84,7 +159,7 @@ profilesRouter.get(
       const profiles = await prisma.profile.findMany({
         where: {
           name: {
-            contains: query,
+            contains: trimmedQuery,
             mode: "insensitive",
           },
           deviceIdentity: {
@@ -113,8 +188,7 @@ profilesRouter.get(
               id: profile.id,
               name: profile.name,
               description: profile.description,
-              // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-              xmtpId: profile.deviceIdentity.xmtpId!,
+              xmtpId: profile.deviceIdentity.xmtpId ?? "",
             }) satisfies SearchProfilesResult,
         ),
       );
@@ -150,7 +224,7 @@ profilesRouter.get(
 );
 
 // Schema for creating a profile
-const profileCreateSchema = z.object({
+export const profileCreateSchema = z.object({
   name: z.string(),
   description: z.string().optional(),
 });
@@ -215,7 +289,7 @@ profilesRouter.post(
 );
 
 // Schema for updating a profile
-const profileUpdateSchema = z.object({
+export const profileUpdateSchema = z.object({
   name: z.string(),
   description: z.string(),
 });

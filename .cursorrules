@@ -1,0 +1,117 @@
+# API Development Best Practices
+
+## 1. Type Safety and TypeScript Usage
+
+- Use explicit types for request parameters, query parameters, and response bodies
+- Leverage TypeScript's type system with `type` and interface definitions
+- Use `Pick` utility type to create subset types from existing interfaces
+- Define request types clearly (e.g., `GetProfileRequestParams`, `SearchProfilesQuery`)
+
+## 2. Request Validation
+
+- Use Zod schema validation for request body validation
+- Define schemas separately and reuse them (e.g., `profileCreateSchema`)
+- Validate query parameters before processing (e.g., checking if search query is empty)
+- Handle validation errors with appropriate error responses
+
+## 3. HTTP Status Codes
+
+- 200: Successful responses
+- 201: Successful resource creation
+- 400: Invalid request body or parameters
+- 404: Resource not found
+- 409: Resource conflict
+- 500: Server errors
+
+## 4. Route Documentation
+
+- Single-line comments above each endpoint describing the HTTP method and purpose
+- Format: `// [HTTP_METHOD] [ROUTE] - [Description]`
+- Example: `// GET /profiles/:id - Get a single profile by ID`
+
+## 5. Error Handling
+
+- Consistent error response structure
+- Specific error messages for different scenarios
+- Try-catch blocks around database operations
+- Different error handling for validation vs. server errors
+
+## 6. Response Structure
+
+- Consistent response formats
+- Success responses include relevant data
+- Error responses include `error` message
+- Some endpoints use `success` boolean flag with messages
+
+## 7. Database Query Practices
+
+- Use specific select clauses to limit returned fields
+- Include related data when needed using `include`
+- Use appropriate query filters
+
+## 8. Code Organization
+
+- Group related routes together
+- Define schemas and types at appropriate locations
+- Separate route handling from business logic
+- Export necessary types and router
+
+## 9. Parameter Validation
+
+- Validate required parameters before processing
+- Check for empty or invalid values
+- Verify existence of related resources before operations
+- Handle edge cases (e.g., duplicate usernames)
+
+## 10. Clean Code Principles
+
+- Descriptive variable names
+- Single responsibility for each route handler
+- Consistent code formatting
+- No duplicate code
+
+## 11. Security Practices
+
+- Input validation before processing
+- No exposed sensitive information
+- Case-insensitive searches where appropriate
+- Proper error handling without leaking internal details
+
+## 12. API Design
+
+- RESTful endpoint structure
+- Clear route naming conventions
+- Consistent parameter naming
+- Logical grouping of related endpoints
+
+## 13. Dependency Management
+
+- Clear import statements
+- Single instance of database client
+- Proper typing of external dependencies
+- Modular router setup
+
+## 14. Optional Fields Handling
+
+- Use of optional chaining where appropriate
+- Proper typing of optional fields
+- Validation of optional fields in schemas
+- Default values where necessary
+
+## 15. API URL Best Practices
+
+- Keep URLs terse and avoid redundancy
+- Use route parameters when appropriate
+- Avoid repeating terms in URL path and query parameters
+
+✅ Good Examples:
+
+- GET /profiles/validate?username=test
+- GET /profiles/:id
+- GET /profiles/user/:userId
+
+❌ Bad Examples:
+
+- GET /profiles/username/valid?username=test (redundant 'username')
+- GET /profiles/get/by-id/:id (verbose)
+- GET /profiles/user/get/all/:userId (overly verbose)
