@@ -32,8 +32,11 @@ Copy `.env.example` to `.env`. The example file contains a `DATABASE_URL` value 
 To run the app locally, use the following commands:
 
 ```bash
-# Run local Docker container
-./dev/up
+# Run local Docker container for the Convos database
+./dev/convos-db/up
+
+# Run local Docker container for an XMTP node
+./dev/xmtp/up
 
 # Install dependencies
 bun install

@@ -1,9 +1,10 @@
 import { Router } from "express";
+import { authMiddleware } from "@/middleware/auth";
 import v1Router from "./v1";
 
 const apiRouter = Router();
 
-// TODO: add app check middleware
+apiRouter.use(authMiddleware);
 
 // add v1 api
 apiRouter.use("/v1", v1Router);
