@@ -5,7 +5,7 @@
   "license": "MIT",
   "type": "module",
   "scripts": {
-    "build": "bun build src/index.ts --outfile index.js --target bun",
+    "build": "bun build src/index.ts --outfile index.js --target bun --external @xmtp/node-bindings",
     "check": "bun typecheck && bun format:check && bun lint",
     "clean": "bun clean:dbs && rimraf node_modules",
     "clean:dbs": "rimraf **/*.db3* ||:",
