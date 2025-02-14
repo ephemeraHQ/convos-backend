@@ -13,8 +13,6 @@ RUN curl -fsSL https://bun.sh/install | bash -s "bun-v1.2.2" && \
 
 RUN mkdir -p /temp/prod
 COPY package.json bun.lock tsconfig.json /temp/prod/
-RUN mkdir -p /temp/prod/patches
-COPY patches /temp/prod/patches
 RUN mkdir -p /temp/prod/src
 COPY src /temp/prod/src
 RUN mkdir -p /temp/prod/prisma
