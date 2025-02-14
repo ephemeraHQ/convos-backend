@@ -25,11 +25,9 @@ See [Docker's documentation](https://docs.docker.com/get-docker/) for installati
 
 #### Setup environment
 
-Copy `.env.example` to `.env`. The example file contains a `DATABASE_URL` value that you can use to connect to a local Postgres DB.
+Copy `.env.example` to `.env`.
 
-#### Run the app
-
-To run the app locally, use the following commands:
+#### Run the app locally
 
 ```bash
 # Run local Docker container for the Convos database
@@ -47,6 +45,24 @@ bun migrate:dev
 # Run the app in watch mode
 bun dev
 ```
+
+#### Run the app locally with Docker
+
+```bash
+# Run local Docker container for the Convos database
+./dev/convos-db/up
+
+# Run local Docker container for an XMTP node
+./dev/xmtp/up
+
+# Build the Docker image
+docker build -t "convos-api-service" .
+
+# Run the Docker container
+docker run --env-file .env -d -p 4000:4000 convos-api-service
+```
+
+Adjust the `-p 4000:4000` flag to match the port in the `.env` file. The default port is `4000`.
 
 ### Useful commands
 
