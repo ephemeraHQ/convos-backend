@@ -12,10 +12,6 @@ import express from "express";
 import profilesRouter, { type SearchProfilesResult } from "@/api/v1/profiles";
 import usersRouter, { type ReturnedUser } from "@/api/v1/users";
 import { jsonMiddleware } from "@/middleware/json";
-import {
-  TEST_USER_DATA,
-  VALID_PROFILE_DATA,
-} from "./fixtures/profiles.fixtures";
 
 const app = express();
 app.use(jsonMiddleware);
@@ -116,16 +112,29 @@ describe("/profiles API", () => {
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify(VALID_PROFILE_DATA),
+        body: JSON.stringify({
+          privyUserId: "test-privy-user-id",
+          device: {
+            os: DeviceOS.ios,
+            name: "iPhone 14",
+          },
+          identity: {
+            privyAddress: "test-privy-address",
+            xmtpId: "test-xmtp-id",
+          },
+          profile: {
+            name: "Test Profile",
+            description: "Test Description",
+          },
+        }),
       },
     );
 
     const createdProfile = (await createProfileResponse.json()) as Profile;
 
     expect(createProfileResponse.status).toBe(201);
-    expect(createdProfile.name).toBe(VALID_PROFILE_DATA.name);
-    // @ts-expect-error - description is nullable
-    expect(createdProfile.description).toBe(VALID_PROFILE_DATA.description);
+    expect(createdProfile.name).toBe("Test Profile");
+    expect(createdProfile.description).toBe("Test Description");
     expect(createdProfile.deviceIdentityId).toBe(createdUser.identity.id);
   });
 
@@ -137,7 +146,13 @@ describe("/profiles API", () => {
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify(VALID_PROFILE_DATA),
+        body: JSON.stringify({
+          privyUserId: "test-privy-user-id",
+          device: {
+            os: DeviceOS.ios,
+            name: "iPhone 14",
+          },
+        }),
       },
     );
 
@@ -180,7 +195,21 @@ describe("/profiles API", () => {
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify(VALID_PROFILE_DATA),
+        body: JSON.stringify({
+          privyUserId: "test-privy-user-id",
+          device: {
+            os: DeviceOS.ios,
+            name: "iPhone 14",
+          },
+          identity: {
+            privyAddress: "test-privy-address",
+            xmtpId: "test-xmtp-id",
+          },
+          profile: {
+            name: "Test Profile",
+            description: "Test Description",
+          },
+        }),
       },
     );
 
@@ -327,7 +356,10 @@ describe("/profiles API", () => {
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify(VALID_PROFILE_DATA),
+        body: JSON.stringify({
+          name: "Updated Name",
+          description: "Updated Description",
+        }),
       },
     );
 
@@ -361,16 +393,15 @@ describe("/profiles API", () => {
 
     // Search for the profile
     const searchResponse = await fetch(
-      "http://localhost:3004/profiles/search?query=Test",
+      "http://localhost:3004/profiles/search?query=Alice",
     );
     const results = (await searchResponse.json()) as SearchProfilesResult[];
 
     expect(searchResponse.status).toBe(200);
     expect(results).toHaveLength(1);
-    expect(results[0].name).toBe(VALID_PROFILE_DATA.name);
-    // @ts-expect-error - description is nullable
-    expect(results[0].description).toBe(VALID_PROFILE_DATA.description);
-    expect(results[0].xmtpId).toBe(TEST_USER_DATA.identity.xmtpId);
+    expect(results[0].name).toBe("Alice Wonder");
+    expect(results[0].description).toBe("Test Description");
+    expect(results[0].xmtpId).toBe("test-xmtp-id");
   });
 
   test("GET /profiles/search is case insensitive", async () => {
@@ -399,16 +430,15 @@ describe("/profiles API", () => {
 
     // Search with lowercase
     const searchResponse = await fetch(
-      "http://localhost:3004/profiles/search?query=test",
+      "http://localhost:3004/profiles/search?query=alice",
     );
     const results = (await searchResponse.json()) as SearchProfilesResult[];
 
     expect(searchResponse.status).toBe(200);
     expect(results).toHaveLength(1);
-    expect(results[0].name).toBe(VALID_PROFILE_DATA.name);
-    // @ts-expect-error - description is nullable
-    expect(results[0].description).toBe(VALID_PROFILE_DATA.description);
-    expect(results[0].xmtpId).toBe(TEST_USER_DATA.identity.xmtpId);
+    expect(results[0].name).toBe("Alice Wonder");
+    expect(results[0].description).toBe("Test Description");
+    expect(results[0].xmtpId).toBe("test-xmtp-id");
   });
 
   test("GET /profiles/search returns 400 for empty query", async () => {
