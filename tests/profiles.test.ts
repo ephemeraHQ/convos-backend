@@ -10,7 +10,7 @@ import {
 } from "bun:test";
 import express from "express";
 import profilesRouter, { type SearchProfilesResult } from "@/api/v1/profiles";
-import usersRouter, { type CreatedUser } from "@/api/v1/users";
+import usersRouter, { type ReturnedUser } from "@/api/v1/users";
 import { jsonMiddleware } from "@/middleware/json";
 
 const app = express();
@@ -65,34 +65,21 @@ describe("/profiles API", () => {
           privyAddress: "test-privy-address",
           xmtpId: "test-xmtp-id",
         },
-      }),
-    });
-    const createdUser = (await createUserResponse.json()) as CreatedUser;
-
-    // Create a profile
-    const createProfileResponse = await fetch(
-      `http://localhost:3004/profiles/${createdUser.identity.id}`,
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
+        profile: {
           name: "Test Profile",
           description: "Test Description",
-        }),
-      },
-    );
-
-    const createdProfile = (await createProfileResponse.json()) as Profile;
+        },
+      }),
+    });
+    const createdUser = (await createUserResponse.json()) as ReturnedUser;
 
     const response = await fetch(
-      `http://localhost:3004/profiles/${createdProfile.id}`,
+      `http://localhost:3004/profiles/${createdUser.profile?.id}`,
     );
     const profile = (await response.json()) as Profile;
 
     expect(response.status).toBe(200);
-    expect(profile.id).toBe(createdProfile.id);
+    expect(profile.id).toBe(createdUser.profile!.id);
     expect(profile.name).toBe("Test Profile");
     expect(profile.description).toBe("Test Description");
   });
@@ -116,7 +103,7 @@ describe("/profiles API", () => {
         },
       }),
     });
-    const createdUser = (await createUserResponse.json()) as CreatedUser;
+    const createdUser = (await createUserResponse.json()) as ReturnedUser;
 
     // Create a profile
     const createProfileResponse = await fetch(
@@ -179,21 +166,13 @@ describe("/profiles API", () => {
           privyAddress: "test-privy-address",
           xmtpId: "test-xmtp-id",
         },
+        profile: {
+          name: "Test Profile",
+          description: "Test Description",
+        },
       }),
     });
-    const createdUser = (await createUserResponse.json()) as CreatedUser;
-
-    // Create a profile
-    await fetch(`http://localhost:3004/profiles/${createdUser.identity.id}`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        name: "Test Profile",
-        description: "Test Description",
-      }),
-    });
+    const createdUser = (await createUserResponse.json()) as ReturnedUser;
 
     // Try to create another profile for the same device identity
     const createProfileResponse = await fetch(
@@ -235,7 +214,7 @@ describe("/profiles API", () => {
         },
       }),
     });
-    const createdUser = (await createUserResponse.json()) as CreatedUser;
+    const createdUser = (await createUserResponse.json()) as ReturnedUser;
 
     const response = await fetch(
       `http://localhost:3004/profiles/${createdUser.identity.id}`,
@@ -272,30 +251,17 @@ describe("/profiles API", () => {
           privyAddress: "test-privy-address",
           xmtpId: "test-xmtp-id",
         },
-      }),
-    });
-    const createdUser = (await createUserResponse.json()) as CreatedUser;
-
-    // Create a profile
-    const createProfileResponse = await fetch(
-      `http://localhost:3004/profiles/${createdUser.identity.id}`,
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
+        profile: {
           name: "Test Profile",
           description: "Test Description",
-        }),
-      },
-    );
-
-    const createdProfile = (await createProfileResponse.json()) as Profile;
+        },
+      }),
+    });
+    const createdUser = (await createUserResponse.json()) as ReturnedUser;
 
     // Update the profile
     const response = await fetch(
-      `http://localhost:3004/profiles/${createdProfile.id}`,
+      `http://localhost:3004/profiles/${createdUser.profile?.id}`,
       {
         method: "PUT",
         headers: {
@@ -311,7 +277,7 @@ describe("/profiles API", () => {
     const updatedProfile = (await response.json()) as Profile;
 
     expect(response.status).toBe(200);
-    expect(updatedProfile.id).toBe(createdProfile.id);
+    expect(updatedProfile.id).toBe(createdUser.profile!.id);
     expect(updatedProfile.name).toBe("Updated Name");
     expect(updatedProfile.description).toBe("Updated Description");
   });
@@ -333,29 +299,16 @@ describe("/profiles API", () => {
           privyAddress: "test-privy-address",
           xmtpId: "test-xmtp-id",
         },
-      }),
-    });
-    const createdUser = (await createUserResponse.json()) as CreatedUser;
-
-    // Create a profile
-    const createProfileResponse = await fetch(
-      `http://localhost:3004/profiles/${createdUser.identity.id}`,
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
+        profile: {
           name: "Test Profile",
           description: "Test Description",
-        }),
-      },
-    );
-
-    const createdProfile = (await createProfileResponse.json()) as Profile;
+        },
+      }),
+    });
+    const createdUser = (await createUserResponse.json()) as ReturnedUser;
 
     const response = await fetch(
-      `http://localhost:3004/profiles/${createdProfile.id}`,
+      `http://localhost:3004/profiles/${createdUser.profile?.id}`,
       {
         method: "PUT",
         headers: {
@@ -392,7 +345,7 @@ describe("/profiles API", () => {
 
   test("GET /profiles/search returns matching profiles", async () => {
     // Create a user with a profile
-    const createUserResponse = await fetch("http://localhost:3004/users", {
+    await fetch("http://localhost:3004/users", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -407,19 +360,10 @@ describe("/profiles API", () => {
           privyAddress: "test-privy-address",
           xmtpId: "test-xmtp-id",
         },
-      }),
-    });
-    const createdUser = (await createUserResponse.json()) as CreatedUser;
-
-    // Create a profile
-    await fetch(`http://localhost:3004/profiles/${createdUser.identity.id}`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        name: "Alice Wonder",
-        description: "Test Description",
+        profile: {
+          name: "Alice Wonder",
+          description: "Test Description",
+        },
       }),
     });
 
@@ -438,7 +382,7 @@ describe("/profiles API", () => {
 
   test("GET /profiles/search is case insensitive", async () => {
     // Create a user with a profile
-    const createUserResponse = await fetch("http://localhost:3004/users", {
+    await fetch("http://localhost:3004/users", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -453,19 +397,10 @@ describe("/profiles API", () => {
           privyAddress: "test-privy-address",
           xmtpId: "test-xmtp-id",
         },
-      }),
-    });
-    const createdUser = (await createUserResponse.json()) as CreatedUser;
-
-    // Create a profile
-    await fetch(`http://localhost:3004/profiles/${createdUser.identity.id}`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        name: "Alice Wonder",
-        description: "Test Description",
+        profile: {
+          name: "Alice Wonder",
+          description: "Test Description",
+        },
       }),
     });
 
@@ -519,7 +454,7 @@ describe("/profiles API", () => {
 
     test("returns success false when username is taken", async () => {
       // Create a user first
-      const createUserResponse = await fetch("http://localhost:3004/users", {
+      await fetch("http://localhost:3004/users", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -534,19 +469,10 @@ describe("/profiles API", () => {
             privyAddress: "test-privy-address",
             xmtpId: "test-xmtp-id",
           },
-        }),
-      });
-      const createdUser = (await createUserResponse.json()) as CreatedUser;
-
-      // Create a profile with the username we want to check
-      await fetch(`http://localhost:3004/profiles/${createdUser.identity.id}`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          name: "takenusername",
-          description: "Test Description",
+          profile: {
+            name: "takenusername",
+            description: "Test Description",
+          },
         }),
       });
 

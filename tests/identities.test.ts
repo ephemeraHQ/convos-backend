@@ -33,6 +33,7 @@ afterAll(async () => {
 });
 
 beforeEach(async () => {
+  await prisma.profile.deleteMany();
   await prisma.identitiesOnDevice.deleteMany();
   await prisma.deviceIdentity.deleteMany();
   await prisma.device.deleteMany();

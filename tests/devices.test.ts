@@ -33,6 +33,7 @@ afterAll(async () => {
 
 beforeEach(async () => {
   // clean up the database before each test
+  await prisma.profile.deleteMany();
   await prisma.device.deleteMany();
   await prisma.user.deleteMany();
 });

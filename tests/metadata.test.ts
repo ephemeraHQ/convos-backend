@@ -14,7 +14,7 @@ import {
 } from "bun:test";
 import express from "express";
 import metadataRouter from "@/api/v1/metadata";
-import usersRouter, { type CreatedUser } from "@/api/v1/users";
+import usersRouter, { type ReturnedUser } from "@/api/v1/users";
 import { jsonMiddleware } from "@/middleware/json";
 
 const app = express();
@@ -36,6 +36,7 @@ afterAll(async () => {
 
 beforeEach(async () => {
   // clean up the database before each test
+  await prisma.profile.deleteMany();
   await prisma.identitiesOnDevice.deleteMany();
   await prisma.conversationMetadata.deleteMany();
   await prisma.deviceIdentity.deleteMany();
@@ -73,7 +74,7 @@ describe("/metadata API", () => {
         },
       }),
     });
-    const createdUser = (await createUserResponse.json()) as CreatedUser;
+    const createdUser = (await createUserResponse.json()) as ReturnedUser;
 
     const response = await fetch(
       `http://localhost:3005/metadata/conversation/${createdUser.identity.id}`,
@@ -140,7 +141,7 @@ describe("/metadata API", () => {
         },
       }),
     });
-    const createdUser = (await createUserResponse.json()) as CreatedUser;
+    const createdUser = (await createUserResponse.json()) as ReturnedUser;
 
     // Create metadata
     const createMetadataResponse = await fetch(
@@ -196,7 +197,7 @@ describe("/metadata API", () => {
         },
       }),
     });
-    const createdUser = (await createUserResponse.json()) as CreatedUser;
+    const createdUser = (await createUserResponse.json()) as ReturnedUser;
 
     // Create metadata
     const createMetadataResponse = await fetch(
