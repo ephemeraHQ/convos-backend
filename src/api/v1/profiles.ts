@@ -42,6 +42,8 @@ type ProfileValidationQueryParams = {
 /**
  * Schema for profile validation with detailed error messages
  * @description Validates profile information before creation or update
+ *
+ * @todo: verify with product what requirements are here
  */
 const profileValidationSchema = z.object({
   name: z
@@ -57,9 +59,8 @@ const profileValidationSchema = z.object({
     .string()
     .min(3, { message: "Username must be at least 3 characters long" })
     .max(30, { message: "Username cannot exceed 30 characters" })
-    .regex(/^[a-zA-Z0-9_-]+$/, {
-      message:
-        "Username can only contain letters, numbers, underscores, and hyphens",
+    .regex(/^[a-zA-Z0-9]+$/, {
+      message: "Username can only contain letters and numbers",
     })
     .optional(),
 });
