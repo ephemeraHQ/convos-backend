@@ -26,14 +26,15 @@ describe("/lookup API", () => {
    * on an address.
    */
   // test("GET /lookup/address/:address returns social profiles", async () => {
-  //   const michaellustigcbidaddress = "0x0aF89d2778f6ccE4A2641438B6207DC4750a82B";
+  //   const michaelWalletWithBasename =
+  //     "0x5222f538B29267a991B346EF61A2A2c389A9f320";
   //   const shaneaddress = "0xa64af7f78de39a238ecd4fff7d6d410dbace2df0";
   //   const response = await fetch(
   //     `http://localhost:3006/lookup/address/${shaneaddress}`,
   //   );
   //   const data = await response.json();
-
   //   expect(response.status).toBe(200);
+  //   console.log(data);
   //   expect(data).toBeDefined();
   // });
 
