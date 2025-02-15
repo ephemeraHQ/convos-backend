@@ -6,7 +6,7 @@ const profilesRouter = Router();
 const prisma = new PrismaClient();
 
 type GetProfileRequestParams = {
-  id: string;
+  xmtpInboxId: string;
 };
 
 type SearchProfilesQuery = {
@@ -124,16 +124,23 @@ profilesRouter.get(
   },
 );
 
-// GET /profiles/:id - Get a single profile by ID
+// GET /profiles/:xmtpInboxId - Get a single profile by XMTP inbox ID
 profilesRouter.get(
-  "/:id",
+  "/:xmtpInboxId",
   async (req: Request<GetProfileRequestParams>, res: Response) => {
     try {
-      const { id } = req.params;
-      const profile = await prisma.profile.findUnique({
-        where: { id },
-        include: {
-          deviceIdentity: true,
+      const { xmtpInboxId } = req.params;
+
+      if (!xmtpInboxId) {
+        res.status(400).json({ error: "Invalid XMTP inbox ID" });
+        return;
+      }
+
+      const profile = await prisma.profile.findFirst({
+        where: {
+          deviceIdentity: {
+            xmtpId: xmtpInboxId,
+          },
         },
       });
 
@@ -156,25 +163,25 @@ const profileCreateSchema = z.object({
 });
 
 type CreateProfileRequestParams = {
-  deviceIdentityId: string;
+  xmtpInboxId: string;
 };
 
 export type CreateProfileRequestBody = z.infer<typeof profileCreateSchema>;
 
-// POST /profiles/:deviceIdentityId - Create a new profile
+// POST /profiles/:xmtpInboxId - Create a new profile
 profilesRouter.post(
-  "/:deviceIdentityId",
+  "/:xmtpInboxId",
   async (
     req: Request<CreateProfileRequestParams, unknown, CreateProfileRequestBody>,
     res: Response,
   ) => {
     try {
-      const { deviceIdentityId } = req.params;
+      const { xmtpInboxId } = req.params;
       const validatedData = profileCreateSchema.parse(req.body);
 
       // Check if device identity exists
-      const deviceIdentity = await prisma.deviceIdentity.findUnique({
-        where: { id: deviceIdentityId },
+      const deviceIdentity = await prisma.deviceIdentity.findFirst({
+        where: { xmtpId: xmtpInboxId },
       });
 
       if (!deviceIdentity) {
@@ -184,7 +191,7 @@ profilesRouter.post(
 
       // Check if profile already exists for this device identity
       const existingProfile = await prisma.profile.findUnique({
-        where: { deviceIdentityId: deviceIdentityId },
+        where: { deviceIdentityId: deviceIdentity.id },
       });
 
       // Return 409 Conflict status code since this is a conflict with an existing resource
@@ -199,7 +206,7 @@ profilesRouter.post(
       const profile = await prisma.profile.create({
         data: {
           ...validatedData,
-          deviceIdentityId,
+          deviceIdentityId: deviceIdentity.id,
         },
       });
 
@@ -224,18 +231,30 @@ export type UpdateProfileRequestBody = Partial<
   z.infer<typeof profileUpdateSchema>
 >;
 
-// PUT /profiles/:id - Update a profile
+// PUT /profiles/:xmtpInboxId - Update a profile
 profilesRouter.put(
-  "/:id",
+  "/:xmtpInboxId",
   async (
     req: Request<GetProfileRequestParams, unknown, UpdateProfileRequestBody>,
     res: Response,
   ) => {
     try {
-      const { id } = req.params;
+      const { xmtpInboxId } = req.params;
 
-      const profile = await prisma.profile.findUnique({
-        where: { id },
+      if (!xmtpInboxId) {
+        res.status(400).json({ error: "Invalid XMTP inbox ID" });
+        return;
+      }
+
+      const validatedData = profileUpdateSchema.partial().parse(req.body);
+
+      // Find the profile through the device identity's xmtpId
+      const profile = await prisma.profile.findFirst({
+        where: {
+          deviceIdentity: {
+            xmtpId: xmtpInboxId,
+          },
+        },
       });
 
       if (!profile) {
@@ -243,10 +262,8 @@ profilesRouter.put(
         return;
       }
 
-      const validatedData = profileUpdateSchema.partial().parse(req.body);
-
       const updatedProfile = await prisma.profile.update({
-        where: { id },
+        where: { id: profile.id },
         data: validatedData,
       });
 

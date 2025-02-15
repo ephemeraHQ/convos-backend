@@ -74,7 +74,7 @@ describe("/profiles API", () => {
     const createdUser = (await createUserResponse.json()) as ReturnedUser;
 
     const response = await fetch(
-      `http://localhost:3004/profiles/${createdUser.profile?.id}`,
+      `http://localhost:3004/profiles/${createdUser.identity.xmtpId}`,
     );
     const profile = (await response.json()) as Profile;
 
@@ -107,7 +107,7 @@ describe("/profiles API", () => {
 
     // Create a profile
     const createProfileResponse = await fetch(
-      `http://localhost:3004/profiles/${createdUser.identity.id}`,
+      `http://localhost:3004/profiles/${createdUser.identity.xmtpId}`,
       {
         method: "POST",
         headers: {
@@ -176,7 +176,7 @@ describe("/profiles API", () => {
 
     // Try to create another profile for the same device identity
     const createProfileResponse = await fetch(
-      `http://localhost:3004/profiles/${createdUser.identity.id}`,
+      `http://localhost:3004/profiles/${createdUser.identity.xmtpId}`,
       {
         method: "POST",
         headers: {
@@ -261,7 +261,7 @@ describe("/profiles API", () => {
 
     // Update the profile
     const response = await fetch(
-      `http://localhost:3004/profiles/${createdUser.profile?.id}`,
+      `http://localhost:3004/profiles/${createdUser.identity.xmtpId}`,
       {
         method: "PUT",
         headers: {
@@ -308,7 +308,7 @@ describe("/profiles API", () => {
     const createdUser = (await createUserResponse.json()) as ReturnedUser;
 
     const response = await fetch(
-      `http://localhost:3004/profiles/${createdUser.profile?.id}`,
+      `http://localhost:3004/profiles/${createdUser.identity.xmtpId}`,
       {
         method: "PUT",
         headers: {
