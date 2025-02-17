@@ -69,8 +69,7 @@ lookupRouter.get(
       );
 
       res.json(sortedProfiles);
-    } catch (error) {
-      console.error("Lookup error:", error);
+    } catch {
       res.status(500).json({ error: "Failed to lookup address" });
     }
   },

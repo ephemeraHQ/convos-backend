@@ -100,7 +100,7 @@ describe("/identities API", () => {
     expect(data.error).toBe("Device not found");
   });
 
-  test("POST /identities/device/:deviceId returns device identities", async () => {
+  test("GET /identities/device/:deviceId returns device identities", async () => {
     // create a device identity
     const createResponse = await fetch(
       `http://localhost:3003/identities/device/${testDeviceId}`,
