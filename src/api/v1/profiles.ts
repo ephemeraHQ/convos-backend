@@ -132,7 +132,7 @@ profilesRouter.get(
       const { xmtpInboxId } = req.params;
 
       if (!xmtpInboxId) {
-        res.status(400).json({ error: "Invalid XMTP inbox ID" });
+        res.status(400).json({ error: "Invalid request body" });
         return;
       }
 
@@ -242,7 +242,7 @@ profilesRouter.put(
       const { xmtpInboxId } = req.params;
 
       if (!xmtpInboxId) {
-        res.status(400).json({ error: "Invalid XMTP inbox ID" });
+        res.status(400).json({ error: "Invalid request body" });
         return;
       }
 
