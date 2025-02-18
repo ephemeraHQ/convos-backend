@@ -52,6 +52,8 @@ model DeviceIdentity {
   conversationMetadata ConversationMetadata[]
   devices              IdentitiesOnDevice[]
   user                 User                   @relation(fields: [userId], references: [id])
+
+  @@index([xmtpId])
 }
 
 model IdentitiesOnDevice {
