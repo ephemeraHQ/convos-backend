@@ -11,7 +11,7 @@ import {
 import express from "express";
 import type { ProfileValidationResponse } from "@/api/v1/profiles/profile.types";
 import profilesRouter, {
-  type SearchProfilesResult,
+  type ProfileRequestResult,
 } from "@/api/v1/profiles/profiles.router";
 import usersRouter, { type ReturnedUser } from "@/api/v1/users";
 import { jsonMiddleware } from "@/middleware/json";
@@ -610,7 +610,7 @@ describe("/profiles API", () => {
     const searchResponse = await fetch(
       "http://localhost:3004/profiles/search?query=Alice",
     );
-    const results = (await searchResponse.json()) as SearchProfilesResult[];
+    const results = (await searchResponse.json()) as ProfileRequestResult[];
 
     expect(searchResponse.status).toBe(200);
     expect(results).toHaveLength(1);
@@ -647,7 +647,7 @@ describe("/profiles API", () => {
     const searchResponse = await fetch(
       "http://localhost:3004/profiles/search?query=alice",
     );
-    const results = (await searchResponse.json()) as SearchProfilesResult[];
+    const results = (await searchResponse.json()) as ProfileRequestResult[];
 
     expect(searchResponse.status).toBe(200);
     expect(results).toHaveLength(1);
@@ -671,7 +671,7 @@ describe("/profiles API", () => {
     const searchResponse = await fetch(
       "http://localhost:3004/profiles/search?query=NonexistentName",
     );
-    const results = (await searchResponse.json()) as SearchProfilesResult[];
+    const results = (await searchResponse.json()) as ProfileRequestResult[];
 
     expect(searchResponse.status).toBe(200);
     expect(results).toHaveLength(0);

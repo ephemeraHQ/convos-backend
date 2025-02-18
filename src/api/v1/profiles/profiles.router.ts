@@ -15,11 +15,12 @@ type SearchProfilesQuery = {
   query: string;
 };
 
-export type SearchProfilesResult = Pick<
+export type ProfileRequestResult = Pick<
   Profile,
   "id" | "name" | "description"
 > & {
   xmtpId: string;
+  avatar: string;
 };
 
 // Define validation request type
@@ -59,6 +60,11 @@ profilesRouter.get(
           deviceIdentity: {
             select: {
               xmtpId: true,
+              profile: {
+                select: {
+                  avatar: true,
+                },
+              },
             },
           },
         },
@@ -73,7 +79,8 @@ profilesRouter.get(
               name: profile.name,
               description: profile.description,
               xmtpId: profile.deviceIdentity.xmtpId ?? "",
-            }) satisfies SearchProfilesResult,
+              avatar: profile.deviceIdentity.profile?.avatar ?? "",
+            }) satisfies ProfileRequestResult,
         ),
       );
     } catch {
@@ -100,14 +107,34 @@ profilesRouter.get(
             xmtpId: xmtpId,
           },
         },
+        include: {
+          deviceIdentity: {
+            select: {
+              xmtpId: true,
+              profile: {
+                select: {
+                  avatar: true,
+                },
+              },
+            },
+          },
+        },
       });
+
 
       if (!profile) {
         res.status(404).json({ error: "Profile not found" });
         return;
       }
 
-      res.json(profile);
+      const profileResult: ProfileRequestResult = {
+        id: profile.id,
+        name: profile.name,
+        description: profile.description,
+        xmtpId: profile.deviceIdentity.xmtpId ?? "",
+        avatar: profile.deviceIdentity.profile?.avatar ?? "",
+      };
+      res.json(profileResult);
     } catch {
       res.status(500).json({ error: "Failed to fetch profile" });
     }
