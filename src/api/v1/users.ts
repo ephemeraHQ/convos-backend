@@ -125,7 +125,6 @@ export type CreateUserRequestBody = z.infer<typeof userCreateSchema>;
 // POST /users - Create a new user
 usersRouter.post(
   "/",
-  // @ts-expect-error generic typescript crap
   async (
     req: Request<unknown, unknown, CreateUserRequestBody>,
     res: Response,
@@ -145,7 +144,8 @@ usersRouter.post(
           description: profile.description,
         });
         if (!validationResult.success) {
-          return res.status(400).json(validationResult);
+          res.status(400).json(validationResult);
+          return;
         }
       }
 

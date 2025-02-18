@@ -220,7 +220,6 @@ export type UpdateProfileRequestBody = Partial<
 // PUT /profiles/:xmtpId - Update a profile
 profilesRouter.put(
   "/:xmtpId",
-  // @ts-expect-error generic typescript crap
   async (
     req: Request<GetProfileRequestParams, unknown, UpdateProfileRequestBody>,
     res: Response,
@@ -252,9 +251,10 @@ profilesRouter.put(
       const validationResult = await validateProfile(validatedData);
 
       if (!validationResult.success) {
-        return res
+        res
           .status(validationResult.errors?.username ? 409 : 400)
           .json(validationResult);
+        return;
       }
 
       // Update the profile
