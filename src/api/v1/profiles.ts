@@ -27,12 +27,15 @@ export type ProfileValidationResponse = {
     username?: string;
     description?: string;
     name?: string;
+    avatar?: string;
   };
   message?: string;
 };
 
 // Define validation request type
-type ProfileValidationRequest = Partial<Pick<Profile, "name" | "description">>;
+type ProfileValidationRequest = Partial<
+  Pick<Profile, "name" | "description" | "avatar">
+>;
 
 // Define query parameters type for validation endpoint
 type ProfileValidationQueryParams = {
@@ -63,6 +66,7 @@ const profileValidationSchema = z.object({
       message: "Username can only contain letters and numbers",
     })
     .optional(),
+  avatar: z.string().url({ message: "Avatar must be a valid URL" }).optional(),
 });
 
 /**
@@ -235,6 +239,7 @@ profilesRouter.get(
 export const profileCreateSchema = z.object({
   name: z.string(),
   description: z.string().optional(),
+  avatar: z.string().url().optional(),
 });
 
 type CreateProfileRequestParams = {
@@ -300,6 +305,7 @@ profilesRouter.post(
 export const profileUpdateSchema = z.object({
   name: z.string(),
   description: z.string(),
+  avatar: z.string().url().optional(),
 });
 
 export type UpdateProfileRequestBody = Partial<

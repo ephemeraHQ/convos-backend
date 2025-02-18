@@ -444,6 +444,102 @@ describe("/profiles API", () => {
     expect(results).toHaveLength(0);
   });
 
+  test("POST /profiles/:deviceIdentityId creates a new profile with avatar", async () => {
+    // Create a user first
+    const createUserResponse = await fetch("http://localhost:3004/users", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        privyUserId: "test-privy-user-id",
+        device: {
+          os: DeviceOS.ios,
+          name: "iPhone 14",
+        },
+        identity: {
+          privyAddress: "test-privy-address",
+          xmtpId: "test-xmtp-id",
+        },
+      }),
+    });
+
+    const createdUser = (await createUserResponse.json()) as ReturnedUser;
+    expect(createUserResponse.status).toBe(201);
+
+    const createProfileResponse = await fetch(
+      `http://localhost:3004/profiles/${createdUser.identity.xmtpId}`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          name: "Test Profile",
+          description: "Test Description",
+          avatar: "https://example.com/avatar.jpg",
+        }),
+      },
+    );
+
+    const createdProfile = (await createProfileResponse.json()) as Profile;
+
+    expect(createProfileResponse.status).toBe(201);
+    expect(createdProfile.name).toBe("Test Profile");
+    expect(createdProfile.description).toBe("Test Description");
+    expect(createdProfile.avatar).toBe("https://example.com/avatar.jpg");
+    expect(createdProfile.deviceIdentityId).toBe(createdUser.identity.id);
+  });
+
+  test("PUT /profiles/:id updates profile avatar", async () => {
+    // Create a user first with a profile
+    const createUserResponse = await fetch("http://localhost:3004/users", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        privyUserId: "test-privy-user-id",
+        device: {
+          os: DeviceOS.ios,
+          name: "iPhone 14",
+        },
+        identity: {
+          privyAddress: "test-privy-address",
+          xmtpId: "test-xmtp-id",
+        },
+        profile: {
+          name: "Test Profile",
+          description: "Test Description",
+          avatar: "https://example.com/old-avatar.jpg",
+        },
+      }),
+    });
+    const createdUser = (await createUserResponse.json()) as ReturnedUser;
+
+    // Update just the avatar
+    const response = await fetch(
+      `http://localhost:3004/profiles/${createdUser.identity.xmtpId}`,
+      {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          avatar: "https://example.com/new-avatar.jpg",
+        }),
+      },
+    );
+
+    const updatedProfile = (await response.json()) as Profile;
+
+    expect(response.status).toBe(200);
+    expect(updatedProfile.id).toBe(createdUser.profile!.id);
+    expect(updatedProfile.name).toBe("Test Profile"); // unchanged
+    expect(updatedProfile.description).toBe("Test Description"); // unchanged
+    expect(updatedProfile.avatar).toBe("https://example.com/new-avatar.jpg");
+  });
+
   describe("POST /profiles/validate", () => {
     test("returns success for valid profile data", async () => {
       const response = await fetch("http://localhost:3004/profiles/validate", {
@@ -576,6 +672,49 @@ describe("/profiles API", () => {
       expect(response.status).toBe(409);
       expect(result.success).toBe(false);
       expect(result.errors?.username).toBe("This username is already taken");
+    });
+
+    test("returns validation error for invalid avatar URL", async () => {
+      const response = await fetch("http://localhost:3004/profiles/validate", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          name: "Test Profile",
+          description: "Test Description",
+          avatar: "not-a-valid-url",
+        }),
+      });
+
+      const result = (await response.json()) as ProfileValidationResponse;
+
+      expect(response.status).toBe(400);
+      expect(result.success).toBe(false);
+      expect(result.errors?.avatar).toBe("Avatar must be a valid URL");
+    });
+
+    test("validates profile with valid avatar URL", async () => {
+      const response = await fetch("http://localhost:3004/profiles/validate", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          name: "Test Profile",
+          description: "Test Description",
+          avatar: "https://example.com/avatar.jpg",
+        }),
+      });
+
+      const result = (await response.json()) as ProfileValidationResponse;
+
+      expect(response.status).toBe(200);
+      expect(result).toEqual({
+        success: true,
+        message: "Profile information is valid",
+        errors: {},
+      });
     });
   });
 });

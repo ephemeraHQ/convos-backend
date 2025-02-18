@@ -22,13 +22,16 @@ type ProfileType = z.infer<typeof ProfileType>;
 // as they may not be up to date with the actual API response.
 // This schema is based on actual API responses and excludes metadata
 // for simplicity and stability.
-const SocialProfileSchema = z.object({
-  type: ProfileType,
-  address: z.string(),
-  name: z.string(),
-  bio: z.string().optional(),
-  avatar: z.string().optional(),
-});
+const SocialProfileSchema = z
+  .object({
+    type: ProfileType,
+    address: z.string(),
+    name: z.string(),
+    bio: z.string().optional(),
+    avatar: z.string().optional(),
+  })
+  // removes additional properties that may be present in the API response
+  .strip();
 
 const SocialProfilesResponseSchema = z.array(SocialProfileSchema);
 

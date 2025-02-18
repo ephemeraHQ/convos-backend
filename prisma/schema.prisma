@@ -70,6 +70,7 @@ model Profile {
   deviceIdentityId String         @unique
   name             String
   description      String?
+  avatar           String?        
   createdAt        DateTime       @default(now())
   updatedAt        DateTime       @updatedAt
   deviceIdentity   DeviceIdentity @relation(fields: [deviceIdentityId], references: [id])
