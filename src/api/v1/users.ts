@@ -101,7 +101,7 @@ usersRouter.get(
 );
 
 // schema for creating a user
-const userCreateSchema = z.object({
+export const userCreateSchema = z.object({
   privyUserId: z.string(),
   device: z.object({
     os: z.enum(Object.keys(DeviceOS) as [DeviceOS, ...DeviceOS[]]),

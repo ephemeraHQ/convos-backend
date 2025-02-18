@@ -9,7 +9,10 @@ import {
   test,
 } from "bun:test";
 import express from "express";
-import profilesRouter, { type SearchProfilesResult } from "@/api/v1/profiles";
+import profilesRouter, {
+  type ProfileValidationResponse,
+  type SearchProfilesResult,
+} from "@/api/v1/profiles";
 import usersRouter, { type ReturnedUser } from "@/api/v1/users";
 import { jsonMiddleware } from "@/middleware/json";
 
@@ -103,9 +106,10 @@ describe("/profiles API", () => {
         },
       }),
     });
-    const createdUser = (await createUserResponse.json()) as ReturnedUser;
 
-    // Create a profile
+    const createdUser = (await createUserResponse.json()) as ReturnedUser;
+    expect(createUserResponse.status).toBe(201);
+
     const createProfileResponse = await fetch(
       `http://localhost:3004/profiles/${createdUser.identity.xmtpId}`,
       {
@@ -137,8 +141,8 @@ describe("/profiles API", () => {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          name: "New Profile",
-          description: "New Description",
+          name: "Test Profile",
+          description: "Test Description",
         }),
       },
     );
@@ -172,7 +176,9 @@ describe("/profiles API", () => {
         },
       }),
     });
+
     const createdUser = (await createUserResponse.json()) as ReturnedUser;
+    expect(createUserResponse.status).toBe(201);
 
     // Try to create another profile for the same device identity
     const createProfileResponse = await fetch(
@@ -183,8 +189,8 @@ describe("/profiles API", () => {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          name: "Test Profile",
-          description: "Test Description",
+          name: "Another Profile",
+          description: "Another Description",
         }),
       },
     );
@@ -333,8 +339,8 @@ describe("/profiles API", () => {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          name: "Test Profile",
-          description: "Test Description",
+          name: "Updated Name",
+          description: "Updated Description",
         }),
       },
     );
@@ -438,23 +444,95 @@ describe("/profiles API", () => {
     expect(results).toHaveLength(0);
   });
 
-  describe("GET /profiles/username/valid", () => {
-    test("returns success true when username is available", async () => {
-      const response = await fetch(
-        "http://localhost:3004/profiles/username/valid?username=newusername",
-      );
-      const result = await response.json();
+  describe("POST /profiles/validate", () => {
+    test("returns success for valid profile data", async () => {
+      const response = await fetch("http://localhost:3004/profiles/validate", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          name: "Test Profile",
+          description: "Test Description",
+        }),
+      });
+
+      const result = (await response.json()) as ProfileValidationResponse;
 
       expect(response.status).toBe(200);
       expect(result).toEqual({
         success: true,
-        message: "Username is available",
+        message: "Profile information is valid",
+        errors: {},
       });
     });
 
-    test("returns success false when username is taken", async () => {
-      // Create a user first
-      await fetch("http://localhost:3004/users", {
+    test("returns validation error for name too short", async () => {
+      const response = await fetch("http://localhost:3004/profiles/validate", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          name: "ab", // too short
+          description: "Test Description",
+        }),
+      });
+
+      const result = (await response.json()) as ProfileValidationResponse;
+
+      expect(response.status).toBe(400);
+      expect(result.success).toBe(false);
+      expect(result.errors?.name).toBe(
+        "Name must be at least 3 characters long",
+      );
+    });
+
+    test("returns validation error for description too long", async () => {
+      const response = await fetch("http://localhost:3004/profiles/validate", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          name: "Test Profile",
+          description: "a".repeat(501), // too long
+        }),
+      });
+
+      const result = (await response.json()) as ProfileValidationResponse;
+
+      expect(response.status).toBe(400);
+      expect(result.success).toBe(false);
+      expect(result.errors?.description).toBe(
+        "Description cannot exceed 500 characters",
+      );
+    });
+
+    test("returns multiple validation errors", async () => {
+      const response = await fetch("http://localhost:3004/profiles/validate", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          name: "ab", // too short
+          description: "a".repeat(501), // too long
+        }),
+      });
+
+      const result = (await response.json()) as ProfileValidationResponse;
+
+      expect(response.status).toBe(400);
+      expect(result.success).toBe(false);
+      expect(result.errors).toBeDefined();
+      expect(result.errors?.name).toBeDefined();
+      expect(result.errors?.description).toBeDefined();
+    });
+
+    test("returns validation error for taken username", async () => {
+      // Create a user with a profile first
+      const createUserResponse = await fetch("http://localhost:3004/users", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -470,49 +548,34 @@ describe("/profiles API", () => {
             xmtpId: "test-xmtp-id",
           },
           profile: {
-            name: "takenusername",
+            name: "Test Profile",
             description: "Test Description",
           },
         }),
       });
 
-      // Check if the username is available
+      expect(createUserResponse.status).toBe(201);
+
+      // Try to validate the same username
       const response = await fetch(
-        "http://localhost:3004/profiles/username/valid?username=takenusername",
+        `http://localhost:3004/profiles/validate?username=${encodeURIComponent("Test Profile")}`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            name: "Test Profile",
+            description: "Test Description",
+          }),
+        },
       );
-      const result = await response.json();
 
-      expect(response.status).toBe(200);
-      expect(result).toEqual({
-        success: false,
-        message: "Username is already taken",
-      });
-    });
+      const result = (await response.json()) as ProfileValidationResponse;
 
-    test("returns error for empty username", async () => {
-      const response = await fetch(
-        "http://localhost:3004/profiles/username/valid?username=",
-      );
-      const result = await response.json();
-
-      expect(response.status).toBe(400);
-      expect(result).toEqual({
-        success: false,
-        message: "Username is required",
-      });
-    });
-
-    test("returns error for missing username parameter", async () => {
-      const response = await fetch(
-        "http://localhost:3004/profiles/username/valid",
-      );
-      const result = await response.json();
-
-      expect(response.status).toBe(400);
-      expect(result).toEqual({
-        success: false,
-        message: "Username is required",
-      });
+      expect(response.status).toBe(409);
+      expect(result.success).toBe(false);
+      expect(result.errors?.username).toBe("This username is already taken");
     });
   });
 });
