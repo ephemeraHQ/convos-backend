@@ -6,7 +6,7 @@ const profilesRouter = Router();
 const prisma = new PrismaClient();
 
 type GetProfileRequestParams = {
-  xmtpInboxId: string;
+  xmtpId: string;
 };
 
 type SearchProfilesQuery = {
@@ -203,14 +203,14 @@ profilesRouter.get(
   },
 );
 
-// GET /profiles/:xmtpInboxId - Get a single profile by XMTP inbox ID
+// GET /profiles/:xmtpId - Get a single profile by XMTP inbox ID
 profilesRouter.get(
-  "/:xmtpInboxId",
+  "/:xmtpId",
   async (req: Request<GetProfileRequestParams>, res: Response) => {
     try {
-      const { xmtpInboxId } = req.params;
+      const { xmtpId } = req.params;
 
-      if (!xmtpInboxId) {
+      if (!xmtpId) {
         res.status(400).json({ error: "Invalid request body" });
         return;
       }
@@ -218,7 +218,7 @@ profilesRouter.get(
       const profile = await prisma.profile.findFirst({
         where: {
           deviceIdentity: {
-            xmtpId: xmtpInboxId,
+            xmtpId: xmtpId,
           },
         },
       });
@@ -243,25 +243,25 @@ export const profileCreateSchema = z.object({
 });
 
 type CreateProfileRequestParams = {
-  xmtpInboxId: string;
+  xmtpId: string;
 };
 
 export type CreateProfileRequestBody = z.infer<typeof profileCreateSchema>;
 
-// POST /profiles/:xmtpInboxId - Create a new profile
+// POST /profiles/:xmtpId - Create a new profile
 profilesRouter.post(
-  "/:xmtpInboxId",
+  "/:xmtpId",
   async (
     req: Request<CreateProfileRequestParams, unknown, CreateProfileRequestBody>,
     res: Response,
   ) => {
     try {
-      const { xmtpInboxId } = req.params;
+      const { xmtpId } = req.params;
       const validatedData = profileCreateSchema.parse(req.body);
 
       // Check if device identity exists
       const deviceIdentity = await prisma.deviceIdentity.findFirst({
-        where: { xmtpId: xmtpInboxId },
+        where: { xmtpId: xmtpId },
       });
 
       if (!deviceIdentity) {
@@ -312,17 +312,17 @@ export type UpdateProfileRequestBody = Partial<
   z.infer<typeof profileUpdateSchema>
 >;
 
-// PUT /profiles/:xmtpInboxId - Update a profile
+// PUT /profiles/:xmtpId - Update a profile
 profilesRouter.put(
-  "/:xmtpInboxId",
+  "/:xmtpId",
   async (
     req: Request<GetProfileRequestParams, unknown, UpdateProfileRequestBody>,
     res: Response,
   ) => {
     try {
-      const { xmtpInboxId } = req.params;
+      const { xmtpId } = req.params;
 
-      if (!xmtpInboxId) {
+      if (!xmtpId) {
         res.status(400).json({ error: "Invalid request body" });
         return;
       }
@@ -333,7 +333,7 @@ profilesRouter.put(
       const profile = await prisma.profile.findFirst({
         where: {
           deviceIdentity: {
-            xmtpId: xmtpInboxId,
+            xmtpId: xmtpId,
           },
         },
       });

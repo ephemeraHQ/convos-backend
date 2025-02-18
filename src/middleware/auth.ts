@@ -25,11 +25,11 @@ export const authMiddleware = async (
 ) => {
   const appCheckToken = req.header("X-Firebase-AppCheck");
   const xmtpInstallationId = req.header("X-XMTP-InstallationId");
-  const xmtpInboxId = req.header("X-XMTP-InboxId");
+  const xmtpId = req.header("X-XMTP-InboxId");
   const xmtpSignature = req.header("X-XMTP-Signature");
 
   // make sure all headers are present
-  if (!appCheckToken || !xmtpInstallationId || !xmtpInboxId || !xmtpSignature) {
+  if (!appCheckToken || !xmtpInstallationId || !xmtpId || !xmtpSignature) {
     res.status(401).send();
     return;
   }
@@ -40,7 +40,7 @@ export const authMiddleware = async (
 
     // validate installation ID
     const isValidInstallation = await Client.isInstallationAuthorized(
-      xmtpInboxId,
+      xmtpId,
       installationId,
       {
         env: xmtpEnv,
