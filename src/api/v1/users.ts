@@ -1,6 +1,7 @@
 import { DeviceOS, PrismaClient } from "@prisma/client";
 import { Router, type Request, type Response } from "express";
 import { z } from "zod";
+import { validateProfile } from "./profiles/profile.validation";
 
 const usersRouter = Router();
 const prisma = new PrismaClient();
@@ -101,7 +102,7 @@ usersRouter.get(
 );
 
 // schema for creating a user
-const userCreateSchema = z.object({
+export const userCreateSchema = z.object({
   privyUserId: z.string(),
   device: z.object({
     os: z.enum(Object.keys(DeviceOS) as [DeviceOS, ...DeviceOS[]]),
@@ -135,6 +136,18 @@ usersRouter.post(
         identity: { privyAddress, xmtpId },
         profile,
       } = userCreateSchema.parse(req.body);
+
+      // If profile is provided, validate it first
+      if (profile) {
+        const validationResult = await validateProfile({
+          name: profile.name,
+          description: profile.description,
+        });
+        if (!validationResult.success) {
+          res.status(400).json(validationResult);
+          return;
+        }
+      }
 
       // create new user
       const createdUser = await prisma.user.create({

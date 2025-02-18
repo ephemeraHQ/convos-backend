@@ -19,12 +19,29 @@ app.use("/devices", devicesRouter);
 const prisma = new PrismaClient();
 let server: Server;
 
-beforeAll(() => {
+const testUserId = "test-user-id";
+
+beforeAll(async () => {
   // start the server on a test port
   server = app.listen(3002);
+
+  // Create a test user before each test
+  await prisma.user.create({
+    data: {
+      id: testUserId,
+      privyUserId: "test-devices-privy-user-id",
+    },
+  });
 });
 
 afterAll(async () => {
+  await prisma.identitiesOnDevice.deleteMany();
+  await prisma.device.deleteMany();
+  await prisma.user.delete({
+    where: {
+      id: testUserId,
+    },
+  });
   // disconnect from the database
   await prisma.$disconnect();
   // close the server
@@ -33,24 +50,11 @@ afterAll(async () => {
 
 beforeEach(async () => {
   // clean up the database before each test
-  await prisma.profile.deleteMany();
+  await prisma.identitiesOnDevice.deleteMany();
   await prisma.device.deleteMany();
-  await prisma.user.deleteMany();
 });
 
 describe("/devices API", () => {
-  const testUserId = "test-user-id";
-
-  beforeEach(async () => {
-    // Create a test user before each test
-    await prisma.user.create({
-      data: {
-        id: testUserId,
-        privyUserId: "test-privy-user-id",
-      },
-    });
-  });
-
   test("POST /devices/:userId creates a new device", async () => {
     const response = await fetch(
       `http://localhost:3002/devices/${testUserId}`,

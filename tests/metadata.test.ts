@@ -63,7 +63,7 @@ describe("/metadata API", () => {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        privyUserId: "test-privy-user-id",
+        privyUserId: "test-metadata-privy-user-id",
         device: {
           os: DeviceOS.ios,
           name: "iPhone 14",
@@ -130,7 +130,7 @@ describe("/metadata API", () => {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        privyUserId: "test-privy-user-id",
+        privyUserId: "test-metadata-privy-user-id",
         device: {
           os: DeviceOS.ios,
           name: "iPhone 14",
@@ -186,7 +186,7 @@ describe("/metadata API", () => {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        privyUserId: "test-privy-user-id",
+        privyUserId: "test-metadata-privy-user-id",
         device: {
           os: DeviceOS.ios,
           name: "iPhone 14",
