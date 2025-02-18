@@ -1,6 +1,7 @@
 import { DeviceOS, PrismaClient } from "@prisma/client";
 import { Router, type Request, type Response } from "express";
 import { z } from "zod";
+import { validateProfile } from "./profiles/profile.validation";
 
 const usersRouter = Router();
 const prisma = new PrismaClient();
@@ -124,6 +125,7 @@ export type CreateUserRequestBody = z.infer<typeof userCreateSchema>;
 // POST /users - Create a new user
 usersRouter.post(
   "/",
+  // @ts-expect-error generic typescript crap
   async (
     req: Request<unknown, unknown, CreateUserRequestBody>,
     res: Response,
@@ -135,6 +137,17 @@ usersRouter.post(
         identity: { privyAddress, xmtpId },
         profile,
       } = userCreateSchema.parse(req.body);
+
+      // If profile is provided, validate it first
+      if (profile) {
+        const validationResult = await validateProfile({
+          name: profile.name,
+          description: profile.description,
+        });
+        if (!validationResult.success) {
+          return res.status(400).json(validationResult);
+        }
+      }
 
       // create new user
       const createdUser = await prisma.user.create({
