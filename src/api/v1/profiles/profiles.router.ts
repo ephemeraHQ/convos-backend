@@ -121,7 +121,6 @@ profilesRouter.get(
         },
       });
 
-
       if (!profile) {
         res.status(404).json({ error: "Profile not found" });
         return;
@@ -307,12 +306,8 @@ profilesRouter.get(
   ) => {
     try {
       const { username } = req.params;
-      console.log(req.params);
-
-      console.log(`Checking if username '${username}' is taken`);
 
       if (!username || username.trim().length === 0) {
-        console.log("Username is empty or only whitespace");
         res.status(400).json({ error: "Username is required" });
         return;
       }
@@ -326,12 +321,6 @@ profilesRouter.get(
           },
         },
       });
-
-      console.log(
-        profile
-          ? `Found existing profile with username '${profile.name}'`
-          : `No profile found with username '${username}'`,
-      );
 
       res.json({
         taken: !!profile,
