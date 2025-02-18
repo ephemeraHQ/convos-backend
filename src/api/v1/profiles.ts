@@ -1,13 +1,22 @@
-import express, { Request, Response } from "express";
+import { PrismaClient } from "@prisma/client";
+import { Router, type Request, type Response } from "express";
 import { z } from "zod";
-import { prisma } from "../../db";
-import { validateProfile } from "../../utils/profileValidation";
+import { validateProfile } from "./profiles/profile.validation";
+import { profileUpdateSchema } from "./profiles/profiles.router";
 
-export const profilesRouter = express.Router();
+export const profilesRouter = Router();
+const prisma = new PrismaClient();
+
+type GetProfileRequestParams = {
+  xmtpId: string;
+};
+
+type UpdateProfileRequestBody = z.infer<typeof profileUpdateSchema>;
 
 // PUT /profiles/:xmtpId - Update a profile
 profilesRouter.put(
   "/:xmtpId",
+  // @ts-expect-error generic typescript crap
   async (
     req: Request<GetProfileRequestParams, unknown, UpdateProfileRequestBody>,
     res: Response,
@@ -39,12 +48,7 @@ profilesRouter.put(
 
       // Validate the profile data
       // Only check uniqueness if name is being changed
-      const validationResult = await validateProfile(
-        validatedData,
-        validatedData.name !== existingProfile.name
-          ? validatedData.name
-          : undefined,
-      );
+      const validationResult = await validateProfile(validatedData);
 
       if (!validationResult.success) {
         return res

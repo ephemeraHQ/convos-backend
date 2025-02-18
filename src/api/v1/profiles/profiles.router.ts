@@ -194,6 +194,7 @@ export type UpdateProfileRequestBody = Partial<
 // PUT /profiles/:xmtpId - Update a profile
 profilesRouter.put(
   "/:xmtpId",
+  // @ts-expect-error generic typescript crap
   async (
     req: Request<GetProfileRequestParams, unknown, UpdateProfileRequestBody>,
     res: Response,
