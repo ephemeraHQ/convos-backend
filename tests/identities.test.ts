@@ -54,7 +54,7 @@ describe("/identities API", () => {
         user: {
           create: {
             id: "test-user-id",
-            privyUserId: "test-privy-user-id",
+            privyUserId: "test-identities-privy-user-id",
           },
         },
       },

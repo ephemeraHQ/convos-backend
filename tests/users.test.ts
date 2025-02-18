@@ -48,7 +48,7 @@ describe("/users API", () => {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        privyUserId: "test-privy-user-id",
+        privyUserId: "test-users-privy-user-id",
         device: {
           os: DeviceOS.ios,
           name: "iPhone 14",
@@ -65,7 +65,7 @@ describe("/users API", () => {
     const user = (await response.json()) as ReturnedUser;
 
     expect(response.status).toBe(201);
-    expect(user.privyUserId).toBe("test-privy-user-id");
+    expect(user.privyUserId).toBe("test-users-privy-user-id");
     expect(user.id).toBeDefined();
     expect(user.device.id).toBeDefined();
     expect(user.device.os).toBe(DeviceOS.ios);
@@ -83,7 +83,7 @@ describe("/users API", () => {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        privyUserId: "test-privy-user-id",
+        privyUserId: "test-users-privy-user-id",
         device: {
           os: DeviceOS.ios,
           name: "iPhone 14",
@@ -97,7 +97,7 @@ describe("/users API", () => {
     const user = (await response.json()) as ReturnedUser;
 
     expect(response.status).toBe(201);
-    expect(user.privyUserId).toBe("test-privy-user-id");
+    expect(user.privyUserId).toBe("test-users-privy-user-id");
     expect(user.id).toBeDefined();
     expect(user.device.id).toBeDefined();
     expect(user.device.os).toBe(DeviceOS.ios);
@@ -126,7 +126,7 @@ describe("/users API", () => {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        privyUserId: "test-privy-user-id",
+        privyUserId: "test-users-privy-user-id",
         device: {
           os: DeviceOS.ios,
           name: "iPhone 14",
@@ -150,7 +150,7 @@ describe("/users API", () => {
 
     expect(response.status).toBe(200);
     expect(user.id).toBe(createdUser.id);
-    expect(user.privyUserId).toBe("test-privy-user-id");
+    expect(user.privyUserId).toBe("test-users-privy-user-id");
   });
 
   test("PUT /users/:id updates user", async () => {

@@ -59,7 +59,7 @@ describe("/profiles API", () => {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        privyUserId: "test-privy-user-id",
+        privyUserId: "test-profiles-privy-user-id",
         device: {
           os: DeviceOS.ios,
           name: "iPhone 14",
@@ -95,7 +95,7 @@ describe("/profiles API", () => {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        privyUserId: "test-privy-user-id",
+        privyUserId: "test-profiles-privy-user-id",
         device: {
           os: DeviceOS.ios,
           name: "iPhone 14",
@@ -161,7 +161,7 @@ describe("/profiles API", () => {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        privyUserId: "test-privy-user-id",
+        privyUserId: "test-profiles-privy-user-id",
         device: {
           os: DeviceOS.ios,
           name: "iPhone 14",
@@ -209,7 +209,7 @@ describe("/profiles API", () => {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        privyUserId: "test-privy-user-id",
+        privyUserId: "test-profiles-privy-user-id",
         device: {
           os: DeviceOS.ios,
           name: "iPhone 14",
@@ -248,7 +248,7 @@ describe("/profiles API", () => {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        privyUserId: "test-privy-user-id",
+        privyUserId: "test-profiles-privy-user-id",
         device: {
           os: DeviceOS.ios,
           name: "iPhone 14",
@@ -296,7 +296,7 @@ describe("/profiles API", () => {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        privyUserId: "test-privy-user-id",
+        privyUserId: "test-profiles-privy-user-id",
         device: {
           os: DeviceOS.ios,
           name: "iPhone 14",
@@ -340,7 +340,7 @@ describe("/profiles API", () => {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        privyUserId: "test-privy-user-id-2",
+        privyUserId: "test-profiles-privy-user-id-2",
         device: {
           os: DeviceOS.ios,
           name: "iPhone 14",
@@ -384,7 +384,7 @@ describe("/profiles API", () => {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        privyUserId: "test-privy-user-id-3",
+        privyUserId: "test-profiles-privy-user-id-3",
         device: {
           os: DeviceOS.ios,
           name: "iPhone 14",
@@ -428,7 +428,7 @@ describe("/profiles API", () => {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        privyUserId: "test-privy-user-id-4",
+        privyUserId: "test-profiles-privy-user-id-4",
         device: {
           os: DeviceOS.ios,
           name: "iPhone 14",
@@ -474,7 +474,7 @@ describe("/profiles API", () => {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        privyUserId: "test-privy-user-id-5",
+        privyUserId: "test-profiles-privy-user-id-5",
         device: {
           os: DeviceOS.ios,
           name: "iPhone 14",
@@ -518,7 +518,7 @@ describe("/profiles API", () => {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        privyUserId: "test-privy-user-id-6",
+        privyUserId: "test-profiles-privy-user-id-6",
         device: {
           os: DeviceOS.ios,
           name: "iPhone 14",
@@ -544,7 +544,7 @@ describe("/profiles API", () => {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          privyUserId: "test-privy-user-id-7",
+          privyUserId: "test-profiles-privy-user-id-7",
           device: {
             os: DeviceOS.ios,
             name: "iPhone 14",
@@ -590,7 +590,7 @@ describe("/profiles API", () => {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        privyUserId: "test-privy-user-id",
+        privyUserId: "test-profiles-privy-user-id",
         device: {
           os: DeviceOS.ios,
           name: "iPhone 14",
@@ -627,7 +627,7 @@ describe("/profiles API", () => {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        privyUserId: "test-privy-user-id",
+        privyUserId: "test-profiles-privy-user-id",
         device: {
           os: DeviceOS.ios,
           name: "iPhone 14",
@@ -685,7 +685,7 @@ describe("/profiles API", () => {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        privyUserId: "test-privy-user-id",
+        privyUserId: "test-profiles-privy-user-id",
         device: {
           os: DeviceOS.ios,
           name: "iPhone 14",
@@ -732,7 +732,7 @@ describe("/profiles API", () => {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        privyUserId: "test-privy-user-id",
+        privyUserId: "test-profiles-privy-user-id",
         device: {
           os: DeviceOS.ios,
           name: "iPhone 14",
@@ -790,7 +790,7 @@ describe("/profiles API", () => {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          privyUserId: "test-privy-user-id",
+          privyUserId: "test-profiles-privy-user-id",
           device: {
             os: DeviceOS.ios,
             name: "iPhone 14",
@@ -831,7 +831,7 @@ describe("/profiles API", () => {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          privyUserId: "test-privy-user-id-2",
+          privyUserId: "test-profiles-privy-user-id-2",
           device: {
             os: DeviceOS.ios,
             name: "iPhone 14",

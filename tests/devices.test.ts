@@ -46,7 +46,7 @@ describe("/devices API", () => {
     await prisma.user.create({
       data: {
         id: testUserId,
-        privyUserId: "test-privy-user-id",
+        privyUserId: "test-devices-privy-user-id",
       },
     });
   });
