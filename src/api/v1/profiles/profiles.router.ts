@@ -1,4 +1,8 @@
-import { PrismaClient, type Profile } from "@prisma/client";
+import {
+  PrismaClient,
+  type DeviceIdentity,
+  type Profile,
+} from "@prisma/client";
 import { Router, type Request, type Response } from "express";
 import { z } from "zod";
 import type { ProfileValidationResponse } from "./profile.types";
@@ -17,11 +21,9 @@ type SearchProfilesQuery = {
 
 export type ProfileRequestResult = Pick<
   Profile,
-  "id" | "name" | "description"
-> & {
-  xmtpId: string;
-  avatar: string;
-};
+  "id" | "name" | "description" | "avatar"
+> &
+  Pick<DeviceIdentity, "xmtpId" | "privyAddress">;
 
 // Define validation request type
 
@@ -78,8 +80,9 @@ profilesRouter.get(
               id: profile.id,
               name: profile.name,
               description: profile.description,
-              xmtpId: profile.deviceIdentity.xmtpId ?? "",
-              avatar: profile.deviceIdentity.profile?.avatar ?? "",
+              xmtpId: profile.deviceIdentity.xmtpId,
+              avatar: profile.deviceIdentity.profile?.avatar,
+              privyAddress: profile.deviceIdentity.privyAddress,
             }) satisfies ProfileRequestResult,
         ),
       );
@@ -130,8 +133,9 @@ profilesRouter.get(
         id: profile.id,
         name: profile.name,
         description: profile.description,
-        xmtpId: profile.deviceIdentity.xmtpId ?? "",
-        avatar: profile.deviceIdentity.profile?.avatar ?? "",
+        xmtpId: profile.deviceIdentity.xmtpId,
+        avatar: profile.deviceIdentity.profile?.avatar,
+        privyAddress: profile.deviceIdentity.privyAddress,
       };
       res.json(profileResult);
     } catch {

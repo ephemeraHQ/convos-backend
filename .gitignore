@@ -54,3 +54,6 @@ build
 
 # typescript
 *.tsbuildinfo
+
+# Cursor
+.specstory/*
