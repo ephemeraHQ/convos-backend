@@ -2,6 +2,7 @@ import { getRandomValues } from "node:crypto";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Client } from "@xmtp/node-sdk";
+import * as jose from "jose";
 import { createWalletClient, http, toBytes, toHex } from "viem";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import { sepolia } from "viem/chains";
@@ -55,4 +56,15 @@ export const createHeaders = (client: Client, appCheckToken: string) => {
     "X-XMTP-InboxId": inboxId,
     "X-XMTP-Signature": toHex(signature),
   };
+};
+
+export const createJWT = async (client: Client, secret: string) => {
+  const jwt = await new jose.SignJWT({
+    inboxId: client.inboxId,
+  })
+    .setProtectedHeader({ alg: "HS256" })
+    .setIssuedAt()
+    .setExpirationTime("1h")
+    .sign(new TextEncoder().encode(secret));
+  return jwt;
 };
