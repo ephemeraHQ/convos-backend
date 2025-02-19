@@ -2,7 +2,7 @@ import { getRandomValues } from "node:crypto";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Client } from "@xmtp/node-sdk";
-import { createWalletClient, http, toBytes } from "viem";
+import { createWalletClient, http, toBytes, toHex } from "viem";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import { sepolia } from "viem/chains";
 
@@ -43,4 +43,16 @@ export const createClient = async () => {
     env: "local",
     dbPath: join(__dirname, `./test-${user.account.address}.db3`),
   });
+};
+
+export const createHeaders = (client: Client, appCheckToken: string) => {
+  const installationId = client.installationId;
+  const inboxId = client.inboxId;
+  const signature = client.signWithInstallationKey(appCheckToken);
+  return {
+    "X-Firebase-AppCheck": appCheckToken,
+    "X-XMTP-InstallationId": installationId,
+    "X-XMTP-InboxId": inboxId,
+    "X-XMTP-Signature": toHex(signature),
+  };
 };
