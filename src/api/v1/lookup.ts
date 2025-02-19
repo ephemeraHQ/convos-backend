@@ -5,41 +5,14 @@ import { z } from "zod";
 
 const lookupRouter = Router();
 
-const FarcasterProfileSchema = z.object({
-  fid: z.number().optional(),
-  bio: z.string().optional(),
-  pfp: z.string().optional(),
-  display: z.string().optional(),
-  username: z.string().optional(),
-  custodyAddress: z.string().optional(),
-  addresses: z.array(z.string()).optional(),
-});
-
-const LensProfileSchema = z.object({
-  name: z.string().optional(),
-  bio: z.string().optional(),
-  picture: z.string().optional(),
-  coverPicture: z.string().optional(),
-});
-
-const EnsProfileSchema = z.object({
-  name: z.string().optional(),
-  address: z.string().optional(),
-  avatar: z.string().optional(),
-  display: z.string().optional(),
-  description: z.string().optional(),
-  keywords: z.array(z.string()).optional(),
-  email: z.string().optional(),
-  mail: z.string().optional(),
-  notice: z.string().optional(),
-  location: z.string().optional(),
-  phone: z.string().optional(),
-  url: z.string().optional(),
-  twitter: z.string().optional(),
-  github: z.string().optional(),
-  discord: z.string().optional(),
-  telegram: z.string().optional(),
-});
+const ProfileType = z.enum([
+  "ens",
+  "farcaster",
+  "basename",
+  "lens",
+  "unstoppable-domains",
+]);
+type ProfileType = z.infer<typeof ProfileType>;
 
 // Note: We define our own schema instead of relying on thirdweb's types
 // as they may not be up to date with the actual API response.
@@ -47,13 +20,11 @@ const EnsProfileSchema = z.object({
 // for simplicity and stability.
 const SocialProfileSchema = z
   .object({
-    type: z.enum(["farcaster", "lens", "ens"]),
-    name: z.string().optional(),
-    avatar: z.string().optional(),
+    type: ProfileType,
+    address: z.string(),
+    name: z.string(),
     bio: z.string().optional(),
-    metadata: z
-      .union([FarcasterProfileSchema, LensProfileSchema, EnsProfileSchema])
-      .optional(),
+    avatar: z.string().optional(),
   })
   // removes additional properties that may be present in the API response
   .strip();
@@ -76,15 +47,6 @@ type AddressLookupResponse = SocialProfilesResponse | ErrorResponse;
 type GetAddressLookupRequestParams = {
   address: string;
 };
-
-const ProfileType = z.enum([
-  "ens",
-  "farcaster",
-  "basename",
-  "lens",
-  "unstoppable-domains",
-]);
-type ProfileType = z.infer<typeof ProfileType>;
 
 const SocialProfilesResponseSchema = z.array(SocialProfileSchema);
 
