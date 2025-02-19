@@ -13,7 +13,7 @@ let server: Server;
 
 beforeAll(() => {
   // start the server on a test port
-  server = app.listen(3007);
+  server = app.listen(3008);
 });
 
 afterAll(() => {
@@ -42,7 +42,7 @@ describe("/attachments API", () => {
     test("uploads and validates text file content", async () => {
       // Get presigned URL
       const response = await fetch(
-        "http://localhost:3007/attachments/presigned?contentType=text/plain",
+        "http://localhost:3008/attachments/presigned?contentType=text/plain",
       );
       expect(response.status).toBe(200);
       const data = (await response.json()) as {
@@ -91,7 +91,7 @@ describe("/attachments API", () => {
 
       // Get presigned URL for PNG
       const response = await fetch(
-        "http://localhost:3007/attachments/presigned?contentType=image/png",
+        "http://localhost:3008/attachments/presigned?contentType=image/png",
       );
       expect(response.status).toBe(200);
       const data = (await response.json()) as {
