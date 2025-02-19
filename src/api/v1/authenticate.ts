@@ -1,8 +1,8 @@
 import { Client, type XmtpEnv } from "@xmtp/node-sdk";
 import { Router, type Request, type Response } from "express";
-import { credential } from "firebase-admin";
-import { initializeApp, type ServiceAccount } from "firebase-admin/app";
-import { getAppCheck } from "firebase-admin/app-check";
+// import { credential } from "firebase-admin";
+// import { initializeApp, type ServiceAccount } from "firebase-admin/app";
+// import { getAppCheck } from "firebase-admin/app-check";
 import * as jose from "jose";
 import { hexToBytes, type Hex } from "viem";
 
@@ -63,15 +63,14 @@ authenticateRouter.post("/", async (req: Request, res: Response) => {
       throw new Error("Invalid signature");
     }
 
-    const serviceAccount = JSON.parse(
-      process.env.FIREBASE_SERVICE_ACCOUNT,
-    ) as ServiceAccount;
-
-    initializeApp({
-      credential: credential.cert(serviceAccount),
-    });
-
-    await getAppCheck().verifyToken(appCheckToken);
+    // TODO: re-enable when AppCheck works in bun
+    // const serviceAccount = JSON.parse(
+    //   process.env.FIREBASE_SERVICE_ACCOUNT,
+    // ) as ServiceAccount;
+    // const app = initializeApp({
+    //   credential: credential.cert(serviceAccount),
+    // });
+    // await getAppCheck(app).verifyToken(appCheckToken);
 
     // Create JWT token
     const jwt = await new jose.SignJWT({
