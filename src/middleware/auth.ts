@@ -66,6 +66,8 @@ export const authMiddleware = async (
     }
 
     await getAppCheck().verifyToken(appCheckToken);
+    // @see https://github.com/oven-sh/bun/issues/15932
+    // await getAppCheck().verifyToken(appCheckToken);
     next();
   } catch {
     res.status(500).send();
