@@ -4,7 +4,12 @@ import { mock } from "bun:test";
 
 void mock.module("firebase-admin/app-check", () => ({
   getAppCheck: () => ({
-    verifyToken: () => Promise.resolve(true),
+    verifyToken: (token: string) => {
+      if (token === "valid-app-check-token") {
+        return Promise.resolve(true);
+      }
+      return Promise.reject(new Error("Invalid AppCheck token"));
+    },
   }),
 }));
 
