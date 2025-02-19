@@ -1,73 +1,29 @@
-import { Client, type XmtpEnv } from "@xmtp/node-sdk";
 import type { NextFunction, Request, Response } from "express";
-import { credential } from "firebase-admin";
-import { initializeApp, type ServiceAccount } from "firebase-admin/app";
-import { getAppCheck } from "firebase-admin/app-check";
-import { hexToBytes, type Hex } from "viem";
+import * as jose from "jose";
 
-if (process.env.NODE_ENV !== "test") {
-  const serviceAccount = JSON.parse(
-    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-    process.env.FIREBASE_SERVICE_ACCOUNT!,
-  ) as ServiceAccount;
-
-  initializeApp({
-    credential: credential.cert(serviceAccount),
-  });
-}
-
-const xmtpEnv = (process.env.XMTP_ENV || "dev") as XmtpEnv;
+export const AUTH_HEADER = "X-Convos-AuthToken";
 
 export const authMiddleware = async (
   req: Request,
   res: Response,
   next: NextFunction,
 ) => {
-  const appCheckToken = req.header("X-Firebase-AppCheck");
-  const xmtpInstallationId = req.header("X-XMTP-InstallationId");
-  const xmtpId = req.header("X-XMTP-InboxId");
-  const xmtpSignature = req.header("X-XMTP-Signature");
+  const authToken = req.header(AUTH_HEADER);
 
-  // make sure all headers are present
-  if (!appCheckToken || !xmtpInstallationId || !xmtpId || !xmtpSignature) {
+  if (!authToken) {
     res.status(401).send();
     return;
   }
 
   try {
-    // convert installation ID to bytes
-    const installationId = hexToBytes(`0x${xmtpInstallationId}`);
-
-    // validate installation ID
-    const isValidInstallation = await Client.isInstallationAuthorized(
-      xmtpId,
-      installationId,
-      {
-        env: xmtpEnv,
-      },
+    // verify JWT token
+    await jose.jwtVerify(
+      authToken,
+      new TextEncoder().encode(process.env.JWT_SECRET),
     );
 
-    if (!isValidInstallation) {
-      res.status(401).send();
-      return;
-    }
-
-    // verify signature
-    const signature = hexToBytes(xmtpSignature as Hex);
-    const isValidSignature = Client.verifySignedWithPublicKey(
-      appCheckToken,
-      signature,
-      installationId,
-    );
-
-    if (!isValidSignature) {
-      res.status(401).send();
-      return;
-    }
-
-    await getAppCheck().verifyToken(appCheckToken);
     next();
   } catch {
-    res.status(500).send();
+    res.status(401).send();
   }
 };

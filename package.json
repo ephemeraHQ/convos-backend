@@ -28,6 +28,7 @@
     "express-rate-limit": "^7.5.0",
     "firebase-admin": "^13.1.0",
     "helmet": "^8.0.0",
+    "jose": "^5.10.0",
     "mime-types": "^2.1.35",
     "prisma": "^6.3.1",
     "thirdweb": "^5.88.2",

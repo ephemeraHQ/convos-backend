@@ -1,8 +1,24 @@
 import { mock } from "bun:test";
 
-// mock Firebase AppCheck
+// mock Firebase functions
+
 void mock.module("firebase-admin/app-check", () => ({
   getAppCheck: () => ({
-    verifyToken: () => Promise.resolve(true),
+    verifyToken: (token: string) => {
+      if (token === "valid-app-check-token") {
+        return Promise.resolve(true);
+      }
+      return Promise.reject(new Error("Invalid AppCheck token"));
+    },
   }),
+}));
+
+void mock.module("firebase-admin", () => ({
+  credential: {
+    cert: () => {},
+  },
+}));
+
+void mock.module("firebase-admin/app", () => ({
+  initializeApp: () => {},
 }));
