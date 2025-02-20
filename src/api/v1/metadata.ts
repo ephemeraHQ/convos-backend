@@ -51,6 +51,7 @@ metadataRouter.post(
     req: Request<Record<string, never>, unknown, UpsertMetadataRequestBody>,
     res: Response,
   ) => {
+    console.log("req.body:", req.body);
     try {
       const validatedData = conversationMetadataUpsertSchema.parse(req.body);
 

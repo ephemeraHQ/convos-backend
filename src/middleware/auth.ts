@@ -28,7 +28,7 @@ export const authMiddleware = async (
     );
 
     // Add xmtpId to the request object
-    // @ts-ignore
+    // @ts-expect-error
     req.xmtpId = payload.inboxId as string;
 
     next();
