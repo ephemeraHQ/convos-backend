@@ -14,7 +14,7 @@ import {
 } from "bun:test";
 import express from "express";
 import metadataRouter from "@/api/v1/metadata";
-import usersRouter, { type ReturnedUser } from "@/api/v1/users";
+import usersRouter, { type CreatedReturnedUser } from "@/api/v1/users";
 import { jsonMiddleware } from "@/middleware/json";
 
 const app = express();
@@ -74,7 +74,8 @@ describe("/metadata API", () => {
         },
       }),
     });
-    const createdUser = (await createUserResponse.json()) as ReturnedUser;
+    const createdUser =
+      (await createUserResponse.json()) as CreatedReturnedUser;
 
     const response = await fetch(
       `http://localhost:3005/metadata/conversation/${createdUser.identity.id}`,
@@ -141,7 +142,8 @@ describe("/metadata API", () => {
         },
       }),
     });
-    const createdUser = (await createUserResponse.json()) as ReturnedUser;
+    const createdUser =
+      (await createUserResponse.json()) as CreatedReturnedUser;
 
     // Create metadata
     const createMetadataResponse = await fetch(
@@ -197,7 +199,8 @@ describe("/metadata API", () => {
         },
       }),
     });
-    const createdUser = (await createUserResponse.json()) as ReturnedUser;
+    const createdUser =
+      (await createUserResponse.json()) as CreatedReturnedUser;
 
     // Create metadata
     const createMetadataResponse = await fetch(

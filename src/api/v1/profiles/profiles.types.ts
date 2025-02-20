@@ -1,0 +1,11 @@
+import type { DeviceIdentity, Profile } from "@prisma/client";
+
+export type GetProfileRequestParams = {
+  xmtpId: string;
+};
+
+export type ProfileRequestResult = Pick<
+  Profile,
+  "id" | "name" | "description" | "avatar"
+> &
+  Pick<DeviceIdentity, "xmtpId" | "privyAddress">;

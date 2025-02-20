@@ -1,4 +1,4 @@
-import { DeviceOS, PrismaClient } from "@prisma/client";
+import { DeviceOS, PrismaClient, type DeviceIdentity } from "@prisma/client";
 import { Router, type Request, type Response } from "express";
 import { z } from "zod";
 import { validateProfile } from "./profiles/profile.validation";
@@ -6,7 +6,144 @@ import { validateProfile } from "./profiles/profile.validation";
 const usersRouter = Router();
 const prisma = new PrismaClient();
 
-export type ReturnedUser = {
+// Define routes after the handlers are declared
+usersRouter.get("/me", getCurrentUser);
+usersRouter.get("/:privyUserId", getUser);
+usersRouter.post("/", createUser);
+usersRouter.put("/:privyUserId", updateUser);
+
+// getCurrentUser types and schemas
+export type ReturnedCurrentUser = {
+  id: string;
+  identities: Array<Pick<DeviceIdentity, "id" | "privyAddress" | "xmtpId">>;
+};
+
+async function getCurrentUser(req: Request, res: Response) {
+  try {
+    const user = await prisma.user.findFirst({
+      where: {
+        DeviceIdentity: {
+          some: {
+            xmtpId: req.xmtpId,
+          },
+        },
+      },
+      select: {
+        id: true,
+        devices: {
+          select: {
+            identities: {
+              select: {
+                identity: {
+                  select: {
+                    id: true,
+                    privyAddress: true,
+                    xmtpId: true,
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    });
+
+    if (!user) {
+      res.status(404).json({ error: "User not found" });
+      return;
+    }
+
+    const returnedUser: ReturnedCurrentUser = {
+      id: user.id,
+      identities: user.devices.flatMap((device) =>
+        device.identities.map(({ identity }) => ({
+          id: identity.id,
+          privyAddress: identity.privyAddress,
+          xmtpId: identity.xmtpId,
+        })),
+      ),
+    };
+
+    res.json(returnedUser);
+  } catch (err) {
+    console.error("Error fetching current user:", err);
+    res.status(500).json({ error: "Failed to fetch user" });
+  }
+}
+
+type GetUserRequestParams = {
+  privyUserId: string;
+};
+
+async function getUser(req: Request<GetUserRequestParams>, res: Response) {
+  try {
+    const { privyUserId } = req.params;
+    const user = await prisma.user.findUnique({
+      where: { privyUserId },
+      include: {
+        devices: {
+          include: {
+            identities: {
+              include: {
+                identity: {
+                  include: {
+                    profile: true,
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    });
+
+    if (!user) {
+      res.status(404).json({ error: "User not found" });
+      return;
+    }
+
+    const {
+      id,
+      devices: [
+        {
+          id: deviceId,
+          os: deviceOs,
+          name: deviceName,
+          identities: [{ identity }],
+        },
+      ],
+    } = user;
+
+    const returnedUser: CreatedReturnedUser = {
+      id,
+      privyUserId,
+      device: {
+        id: deviceId,
+        os: deviceOs,
+        name: deviceName,
+      },
+      identity: {
+        id: identity.id,
+        privyAddress: identity.privyAddress,
+        xmtpId: identity.xmtpId,
+      },
+      profile: identity.profile
+        ? {
+            id: identity.profile.id,
+            name: identity.profile.name,
+            description: identity.profile.description,
+          }
+        : null,
+    };
+
+    res.json(returnedUser);
+  } catch (err) {
+    console.error("Error fetching user:", err);
+    res.status(500).json({ error: "Failed to fetch user" });
+  }
+}
+
+export type CreatedReturnedUser = {
   id: string;
   privyUserId: string;
   device: {
@@ -26,82 +163,7 @@ export type ReturnedUser = {
   } | null;
 };
 
-type GetUserRequestParams = {
-  privyUserId: string;
-};
-
-// GET /users/:privyUserId - Get a single user by Privy user ID
-usersRouter.get(
-  "/:privyUserId",
-  async (req: Request<GetUserRequestParams>, res: Response) => {
-    try {
-      const { privyUserId } = req.params;
-      const user = await prisma.user.findUnique({
-        where: { privyUserId },
-        include: {
-          devices: {
-            include: {
-              identities: {
-                include: {
-                  identity: {
-                    include: {
-                      profile: true,
-                    },
-                  },
-                },
-              },
-            },
-          },
-        },
-      });
-
-      if (!user) {
-        res.status(404).json({ error: "User not found" });
-        return;
-      }
-
-      // format user data for response
-      const {
-        id,
-        devices: [
-          {
-            id: deviceId,
-            os: deviceOs,
-            name: deviceName,
-            identities: [{ identity }],
-          },
-        ],
-      } = user;
-      const returnedUser = {
-        id,
-        privyUserId,
-        device: {
-          id: deviceId,
-          os: deviceOs,
-          name: deviceName,
-        },
-        identity: {
-          id: identity.id,
-          privyAddress: identity.privyAddress,
-          xmtpId: identity.xmtpId,
-        },
-        profile: identity.profile
-          ? {
-              id: identity.profile.id,
-              name: identity.profile.name,
-              description: identity.profile.description,
-            }
-          : null,
-      } satisfies ReturnedUser;
-
-      res.json(returnedUser);
-    } catch {
-      res.status(500).json({ error: "Failed to fetch user" });
-    }
-  },
-);
-
-// schema for creating a user
+// createUser types and schemas
 export const userCreateSchema = z.object({
   privyUserId: z.string(),
   device: z.object({
@@ -122,161 +184,150 @@ export const userCreateSchema = z.object({
 
 export type CreateUserRequestBody = z.infer<typeof userCreateSchema>;
 
-// POST /users - Create a new user
-usersRouter.post(
-  "/",
-  async (
-    req: Request<unknown, unknown, CreateUserRequestBody>,
-    res: Response,
-  ) => {
-    try {
-      const {
-        privyUserId,
-        device,
-        identity: { privyAddress, xmtpId },
-        profile,
-      } = userCreateSchema.parse(req.body);
+async function createUser(
+  req: Request<unknown, unknown, CreateUserRequestBody>,
+  res: Response,
+) {
+  try {
+    const {
+      privyUserId,
+      device,
+      identity: { privyAddress, xmtpId },
+      profile,
+    } = userCreateSchema.parse(req.body);
 
-      // If profile is provided, validate it first
-      if (profile) {
-        const validationResult = await validateProfile({
-          name: profile.name,
-          description: profile.description,
-        });
-        if (!validationResult.success) {
-          res.status(400).json(validationResult);
-          return;
-        }
-      }
-
-      // create new user
-      const createdUser = await prisma.user.create({
-        data: {
-          privyUserId,
-          devices: {
-            create: {
-              os: device.os,
-              name: device.name,
-              identities: {
-                create: {
-                  identity: {
-                    create: {
-                      privyAddress,
-                      xmtpId,
-                      user: {
-                        connect: {
-                          privyUserId,
-                        },
-                      },
-                      profile: profile
-                        ? {
-                            create: {
-                              name: profile.name,
-                              description: profile.description,
-                            },
-                          }
-                        : undefined,
-                    },
-                  },
-                },
-              },
-            },
-          },
-        },
-        include: {
-          devices: {
-            include: {
-              identities: {
-                include: {
-                  identity: {
-                    include: {
-                      profile: true,
-                    },
-                  },
-                },
-              },
-            },
-          },
-        },
+    if (profile) {
+      const validationResult = await validateProfile({
+        name: profile.name,
+        description: profile.description,
       });
+      if (!validationResult.success) {
+        res.status(400).json(validationResult);
+        return;
+      }
+    }
 
-      // format user data for response
-      const {
-        id,
-        devices: [
-          {
-            id: deviceId,
-            os: deviceOs,
-            name: deviceName,
-            identities: [{ identity }],
-          },
-        ],
-      } = createdUser;
-      const returnedUser = {
-        id,
+    const createdUser = await prisma.user.create({
+      data: {
         privyUserId,
-        device: {
+        devices: {
+          create: {
+            os: device.os,
+            name: device.name,
+            identities: {
+              create: {
+                identity: {
+                  create: {
+                    privyAddress,
+                    xmtpId,
+                    user: {
+                      connect: {
+                        privyUserId,
+                      },
+                    },
+                    profile: profile
+                      ? {
+                          create: {
+                            name: profile.name,
+                            description: profile.description,
+                          },
+                        }
+                      : undefined,
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+      include: {
+        devices: {
+          include: {
+            identities: {
+              include: {
+                identity: {
+                  include: {
+                    profile: true,
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    });
+
+    const {
+      id,
+      devices: [
+        {
           id: deviceId,
           os: deviceOs,
           name: deviceName,
+          identities: [{ identity }],
         },
-        identity: {
-          id: identity.id,
-          privyAddress: identity.privyAddress,
-          xmtpId: identity.xmtpId,
-        },
-        profile: identity.profile
-          ? {
-              id: identity.profile.id,
-              name: identity.profile.name,
-              description: identity.profile.description,
-            }
-          : null,
-      } satisfies ReturnedUser;
+      ],
+    } = createdUser;
 
-      res.status(201).json(returnedUser);
-    } catch (error) {
-      if (error instanceof z.ZodError) {
-        res.status(400).json({ error: "Invalid request body" });
-        return;
-      }
-      res.status(500).json({ error: "Failed to create user" });
+    const returnedUser: CreatedReturnedUser = {
+      id,
+      privyUserId,
+      device: {
+        id: deviceId,
+        os: deviceOs,
+        name: deviceName,
+      },
+      identity: {
+        id: identity.id,
+        privyAddress: identity.privyAddress,
+        xmtpId: identity.xmtpId,
+      },
+      profile: identity.profile
+        ? {
+            id: identity.profile.id,
+            name: identity.profile.name,
+            description: identity.profile.description,
+          }
+        : null,
+    };
+
+    res.status(201).json(returnedUser);
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      res.status(400).json({ error: "Invalid request body" });
+      return;
     }
-  },
-);
+    res.status(500).json({ error: "Failed to create user" });
+  }
+}
 
-// schema for updating a user
+// updateUser types and schemas
 const userUpdateSchema = z.object({
   privyUserId: z.string(),
 });
-
 type UpdateUserRequestBody = z.infer<typeof userUpdateSchema>;
 
-// PUT /users/:privyUserId - Update a user by Privy user ID
-usersRouter.put(
-  "/:privyUserId",
-  async (
-    req: Request<GetUserRequestParams, unknown, UpdateUserRequestBody>,
-    res: Response,
-  ) => {
-    try {
-      const { privyUserId } = req.params;
-      const validatedData = userUpdateSchema.partial().parse(req.body);
+async function updateUser(
+  req: Request<GetUserRequestParams, unknown, UpdateUserRequestBody>,
+  res: Response,
+) {
+  try {
+    const { privyUserId } = req.params;
+    const validatedData = userUpdateSchema.partial().parse(req.body);
 
-      const user = await prisma.user.update({
-        where: { privyUserId },
-        data: validatedData,
-      });
+    const user = await prisma.user.update({
+      where: { privyUserId },
+      data: validatedData,
+    });
 
-      res.json(user);
-    } catch (error) {
-      if (error instanceof z.ZodError) {
-        res.status(400).json({ error: "Invalid request body" });
-        return;
-      }
-      res.status(500).json({ error: "Failed to update user" });
+    res.json(user);
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      res.status(400).json({ error: "Invalid request body" });
+      return;
     }
-  },
-);
+    res.status(500).json({ error: "Failed to update user" });
+  }
+}
 
 export default usersRouter;

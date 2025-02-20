@@ -9,7 +9,7 @@ import {
   test,
 } from "bun:test";
 import express from "express";
-import usersRouter, { type ReturnedUser } from "@/api/v1/users";
+import usersRouter, { type CreatedReturnedUser } from "@/api/v1/users";
 import { jsonMiddleware } from "@/middleware/json";
 
 const app = express();
@@ -62,7 +62,7 @@ describe("/users API", () => {
         },
       }),
     });
-    const user = (await response.json()) as ReturnedUser;
+    const user = (await response.json()) as CreatedReturnedUser;
 
     expect(response.status).toBe(201);
     expect(user.privyUserId).toBe("test-users-privy-user-id");
@@ -94,7 +94,7 @@ describe("/users API", () => {
         },
       }),
     });
-    const user = (await response.json()) as ReturnedUser;
+    const user = (await response.json()) as CreatedReturnedUser;
 
     expect(response.status).toBe(201);
     expect(user.privyUserId).toBe("test-users-privy-user-id");
@@ -140,13 +140,13 @@ describe("/users API", () => {
         },
       }),
     });
-    const createdUser = (await createResponse.json()) as ReturnedUser;
+    const createdUser = (await createResponse.json()) as CreatedReturnedUser;
 
     // fetch the user
     const response = await fetch(
       `http://localhost:3001/users/${createdUser.privyUserId}`,
     );
-    const user = (await response.json()) as ReturnedUser;
+    const user = (await response.json()) as CreatedReturnedUser;
 
     expect(response.status).toBe(200);
     expect(user.id).toBe(createdUser.id);
@@ -175,7 +175,7 @@ describe("/users API", () => {
         },
       }),
     });
-    const createdUser = (await createResponse.json()) as ReturnedUser;
+    const createdUser = (await createResponse.json()) as CreatedReturnedUser;
 
     // update the user
     const updateResponse = await fetch(
@@ -190,7 +190,7 @@ describe("/users API", () => {
         }),
       },
     );
-    const updatedUser = (await updateResponse.json()) as ReturnedUser;
+    const updatedUser = (await updateResponse.json()) as CreatedReturnedUser;
 
     expect(updateResponse.status).toBe(200);
     expect(updatedUser.id).toBe(createdUser.id);

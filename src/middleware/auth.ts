@@ -3,6 +3,11 @@ import * as jose from "jose";
 
 export const AUTH_HEADER = "X-Convos-AuthToken";
 
+// Extend Express Request type
+export interface RequestWithXmtp extends Request {
+  xmtpId: string;
+}
+
 export const authMiddleware = async (
   req: Request,
   res: Response,
@@ -16,11 +21,14 @@ export const authMiddleware = async (
   }
 
   try {
-    // verify JWT token
-    await jose.jwtVerify(
+    // verify JWT token and get payload
+    const { payload } = await jose.jwtVerify(
       authToken,
       new TextEncoder().encode(process.env.JWT_SECRET),
     );
+
+    // Add xmtpId to the request object
+    req.xmtpId = payload.inboxId as string;
 
     next();
   } catch {

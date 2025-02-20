@@ -10,10 +10,9 @@ import {
 } from "bun:test";
 import express from "express";
 import type { ProfileValidationResponse } from "@/api/v1/profiles/profile.types";
-import profilesRouter, {
-  type ProfileRequestResult,
-} from "@/api/v1/profiles/profiles.router";
-import usersRouter, { type ReturnedUser } from "@/api/v1/users";
+import profilesRouter from "@/api/v1/profiles/profiles.router";
+import type { ProfileRequestResult } from "@/api/v1/profiles/profiles.types";
+import usersRouter, { type CreatedReturnedUser } from "@/api/v1/users";
 import { jsonMiddleware } from "@/middleware/json";
 
 const app = express();
@@ -74,7 +73,8 @@ describe("/profiles API", () => {
         },
       }),
     });
-    const createdUser = (await createUserResponse.json()) as ReturnedUser;
+    const createdUser =
+      (await createUserResponse.json()) as CreatedReturnedUser;
 
     const response = await fetch(
       `http://localhost:3004/profiles/${createdUser.identity.xmtpId}`,
@@ -107,7 +107,8 @@ describe("/profiles API", () => {
       }),
     });
 
-    const createdUser = (await createUserResponse.json()) as ReturnedUser;
+    const createdUser =
+      (await createUserResponse.json()) as CreatedReturnedUser;
     expect(createUserResponse.status).toBe(201);
 
     const createProfileResponse = await fetch(
@@ -177,7 +178,8 @@ describe("/profiles API", () => {
       }),
     });
 
-    const createdUser = (await createUserResponse.json()) as ReturnedUser;
+    const createdUser =
+      (await createUserResponse.json()) as CreatedReturnedUser;
     expect(createUserResponse.status).toBe(201);
 
     // Try to create another profile for the same device identity
@@ -220,7 +222,8 @@ describe("/profiles API", () => {
         },
       }),
     });
-    const createdUser = (await createUserResponse.json()) as ReturnedUser;
+    const createdUser =
+      (await createUserResponse.json()) as CreatedReturnedUser;
 
     const response = await fetch(
       `http://localhost:3004/profiles/${createdUser.identity.id}`,
@@ -263,7 +266,8 @@ describe("/profiles API", () => {
         },
       }),
     });
-    const createdUser = (await createUserResponse.json()) as ReturnedUser;
+    const createdUser =
+      (await createUserResponse.json()) as CreatedReturnedUser;
 
     // Update the profile
     const response = await fetch(
@@ -311,7 +315,8 @@ describe("/profiles API", () => {
         },
       }),
     });
-    const createdUser = (await createUserResponse.json()) as ReturnedUser;
+    const createdUser =
+      (await createUserResponse.json()) as CreatedReturnedUser;
 
     const response = await fetch(
       `http://localhost:3004/profiles/${createdUser.identity.xmtpId}`,
@@ -355,7 +360,8 @@ describe("/profiles API", () => {
         },
       }),
     });
-    const createdUser = (await createUserResponse.json()) as ReturnedUser;
+    const createdUser =
+      (await createUserResponse.json()) as CreatedReturnedUser;
 
     const response = await fetch(
       `http://localhost:3004/profiles/${createdUser.identity.xmtpId}`,
@@ -399,7 +405,8 @@ describe("/profiles API", () => {
         },
       }),
     });
-    const createdUser = (await createUserResponse.json()) as ReturnedUser;
+    const createdUser =
+      (await createUserResponse.json()) as CreatedReturnedUser;
 
     const response = await fetch(
       `http://localhost:3004/profiles/${createdUser.identity.xmtpId}`,
@@ -443,7 +450,8 @@ describe("/profiles API", () => {
         },
       }),
     });
-    const createdUser = (await createUserResponse.json()) as ReturnedUser;
+    const createdUser =
+      (await createUserResponse.json()) as CreatedReturnedUser;
 
     const response = await fetch(
       `http://localhost:3004/profiles/${createdUser.identity.xmtpId}`,
@@ -489,7 +497,8 @@ describe("/profiles API", () => {
         },
       }),
     });
-    const createdUser = (await createUserResponse.json()) as ReturnedUser;
+    const createdUser =
+      (await createUserResponse.json()) as CreatedReturnedUser;
 
     const response = await fetch(
       `http://localhost:3004/profiles/${createdUser.identity.xmtpId}`,
@@ -560,7 +569,8 @@ describe("/profiles API", () => {
         }),
       },
     );
-    const secondUser = (await createSecondUserResponse.json()) as ReturnedUser;
+    const secondUser =
+      (await createSecondUserResponse.json()) as CreatedReturnedUser;
 
     // Try to update second user's profile with first user's username
     const response = await fetch(
@@ -697,7 +707,8 @@ describe("/profiles API", () => {
       }),
     });
 
-    const createdUser = (await createUserResponse.json()) as ReturnedUser;
+    const createdUser =
+      (await createUserResponse.json()) as CreatedReturnedUser;
     expect(createUserResponse.status).toBe(201);
 
     const createProfileResponse = await fetch(
@@ -748,7 +759,8 @@ describe("/profiles API", () => {
         },
       }),
     });
-    const createdUser = (await createUserResponse.json()) as ReturnedUser;
+    const createdUser =
+      (await createUserResponse.json()) as CreatedReturnedUser;
 
     // Update just the avatar
     const response = await fetch(
@@ -802,7 +814,8 @@ describe("/profiles API", () => {
         }),
       });
 
-      const createdUser = (await createUserResponse.json()) as ReturnedUser;
+      const createdUser =
+        (await createUserResponse.json()) as CreatedReturnedUser;
 
       // Create a profile
       const profile = await prisma.profile.create({
@@ -843,7 +856,8 @@ describe("/profiles API", () => {
         }),
       });
 
-      const createdUser = (await createUserResponse.json()) as ReturnedUser;
+      const createdUser =
+        (await createUserResponse.json()) as CreatedReturnedUser;
 
       // Create a profile
       const profile = await prisma.profile.create({
