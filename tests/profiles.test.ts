@@ -12,7 +12,7 @@ import express from "express";
 import type { ProfileValidationResponse } from "@/api/v1/profiles/profile.types";
 import profilesRouter from "@/api/v1/profiles/profiles.router";
 import type { ProfileRequestResult } from "@/api/v1/profiles/profiles.types";
-import usersRouter from "@/api/v1/users";
+import usersRouter from "@/api/v1/users/users.router";
 import type { CreatedReturnedUser } from "@/api/v1/users/users.types";
 import { jsonMiddleware } from "@/middleware/json";
 

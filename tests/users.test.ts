@@ -9,7 +9,7 @@ import {
   test,
 } from "bun:test";
 import express from "express";
-import usersRouter from "@/api/v1/users";
+import usersRouter from "@/api/v1/users/users.router";
 import type {
   CreatedReturnedUser,
   ReturnedCurrentUser,

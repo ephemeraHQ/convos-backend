@@ -7,7 +7,7 @@ import attachmentsRouter from "./attachments";
 import devicesRouter from "./devices";
 import identitiesRouter from "./identities";
 import lookupRouter from "./lookup";
-import usersRouter from "./users";
+import usersRouter from "./users/users.router";
 
 const v1Router = Router();
 

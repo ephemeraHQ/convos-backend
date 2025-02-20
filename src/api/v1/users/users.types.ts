@@ -1,4 +1,4 @@
-import type { DeviceIdentity } from "@prisma/client";
+import type { DeviceIdentity, DeviceOS } from "@prisma/client";
 
 export type ReturnedCurrentUser = {
   id: string;
