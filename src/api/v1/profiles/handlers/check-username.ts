@@ -23,7 +23,7 @@ export async function checkUsername(
     const { username } = req.params;
 
     if (!username || username.trim().length === 0) {
-      res.status(400).json({ error: "Username is required" });
+      res.status(404).json({ error: "Profile not found" });
       return;
     }
 

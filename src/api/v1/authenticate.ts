@@ -78,7 +78,7 @@ authenticateRouter.post("/", async (req: Request, res: Response) => {
     })
       .setProtectedHeader({ alg: "HS256" })
       .setIssuedAt()
-      .setExpirationTime("5s")
+      .setExpirationTime("1h")
       .sign(new TextEncoder().encode(process.env.JWT_SECRET));
 
     res.json({ token: jwt });
