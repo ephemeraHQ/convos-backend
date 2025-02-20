@@ -24,6 +24,7 @@ async function getCurrentUser(req: Request, res: Response) {
       where: {
         DeviceIdentity: {
           some: {
+            // @ts-ignore
             xmtpId: req.xmtpId,
           },
         },
