@@ -9,11 +9,9 @@ import {
   test,
 } from "bun:test";
 import express from "express";
+import type { CreatedReturnedUser } from "@/api/v1/users/handlers/create-user";
+import type { ReturnedCurrentUser } from "@/api/v1/users/handlers/get-current-user";
 import usersRouter from "@/api/v1/users/users.router";
-import type {
-  CreatedReturnedUser,
-  ReturnedCurrentUser,
-} from "@/api/v1/users/users.types";
 import { jsonMiddleware } from "@/middleware/json";
 
 const app = express();
@@ -79,7 +77,7 @@ describe("/users API", () => {
     expect(user.identity.id).toBeDefined();
     expect(user.identity.privyAddress).toBe("test-privy-address");
     expect(user.identity.xmtpId).toBe("test-xmtp-id");
-    expect(user.profile?.name).toBe("Test User");
+    expect(user.profile.name).toBe("Test User");
   });
 
   test("GET /users/me returns 401 without auth header", async () => {

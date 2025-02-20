@@ -12,8 +12,8 @@ import express from "express";
 import type { ProfileValidationResponse } from "@/api/v1/profiles/profile.types";
 import profilesRouter from "@/api/v1/profiles/profiles.router";
 import type { ProfileRequestResult } from "@/api/v1/profiles/profiles.types";
+import type { CreatedReturnedUser } from "@/api/v1/users/handlers/create-user";
 import usersRouter from "@/api/v1/users/users.router";
-import type { CreatedReturnedUser } from "@/api/v1/users/users.types";
 import { jsonMiddleware } from "@/middleware/json";
 
 const app = express();
@@ -84,7 +84,7 @@ describe("/profiles API", () => {
     const profile = (await response.json()) as Profile;
 
     expect(response.status).toBe(200);
-    expect(profile.id).toBe(createdUser.profile!.id);
+    expect(profile.id).toBe(createdUser.profile.id);
     expect(profile.name).toBe("Test Profile");
     expect(profile.description).toBe("Test Description");
   });
@@ -133,7 +133,7 @@ describe("/profiles API", () => {
     const updatedProfile = (await response.json()) as Profile;
 
     expect(response.status).toBe(200);
-    expect(updatedProfile.id).toBe(createdUser.profile!.id);
+    expect(updatedProfile.id).toBe(createdUser.profile.id);
     expect(updatedProfile.name).toBe("Updated Name");
     expect(updatedProfile.description).toBe("Updated Description");
   });
@@ -577,7 +577,7 @@ describe("/profiles API", () => {
     const updatedProfile = (await response.json()) as Profile;
 
     expect(response.status).toBe(200);
-    expect(updatedProfile.id).toBe(createdUser.profile!.id);
+    expect(updatedProfile.id).toBe(createdUser.profile.id);
     expect(updatedProfile.name).toBe("Test Profile"); // unchanged
     expect(updatedProfile.description).toBe("Test Description"); // unchanged
     expect(updatedProfile.avatar).toBe("https://example.com/new-avatar.jpg");

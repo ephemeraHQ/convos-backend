@@ -14,8 +14,8 @@ import {
 } from "bun:test";
 import express from "express";
 import metadataRouter from "@/api/v1/metadata";
+import type { CreatedReturnedUser } from "@/api/v1/users/handlers/create-user";
 import usersRouter from "@/api/v1/users/users.router";
-import type { CreatedReturnedUser } from "@/api/v1/users/users.types";
 import { jsonMiddleware } from "@/middleware/json";
 
 const app = express();

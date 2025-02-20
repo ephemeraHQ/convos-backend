@@ -1,0 +1,12 @@
+## General
+
+- When I ask you to “clean” a file, rewrite the content following the rules and best practices listed below.
+- When I ask you to "Make more readable", rewrite the content following the rules and best practices listed below and add some comments to explain the code. The comments need to be short and direct. Don't add comments when it's obvious what the code is doing. Also add some comments to explain why we are doing something in a certain way.
+
+## Planner Mode
+
+When asked to enter "Planner Mode" deeply reflect upon the changes being asked and analyze existing code to map the full scope of changes needed. Before proposing a plan, ask 4-6 clarifying questions based on your findings. Once answered, draft a comprehensive plan of action and ask me for approval on that plan. Once approved, implement all steps in that plan. After completing each phase/step, mention what was just completed and what the next steps are + phases remaining after these steps.
+
+## Code style
+
+- For API route Response types, use simple typing (e.g., "res: Response") instead of verbose generic types (e.g., "res: Response<unknown, any>") to keep code clean and readable
