@@ -31,19 +31,6 @@ const SocialProfileSchema = z
 
 const SocialProfilesSchema = z.array(SocialProfileSchema);
 
-type ISocialProfiles = z.infer<typeof SocialProfilesSchema>;
-
-type SocialProfilesResponse = {
-  socialProfiles: ISocialProfiles;
-};
-
-type ErrorResponse = {
-  error: string;
-};
-
-// Combined response type
-type AddressLookupResponse = SocialProfilesResponse | ErrorResponse;
-
 type GetAddressLookupRequestParams = {
   address: string;
 };
@@ -62,10 +49,7 @@ const ProfileTypePriority: Record<ProfileType, number> = {
 // GET /lookup/address/:address - Lookup social profiles by address
 lookupRouter.get(
   "/address/:address",
-  async (
-    req: Request<GetAddressLookupRequestParams>,
-    res: Response<AddressLookupResponse>,
-  ) => {
+  async (req: Request<GetAddressLookupRequestParams>, res: Response) => {
     try {
       const { address } = req.params;
 
