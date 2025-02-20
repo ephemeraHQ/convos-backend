@@ -208,28 +208,6 @@ describe("/metadata API", () => {
     const createdUser =
       (await createUserResponse.json()) as CreatedReturnedUser;
 
-    // Create initial metadata
-    const createMetadataResponse = await fetch(
-      "http://localhost:3005/metadata/conversation",
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          conversationId: "test-conversation-id",
-          pinned: true,
-          unread: false,
-          deleted: false,
-          readUntil: new Date().toISOString(),
-          deviceIdentityId: createdUser.identity.id,
-        }),
-      },
-    );
-
-    const createdMetadata =
-      (await createMetadataResponse.json()) as ConversationMetadata;
-
     // Update the metadata with new values
     const updateResponse = await fetch(
       "http://localhost:3005/metadata/conversation",
