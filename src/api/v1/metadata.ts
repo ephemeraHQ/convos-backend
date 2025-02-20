@@ -31,39 +31,32 @@ metadataRouter.get(
   },
 );
 
-type CreateMetadataRequestParams = {
-  deviceIdentityId: string;
-};
-
-const conversationMetadataCreateSchema = z.object({
+const conversationMetadataUpsertSchema = z.object({
   conversationId: z.string(),
   pinned: z.boolean().optional(),
   unread: z.boolean().optional(),
   deleted: z.boolean().optional(),
   readUntil: z.string().datetime().optional(),
+  deviceIdentityId: z.string(),
 });
 
-type CreateMetadataRequestBody = z.infer<
-  typeof conversationMetadataCreateSchema
+type UpsertMetadataRequestBody = z.infer<
+  typeof conversationMetadataUpsertSchema
 >;
 
-// POST /metadata/conversation/:deviceIdentityId - Create new conversation metadata
+// POST /metadata/conversation - Upsert conversation metadata
 metadataRouter.post(
-  "/conversation/:deviceIdentityId",
+  "/conversation",
   async (
-    req: Request<
-      CreateMetadataRequestParams,
-      unknown,
-      CreateMetadataRequestBody
-    >,
+    req: Request<Record<string, never>, unknown, UpsertMetadataRequestBody>,
     res: Response,
   ) => {
     try {
-      const { deviceIdentityId } = req.params;
+      const validatedData = conversationMetadataUpsertSchema.parse(req.body);
 
       // Check if device identity exists
       const deviceIdentity = await prisma.deviceIdentity.findUnique({
-        where: { id: deviceIdentityId },
+        where: { id: validatedData.deviceIdentityId },
       });
 
       if (!deviceIdentity) {
@@ -71,12 +64,14 @@ metadataRouter.post(
         return;
       }
 
-      const validatedData = conversationMetadataCreateSchema.parse(req.body);
-
-      const metadata = await prisma.conversationMetadata.create({
-        data: {
-          ...validatedData,
-          deviceIdentityId,
+      const metadata = await prisma.conversationMetadata.upsert({
+        where: { conversationId: validatedData.conversationId },
+        create: validatedData,
+        update: {
+          pinned: validatedData.pinned,
+          unread: validatedData.unread,
+          deleted: validatedData.deleted,
+          readUntil: validatedData.readUntil,
         },
       });
 
@@ -86,45 +81,7 @@ metadataRouter.post(
         res.status(400).json({ error: "Invalid request body" });
         return;
       }
-      res.status(500).json({ error: "Failed to create conversation metadata" });
-    }
-  },
-);
-
-const conversationMetadataUpdateSchema = z.object({
-  pinned: z.boolean().optional(),
-  unread: z.boolean().optional(),
-  deleted: z.boolean().optional(),
-  readUntil: z.string().datetime().optional(),
-});
-
-type UpdateMetadataRequestBody = z.infer<
-  typeof conversationMetadataUpdateSchema
->;
-
-// PUT /metadata/conversation/:conversationId - Update conversation metadata
-metadataRouter.put(
-  "/conversation/:conversationId",
-  async (
-    req: Request<GetMetadataRequestParams, unknown, UpdateMetadataRequestBody>,
-    res: Response,
-  ) => {
-    try {
-      const { conversationId } = req.params;
-      const validatedData = conversationMetadataUpdateSchema.parse(req.body);
-
-      const metadata = await prisma.conversationMetadata.update({
-        where: { conversationId },
-        data: validatedData,
-      });
-
-      res.json(metadata);
-    } catch (error) {
-      if (error instanceof z.ZodError) {
-        res.status(400).json({ error: "Invalid request body" });
-        return;
-      }
-      res.status(500).json({ error: "Failed to update conversation metadata" });
+      res.status(500).json({ error: "Failed to upsert conversation metadata" });
     }
   },
 );

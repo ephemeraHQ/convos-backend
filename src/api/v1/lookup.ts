@@ -5,10 +5,6 @@ import { z } from "zod";
 
 const lookupRouter = Router();
 
-type GetAddressLookupRequestParams = {
-  address: string;
-};
-
 const ProfileType = z.enum([
   "ens",
   "farcaster",
@@ -32,6 +28,12 @@ const SocialProfileSchema = z
   })
   // removes additional properties that may be present in the API response
   .strip();
+
+const SocialProfilesSchema = z.array(SocialProfileSchema);
+
+type GetAddressLookupRequestParams = {
+  address: string;
+};
 
 const SocialProfilesResponseSchema = z.array(SocialProfileSchema);
 
@@ -65,15 +67,29 @@ lookupRouter.get(
       });
 
       const validatedProfiles = SocialProfilesResponseSchema.parse(profiles);
-
       // Sort profiles by priority
       const sortedProfiles = validatedProfiles.sort(
         (a, b) => ProfileTypePriority[a.type] - ProfileTypePriority[b.type],
       );
 
-      res.json(sortedProfiles);
+      const validationResult = SocialProfilesSchema.safeParse(sortedProfiles);
+
+      if (!validationResult.success) {
+        console.error(
+          "Social profiles validation failed:",
+          validationResult.error,
+        );
+      }
+
+      res.json({
+        socialProfiles: validationResult.success
+          ? validationResult.data
+          : sortedProfiles,
+      });
     } catch {
-      res.status(500).json({ error: "Failed to lookup address" });
+      res.status(500).json({
+        error: "Failed to lookup address",
+      });
     }
   },
 );

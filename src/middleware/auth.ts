@@ -3,6 +3,10 @@ import * as jose from "jose";
 
 export const AUTH_HEADER = "X-Convos-AuthToken";
 
+export type JWTPayload = {
+  inboxId: string;
+};
+
 export const authMiddleware = async (
   req: Request,
   res: Response,
@@ -16,11 +20,14 @@ export const authMiddleware = async (
   }
 
   try {
-    // verify JWT token
-    await jose.jwtVerify(
+    // verify JWT token and get payload
+    const { payload } = await jose.jwtVerify<JWTPayload>(
       authToken,
       new TextEncoder().encode(process.env.JWT_SECRET),
     );
+
+    // add xmtpId to app local variables
+    req.app.locals.xmtpId = payload.inboxId;
 
     next();
   } catch {

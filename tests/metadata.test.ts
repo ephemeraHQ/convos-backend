@@ -14,7 +14,8 @@ import {
 } from "bun:test";
 import express from "express";
 import metadataRouter from "@/api/v1/metadata";
-import usersRouter, { type ReturnedUser } from "@/api/v1/users";
+import usersRouter from "@/api/v1/users/users.router";
+import type { CreatedReturnedUser } from "@/api/v1/users/users.types";
 import { jsonMiddleware } from "@/middleware/json";
 
 const app = express();
@@ -55,7 +56,7 @@ describe("/metadata API", () => {
     expect(data.error).toBe("Conversation metadata not found");
   });
 
-  test("POST /metadata/conversation/:deviceIdentityId creates new metadata", async () => {
+  test("POST /metadata/conversation creates new metadata", async () => {
     // Create a user first
     const createUserResponse = await fetch("http://localhost:3005/users", {
       method: "POST",
@@ -74,10 +75,11 @@ describe("/metadata API", () => {
         },
       }),
     });
-    const createdUser = (await createUserResponse.json()) as ReturnedUser;
+    const createdUser =
+      (await createUserResponse.json()) as CreatedReturnedUser;
 
     const response = await fetch(
-      `http://localhost:3005/metadata/conversation/${createdUser.identity.id}`,
+      "http://localhost:3005/metadata/conversation",
       {
         method: "POST",
         headers: {
@@ -89,6 +91,7 @@ describe("/metadata API", () => {
           unread: true,
           deleted: false,
           readUntil: new Date().toISOString(),
+          deviceIdentityId: createdUser.identity.id,
         }),
       },
     );
@@ -102,9 +105,9 @@ describe("/metadata API", () => {
     expect(metadata.deleted).toBe(false);
   });
 
-  test("POST /metadata/conversation/:deviceIdentityId returns 404 for non-existent device", async () => {
+  test("POST /metadata/conversation returns 404 for non-existent device", async () => {
     const response = await fetch(
-      "http://localhost:3005/metadata/conversation/nonexistent-id",
+      "http://localhost:3005/metadata/conversation",
       {
         method: "POST",
         headers: {
@@ -113,6 +116,10 @@ describe("/metadata API", () => {
         body: JSON.stringify({
           conversationId: "test-conversation-id",
           pinned: true,
+          unread: false,
+          deleted: false,
+          readUntil: new Date().toISOString(),
+          deviceIdentityId: "nonexistent-id",
         }),
       },
     );
@@ -141,11 +148,12 @@ describe("/metadata API", () => {
         },
       }),
     });
-    const createdUser = (await createUserResponse.json()) as ReturnedUser;
+    const createdUser =
+      (await createUserResponse.json()) as CreatedReturnedUser;
 
     // Create metadata
     const createMetadataResponse = await fetch(
-      `http://localhost:3005/metadata/conversation/${createdUser.identity.id}`,
+      "http://localhost:3005/metadata/conversation",
       {
         method: "POST",
         headers: {
@@ -157,6 +165,7 @@ describe("/metadata API", () => {
           unread: false,
           deleted: false,
           readUntil: new Date().toISOString(),
+          deviceIdentityId: createdUser.identity.id,
         }),
       },
     );
@@ -178,7 +187,7 @@ describe("/metadata API", () => {
     expect(metadata.deviceIdentityId).toBe(createdUser.identity.id);
   });
 
-  test("PUT /metadata/conversation/:conversationId updates metadata", async () => {
+  test("POST /metadata/conversation updates existing metadata", async () => {
     // Create a user first
     const createUserResponse = await fetch("http://localhost:3005/users", {
       method: "POST",
@@ -197,11 +206,12 @@ describe("/metadata API", () => {
         },
       }),
     });
-    const createdUser = (await createUserResponse.json()) as ReturnedUser;
+    const createdUser =
+      (await createUserResponse.json()) as CreatedReturnedUser;
 
-    // Create metadata
-    const createMetadataResponse = await fetch(
-      `http://localhost:3005/metadata/conversation/${createdUser.identity.id}`,
+    // Update the metadata with new values
+    const updateResponse = await fetch(
+      "http://localhost:3005/metadata/conversation",
       {
         method: "POST",
         headers: {
@@ -209,56 +219,21 @@ describe("/metadata API", () => {
         },
         body: JSON.stringify({
           conversationId: "test-conversation-id",
-          pinned: true,
-          unread: false,
-          deleted: false,
-          readUntil: new Date().toISOString(),
-        }),
-      },
-    );
-
-    const createdMetadata =
-      (await createMetadataResponse.json()) as ConversationMetadata;
-
-    const response = await fetch(
-      `http://localhost:3005/metadata/conversation/${createdMetadata.conversationId}`,
-      {
-        method: "PUT",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
           pinned: false,
           unread: true,
           deleted: true,
+          deviceIdentityId: createdUser.identity.id,
         }),
       },
     );
-    const updatedMetadata = (await response.json()) as ConversationMetadata;
+    const updatedMetadata =
+      (await updateResponse.json()) as ConversationMetadata;
 
-    expect(response.status).toBe(200);
+    expect(updateResponse.status).toBe(201);
     expect(updatedMetadata.conversationId).toBe("test-conversation-id");
     expect(updatedMetadata.pinned).toBe(false);
     expect(updatedMetadata.unread).toBe(true);
     expect(updatedMetadata.deleted).toBe(true);
-  });
-
-  test("PUT /metadata/conversation/:conversationId returns 400 for invalid data", async () => {
-    const response = await fetch(
-      "http://localhost:3005/metadata/conversation/test-id",
-      {
-        method: "PUT",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          pinned: "not-a-boolean",
-        }),
-      },
-    );
-    const data = (await response.json()) as { error: string };
-
-    expect(response.status).toBe(400);
-    expect(data.error).toBe("Invalid request body");
+    expect(updatedMetadata.deviceIdentityId).toBe(createdUser.identity.id);
   });
 });

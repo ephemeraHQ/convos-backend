@@ -4,13 +4,15 @@ const environment = process.env.ENV || "dev";
 
 export const logMiddleware = (
   req: Request,
-  _res: Response,
+  res: Response,
   next: NextFunction,
 ) => {
   if (environment === "dev") {
-    console.log(
-      `[${new Date().toISOString()}] ${req.method} ${req.originalUrl}`,
-    );
+    res.on("finish", () => {
+      console.log(
+        `[${new Date().toISOString()}] ${req.method} ${req.originalUrl} - Status: ${res.statusCode}`,
+      );
+    });
   }
   next();
 };
