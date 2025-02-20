@@ -3,10 +3,9 @@ import * as jose from "jose";
 
 export const AUTH_HEADER = "X-Convos-AuthToken";
 
-// Extend Express Request type
-export interface RequestWithXmtp extends Request {
-  xmtpId: string;
-}
+export type JWTPayload = {
+  inboxId: string;
+};
 
 export const authMiddleware = async (
   req: Request,
@@ -22,14 +21,13 @@ export const authMiddleware = async (
 
   try {
     // verify JWT token and get payload
-    const { payload } = await jose.jwtVerify(
+    const { payload } = await jose.jwtVerify<JWTPayload>(
       authToken,
       new TextEncoder().encode(process.env.JWT_SECRET),
     );
 
-    // Add xmtpId to the request object
-    // @ts-expect-error temporary until we have a better solution for typing the req.xmtpId
-    req.xmtpId = payload.inboxId as string;
+    // add xmtpId to app local variables
+    req.app.locals.xmtpId = payload.inboxId;
 
     next();
   } catch {
