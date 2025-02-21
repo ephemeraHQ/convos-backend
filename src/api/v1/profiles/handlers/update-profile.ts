@@ -2,7 +2,7 @@ import { PrismaClient } from "@prisma/client";
 import type { Request, Response } from "express";
 import { z } from "zod";
 import type { ProfileValidationResponse } from "../profile.types";
-import { profileBaseSchema, validateProfile } from "../profile.validation";
+import { validateProfile, type profileBaseSchema } from "../profile.validation";
 import type { GetProfileRequestParams } from "../profiles.types";
 
 const prisma = new PrismaClient();
