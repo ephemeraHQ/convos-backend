@@ -4,9 +4,9 @@ import type { Profile } from "@prisma/client";
 export type ProfileValidationResponse = {
   success: boolean;
   errors?: {
+    name?: string;
     username?: string;
     description?: string;
-    name?: string;
     avatar?: string;
   };
   message?: string;

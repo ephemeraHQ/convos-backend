@@ -48,12 +48,12 @@ export async function validateProfile(
     errors: {},
   };
 
-  // Check for existing username (case-insensitive) first
-  if (profileData.name) {
+  // Check for existing username
+  if (profileData.username) {
     const existingProfile = await prisma.profile.findFirst({
       where: {
         name: {
-          equals: profileData.name,
+          equals: profileData.username,
           mode: "insensitive",
         },
       },
