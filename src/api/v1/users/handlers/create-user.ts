@@ -1,7 +1,6 @@
 import { DeviceOS, PrismaClient } from "@prisma/client";
 import type { Request, Response } from "express";
 import { z } from "zod";
-import type { ProfileValidationResponse } from "../../profiles/profile.types";
 import { validateProfile } from "../../profiles/profile.validation";
 
 const prisma = new PrismaClient();
@@ -48,32 +47,34 @@ export type CreatedReturnedUser = {
 };
 
 export async function createUser(
-  req: Request<unknown, unknown, CreateUserRequestBody>,
-  res: Response,
-) {
+  req: Request<{}, any, CreateUserRequestBody>,
+  res: Response
+): Promise<void> {
   try {
     let body;
     try {
       body = await createUserRequestBodySchema.parseAsync(req.body);
     } catch (error) {
       if (error instanceof z.ZodError) {
-        return res.status(400).json({
+        res.status(400).json({
           success: false,
           errors: {
             name: error.errors.find(e => e.path.join(".") === "profile.name")?.message || "Name is required",
             username: error.errors.find(e => e.path.join(".") === "profile.username")?.message || "Username is required",
           },
         });
+        return;
       }
       throw error;
     }
 
     const validationResult = await validateProfile(body.profile, false);
     if (!validationResult.success) {
-      return res.status(400).json({
+      res.status(400).json({
         success: false,
         errors: validationResult.errors,
       });
+      return;
     }
 
     // Create user
