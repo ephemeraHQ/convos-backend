@@ -1,8 +1,12 @@
-import { PrismaClient } from "@prisma/client";
+import { PrismaClient, type DeviceIdentity } from "@prisma/client";
 import type { Request, Response } from "express";
-import type { ReturnedCurrentUser } from "../users.types";
 
 const prisma = new PrismaClient();
+
+export type ReturnedCurrentUser = {
+  id: string;
+  identities: Array<Pick<DeviceIdentity, "id" | "privyAddress" | "xmtpId">>;
+};
 
 export async function getCurrentUser(req: Request, res: Response) {
   try {

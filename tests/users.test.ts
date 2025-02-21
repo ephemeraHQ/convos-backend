@@ -9,11 +9,12 @@ import {
   test,
 } from "bun:test";
 import express from "express";
-import usersRouter from "@/api/v1/users/users.router";
 import type {
   CreatedReturnedUser,
-  ReturnedCurrentUser,
-} from "@/api/v1/users/users.types";
+  CreateUserRequestBody,
+} from "@/api/v1/users/handlers/create-user";
+import type { ReturnedCurrentUser } from "@/api/v1/users/handlers/get-current-user";
+import usersRouter from "@/api/v1/users/users.router";
 import { jsonMiddleware } from "@/middleware/json";
 
 const app = express();
@@ -47,39 +48,43 @@ beforeEach(async () => {
 
 describe("/users API", () => {
   test("POST /users creates a new user", async () => {
+    const createUserBody: CreateUserRequestBody = {
+      privyUserId: "test-users-privy-user-id",
+      device: {
+        os: DeviceOS.ios,
+        name: "iPhone 14",
+      },
+      identity: {
+        privyAddress: "test-privy-address",
+        xmtpId: "test-xmtp-id",
+      },
+      profile: {
+        name: "Test User",
+      },
+    };
+
     const response = await fetch("http://localhost:3001/users", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({
-        privyUserId: "test-users-privy-user-id",
-        device: {
-          os: DeviceOS.ios,
-          name: "iPhone 14",
-        },
-        identity: {
-          privyAddress: "test-privy-address",
-          xmtpId: "test-xmtp-id",
-        },
-        profile: {
-          name: "Test User",
-        },
-      }),
+      body: JSON.stringify(createUserBody),
     });
 
     expect(response.status).toBe(201);
 
     const user = (await response.json()) as CreatedReturnedUser;
-    expect(user.privyUserId).toBe("test-users-privy-user-id");
+    expect(user.privyUserId).toBe(createUserBody.privyUserId);
     expect(user.id).toBeDefined();
     expect(user.device.id).toBeDefined();
-    expect(user.device.os).toBe(DeviceOS.ios);
-    expect(user.device.name).toBe("iPhone 14");
+    expect(user.device.os).toBe(createUserBody.device.os);
+    expect(user.device.name!).toBe(createUserBody.device.name!);
     expect(user.identity.id).toBeDefined();
-    expect(user.identity.privyAddress).toBe("test-privy-address");
-    expect(user.identity.xmtpId).toBe("test-xmtp-id");
-    expect(user.profile?.name).toBe("Test User");
+    expect(user.identity.privyAddress).toBe(
+      createUserBody.identity.privyAddress,
+    );
+    expect(user.identity.xmtpId).toBe(createUserBody.identity.xmtpId);
+    expect(user.profile.name).toBe(createUserBody.profile.name);
   });
 
   test("GET /users/me returns 401 without auth header", async () => {
@@ -91,23 +96,28 @@ describe("/users API", () => {
 
   test("GET /users/me returns current user", async () => {
     // First create a user
+    const createUserBody: CreateUserRequestBody = {
+      privyUserId: "test-privy-user-id",
+      device: {
+        os: DeviceOS.ios,
+        name: "iPhone 14",
+      },
+      identity: {
+        privyAddress: "test-privy-address",
+        xmtpId: "test-xmtp-id",
+      },
+      profile: {
+        name: "Test User",
+      },
+    };
+
     const createResponse = await fetch("http://localhost:3001/users", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         Authorization: "Bearer test-privy-user-id",
       },
-      body: JSON.stringify({
-        privyUserId: "test-privy-user-id",
-        device: {
-          os: DeviceOS.ios,
-          name: "iPhone 14",
-        },
-        identity: {
-          privyAddress: "test-privy-address",
-          xmtpId: "test-xmtp-id",
-        },
-      }),
+      body: JSON.stringify(createUserBody),
     });
     expect(createResponse.status).toBe(201);
 

@@ -12,8 +12,11 @@ import express from "express";
 import type { ProfileValidationResponse } from "@/api/v1/profiles/profile.types";
 import profilesRouter from "@/api/v1/profiles/profiles.router";
 import type { ProfileRequestResult } from "@/api/v1/profiles/profiles.types";
+import type {
+  CreatedReturnedUser,
+  CreateUserRequestBody,
+} from "@/api/v1/users/handlers/create-user";
 import usersRouter from "@/api/v1/users/users.router";
-import type { CreatedReturnedUser } from "@/api/v1/users/users.types";
 import { jsonMiddleware } from "@/middleware/json";
 
 const app = express();
@@ -43,6 +46,22 @@ beforeEach(async () => {
   await prisma.user.deleteMany();
 });
 
+const createUserBody: CreateUserRequestBody = {
+  privyUserId: "test-profiles-privy-user-id",
+  device: {
+    os: DeviceOS.ios,
+    name: "iPhone 14",
+  },
+  identity: {
+    privyAddress: "test-privy-address",
+    xmtpId: "test-xmtp-id",
+  },
+  profile: {
+    name: "Test Profile",
+    description: "Test Description",
+  },
+};
+
 describe("/profiles API", () => {
   test("GET /profiles/:id returns 404 for non-existent profile", async () => {
     const response = await fetch(
@@ -53,27 +72,12 @@ describe("/profiles API", () => {
   });
 
   test("GET /profiles/:id returns profile when exists", async () => {
-    // Create a user first
     const createUserResponse = await fetch("http://localhost:3004/users", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({
-        privyUserId: "test-profiles-privy-user-id",
-        device: {
-          os: DeviceOS.ios,
-          name: "iPhone 14",
-        },
-        identity: {
-          privyAddress: "test-privy-address",
-          xmtpId: "test-xmtp-id",
-        },
-        profile: {
-          name: "Test Profile",
-          description: "Test Description",
-        },
-      }),
+      body: JSON.stringify(createUserBody),
     });
     const createdUser =
       (await createUserResponse.json()) as CreatedReturnedUser;
@@ -84,33 +88,18 @@ describe("/profiles API", () => {
     const profile = (await response.json()) as Profile;
 
     expect(response.status).toBe(200);
-    expect(profile.id).toBe(createdUser.profile!.id);
+    expect(profile.id).toBe(createdUser.profile.id);
     expect(profile.name).toBe("Test Profile");
     expect(profile.description).toBe("Test Description");
   });
 
   test("PUT /profiles/:id updates profile", async () => {
-    // Create a user first
     const createUserResponse = await fetch("http://localhost:3004/users", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({
-        privyUserId: "test-profiles-privy-user-id",
-        device: {
-          os: DeviceOS.ios,
-          name: "iPhone 14",
-        },
-        identity: {
-          privyAddress: "test-privy-address",
-          xmtpId: "test-xmtp-id",
-        },
-        profile: {
-          name: "Test Profile",
-          description: "Test Description",
-        },
-      }),
+      body: JSON.stringify(createUserBody),
     });
     const createdUser =
       (await createUserResponse.json()) as CreatedReturnedUser;
@@ -133,33 +122,18 @@ describe("/profiles API", () => {
     const updatedProfile = (await response.json()) as Profile;
 
     expect(response.status).toBe(200);
-    expect(updatedProfile.id).toBe(createdUser.profile!.id);
+    expect(updatedProfile.id).toBe(createdUser.profile.id);
     expect(updatedProfile.name).toBe("Updated Name");
     expect(updatedProfile.description).toBe("Updated Description");
   });
 
   test("PUT /profiles/:id returns 400 for invalid request body", async () => {
-    // Create a user first
     const createUserResponse = await fetch("http://localhost:3004/users", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({
-        privyUserId: "test-profiles-privy-user-id",
-        device: {
-          os: DeviceOS.ios,
-          name: "iPhone 14",
-        },
-        identity: {
-          privyAddress: "test-privy-address",
-          xmtpId: "test-xmtp-id",
-        },
-        profile: {
-          name: "Test Profile",
-          description: "Test Description",
-        },
-      }),
+      body: JSON.stringify(createUserBody),
     });
     const createdUser =
       (await createUserResponse.json()) as CreatedReturnedUser;
@@ -184,27 +158,12 @@ describe("/profiles API", () => {
   });
 
   test("PUT /profiles/:id returns 400 for name too short", async () => {
-    // Create a user first
     const createUserResponse = await fetch("http://localhost:3004/users", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({
-        privyUserId: "test-profiles-privy-user-id-2",
-        device: {
-          os: DeviceOS.ios,
-          name: "iPhone 14",
-        },
-        identity: {
-          privyAddress: "test-privy-address-2",
-          xmtpId: "test-xmtp-id-2",
-        },
-        profile: {
-          name: "Test Profile",
-          description: "Test Description",
-        },
-      }),
+      body: JSON.stringify(createUserBody),
     });
     const createdUser =
       (await createUserResponse.json()) as CreatedReturnedUser;
@@ -229,27 +188,12 @@ describe("/profiles API", () => {
   });
 
   test("PUT /profiles/:id returns 400 for name too long", async () => {
-    // Create a user first
     const createUserResponse = await fetch("http://localhost:3004/users", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({
-        privyUserId: "test-profiles-privy-user-id-3",
-        device: {
-          os: DeviceOS.ios,
-          name: "iPhone 14",
-        },
-        identity: {
-          privyAddress: "test-privy-address-3",
-          xmtpId: "test-xmtp-id-3",
-        },
-        profile: {
-          name: "Test Profile",
-          description: "Test Description",
-        },
-      }),
+      body: JSON.stringify(createUserBody),
     });
     const createdUser =
       (await createUserResponse.json()) as CreatedReturnedUser;
@@ -274,27 +218,12 @@ describe("/profiles API", () => {
   });
 
   test("PUT /profiles/:id returns 400 for description too long", async () => {
-    // Create a user first
     const createUserResponse = await fetch("http://localhost:3004/users", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({
-        privyUserId: "test-profiles-privy-user-id-4",
-        device: {
-          os: DeviceOS.ios,
-          name: "iPhone 14",
-        },
-        identity: {
-          privyAddress: "test-privy-address-4",
-          xmtpId: "test-xmtp-id-4",
-        },
-        profile: {
-          name: "Test Profile",
-          description: "Test Description",
-        },
-      }),
+      body: JSON.stringify(createUserBody),
     });
     const createdUser =
       (await createUserResponse.json()) as CreatedReturnedUser;
@@ -321,27 +250,12 @@ describe("/profiles API", () => {
   });
 
   test("PUT /profiles/:id returns 400 for invalid avatar URL", async () => {
-    // Create a user first
     const createUserResponse = await fetch("http://localhost:3004/users", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({
-        privyUserId: "test-profiles-privy-user-id-5",
-        device: {
-          os: DeviceOS.ios,
-          name: "iPhone 14",
-        },
-        identity: {
-          privyAddress: "test-privy-address-5",
-          xmtpId: "test-xmtp-id-5",
-        },
-        profile: {
-          name: "Test Profile",
-          description: "Test Description",
-        },
-      }),
+      body: JSON.stringify(createUserBody),
     });
     const createdUser =
       (await createUserResponse.json()) as CreatedReturnedUser;
@@ -366,31 +280,46 @@ describe("/profiles API", () => {
   });
 
   test("PUT /profiles/:id returns 409 for duplicate username", async () => {
-    // Create first user with profile
-    const createFirstUserResponse = await fetch("http://localhost:3004/users", {
+    const firstUserBody: CreateUserRequestBody = {
+      privyUserId: "test-profiles-privy-user-id-6",
+      device: {
+        os: DeviceOS.ios,
+        name: "iPhone 14 Pro",
+      },
+      identity: {
+        privyAddress: "test-privy-address-6",
+        xmtpId: "test-xmtp-id-6",
+      },
+      profile: {
+        name: "Existing Username",
+        description: "First user description",
+      },
+    };
+
+    const secondUserBody: CreateUserRequestBody = {
+      privyUserId: "test-profiles-privy-user-id-7",
+      device: {
+        os: DeviceOS.ios,
+        name: "iPhone 14",
+      },
+      identity: {
+        privyAddress: "test-privy-address-7",
+        xmtpId: "test-xmtp-id-7",
+      },
+      profile: {
+        name: "Original Username",
+        description: "Second user description",
+      },
+    };
+
+    await fetch("http://localhost:3004/users", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({
-        privyUserId: "test-profiles-privy-user-id-6",
-        device: {
-          os: DeviceOS.ios,
-          name: "iPhone 14",
-        },
-        identity: {
-          privyAddress: "test-privy-address-6",
-          xmtpId: "test-xmtp-id-6",
-        },
-        profile: {
-          name: "Existing Username",
-          description: "Test Description",
-        },
-      }),
+      body: JSON.stringify(firstUserBody),
     });
-    await createFirstUserResponse.json();
 
-    // Create second user with different profile
     const createSecondUserResponse = await fetch(
       "http://localhost:3004/users",
       {
@@ -398,21 +327,7 @@ describe("/profiles API", () => {
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({
-          privyUserId: "test-profiles-privy-user-id-7",
-          device: {
-            os: DeviceOS.ios,
-            name: "iPhone 14",
-          },
-          identity: {
-            privyAddress: "test-privy-address-7",
-            xmtpId: "test-xmtp-id-7",
-          },
-          profile: {
-            name: "Original Username",
-            description: "Test Description",
-          },
-        }),
+        body: JSON.stringify(secondUserBody),
       },
     );
     const secondUser =
@@ -445,32 +360,18 @@ describe("/profiles API", () => {
       headers: {
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({
-        privyUserId: "test-profiles-privy-user-id",
-        device: {
-          os: DeviceOS.ios,
-          name: "iPhone 14",
-        },
-        identity: {
-          privyAddress: "test-privy-address",
-          xmtpId: "test-xmtp-id",
-        },
-        profile: {
-          name: "Alice Wonder",
-          description: "Test Description",
-        },
-      }),
+      body: JSON.stringify(createUserBody),
     });
 
     // Search for the profile
     const searchResponse = await fetch(
-      "http://localhost:3004/profiles/search?query=Alice",
+      "http://localhost:3004/profiles/search?query=Test Profile",
     );
     const results = (await searchResponse.json()) as ProfileRequestResult[];
 
     expect(searchResponse.status).toBe(200);
     expect(results).toHaveLength(1);
-    expect(results[0].name).toBe("Alice Wonder");
+    expect(results[0].name).toBe("Test Profile");
     expect(results[0].description).toBe("Test Description");
     expect(results[0].xmtpId).toBe("test-xmtp-id");
   });
@@ -482,32 +383,18 @@ describe("/profiles API", () => {
       headers: {
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({
-        privyUserId: "test-profiles-privy-user-id",
-        device: {
-          os: DeviceOS.ios,
-          name: "iPhone 14",
-        },
-        identity: {
-          privyAddress: "test-privy-address",
-          xmtpId: "test-xmtp-id",
-        },
-        profile: {
-          name: "Alice Wonder",
-          description: "Test Description",
-        },
-      }),
+      body: JSON.stringify(createUserBody),
     });
 
     // Search with lowercase
     const searchResponse = await fetch(
-      "http://localhost:3004/profiles/search?query=alice",
+      "http://localhost:3004/profiles/search?query=test profile",
     );
     const results = (await searchResponse.json()) as ProfileRequestResult[];
 
     expect(searchResponse.status).toBe(200);
     expect(results).toHaveLength(1);
-    expect(results[0].name).toBe("Alice Wonder");
+    expect(results[0].name).toBe("Test Profile");
     expect(results[0].description).toBe("Test Description");
     expect(results[0].xmtpId).toBe("test-xmtp-id");
   });
@@ -540,22 +427,7 @@ describe("/profiles API", () => {
       headers: {
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({
-        privyUserId: "test-profiles-privy-user-id",
-        device: {
-          os: DeviceOS.ios,
-          name: "iPhone 14",
-        },
-        identity: {
-          privyAddress: "test-privy-address",
-          xmtpId: "test-xmtp-id",
-        },
-        profile: {
-          name: "Test Profile",
-          description: "Test Description",
-          avatar: "https://example.com/old-avatar.jpg",
-        },
-      }),
+      body: JSON.stringify(createUserBody),
     });
     const createdUser =
       (await createUserResponse.json()) as CreatedReturnedUser;
@@ -577,7 +449,7 @@ describe("/profiles API", () => {
     const updatedProfile = (await response.json()) as Profile;
 
     expect(response.status).toBe(200);
-    expect(updatedProfile.id).toBe(createdUser.profile!.id);
+    expect(updatedProfile.id).toBe(createdUser.profile.id);
     expect(updatedProfile.name).toBe("Test Profile"); // unchanged
     expect(updatedProfile.description).toBe("Test Description"); // unchanged
     expect(updatedProfile.avatar).toBe("https://example.com/new-avatar.jpg");
@@ -594,86 +466,36 @@ describe("/profiles API", () => {
 
     test("returns true for existing username", async () => {
       // Create a user first
-      const createUserResponse = await fetch("http://localhost:3004/users", {
+      await fetch("http://localhost:3004/users", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({
-          privyUserId: "test-profiles-privy-user-id",
-          device: {
-            os: DeviceOS.ios,
-            name: "iPhone 14",
-          },
-          identity: {
-            privyAddress: "test-privy-address",
-            xmtpId: "test-xmtp-id",
-          },
-        }),
-      });
-
-      const createdUser =
-        (await createUserResponse.json()) as CreatedReturnedUser;
-
-      // Create a profile
-      const profile = await prisma.profile.create({
-        data: {
-          name: "existinguser",
-          description: "test description",
-          deviceIdentityId: createdUser.identity.id,
-        },
+        body: JSON.stringify(createUserBody),
       });
 
       const response = await fetch(
-        "http://localhost:3004/profiles/check/existinguser",
+        "http://localhost:3004/profiles/check/Test Profile",
       );
       expect(response.status).toBe(200);
       expect(await response.json()).toEqual({ taken: true });
-
-      // Clean up
-      await prisma.profile.delete({ where: { id: profile.id } });
     });
 
     test("is case insensitive", async () => {
       // Create a user first
-      const createUserResponse = await fetch("http://localhost:3004/users", {
+      await fetch("http://localhost:3004/users", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({
-          privyUserId: "test-profiles-privy-user-id-2",
-          device: {
-            os: DeviceOS.ios,
-            name: "iPhone 14",
-          },
-          identity: {
-            privyAddress: "test-privy-address-2",
-            xmtpId: "test-xmtp-id-2",
-          },
-        }),
-      });
-
-      const createdUser =
-        (await createUserResponse.json()) as CreatedReturnedUser;
-
-      // Create a profile
-      const profile = await prisma.profile.create({
-        data: {
-          name: "testUser",
-          description: "test description",
-          deviceIdentityId: createdUser.identity.id,
-        },
+        body: JSON.stringify(createUserBody),
       });
 
       const response = await fetch(
-        "http://localhost:3004/profiles/check/testuser",
+        "http://localhost:3004/profiles/check/test profile",
       );
       expect(response.status).toBe(200);
       expect(await response.json()).toEqual({ taken: true });
-
-      // Clean up
-      await prisma.profile.delete({ where: { id: profile.id } });
     });
 
     test("returns 404  for empty username", async () => {
@@ -690,22 +512,7 @@ describe("/profiles API", () => {
       headers: {
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({
-        privyUserId: "test-profiles-privy-user-id",
-        device: {
-          os: DeviceOS.ios,
-          name: "iPhone 14",
-        },
-        identity: {
-          privyAddress: "test-privy-address",
-          xmtpId: "test-xmtp-id",
-        },
-        profile: {
-          name: "Test Profile",
-          description: "Test Description",
-          avatar: "https://example.com/avatar.jpg",
-        },
-      }),
+      body: JSON.stringify(createUserBody),
     });
     const createdUser =
       (await createUserResponse.json()) as CreatedReturnedUser;
@@ -728,7 +535,9 @@ describe("/profiles API", () => {
 
     expect(response.status).toBe(200);
     expect(updatedProfile.name).toBe("Updated Name Only");
-    expect(updatedProfile.description).toBe("Test Description"); // Should remain unchanged
-    expect(updatedProfile.avatar).toBe("https://example.com/avatar.jpg"); // Should remain unchanged
+    expect(updatedProfile.description).toBe(
+      createUserBody.profile.description ?? null,
+    ); // Should remain unchanged
+    expect(updatedProfile.avatar).toBe(createUserBody.profile.avatar ?? null); // Should remain unchanged
   });
 });

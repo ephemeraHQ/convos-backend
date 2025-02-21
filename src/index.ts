@@ -3,6 +3,7 @@ import express, { type Request, type Response } from "express";
 import helmet from "helmet";
 import apiRouter from "./api";
 import { errorMiddleware } from "./middleware/error";
+import { errorHandlerMiddleware } from "./middleware/errorHandler";
 import { jsonMiddleware } from "./middleware/json";
 import { logMiddleware } from "./middleware/log";
 import { noRouteMiddleware } from "./middleware/noRoute";
@@ -34,6 +35,9 @@ app.use("/api", apiRouter);
 
 // handle non-existent routes with 404 response
 app.use(noRouteMiddleware);
+
+// Error handling middleware should be last
+app.use(errorHandlerMiddleware);
 
 const server = app.listen(port, () => {
   console.log(`Convos API service is running on port ${port}`);
