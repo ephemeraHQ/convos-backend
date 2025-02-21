@@ -60,6 +60,7 @@ describe("/users API", () => {
       },
       profile: {
         name: "Test User",
+        username: "test-user",
       },
     };
 
@@ -108,6 +109,7 @@ describe("/users API", () => {
       },
       profile: {
         name: "Test User",
+        username: "test-user",
       },
     };
 

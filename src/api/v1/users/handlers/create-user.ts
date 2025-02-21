@@ -91,6 +91,7 @@ export async function createUser(
                   profile: {
                     create: {
                       name: parsedBody.profile.name,
+                      username: parsedBody.profile.username,
                       description: parsedBody.profile.description,
                       avatar: parsedBody.profile.avatar,
                     },
@@ -121,6 +122,7 @@ export async function createUser(
                     select: {
                       id: true,
                       name: true,
+                      username: true,
                       description: true,
                     },
                   },

@@ -73,6 +73,7 @@ describe("/metadata API", () => {
       },
       profile: {
         name: "Test User",
+        username: "test-user",
         description: "Test bio",
         avatar: "https://example.com/avatar.jpg",
       },
@@ -153,6 +154,7 @@ describe("/metadata API", () => {
       },
       profile: {
         name: "Test User 2",
+        username: "test-user-2",
         description: "Test bio 2",
         avatar: "https://example.com/avatar2.jpg",
       },
@@ -218,6 +220,7 @@ describe("/metadata API", () => {
       },
       profile: {
         name: "Test User 3",
+        username: "test-user-3",
         description: "Test bio 3",
         avatar: "https://example.com/avatar3.jpg",
       },

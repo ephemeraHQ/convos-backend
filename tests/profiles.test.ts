@@ -58,6 +58,7 @@ const createUserBody: CreateUserRequestBody = {
   },
   profile: {
     name: "Test Profile",
+    username: "test-user",
     description: "Test Description",
   },
 };
@@ -292,6 +293,7 @@ describe("/profiles API", () => {
       },
       profile: {
         name: "Existing Username",
+        username: "existing-username",
         description: "First user description",
       },
     };
@@ -308,6 +310,7 @@ describe("/profiles API", () => {
       },
       profile: {
         name: "Original Username",
+        username: "original-username",
         description: "Second user description",
       },
     };
