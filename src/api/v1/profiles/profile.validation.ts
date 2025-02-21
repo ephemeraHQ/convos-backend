@@ -18,13 +18,16 @@ export const profileValidationSchema = z.object({
     .string()
     .min(3, { message: "Name must be at least 3 characters long" })
     .max(50, { message: "Name cannot exceed 50 characters" })
-    .regex(/^[^.]+$/, { message: "Name cannot contain a dot" })
-    .optional(),
+    .regex(/^[a-zA-Z0-9]+$/, {
+      message: "Display name can only contain letters and numbers",
+    }),
   username: z
     .string()
-    .min(3, { message: "Name must be at least 3 characters long" })
-    .max(50, { message: "Name cannot exceed 50 characters" })
-    .optional(),
+    .min(3, { message: "Username must be at least 3 characters long" })
+    .max(50, { message: "Username cannot exceed 50 characters" })
+    .regex(/^[a-zA-Z0-9]+$/, {
+      message: "Username can only contain letters and numbers",
+    }),
   description: z
     .string()
     .max(500, { message: "Description cannot exceed 500 characters" })
