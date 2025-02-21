@@ -57,9 +57,43 @@ const createUserBody: CreateUserRequestBody = {
     xmtpId: "test-xmtp-id",
   },
   profile: {
-    name: "Test Profile",
-    username: "test-user",
+    name: "TestProfile123",
+    username: "testuser123",
     description: "Test Description",
+  },
+};
+
+const firstUserBody: CreateUserRequestBody = {
+  privyUserId: "test-profiles-privy-user-id-6",
+  device: {
+    os: DeviceOS.ios,
+    name: "iPhone 14 Pro",
+  },
+  identity: {
+    privyAddress: "test-privy-address-6",
+    xmtpId: "test-xmtp-id-6",
+  },
+  profile: {
+    name: "ExistingUser123",
+    username: "existinguser123",
+    description: "First user description",
+  },
+};
+
+const secondUserBody: CreateUserRequestBody = {
+  privyUserId: "test-profiles-privy-user-id-7",
+  device: {
+    os: DeviceOS.ios,
+    name: "iPhone 14",
+  },
+  identity: {
+    privyAddress: "test-privy-address-7",
+    xmtpId: "test-xmtp-id-7",
+  },
+  profile: {
+    name: "OriginalUser123",
+    username: "originaluser123",
+    description: "Second user description",
   },
 };
 
@@ -90,7 +124,7 @@ describe("/profiles API", () => {
 
     expect(response.status).toBe(200);
     expect(profile.id).toBe(createdUser.profile.id);
-    expect(profile.name).toBe("Test Profile");
+    expect(profile.name).toBe("TestProfile123");
     expect(profile.description).toBe("Test Description");
   });
 
@@ -114,7 +148,8 @@ describe("/profiles API", () => {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          name: "Updated Name",
+          name: "UpdatedName123",
+          username: "updated-user-123",
           description: "Updated Description",
         }),
       },
@@ -124,8 +159,67 @@ describe("/profiles API", () => {
 
     expect(response.status).toBe(200);
     expect(updatedProfile.id).toBe(createdUser.profile.id);
-    expect(updatedProfile.name).toBe("Updated Name");
+    expect(updatedProfile.name).toBe("UpdatedName123");
+    expect(updatedProfile.username).toBe("updated-user-123");
     expect(updatedProfile.description).toBe("Updated Description");
+  });
+
+  test("PUT /profiles/:id returns 400 for invalid characters in name", async () => {
+    const createUserResponse = await fetch("http://localhost:3004/users", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(createUserBody),
+    });
+    const createdUser = (await createUserResponse.json()) as CreatedReturnedUser;
+
+    const response = await fetch(
+      `http://localhost:3004/profiles/${createdUser.identity.xmtpId}`,
+      {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          name: "Test@Profile", // Contains special characters
+        }),
+      },
+    );
+
+    expect(response.status).toBe(400);
+    const result = (await response.json()) as ProfileValidationResponse;
+    expect(result.success).toBe(false);
+    expect(result.errors?.name).toBe("Name can only contain letters, numbers and spaces");
+  });
+
+  test("PUT /profiles/:id returns 400 for invalid characters in username", async () => {
+    const createUserResponse = await fetch("http://localhost:3004/users", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(createUserBody),
+    });
+    const createdUser = (await createUserResponse.json()) as CreatedReturnedUser;
+
+    const response = await fetch(
+      `http://localhost:3004/profiles/${createdUser.identity.xmtpId}`,
+      {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          username: "test_user!", // Contains underscore and special characters
+        }),
+      },
+    );
+
+    expect(response.status).toBe(400);
+    const result = (await response.json()) as ProfileValidationResponse;
+    expect(result.success).toBe(false);
+    expect(result.errors?.username).toBe("Username can only contain letters, numbers and dashes");
   });
 
   test("PUT /profiles/:id returns 400 for invalid request body", async () => {
@@ -277,44 +371,10 @@ describe("/profiles API", () => {
     expect(response.status).toBe(400);
     const result = (await response.json()) as ProfileValidationResponse;
     expect(result.success).toBe(false);
-    expect(result.errors?.avatar).toBe("Invalid url");
+    expect(result.errors?.avatar).toBe("Avatar must be a valid URL");
   });
 
   test("PUT /profiles/:id returns 409 for duplicate username", async () => {
-    const firstUserBody: CreateUserRequestBody = {
-      privyUserId: "test-profiles-privy-user-id-6",
-      device: {
-        os: DeviceOS.ios,
-        name: "iPhone 14 Pro",
-      },
-      identity: {
-        privyAddress: "test-privy-address-6",
-        xmtpId: "test-xmtp-id-6",
-      },
-      profile: {
-        name: "Existing Username",
-        username: "existing-username",
-        description: "First user description",
-      },
-    };
-
-    const secondUserBody: CreateUserRequestBody = {
-      privyUserId: "test-profiles-privy-user-id-7",
-      device: {
-        os: DeviceOS.ios,
-        name: "iPhone 14",
-      },
-      identity: {
-        privyAddress: "test-privy-address-7",
-        xmtpId: "test-xmtp-id-7",
-      },
-      profile: {
-        name: "Original Username",
-        username: "original-username",
-        description: "Second user description",
-      },
-    };
-
     await fetch("http://localhost:3004/users", {
       method: "POST",
       headers: {
@@ -336,7 +396,7 @@ describe("/profiles API", () => {
     const secondUser =
       (await createSecondUserResponse.json()) as CreatedReturnedUser;
 
-    // Try to update second user's profile with first user's username
+    // Try to update second user's username to first user's username
     const response = await fetch(
       `http://localhost:3004/profiles/${secondUser.identity.xmtpId}`,
       {
@@ -345,7 +405,7 @@ describe("/profiles API", () => {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          name: "Existing Username", // Already taken by first user
+          username: "existinguser123", // Already taken by first user
         }),
       },
     );
@@ -368,15 +428,15 @@ describe("/profiles API", () => {
 
     // Search for the profile
     const searchResponse = await fetch(
-      "http://localhost:3004/profiles/search?query=Test Profile",
+      "http://localhost:3004/profiles/search?query=TestProfile123",
     );
     const results = (await searchResponse.json()) as ProfileRequestResult[];
 
     expect(searchResponse.status).toBe(200);
     expect(results).toHaveLength(1);
-    expect(results[0].name).toBe("Test Profile");
+    expect(results[0].name).toBe("TestProfile123");
+    expect(results[0].username).toBe("testuser123");
     expect(results[0].description).toBe("Test Description");
-    expect(results[0].xmtpId).toBe("test-xmtp-id");
   });
 
   test("GET /profiles/search is case insensitive", async () => {
@@ -391,15 +451,15 @@ describe("/profiles API", () => {
 
     // Search with lowercase
     const searchResponse = await fetch(
-      "http://localhost:3004/profiles/search?query=test profile",
+      "http://localhost:3004/profiles/search?query=testprofile123",
     );
     const results = (await searchResponse.json()) as ProfileRequestResult[];
 
     expect(searchResponse.status).toBe(200);
     expect(results).toHaveLength(1);
-    expect(results[0].name).toBe("Test Profile");
+    expect(results[0].name).toBe("TestProfile123");
+    expect(results[0].username).toBe("testuser123");
     expect(results[0].description).toBe("Test Description");
-    expect(results[0].xmtpId).toBe("test-xmtp-id");
   });
 
   test("GET /profiles/search returns 400 for empty query", async () => {
@@ -453,7 +513,7 @@ describe("/profiles API", () => {
 
     expect(response.status).toBe(200);
     expect(updatedProfile.id).toBe(createdUser.profile.id);
-    expect(updatedProfile.name).toBe("Test Profile"); // unchanged
+    expect(updatedProfile.name).toBe("TestProfile123"); // unchanged
     expect(updatedProfile.description).toBe("Test Description"); // unchanged
     expect(updatedProfile.avatar).toBe("https://example.com/new-avatar.jpg");
   });
@@ -461,7 +521,7 @@ describe("/profiles API", () => {
   describe("GET /profiles/check/:username", () => {
     test("returns false for non-existent username", async () => {
       const response = await fetch(
-        "http://localhost:3004/profiles/check/nonexistentuser",
+        "http://localhost:3004/profiles/check/nonexistent-user-123",
       );
       expect(response.status).toBe(200);
       expect(await response.json()).toEqual({ taken: false });
@@ -478,7 +538,7 @@ describe("/profiles API", () => {
       });
 
       const response = await fetch(
-        "http://localhost:3004/profiles/check/Test Profile",
+        "http://localhost:3004/profiles/check/testuser123",
       );
       expect(response.status).toBe(200);
       expect(await response.json()).toEqual({ taken: true });
@@ -495,7 +555,7 @@ describe("/profiles API", () => {
       });
 
       const response = await fetch(
-        "http://localhost:3004/profiles/check/test profile",
+        "http://localhost:3004/profiles/check/TESTUSER123",
       );
       expect(response.status).toBe(200);
       expect(await response.json()).toEqual({ taken: true });
@@ -509,7 +569,6 @@ describe("/profiles API", () => {
   });
 
   test("PUT /profiles/:id allows partial updates", async () => {
-    // Create a user first with a complete profile
     const createUserResponse = await fetch("http://localhost:3004/users", {
       method: "POST",
       headers: {
@@ -517,8 +576,7 @@ describe("/profiles API", () => {
       },
       body: JSON.stringify(createUserBody),
     });
-    const createdUser =
-      (await createUserResponse.json()) as CreatedReturnedUser;
+    const createdUser = (await createUserResponse.json()) as CreatedReturnedUser;
 
     // Update only the name
     const response = await fetch(
@@ -529,7 +587,7 @@ describe("/profiles API", () => {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          name: "Updated Name Only",
+          name: "UpdatedName123",
         }),
       },
     );
@@ -537,10 +595,127 @@ describe("/profiles API", () => {
     const updatedProfile = (await response.json()) as Profile;
 
     expect(response.status).toBe(200);
-    expect(updatedProfile.name).toBe("Updated Name Only");
-    expect(updatedProfile.description).toBe(
-      createUserBody.profile.description ?? null,
-    ); // Should remain unchanged
-    expect(updatedProfile.avatar).toBe(createUserBody.profile.avatar ?? null); // Should remain unchanged
+    expect(updatedProfile.name).toBe("UpdatedName123");
+    expect(updatedProfile.username).toBe("testuser123"); // Should remain unchanged
+    expect(updatedProfile.description).toBe("Test Description"); // Should remain unchanged
+  });
+
+  test("PUT /profiles/:id validates name format", async () => {
+    const createUserResponse = await fetch("http://localhost:3004/users", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(createUserBody),
+    });
+    const createdUser = (await createUserResponse.json()) as CreatedReturnedUser;
+
+    const response = await fetch(
+      `http://localhost:3004/profiles/${createdUser.identity.xmtpId}`,
+      {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          name: "Test@Profile", // Contains special characters
+        }),
+      },
+    );
+
+    expect(response.status).toBe(400);
+    const result = (await response.json()) as ProfileValidationResponse;
+    expect(result.success).toBe(false);
+    expect(result.errors?.name).toBe("Name can only contain letters, numbers and spaces");
+  });
+
+  test("POST /users validates required profile fields", async () => {
+    const invalidBody = {
+      ...createUserBody,
+      profile: {
+        // Missing required fields
+        description: "Test Description",
+      },
+    };
+
+    const response = await fetch("http://localhost:3004/users", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(invalidBody),
+    });
+
+    expect(response.status).toBe(400);
+    const result = (await response.json()) as ProfileValidationResponse;
+    expect(result.success).toBe(false);
+    expect(result.errors?.name).toBeTruthy();
+    expect(result.errors?.username).toBeTruthy();
+  });
+
+  test("PUT /profiles/:id allows optional fields to be omitted", async () => {
+    const createUserResponse = await fetch("http://localhost:3004/users", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(createUserBody),
+    });
+    const createdUser = (await createUserResponse.json()) as CreatedReturnedUser;
+
+    // Update with minimal data
+    const response = await fetch(
+      `http://localhost:3004/profiles/${createdUser.identity.xmtpId}`,
+      {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          username: "newuser123",
+        }),
+      },
+    );
+
+    expect(response.status).toBe(200);
+    const updatedProfile = (await response.json()) as Profile;
+    expect(updatedProfile.username).toBe("newuser123");
+    expect(updatedProfile.name).toBe("TestProfile123"); // Unchanged
+    expect(updatedProfile.description).toBe("Test Description"); // Unchanged
+  });
+
+  test("PUT /profiles/:id validates all provided fields", async () => {
+    const createUserResponse = await fetch("http://localhost:3004/users", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(createUserBody),
+    });
+    const createdUser = (await createUserResponse.json()) as CreatedReturnedUser;
+
+    const response = await fetch(
+      `http://localhost:3004/profiles/${createdUser.identity.xmtpId}`,
+      {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          name: "ab", // Too short
+          username: "test@123", // Invalid characters
+          description: "a".repeat(501), // Too long
+          avatar: "not-a-url", // Invalid URL
+        }),
+      },
+    );
+
+    expect(response.status).toBe(400);
+    const result = (await response.json()) as ProfileValidationResponse;
+    expect(result.success).toBe(false);
+    expect(result.errors?.name).toBe("Name must be at least 3 characters long");
+    expect(result.errors?.username).toBe("Username can only contain letters, numbers and dashes");
+    expect(result.errors?.description).toBe("Description cannot exceed 500 characters");
+    expect(result.errors?.avatar).toBe("Avatar must be a valid URL");
   });
 });

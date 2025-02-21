@@ -2,21 +2,13 @@ import { PrismaClient } from "@prisma/client";
 import type { Request, Response } from "express";
 import { z } from "zod";
 import type { ProfileValidationResponse } from "../profile.types";
-import { validateProfile } from "../profile.validation";
+import { validateProfile, profileBaseSchema } from "../profile.validation";
 import type { GetProfileRequestParams } from "../profiles.types";
 
 const prisma = new PrismaClient();
 
-export const profileUpdateSchema = z.object({
-  name: z.string(),
-  username: z.string(),
-  description: z.string(),
-  avatar: z.string().url().optional(),
-});
-
-export type UpdateProfileRequestBody = Partial<
-  z.infer<typeof profileUpdateSchema>
->;
+// Use Zod schema for type definition
+export type UpdateProfileRequestBody = Partial<z.infer<typeof profileBaseSchema>>;
 
 export async function updateProfile(
   req: Request<GetProfileRequestParams, unknown, UpdateProfileRequestBody>,
@@ -44,21 +36,20 @@ export async function updateProfile(
       return;
     }
 
-    // Parse the request body and validate it
-    const validatedData = profileUpdateSchema.partial().parse(req.body);
-    const validationResult = await validateProfile(validatedData);
+    // Validate the request body
+    const validationResult = await validateProfile(req.body, true);
 
     if (!validationResult.success) {
-      res
-        .status(validationResult.errors?.username ? 409 : 400)
-        .json(validationResult);
+      // Only use 409 if the error is specifically about username being taken
+      const status = validationResult.errors?.username === "This username is already taken" ? 409 : 400;
+      res.status(status).json(validationResult);
       return;
     }
 
     // Update the profile
     const updatedProfile = await prisma.profile.update({
       where: { id: existingProfile.id },
-      data: validatedData,
+      data: req.body,
     });
 
     res.json(updatedProfile);

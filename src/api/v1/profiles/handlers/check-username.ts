@@ -30,7 +30,7 @@ export async function checkUsername(
     // Find the profile through case-insensitive username match
     const profile = await prisma.profile.findFirst({
       where: {
-        name: {
+        username: {
           equals: username,
           mode: "insensitive",
         },
