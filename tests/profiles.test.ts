@@ -172,7 +172,8 @@ describe("/profiles API", () => {
       },
       body: JSON.stringify(createUserBody),
     });
-    const createdUser = (await createUserResponse.json()) as CreatedReturnedUser;
+    const createdUser =
+      (await createUserResponse.json()) as CreatedReturnedUser;
 
     const response = await fetch(
       `http://localhost:3004/profiles/${createdUser.identity.xmtpId}`,
@@ -190,7 +191,9 @@ describe("/profiles API", () => {
     expect(response.status).toBe(400);
     const result = (await response.json()) as ProfileValidationResponse;
     expect(result.success).toBe(false);
-    expect(result.errors?.name).toBe("Name can only contain letters, numbers and spaces");
+    expect(result.errors?.name).toBe(
+      "Name can only contain letters, numbers and spaces",
+    );
   });
 
   test("PUT /profiles/:id returns 400 for invalid characters in username", async () => {
@@ -201,7 +204,8 @@ describe("/profiles API", () => {
       },
       body: JSON.stringify(createUserBody),
     });
-    const createdUser = (await createUserResponse.json()) as CreatedReturnedUser;
+    const createdUser =
+      (await createUserResponse.json()) as CreatedReturnedUser;
 
     const response = await fetch(
       `http://localhost:3004/profiles/${createdUser.identity.xmtpId}`,
@@ -219,7 +223,9 @@ describe("/profiles API", () => {
     expect(response.status).toBe(400);
     const result = (await response.json()) as ProfileValidationResponse;
     expect(result.success).toBe(false);
-    expect(result.errors?.username).toBe("Username can only contain letters, numbers and dashes");
+    expect(result.errors?.username).toBe(
+      "Username can only contain letters, numbers and dashes",
+    );
   });
 
   test("PUT /profiles/:id returns 400 for invalid request body", async () => {
@@ -576,7 +582,8 @@ describe("/profiles API", () => {
       },
       body: JSON.stringify(createUserBody),
     });
-    const createdUser = (await createUserResponse.json()) as CreatedReturnedUser;
+    const createdUser =
+      (await createUserResponse.json()) as CreatedReturnedUser;
 
     // Update only the name
     const response = await fetch(
@@ -608,7 +615,8 @@ describe("/profiles API", () => {
       },
       body: JSON.stringify(createUserBody),
     });
-    const createdUser = (await createUserResponse.json()) as CreatedReturnedUser;
+    const createdUser =
+      (await createUserResponse.json()) as CreatedReturnedUser;
 
     const response = await fetch(
       `http://localhost:3004/profiles/${createdUser.identity.xmtpId}`,
@@ -626,7 +634,9 @@ describe("/profiles API", () => {
     expect(response.status).toBe(400);
     const result = (await response.json()) as ProfileValidationResponse;
     expect(result.success).toBe(false);
-    expect(result.errors?.name).toBe("Name can only contain letters, numbers and spaces");
+    expect(result.errors?.name).toBe(
+      "Name can only contain letters, numbers and spaces",
+    );
   });
 
   test("POST /users validates required profile fields", async () => {
@@ -661,7 +671,8 @@ describe("/profiles API", () => {
       },
       body: JSON.stringify(createUserBody),
     });
-    const createdUser = (await createUserResponse.json()) as CreatedReturnedUser;
+    const createdUser =
+      (await createUserResponse.json()) as CreatedReturnedUser;
 
     // Update with minimal data
     const response = await fetch(
@@ -692,7 +703,8 @@ describe("/profiles API", () => {
       },
       body: JSON.stringify(createUserBody),
     });
-    const createdUser = (await createUserResponse.json()) as CreatedReturnedUser;
+    const createdUser =
+      (await createUserResponse.json()) as CreatedReturnedUser;
 
     const response = await fetch(
       `http://localhost:3004/profiles/${createdUser.identity.xmtpId}`,
@@ -714,8 +726,12 @@ describe("/profiles API", () => {
     const result = (await response.json()) as ProfileValidationResponse;
     expect(result.success).toBe(false);
     expect(result.errors?.name).toBe("Name must be at least 3 characters long");
-    expect(result.errors?.username).toBe("Username can only contain letters, numbers and dashes");
-    expect(result.errors?.description).toBe("Description cannot exceed 500 characters");
+    expect(result.errors?.username).toBe(
+      "Username can only contain letters, numbers and dashes",
+    );
+    expect(result.errors?.description).toBe(
+      "Description cannot exceed 500 characters",
+    );
     expect(result.errors?.avatar).toBe("Avatar must be a valid URL");
   });
 });

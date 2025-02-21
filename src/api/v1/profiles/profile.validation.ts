@@ -10,7 +10,7 @@ const prisma = new PrismaClient();
 /**
  * Schema for profile validation with detailed error messages
  * @description Validates profile information before creation or update
- * 
+ *
  * Same validation rules as the client side:
  * ./features/profiles/profiles.api.ts
  */
@@ -19,7 +19,9 @@ export const profileBaseSchema = z.object({
     .string()
     .min(3, { message: "Name must be at least 3 characters long" })
     .max(50, { message: "Name cannot exceed 50 characters" })
-    .regex(/^[a-zA-Z0-9\s]+$/, { message: "Name can only contain letters, numbers and spaces" }),
+    .regex(/^[a-zA-Z0-9\s]+$/, {
+      message: "Name can only contain letters, numbers and spaces",
+    }),
   username: z
     .string()
     .min(3, { message: "Username must be at least 3 characters long" })
@@ -48,7 +50,7 @@ export const profileUpdateValidationSchema = profileBaseSchema.partial();
  */
 export async function validateProfile(
   profileData: ProfileValidationRequest,
-  isUpdate = false
+  isUpdate = false,
 ): Promise<ProfileValidationResponse> {
   const validationResult: ProfileValidationResponse = {
     success: true,
@@ -74,7 +76,9 @@ export async function validateProfile(
 
   // Then validate against schema
   try {
-    const schema = isUpdate ? profileUpdateValidationSchema : profileValidationSchema;
+    const schema = isUpdate
+      ? profileUpdateValidationSchema
+      : profileValidationSchema;
     schema.parse(profileData);
 
     // Check for existing username after schema validation
@@ -108,7 +112,7 @@ export async function validateProfile(
           ...acc,
           [error.path[0]]: error.message,
         }),
-        {}
+        {},
       );
     }
     return validationResult;

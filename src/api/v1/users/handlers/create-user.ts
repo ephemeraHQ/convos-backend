@@ -48,7 +48,7 @@ export type CreatedReturnedUser = {
 
 export async function createUser(
   req: Request<{}, any, CreateUserRequestBody>,
-  res: Response
+  res: Response,
 ): Promise<void> {
   try {
     let body;
@@ -59,8 +59,12 @@ export async function createUser(
         res.status(400).json({
           success: false,
           errors: {
-            name: error.errors.find(e => e.path.join(".") === "profile.name")?.message || "Name is required",
-            username: error.errors.find(e => e.path.join(".") === "profile.username")?.message || "Username is required",
+            name:
+              error.errors.find((e) => e.path.join(".") === "profile.name")
+                ?.message || "Name is required",
+            username:
+              error.errors.find((e) => e.path.join(".") === "profile.username")
+                ?.message || "Username is required",
           },
         });
         return;
