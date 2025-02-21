@@ -14,7 +14,10 @@ import {
 } from "bun:test";
 import express from "express";
 import metadataRouter from "@/api/v1/metadata";
-import type { CreatedReturnedUser } from "@/api/v1/users/handlers/create-user";
+import type {
+  CreatedReturnedUser,
+  CreateUserRequestBody,
+} from "@/api/v1/users/handlers/create-user";
 import usersRouter from "@/api/v1/users/users.router";
 import { jsonMiddleware } from "@/middleware/json";
 
@@ -57,23 +60,30 @@ describe("/metadata API", () => {
   });
 
   test("POST /metadata/conversation creates new metadata", async () => {
-    // Create a user first
+    // Create a user first with profile
+    const createUserBody: CreateUserRequestBody = {
+      privyUserId: "test-metadata-privy-user-id",
+      device: {
+        os: DeviceOS.ios,
+        name: "iPhone 14",
+      },
+      identity: {
+        privyAddress: "test-privy-address",
+        xmtpId: "test-xmtp-id",
+      },
+      profile: {
+        name: "Test User",
+        description: "Test bio",
+        avatar: "https://example.com/avatar.jpg",
+      },
+    };
+
     const createUserResponse = await fetch("http://localhost:3005/users", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({
-        privyUserId: "test-metadata-privy-user-id",
-        device: {
-          os: DeviceOS.ios,
-          name: "iPhone 14",
-        },
-        identity: {
-          privyAddress: "test-privy-address",
-          xmtpId: "test-xmtp-id",
-        },
-      }),
+      body: JSON.stringify(createUserBody),
     });
     const createdUser =
       (await createUserResponse.json()) as CreatedReturnedUser;
@@ -131,22 +141,29 @@ describe("/metadata API", () => {
 
   test("GET /metadata/conversation/:conversationId returns metadata when exists", async () => {
     // Create a user first
+    const createUserBody: CreateUserRequestBody = {
+      privyUserId: "test-metadata-privy-user-id",
+      device: {
+        os: DeviceOS.ios,
+        name: "iPhone 14",
+      },
+      identity: {
+        privyAddress: "test-privy-address",
+        xmtpId: "test-xmtp-id",
+      },
+      profile: {
+        name: "Test User 2",
+        description: "Test bio 2",
+        avatar: "https://example.com/avatar2.jpg",
+      },
+    };
+
     const createUserResponse = await fetch("http://localhost:3005/users", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({
-        privyUserId: "test-metadata-privy-user-id",
-        device: {
-          os: DeviceOS.ios,
-          name: "iPhone 14",
-        },
-        identity: {
-          privyAddress: "test-privy-address",
-          xmtpId: "test-xmtp-id",
-        },
-      }),
+      body: JSON.stringify(createUserBody),
     });
     const createdUser =
       (await createUserResponse.json()) as CreatedReturnedUser;
@@ -189,22 +206,29 @@ describe("/metadata API", () => {
 
   test("POST /metadata/conversation updates existing metadata", async () => {
     // Create a user first
+    const createUserBody: CreateUserRequestBody = {
+      privyUserId: "test-metadata-privy-user-id",
+      device: {
+        os: DeviceOS.ios,
+        name: "iPhone 14",
+      },
+      identity: {
+        privyAddress: "test-privy-address",
+        xmtpId: "test-xmtp-id",
+      },
+      profile: {
+        name: "Test User 3",
+        description: "Test bio 3",
+        avatar: "https://example.com/avatar3.jpg",
+      },
+    };
+
     const createUserResponse = await fetch("http://localhost:3005/users", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({
-        privyUserId: "test-metadata-privy-user-id",
-        device: {
-          os: DeviceOS.ios,
-          name: "iPhone 14",
-        },
-        identity: {
-          privyAddress: "test-privy-address",
-          xmtpId: "test-xmtp-id",
-        },
-      }),
+      body: JSON.stringify(createUserBody),
     });
     const createdUser =
       (await createUserResponse.json()) as CreatedReturnedUser;

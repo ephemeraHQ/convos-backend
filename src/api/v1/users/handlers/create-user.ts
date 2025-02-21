@@ -60,16 +60,9 @@ export async function createUser(
     );
   }
 
-  const {
-    privyUserId,
-    device,
-    identity: { privyAddress, xmtpId },
-    profile,
-  } = parsedBody;
-
   const validationResult = await validateProfile({
-    name: profile.name,
-    description: profile.description,
+    name: parsedBody.profile.name,
+    description: parsedBody.profile.description,
   });
 
   if (!validationResult.success) {
@@ -78,27 +71,27 @@ export async function createUser(
 
   const createdUser = await prisma.user.create({
     data: {
-      privyUserId,
+      privyUserId: parsedBody.privyUserId,
       devices: {
         create: {
-          os: device.os,
-          name: device.name,
+          os: parsedBody.device.os,
+          name: parsedBody.device.name,
           identities: {
             create: {
               identity: {
                 create: {
-                  privyAddress,
-                  xmtpId,
+                  privyAddress: parsedBody.identity.privyAddress,
+                  xmtpId: parsedBody.identity.xmtpId,
                   user: {
                     connect: {
-                      privyUserId,
+                      privyUserId: parsedBody.privyUserId,
                     },
                   },
                   profile: {
                     create: {
-                      name: profile.name,
-                      description: profile.description,
-                      avatar: profile.avatar,
+                      name: parsedBody.profile.name,
+                      description: parsedBody.profile.description,
+                      avatar: parsedBody.profile.avatar,
                     },
                   },
                 },
@@ -108,14 +101,28 @@ export async function createUser(
         },
       },
     },
-    include: {
+    select: {
+      id: true,
+      privyUserId: true,
       devices: {
-        include: {
+        select: {
+          id: true,
+          os: true,
+          name: true,
           identities: {
-            include: {
+            select: {
               identity: {
-                include: {
-                  profile: true,
+                select: {
+                  id: true,
+                  privyAddress: true,
+                  xmtpId: true,
+                  profile: {
+                    select: {
+                      id: true,
+                      name: true,
+                      description: true,
+                    },
+                  },
                 },
               },
             },
@@ -125,35 +132,40 @@ export async function createUser(
     },
   });
 
-  const {
-    id,
-    devices: [
-      {
-        id: deviceId,
-        os: deviceOs,
-        name: deviceName,
-        identities: [{ identity }],
-      },
-    ],
-  } = createdUser;
+  if (!createdUser.devices.length) {
+    throw new Error("Device was not created successfully");
+  }
+
+  const createdDevice = createdUser.devices[0];
+
+  if (!createdDevice.identities.length) {
+    throw new Error("Identity was not created successfully");
+  }
+
+  const createdIdentity = createdDevice.identities[0].identity;
+  const createdProfile = createdIdentity.profile;
+
+  if (!createdProfile) {
+    throw new Error("Profile was not created successfully");
+  }
 
   const returnedUser: CreatedReturnedUser = {
-    id,
-    privyUserId,
+    id: createdUser.id,
+    privyUserId: createdUser.privyUserId,
     device: {
-      id: deviceId,
-      os: deviceOs,
-      name: deviceName,
+      id: createdDevice.id,
+      os: createdDevice.os,
+      name: createdDevice.name,
     },
     identity: {
-      id: identity.id,
-      privyAddress: identity.privyAddress,
-      xmtpId: identity.xmtpId,
+      id: createdIdentity.id,
+      privyAddress: createdIdentity.privyAddress,
+      xmtpId: createdIdentity.xmtpId,
     },
     profile: {
-      id: identity.profile!.id,
-      name: identity.profile!.name,
-      description: identity.profile!.description,
+      id: createdProfile.id,
+      name: createdProfile.name,
+      description: createdProfile.description,
     },
   };
 

@@ -1,12 +1,107 @@
 ## General
 
-- When I ask you to “clean” a file, rewrite the content following the rules and best practices listed below.
+- When I ask you to "clean" a file, rewrite the content following the rules and best practices listed below.
 - When I ask you to "Make more readable", rewrite the content following the rules and best practices listed below and add some comments to explain the code. The comments need to be short and direct. Don't add comments when it's obvious what the code is doing. Also add some comments to explain why we are doing something in a certain way.
 
 ## Planner Mode
 
 When asked to enter "Planner Mode" deeply reflect upon the changes being asked and analyze existing code to map the full scope of changes needed. Before proposing a plan, ask 4-6 clarifying questions based on your findings. Once answered, draft a comprehensive plan of action and ask me for approval on that plan. Once approved, implement all steps in that plan. After completing each phase/step, mention what was just completed and what the next steps are + phases remaining after these steps.
 
-## Code style
+## Tech Stack Guidelines
+
+### Core Technologies
+
+- TypeScript with strict mode and ESNext features
+- Bun for runtime and package management
+- Express.js for API routes
+- Prisma for database operations
+- Zod for validation and type safety
+
+### Authentication & Security
+
+- JWT (jose) for token management
+- Firebase App Check integration
+- XMTP for messaging and identity
+- Helmet for security headers
+- CORS and rate limiting middleware
+
+## Code Style
+
+### API Routes
 
 - For API route Response types, use simple typing (e.g., "res: Response") instead of verbose generic types (e.g., "res: Response<unknown, any>") to keep code clean and readable
+- Use dedicated handlers directory for route logic
+- Follow RESTful principles for endpoint naming
+- Implement consistent error handling using AppError class
+
+### TypeScript Patterns
+
+- Use Zod schemas for request validation and type inference
+- Prefer type inference from Prisma models
+- Keep types close to their usage (same directory)
+- Use type exports for shared types
+- Leverage path aliases (@/) for imports
+
+### Database & Prisma
+
+- Use transactions for multi-table operations
+- Include necessary relations in queries using include
+- Follow schema naming conventions (PascalCase for models)
+- Use appropriate field types and constraints
+- Add indexes for frequently queried fields
+
+### Error Handling
+
+- Use custom AppError class for application errors
+- Implement consistent error responses
+- Log errors with context using logError utility
+- Handle validation errors separately from other errors
+- Return appropriate HTTP status codes
+
+### Project Structure
+
+- Group related features in feature directories
+- Keep middleware in dedicated directory
+- Use index.ts files for exports
+- Maintain clear separation of concerns
+- Follow consistent file naming (kebab-case)
+
+### Testing
+
+- Write tests for API endpoints
+- Use helper functions for test setup
+- Mock external services
+- Test error cases
+- Follow AAA pattern (Arrange, Act, Assert)
+
+### Environment & Configuration
+
+- Use .env for configuration
+- Keep sensitive values in environment variables
+- Document required environment variables
+- Use TypeScript path aliases
+- Configure appropriate dev tools (ESLint, Prettier)
+
+### Security Best Practices
+
+- Implement rate limiting
+- Use security headers (Helmet)
+- Validate and sanitize inputs
+- Handle authentication consistently
+- Log security-relevant events
+
+### Performance
+
+- Use appropriate database indexes
+- Implement caching where needed
+- Optimize database queries
+- Handle file uploads efficiently
+- Use appropriate batch operations
+
+### Documentation
+
+- Add JSDoc comments for public APIs
+- Document environment setup
+- Keep README up to date
+- Document API endpoints
+- Include example usage
