@@ -42,6 +42,7 @@ export type CreatedReturnedUser = {
   profile: {
     id: string;
     name: string;
+    username: string;
     description: string | null;
   };
 };
@@ -168,6 +169,7 @@ export async function createUser(
     profile: {
       id: createdProfile.id,
       name: createdProfile.name,
+      username: createdProfile.username,
       description: createdProfile.description,
     },
   };
