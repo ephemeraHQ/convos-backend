@@ -9,6 +9,7 @@ const prisma = new PrismaClient();
 
 export const profileUpdateSchema = z.object({
   name: z.string(),
+  username: z.string(),
   description: z.string(),
   avatar: z.string().url().optional(),
 });

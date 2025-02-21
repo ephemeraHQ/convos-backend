@@ -6,6 +6,6 @@ export type GetProfileRequestParams = {
 
 export type ProfileRequestResult = Pick<
   Profile,
-  "id" | "name" | "description" | "avatar"
+  "id" | "name" | "username" | "description" | "avatar"
 > &
   Pick<DeviceIdentity, "xmtpId" | "privyAddress">;

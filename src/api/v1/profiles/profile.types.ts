@@ -13,5 +13,5 @@ export type ProfileValidationResponse = {
 };
 
 export type ProfileValidationRequest = Partial<
-  Pick<Profile, "name" | "description" | "avatar">
+  Pick<Profile, "name" | "username" | "description" | "avatar">
 >;

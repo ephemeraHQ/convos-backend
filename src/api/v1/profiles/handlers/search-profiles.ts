@@ -23,10 +23,20 @@ export async function searchProfiles(
 
     const profiles = await prisma.profile.findMany({
       where: {
-        name: {
-          contains: trimmedQuery,
-          mode: "insensitive",
-        },
+        OR: [
+          {
+            name: {
+              contains: trimmedQuery,
+              mode: "insensitive",
+            },
+          },
+          {
+            username: {
+              contains: trimmedQuery,
+              mode: "insensitive",
+            },
+          },
+        ],
         deviceIdentity: {
           xmtpId: {
             not: null,
@@ -50,6 +60,7 @@ export async function searchProfiles(
           ({
             id: profile.id,
             name: profile.name,
+            username: profile.username,
             avatar: profile.avatar,
             description: profile.description,
             xmtpId: profile.deviceIdentity.xmtpId,

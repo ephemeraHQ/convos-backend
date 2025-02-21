@@ -18,6 +18,7 @@ export const createUserRequestBodySchema = z.object({
   }),
   profile: z.object({
     name: z.string(),
+    username: z.string(),
     description: z.string().optional(),
     avatar: z.string().url().optional(),
   }),
