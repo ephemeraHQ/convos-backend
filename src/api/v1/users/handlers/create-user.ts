@@ -47,9 +47,9 @@ export type CreatedReturnedUser = {
 };
 
 export async function createUser(
-  req: Request<object, object, CreateUserRequestBody>,
+  req: Request<unknown, unknown, CreateUserRequestBody>,
   res: Response,
-): Promise<void> {
+) {
   try {
     let body;
     try {
