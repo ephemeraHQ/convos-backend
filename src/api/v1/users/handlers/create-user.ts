@@ -9,7 +9,7 @@ export const createUserRequestBodySchema = z.object({
   privyUserId: z.string(),
   device: z.object({
     os: z.enum(Object.keys(DeviceOS) as [DeviceOS, ...DeviceOS[]]),
-    name: z.string().optional(),
+    name: z.string().nullable().optional(),
   }),
   identity: z.object({
     privyAddress: z.string(),
