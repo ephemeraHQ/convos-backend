@@ -10,6 +10,7 @@ import {
 } from "bun:test";
 import express from "express";
 import type { ProfileValidationResponse } from "@/api/v1/profiles/profile.types";
+import { ProfileValidationErrorType } from "@/api/v1/profiles/profile.validation";
 import profilesRouter from "@/api/v1/profiles/profiles.router";
 import type { ProfileRequestResult } from "@/api/v1/profiles/profiles.types";
 import type {
@@ -191,9 +192,10 @@ describe("/profiles API", () => {
     expect(response.status).toBe(400);
     const result = (await response.json()) as ProfileValidationResponse;
     expect(result.success).toBe(false);
-    expect(result.errors?.name).toBe(
-      "Name can only contain letters, numbers and spaces",
-    );
+    expect(result.errors?.name).toEqual({
+      type: ProfileValidationErrorType.INVALID_FORMAT,
+      message: "Name can only contain letters, numbers and spaces",
+    });
   });
 
   test("PUT /profiles/:id returns 400 for invalid characters in username", async () => {
@@ -223,9 +225,10 @@ describe("/profiles API", () => {
     expect(response.status).toBe(400);
     const result = (await response.json()) as ProfileValidationResponse;
     expect(result.success).toBe(false);
-    expect(result.errors?.username).toBe(
-      "Username can only contain letters, numbers and dashes",
-    );
+    expect(result.errors?.username).toEqual({
+      type: ProfileValidationErrorType.INVALID_FORMAT,
+      message: "Username can only contain letters, numbers and dashes",
+    });
   });
 
   test("PUT /profiles/:id returns 400 for invalid request body", async () => {
@@ -255,7 +258,10 @@ describe("/profiles API", () => {
     expect(response.status).toBe(400);
     const result = (await response.json()) as ProfileValidationResponse;
     expect(result.success).toBe(false);
-    expect(result.errors?.name).toBe("Expected string, received number");
+    expect(result.errors?.name).toEqual({
+      type: ProfileValidationErrorType.INVALID_FORMAT,
+      message: "Expected string, received number",
+    });
   });
 
   test("PUT /profiles/:id returns 400 for name too short", async () => {
@@ -285,7 +291,10 @@ describe("/profiles API", () => {
     expect(response.status).toBe(400);
     const result = (await response.json()) as ProfileValidationResponse;
     expect(result.success).toBe(false);
-    expect(result.errors?.name).toBe("Name must be at least 3 characters long");
+    expect(result.errors?.name).toEqual({
+      type: ProfileValidationErrorType.INVALID_FORMAT,
+      message: "Name must be at least 3 characters long",
+    });
   });
 
   test("PUT /profiles/:id returns 400 for name too long", async () => {
@@ -315,7 +324,10 @@ describe("/profiles API", () => {
     expect(response.status).toBe(400);
     const result = (await response.json()) as ProfileValidationResponse;
     expect(result.success).toBe(false);
-    expect(result.errors?.name).toBe("Name cannot exceed 50 characters");
+    expect(result.errors?.name).toEqual({
+      type: ProfileValidationErrorType.INVALID_FORMAT,
+      message: "Name cannot exceed 50 characters",
+    });
   });
 
   test("PUT /profiles/:id returns 400 for description too long", async () => {
@@ -345,9 +357,10 @@ describe("/profiles API", () => {
     expect(response.status).toBe(400);
     const result = (await response.json()) as ProfileValidationResponse;
     expect(result.success).toBe(false);
-    expect(result.errors?.description).toBe(
-      "Description cannot exceed 500 characters",
-    );
+    expect(result.errors?.description).toEqual({
+      type: ProfileValidationErrorType.INVALID_FORMAT,
+      message: "Description cannot exceed 500 characters",
+    });
   });
 
   test("PUT /profiles/:id returns 400 for invalid avatar URL", async () => {
@@ -377,7 +390,10 @@ describe("/profiles API", () => {
     expect(response.status).toBe(400);
     const result = (await response.json()) as ProfileValidationResponse;
     expect(result.success).toBe(false);
-    expect(result.errors?.avatar).toBe("Avatar must be a valid URL");
+    expect(result.errors?.avatar).toEqual({
+      type: ProfileValidationErrorType.INVALID_FORMAT,
+      message: "Avatar must be a valid URL",
+    });
   });
 
   test("PUT /profiles/:id returns 409 for duplicate username", async () => {
@@ -419,7 +435,10 @@ describe("/profiles API", () => {
     expect(response.status).toBe(409);
     const result = (await response.json()) as ProfileValidationResponse;
     expect(result.success).toBe(false);
-    expect(result.errors?.username).toBe("This username is already taken");
+    expect(result.errors?.username).toEqual({
+      type: ProfileValidationErrorType.USERNAME_TAKEN,
+      message: "This username is already taken",
+    });
   });
 
   test("GET /profiles/search returns matching profiles", async () => {
@@ -634,9 +653,10 @@ describe("/profiles API", () => {
     expect(response.status).toBe(400);
     const result = (await response.json()) as ProfileValidationResponse;
     expect(result.success).toBe(false);
-    expect(result.errors?.name).toBe(
-      "Name can only contain letters, numbers and spaces",
-    );
+    expect(result.errors?.name).toEqual({
+      type: ProfileValidationErrorType.INVALID_FORMAT,
+      message: "Name can only contain letters, numbers and spaces",
+    });
   });
 
   test("POST /users validates required profile fields", async () => {
@@ -725,13 +745,21 @@ describe("/profiles API", () => {
     expect(response.status).toBe(400);
     const result = (await response.json()) as ProfileValidationResponse;
     expect(result.success).toBe(false);
-    expect(result.errors?.name).toBe("Name must be at least 3 characters long");
-    expect(result.errors?.username).toBe(
-      "Username can only contain letters, numbers and dashes",
-    );
-    expect(result.errors?.description).toBe(
-      "Description cannot exceed 500 characters",
-    );
-    expect(result.errors?.avatar).toBe("Avatar must be a valid URL");
+    expect(result.errors?.name).toEqual({
+      type: ProfileValidationErrorType.INVALID_FORMAT,
+      message: "Name must be at least 3 characters long",
+    });
+    expect(result.errors?.username).toEqual({
+      type: ProfileValidationErrorType.INVALID_FORMAT,
+      message: "Username can only contain letters, numbers and dashes",
+    });
+    expect(result.errors?.description).toEqual({
+      type: ProfileValidationErrorType.INVALID_FORMAT,
+      message: "Description cannot exceed 500 characters",
+    });
+    expect(result.errors?.avatar).toEqual({
+      type: ProfileValidationErrorType.INVALID_FORMAT,
+      message: "Avatar must be a valid URL",
+    });
   });
 });

@@ -2,7 +2,11 @@ import { PrismaClient } from "@prisma/client";
 import type { Request, Response } from "express";
 import { z } from "zod";
 import type { ProfileValidationResponse } from "../profile.types";
-import { validateProfile, ProfileValidationErrorType, type profileBaseSchema } from "../profile.validation";
+import {
+  ProfileValidationErrorType,
+  validateProfile,
+  type profileBaseSchema,
+} from "../profile.validation";
 import type { GetProfileRequestParams } from "../profiles.types";
 
 const prisma = new PrismaClient();
@@ -47,7 +51,10 @@ export async function updateProfile(
     if (!validationResult.success) {
       // Get the first error type to determine status code
       const firstError = Object.values(validationResult.errors || {})[0];
-      const status = firstError?.type === ProfileValidationErrorType.USERNAME_TAKEN ? 409 : 400;
+      const status =
+        firstError.type === ProfileValidationErrorType.USERNAME_TAKEN
+          ? 409
+          : 400;
       res.status(status).json(validationResult);
       return;
     }
