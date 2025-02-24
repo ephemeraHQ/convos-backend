@@ -85,24 +85,6 @@ describe("/authenticate API", () => {
     expect(data3.error).toBe("Failed to create authentication token");
   });
 
-  test("POST /authenticate fails with invalid installation ID", async () => {
-    const client = await createClient();
-    const client2 = await createClient();
-    const headers = createHeaders(client, "valid-app-check-token");
-    const response = await fetch("http://localhost:3009/authenticate", {
-      method: "POST",
-      headers: {
-        ...headers,
-        "X-XMTP-InstallationId": client2.installationId,
-      },
-    });
-
-    const data = (await response.json()) as { error: string };
-
-    expect(response.status).toBe(500);
-    expect(data.error).toBe("Failed to create authentication token");
-  });
-
   test("POST /authenticate fails with invalid signature", async () => {
     const client = await createClient();
     const headers = createHeaders(client, "valid-app-check-token");

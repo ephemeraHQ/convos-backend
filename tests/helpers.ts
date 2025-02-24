@@ -41,7 +41,7 @@ export type User = ReturnType<typeof createUser>;
 export const createClient = async () => {
   const user = createUser();
   return Client.create(createSigner(user), testEncryptionKey, {
-    env: "local",
+    env: (process.env.XMTP_ENV as "local" | "dev" | "production") || "dev",
     dbPath: join(__dirname, `./test-${user.account.address}.db3`),
   });
 };
