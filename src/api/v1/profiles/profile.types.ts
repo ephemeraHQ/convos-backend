@@ -1,13 +1,14 @@
 import type { Profile } from "@prisma/client";
+import type { ProfileValidationErrorType } from "./profile.validation";
 
 // Define validation response type
 export type ProfileValidationResponse = {
   success: boolean;
   errors?: {
-    name?: string;
-    username?: string;
-    description?: string;
-    avatar?: string;
+    name?: { type: ProfileValidationErrorType; message: string };
+    username?: { type: ProfileValidationErrorType; message: string };
+    description?: { type: ProfileValidationErrorType; message: string };
+    avatar?: { type: ProfileValidationErrorType; message: string };
   };
   message?: string;
 };

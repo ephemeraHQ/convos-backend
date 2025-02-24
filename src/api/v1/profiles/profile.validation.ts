@@ -7,6 +7,17 @@ import type {
 
 const prisma = new PrismaClient();
 
+export enum ProfileValidationErrorType {
+  USERNAME_TAKEN = "USERNAME_TAKEN",
+  INVALID_FORMAT = "INVALID_FORMAT",
+  REQUIRED_FIELD = "REQUIRED_FIELD",
+}
+
+export type ProfileValidationError = {
+  type: ProfileValidationErrorType;
+  message: string;
+};
+
 /**
  * Schema for profile validation with detailed error messages
  * @description Validates profile information before creation or update
@@ -59,12 +70,18 @@ export async function validateProfile(
 
   // Check for required fields first when creating
   if (!isUpdate) {
-    const errors: Record<string, string> = {};
+    const errors: ProfileValidationResponse["errors"] = {};
     if (!profileData.name) {
-      errors.name = "Name is required";
+      errors.name = {
+        type: ProfileValidationErrorType.REQUIRED_FIELD,
+        message: "Name is required",
+      };
     }
     if (!profileData.username) {
-      errors.username = "Username is required";
+      errors.username = {
+        type: ProfileValidationErrorType.REQUIRED_FIELD,
+        message: "Username is required",
+      };
     }
     if (Object.keys(errors).length > 0) {
       return {
@@ -95,7 +112,10 @@ export async function validateProfile(
       if (existingProfile) {
         validationResult.success = false;
         validationResult.errors = {
-          username: "This username is already taken",
+          username: {
+            type: ProfileValidationErrorType.USERNAME_TAKEN,
+            message: "This username is already taken",
+          },
         };
         return validationResult;
       }
@@ -110,7 +130,10 @@ export async function validateProfile(
       validationResult.errors = validationError.errors.reduce(
         (acc, error) => ({
           ...acc,
-          [error.path[0]]: error.message,
+          [error.path[0]]: {
+            type: ProfileValidationErrorType.INVALID_FORMAT,
+            message: error.message,
+          },
         }),
         {},
       );

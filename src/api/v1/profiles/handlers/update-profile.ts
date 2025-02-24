@@ -2,7 +2,7 @@ import { PrismaClient } from "@prisma/client";
 import type { Request, Response } from "express";
 import { z } from "zod";
 import type { ProfileValidationResponse } from "../profile.types";
-import { validateProfile, type profileBaseSchema } from "../profile.validation";
+import { validateProfile, ProfileValidationErrorType, type profileBaseSchema } from "../profile.validation";
 import type { GetProfileRequestParams } from "../profiles.types";
 
 const prisma = new PrismaClient();
@@ -42,11 +42,9 @@ export async function updateProfile(
     const validationResult = await validateProfile(req.body, true);
 
     if (!validationResult.success) {
-      // Only use 409 if the error is specifically about username being taken
-      const status =
-        validationResult.errors?.username === "This username is already taken"
-          ? 409
-          : 400;
+      // Get the first error type to determine status code
+      const firstError = Object.values(validationResult.errors || {})[0];
+      const status = firstError?.type === ProfileValidationErrorType.USERNAME_TAKEN ? 409 : 400;
       res.status(status).json(validationResult);
       return;
     }
@@ -65,7 +63,10 @@ export async function updateProfile(
         errors: error.errors.reduce(
           (acc, err) => ({
             ...acc,
-            [err.path[0]]: err.message,
+            [err.path[0]]: {
+              type: ProfileValidationErrorType.INVALID_FORMAT,
+              message: err.message,
+            },
           }),
           {},
         ),
