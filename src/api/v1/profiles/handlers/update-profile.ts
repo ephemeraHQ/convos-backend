@@ -1,13 +1,13 @@
 import { PrismaClient } from "@prisma/client";
 import type { Request, Response } from "express";
 import { z } from "zod";
+import type { profileBaseSchema } from "../profile.schema";
 import type { ProfileValidationResponse } from "../profile.types";
+import type { GetProfileRequestParams } from "../profiles.types";
 import {
   ProfileValidationErrorType,
-  validateProfile,
-  type profileBaseSchema,
-} from "../profile.validation";
-import type { GetProfileRequestParams } from "../profiles.types";
+  validateProfileUpdate,
+} from "./validate-profile";
 
 const prisma = new PrismaClient();
 
@@ -43,9 +43,8 @@ export async function updateProfile(
     }
 
     // Validate the request body
-    const validationResult = await validateProfile({
+    const validationResult = await validateProfileUpdate({
       profileData: req.body,
-      isUpdate: true,
     });
 
     if (!validationResult.success) {

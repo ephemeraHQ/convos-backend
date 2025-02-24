@@ -9,8 +9,8 @@ import {
   test,
 } from "bun:test";
 import express from "express";
+import { ProfileValidationErrorType } from "@/api/v1/profiles/handlers/validate-profile";
 import type { ProfileValidationResponse } from "@/api/v1/profiles/profile.types";
-import { ProfileValidationErrorType } from "@/api/v1/profiles/profile.validation";
 import profilesRouter from "@/api/v1/profiles/profiles.router";
 import type { ProfileRequestResult } from "@/api/v1/profiles/profiles.types";
 import type {

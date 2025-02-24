@@ -1,7 +1,7 @@
 import { DeviceOS, PrismaClient } from "@prisma/client";
 import type { Request, Response } from "express";
 import { z } from "zod";
-import { validateProfile } from "../../profiles/profile.validation";
+import { validateProfileCreation } from "../../profiles/handlers/validate-profile";
 
 const prisma = new PrismaClient();
 
@@ -72,9 +72,8 @@ export async function createUser(
       throw error;
     }
 
-    const validationResult = await validateProfile({
+    const validationResult = await validateProfileCreation({
       profileData: body.profile,
-      isUpdate: false,
     });
     if (!validationResult.success) {
       res.status(400).json({

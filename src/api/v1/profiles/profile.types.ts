@@ -1,5 +1,5 @@
 import type { Profile } from "@prisma/client";
-import type { ProfileValidationErrorType } from "./profile.validation";
+import type { ProfileValidationErrorType } from "./handlers/validate-profile";
 
 // Define validation response type
 export type ProfileValidationResponse = {
