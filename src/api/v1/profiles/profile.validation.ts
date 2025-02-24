@@ -55,29 +55,26 @@ export const profileUpdateValidationSchema = profileBaseSchema.partial();
 
 /**
  * Validates profile information
- * @param profileData Profile data to validate
- * @param isUpdate Whether this is an update operation
- * @returns Validation result with any errors
  */
-export async function validateProfile(
-  profileData: ProfileValidationRequest,
-  isUpdate = false,
-): Promise<ProfileValidationResponse> {
+export async function validateProfile(args: {
+  profileData: ProfileValidationRequest;
+  isUpdate?: boolean;
+}): Promise<ProfileValidationResponse> {
   const validationResult: ProfileValidationResponse = {
     success: true,
     errors: {},
   };
 
   // Check for required fields first when creating
-  if (!isUpdate) {
+  if (!args.isUpdate) {
     const errors: ProfileValidationResponse["errors"] = {};
-    if (!profileData.name) {
+    if (!args.profileData.name) {
       errors.name = {
         type: ProfileValidationErrorType.REQUIRED_FIELD,
         message: "Name is required",
       };
     }
-    if (!profileData.username) {
+    if (!args.profileData.username) {
       errors.username = {
         type: ProfileValidationErrorType.REQUIRED_FIELD,
         message: "Username is required",
@@ -93,17 +90,17 @@ export async function validateProfile(
 
   // Then validate against schema
   try {
-    const schema = isUpdate
+    const schema = args.isUpdate
       ? profileUpdateValidationSchema
       : profileValidationSchema;
-    schema.parse(profileData);
+    schema.parse(args.profileData);
 
     // Check for existing username after schema validation
-    if (profileData.username) {
+    if (args.profileData.username) {
       const existingProfile = await prisma.profile.findFirst({
         where: {
           username: {
-            equals: profileData.username,
+            equals: args.profileData.username,
             mode: "insensitive",
           },
         },

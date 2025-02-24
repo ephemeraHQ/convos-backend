@@ -39,7 +39,10 @@ export async function updateProfile(
     }
 
     // Validate the request body
-    const validationResult = await validateProfile(req.body, true);
+    const validationResult = await validateProfile({
+      profileData: req.body,
+      isUpdate: true,
+    });
 
     if (!validationResult.success) {
       // Get the first error type to determine status code

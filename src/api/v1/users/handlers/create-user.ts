@@ -72,7 +72,10 @@ export async function createUser(
       throw error;
     }
 
-    const validationResult = await validateProfile(body.profile, false);
+    const validationResult = await validateProfile({
+      profileData: body.profile,
+      isUpdate: false,
+    });
     if (!validationResult.success) {
       res.status(400).json({
         success: false,
