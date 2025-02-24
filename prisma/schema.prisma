@@ -69,6 +69,7 @@ model Profile {
   id               String         @id @default(uuid())
   deviceIdentityId String         @unique
   name             String
+  username         String         @unique
   description      String?
   avatar           String?        
   createdAt        DateTime       @default(now())

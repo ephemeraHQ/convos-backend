@@ -43,6 +43,7 @@ export async function getProfile(
     const profileResult: ProfileRequestResult = {
       id: profile.id,
       name: profile.name,
+      username: profile.username,
       description: profile.description,
       avatar: profile.avatar,
       xmtpId: profile.deviceIdentity.xmtpId,

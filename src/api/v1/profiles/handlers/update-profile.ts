@@ -1,20 +1,19 @@
 import { PrismaClient } from "@prisma/client";
 import type { Request, Response } from "express";
 import { z } from "zod";
+import type { profileBaseSchema } from "../profile.schema";
 import type { ProfileValidationResponse } from "../profile.types";
-import { validateProfile } from "../profile.validation";
 import type { GetProfileRequestParams } from "../profiles.types";
+import {
+  ProfileValidationErrorType,
+  validateProfileUpdate,
+} from "./validate-profile";
 
 const prisma = new PrismaClient();
 
-export const profileUpdateSchema = z.object({
-  name: z.string(),
-  description: z.string(),
-  avatar: z.string().url().optional(),
-});
-
+// Use Zod schema for type definition
 export type UpdateProfileRequestBody = Partial<
-  z.infer<typeof profileUpdateSchema>
+  z.infer<typeof profileBaseSchema>
 >;
 
 export async function updateProfile(
@@ -43,21 +42,26 @@ export async function updateProfile(
       return;
     }
 
-    // Parse the request body and validate it
-    const validatedData = profileUpdateSchema.partial().parse(req.body);
-    const validationResult = await validateProfile(validatedData);
+    // Validate the request body
+    const validationResult = await validateProfileUpdate({
+      profileData: req.body,
+    });
 
     if (!validationResult.success) {
-      res
-        .status(validationResult.errors?.username ? 409 : 400)
-        .json(validationResult);
+      // Get the first error type to determine status code
+      const firstError = Object.values(validationResult.errors || {})[0];
+      const status =
+        firstError.type === ProfileValidationErrorType.USERNAME_TAKEN
+          ? 409
+          : 400;
+      res.status(status).json(validationResult);
       return;
     }
 
     // Update the profile
     const updatedProfile = await prisma.profile.update({
       where: { id: existingProfile.id },
-      data: validatedData,
+      data: req.body,
     });
 
     res.json(updatedProfile);
@@ -68,7 +72,10 @@ export async function updateProfile(
         errors: error.errors.reduce(
           (acc, err) => ({
             ...acc,
-            [err.path[0]]: err.message,
+            [err.path[0]]: {
+              type: ProfileValidationErrorType.INVALID_FORMAT,
+              message: err.message,
+            },
           }),
           {},
         ),
