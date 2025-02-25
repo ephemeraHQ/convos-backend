@@ -1,5 +1,6 @@
 import { PrismaClient } from "@prisma/client";
 import type { Request, Response } from "express";
+import { isAddress } from "viem";
 import type { ProfileRequestResult } from "../profiles.types";
 
 const prisma = new PrismaClient();
@@ -24,6 +25,15 @@ export async function searchProfiles(
     const profiles = await prisma.profile.findMany({
       where: {
         OR: [
+          ...(isAddress(trimmedQuery)
+            ? [
+                {
+                  deviceIdentity: {
+                    privyAddress: trimmedQuery,
+                  },
+                },
+              ]
+            : []),
           {
             name: {
               contains: trimmedQuery,
