@@ -22,13 +22,18 @@ export type ProfileValidationError = {
 /**
  * Checks if a username is already taken
  */
-async function checkUsernameTaken(username: string): Promise<boolean> {
+async function checkUsernameTaken(args: {
+  username: string;
+  excludeProfileId?: string;
+}): Promise<boolean> {
   const existingProfile = await prisma.profile.findFirst({
     where: {
       username: {
-        equals: username,
+        equals: args.username,
         mode: "insensitive",
       },
+      // Exclude the profile with the given id if it exists
+      ...(args.excludeProfileId ? { id: { not: args.excludeProfileId } } : {}),
     },
   });
 
@@ -69,7 +74,7 @@ export async function validateProfileCreation(args: {
     // Check for username uniqueness
     if (
       args.profileData.username &&
-      (await checkUsernameTaken(args.profileData.username))
+      (await checkUsernameTaken({ username: args.profileData.username }))
     ) {
       return {
         success: false,
@@ -111,6 +116,7 @@ export async function validateProfileCreation(args: {
  */
 export async function validateProfileUpdate(args: {
   profileData: ProfileValidationRequest;
+  currentProfileId?: string;
 }): Promise<ProfileValidationResponse> {
   try {
     // Validate against schema
@@ -119,7 +125,10 @@ export async function validateProfileUpdate(args: {
     // Check for username uniqueness if username is being updated
     if (
       args.profileData.username &&
-      (await checkUsernameTaken(args.profileData.username))
+      (await checkUsernameTaken({
+        username: args.profileData.username,
+        excludeProfileId: args.currentProfileId,
+      }))
     ) {
       return {
         success: false,

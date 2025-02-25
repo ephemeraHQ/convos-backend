@@ -45,6 +45,7 @@ export async function updateProfile(
     // Validate the request body
     const validationResult = await validateProfileUpdate({
       profileData: req.body,
+      currentProfileId: existingProfile.id,
     });
 
     if (!validationResult.success) {

@@ -19,11 +19,24 @@ export const profileBaseSchema = z.object({
     .regex(/^[a-zA-Z0-9-]+$/, {
       message: "Username can only contain letters, numbers and dashes",
     }),
-  description: z
-    .string()
-    .max(500, { message: "Description cannot exceed 500 characters" })
-    .optional(),
-  avatar: z.string().url({ message: "Avatar must be a valid URL" }).optional(),
+  description: z.preprocess(
+    // Convert empty string to null before validation
+    (val) => (val === "" ? null : val),
+    z
+      .string()
+      .max(500, { message: "Description cannot exceed 500 characters" })
+      .nullable()
+      .optional(),
+  ),
+  avatar: z.preprocess(
+    // Convert empty string to null before validation
+    (val) => (val === "" ? null : val),
+    z
+      .string()
+      .url({ message: "Avatar must be a valid URL" })
+      .nullable()
+      .optional(),
+  ),
 });
 
 // For creation - name and username required
