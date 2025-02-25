@@ -1,4 +1,5 @@
 import { Router } from "express";
+import appConfigRouter from "@/api/v1/appConfig";
 import authenticateRouter from "@/api/v1/authenticate";
 import metadataRouter from "@/api/v1/metadata";
 import profilesRouter from "@/api/v1/profiles/profiles.router";
@@ -10,6 +11,9 @@ import lookupRouter from "./lookup";
 import usersRouter from "./users/users.router";
 
 const v1Router = Router();
+
+// mount app config routes under /app-config
+v1Router.use("/app-config", appConfigRouter);
 
 // mount authenticate routes under /authenticate
 v1Router.use("/authenticate", authenticateRouter);
