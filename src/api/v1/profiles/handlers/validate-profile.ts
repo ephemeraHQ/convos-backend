@@ -120,7 +120,13 @@ export async function validateProfileUpdate(args: {
 }): Promise<ProfileValidationResponse> {
   try {
     // Validate against schema
-    profileUpdateSchema.parse(args.profileData);
+    try {
+      profileUpdateSchema.parse(args.profileData);
+      console.log("Schema validation passed");
+    } catch (parseError) {
+      console.log("Schema validation failed:", parseError);
+      throw parseError;
+    }
 
     // Check for username uniqueness if username is being updated
     if (

@@ -42,9 +42,20 @@ export async function updateProfile(
       return;
     }
 
+    // Preprocess the data before validation
+    const preprocessedData = { ...req.body };
+
+    // Handle empty strings for optional fields
+    if (preprocessedData.avatar === "") {
+      preprocessedData.avatar = null;
+    }
+    if (preprocessedData.description === "") {
+      preprocessedData.description = null;
+    }
+
     // Validate the request body
     const validationResult = await validateProfileUpdate({
-      profileData: req.body,
+      profileData: preprocessedData,
       currentProfileId: existingProfile.id,
     });
 
@@ -62,7 +73,7 @@ export async function updateProfile(
     // Update the profile
     const updatedProfile = await prisma.profile.update({
       where: { id: existingProfile.id },
-      data: req.body,
+      data: preprocessedData,
     });
 
     res.json(updatedProfile);
