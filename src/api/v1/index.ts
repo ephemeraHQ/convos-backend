@@ -39,7 +39,4 @@ v1Router.use("/lookup", authMiddleware, lookupRouter);
 // mount attachments routes under /attachments
 v1Router.use("/attachments", authMiddleware, attachmentsRouter);
 
-// mount attachments routes under /attachments
-v1Router.use("/attachments", attachmentsRouter);
-
 export default v1Router;
