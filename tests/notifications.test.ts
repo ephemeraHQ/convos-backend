@@ -2,6 +2,7 @@ import type { Server } from "http";
 import { afterEach, beforeEach, describe, expect, it, test } from "bun:test";
 import express, { type Request, type Response } from "express";
 import { rimrafSync } from "rimraf";
+import { jsonMiddleware } from "@/middleware/json";
 import {
   createNotificationClient,
   type NotificationResponse,
@@ -37,9 +38,9 @@ describe("Notifications", () => {
 
     beforeEach(() => {
       app = express();
+      app.use(jsonMiddleware);
       stream = new AsyncStream<NotificationResponse>();
       app.post("/", (req: Request, res: Response) => {
-        console.log("request", req);
         console.log("received notification", req.body);
         void stream.callback(null, req.body as NotificationResponse);
         res.status(200).send("OK");
@@ -70,7 +71,7 @@ describe("Notifications", () => {
       expect(registerResponse.installationId).toBe(client.installationId);
       expect(registerResponse.validUntil).toBeGreaterThan(0);
 
-      const inviteTopic = buildWelcomeTopic(client.installationId);
+      const inviteTopic = buildWelcomeTopic(client2.installationId);
       await notificationClient.subscribeWithMetadata({
         installationId: client.installationId,
         subscriptions: [
@@ -80,7 +81,6 @@ describe("Notifications", () => {
           },
         ],
       });
-
       await client.conversations.newDm(client2.accountAddress);
 
       console.log("created DM");
@@ -94,7 +94,9 @@ describe("Notifications", () => {
         expect(notification?.installation.delivery_mechanism.token).toEqual(
           "token",
         );
-        expect(notification?.message_context.message_type).toEqual("v3-invite");
+        expect(notification?.message_context.message_type).toEqual(
+          "v3-welcome",
+        );
         // end stream
         break;
       }
