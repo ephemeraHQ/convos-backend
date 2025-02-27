@@ -1,4 +1,12 @@
 services:
+  convos_db:
+    image: postgres:16
+    environment:
+      POSTGRES_PASSWORD: convos
+    ports:
+      - 5433:5433
+    command: -p 5433
+  
   node:
     image: xmtp/node-go:latest
     platform: linux/amd64
@@ -33,3 +41,20 @@ services:
     image: postgres:13
     environment:
       POSTGRES_PASSWORD: xmtp
+
+  notification_server:
+    image: xmtp/notifications-server:latest
+    platform: linux/amd64
+    depends_on:
+      - node
+      - convos_db
+    command:
+      - --db-connection-string=postgres://postgres:convos@convos_db:5433/postgres?sslmode=disable
+      - --xmtp-address=node:5556
+      - --log-level=debug
+      - --api
+      - --api-port=8080
+      - --http-delivery
+      - --http-delivery-address=http://localhost:8081
+    ports:
+      - 8080:8080
