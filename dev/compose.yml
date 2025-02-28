@@ -4,8 +4,7 @@ services:
     environment:
       POSTGRES_PASSWORD: convos
     ports:
-      - 5433:5433
-    command: -p 5433
+      - 5432:5432
 
   node:
     image: xmtp/node-go:latest
