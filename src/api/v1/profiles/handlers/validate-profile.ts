@@ -1,5 +1,8 @@
 import { PrismaClient } from "@prisma/client";
+import { createThirdwebClient } from "thirdweb";
+import { getSocialProfiles } from "thirdweb/social";
 import { z } from "zod";
+import { getAddressesForInboxId } from "../../../../utils/xmtp";
 import { profileCreationSchema, profileUpdateSchema } from "../profile.schema";
 import type {
   ProfileValidationRequest,
@@ -12,6 +15,8 @@ export enum ProfileValidationErrorType {
   USERNAME_TAKEN = "USERNAME_TAKEN",
   INVALID_FORMAT = "INVALID_FORMAT",
   REQUIRED_FIELD = "REQUIRED_FIELD",
+  NAME_TAKEN = "NAME_TAKEN",
+  ONCHAIN_NAME_NOT_OWNED = "ONCHAIN_NAME_NOT_OWNED",
 }
 
 export type ProfileValidationError = {
@@ -20,7 +25,7 @@ export type ProfileValidationError = {
 };
 
 /**
- * Checks if a username is already taken
+ * Validates required fields in profile data
  */
 async function checkUsernameTaken(args: {
   username: string;
@@ -37,36 +42,28 @@ async function checkUsernameTaken(args: {
     },
   });
 
-  return !!existingProfile;
+  if (existingProfile) {
+    return {
+      success: false,
+      errors: {
+        username: {
+          type: ProfileValidationErrorType.USERNAME_TAKEN,
+          message: "This username is already taken",
+        },
+      },
+    };
+  }
+
+  return { success: true };
 }
 
 /**
- * Validates profile information for creation
+ * Validates ownership of an on-chain name
  */
-export async function validateProfileCreation(args: {
-  profileData: ProfileValidationRequest;
-}): Promise<ProfileValidationResponse> {
-  // Check for required fields first
-  const errors: ProfileValidationResponse["errors"] = {};
-  if (!args.profileData.name) {
-    errors.name = {
-      type: ProfileValidationErrorType.REQUIRED_FIELD,
-      message: "Name is required",
-    };
-  }
-  if (!args.profileData.username) {
-    errors.username = {
-      type: ProfileValidationErrorType.REQUIRED_FIELD,
-      message: "Username is required",
-    };
-  }
-  if (Object.keys(errors).length > 0) {
-    return {
-      success: false,
-      errors,
-    };
-  }
-
+export async function validateOnChainName(
+  name: string,
+  xmtpId: string,
+): Promise<ProfileValidationResponse> {
   try {
     // Validate against schema
     profileCreationSchema.parse(args.profileData);
@@ -79,35 +76,68 @@ export async function validateProfileCreation(args: {
       return {
         success: false,
         errors: {
-          username: {
-            type: ProfileValidationErrorType.USERNAME_TAKEN,
-            message: "This username is already taken",
+          name: {
+            type: ProfileValidationErrorType.ONCHAIN_NAME_NOT_OWNED,
+            message: "No addresses found for this XMTP ID",
           },
         },
       };
     }
 
+    // Initialize ThirdWeb client
+    if (!process.env.THIRDWEB_SECRET_KEY) {
+      throw new Error("THIRDWEB_SECRET_KEY is not set");
+    }
+
+    const thirdwebClient = createThirdwebClient({
+      secretKey: process.env.THIRDWEB_SECRET_KEY,
+    });
+
+    // Check each address for social profiles
+    for (const address of addresses) {
+      try {
+        const profiles = await getSocialProfiles({
+          address,
+          client: thirdwebClient,
+        });
+
+        // Check if any of the social profiles match the name
+        const hasMatchingName = profiles.some(
+          (profile) =>
+            profile.name && profile.name.toLowerCase() === name.toLowerCase(),
+        );
+        if (hasMatchingName) {
+          return { success: true };
+        }
+      } catch (error) {
+        console.error(
+          `Error fetching social profiles for address ${address}:`,
+          error,
+        );
+        continue;
+      }
+    }
+
     return {
-      success: true,
-      message: "Profile information is valid",
+      success: false,
+      errors: {
+        name: {
+          type: ProfileValidationErrorType.ONCHAIN_NAME_NOT_OWNED,
+          message: "You don't own this on-chain name",
+        },
+      },
     };
   } catch (error) {
-    if (error instanceof z.ZodError) {
-      return {
-        success: false,
-        errors: error.errors.reduce(
-          (acc, err) => ({
-            ...acc,
-            [err.path[0]]: {
-              type: ProfileValidationErrorType.INVALID_FORMAT,
-              message: err.message,
-            },
-          }),
-          {},
-        ),
-      };
-    }
-    throw error;
+    console.error("Error verifying on-chain name:", error);
+    return {
+      success: false,
+      errors: {
+        name: {
+          type: ProfileValidationErrorType.ONCHAIN_NAME_NOT_OWNED,
+          message: "Failed to verify on-chain name ownership",
+        },
+      },
+    };
   }
 }
 
