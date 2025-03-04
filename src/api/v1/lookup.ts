@@ -1,10 +1,17 @@
 import { Router, type Request, type Response } from "express";
-import { getSocialProfilesForAddress } from "../../utils/thirdweb";
+import {
+  getSocialProfilesForAddress,
+  type SocialProfile,
+} from "../../utils/thirdweb";
 
 const lookupRouter = Router();
 
 type GetAddressLookupRequestParams = {
   address: string;
+};
+
+export type LookupResponse = {
+  socialProfiles: SocialProfile[];
 };
 
 // GET /lookup/address/:address - Lookup social profiles by address

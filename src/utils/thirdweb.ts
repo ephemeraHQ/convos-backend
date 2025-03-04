@@ -24,6 +24,8 @@ const SocialProfileSchema = z
   })
   .strip();
 
+export type SocialProfile = z.infer<typeof SocialProfileSchema>;
+
 type SocialProfileType = z.infer<typeof SocialProfileSchema.shape.type>;
 
 // Priority order for profile types
