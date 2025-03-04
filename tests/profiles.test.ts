@@ -155,7 +155,6 @@ describe("/profiles API", () => {
         }),
       },
     );
-
     const updatedProfile = (await response.json()) as Profile;
 
     expect(response.status).toBe(200);
@@ -194,7 +193,7 @@ describe("/profiles API", () => {
     expect(result.success).toBe(false);
     expect(result.errors?.name).toEqual({
       type: ProfileValidationErrorType.INVALID_FORMAT,
-      message: "Name can only contain letters, numbers and spaces",
+      message: "Name can only contain letters, numbers, spaces and dots",
     });
   });
 
@@ -655,7 +654,7 @@ describe("/profiles API", () => {
     expect(result.success).toBe(false);
     expect(result.errors?.name).toEqual({
       type: ProfileValidationErrorType.INVALID_FORMAT,
-      message: "Name can only contain letters, numbers and spaces",
+      message: "Name can only contain letters, numbers, spaces and dots",
     });
   });
 
@@ -760,6 +759,111 @@ describe("/profiles API", () => {
     expect(result.errors?.avatar).toEqual({
       type: ProfileValidationErrorType.INVALID_FORMAT,
       message: "Avatar must be a valid URL",
+    });
+  });
+
+  test("PUT /profiles/:id validates on-chain name ownership", async () => {
+    const createUserResponse = await fetch("http://localhost:3004/users", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(createUserBody),
+    });
+    const createdUser =
+      (await createUserResponse.json()) as CreatedReturnedUser;
+
+    const response = await fetch(
+      `http://localhost:3004/profiles/${createdUser.identity.xmtpId}`,
+      {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          name: "vitalik.eth", // On-chain name that the user doesn't own
+        }),
+      },
+    );
+
+    expect(response.status).toBe(400);
+    const result = (await response.json()) as ProfileValidationResponse;
+    expect(result.success).toBe(false);
+    expect(result.errors?.name).toEqual({
+      type: ProfileValidationErrorType.ONCHAIN_NAME_NOT_OWNED,
+      message: "You don't own this on-chain name",
+    });
+  });
+
+  test("PUT /profiles/:id validates on-chain name ownership - success case", async () => {
+    // Create a user with vitalik's XMTP ID
+    const vitalikUserBody = {
+      ...createUserBody,
+      identity: {
+        privyAddress: "test-privy-address",
+        xmtpId: "vitalik-xmtp-id", // This will return vitalik's address in the mock
+      },
+    };
+
+    const createUserResponse = await fetch("http://localhost:3004/users", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(vitalikUserBody),
+    });
+    const createdUser =
+      (await createUserResponse.json()) as CreatedReturnedUser;
+
+    // Try to update the name to vitalik.eth
+    const response = await fetch(
+      `http://localhost:3004/profiles/${createdUser.identity.xmtpId}`,
+      {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          name: "vitalik.eth",
+        }),
+      },
+    );
+
+    expect(response.status).toBe(200);
+    const updatedProfile = (await response.json()) as Profile;
+    expect(updatedProfile.name).toBe("vitalik.eth");
+  });
+
+  test("PUT /profiles/:id validates on-chain name ownership - failure case", async () => {
+    const createUserResponse = await fetch("http://localhost:3004/users", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(createUserBody),
+    });
+    const createdUser =
+      (await createUserResponse.json()) as CreatedReturnedUser;
+
+    const response = await fetch(
+      `http://localhost:3004/profiles/${createdUser.identity.xmtpId}`,
+      {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          name: "vitalik.eth", // Try to claim vitalik.eth with a different address
+        }),
+      },
+    );
+
+    expect(response.status).toBe(400);
+    const result = (await response.json()) as ProfileValidationResponse;
+    expect(result.success).toBe(false);
+    expect(result.errors?.name).toEqual({
+      type: ProfileValidationErrorType.ONCHAIN_NAME_NOT_OWNED,
+      message: "You don't own this on-chain name",
     });
   });
 });

@@ -1,7 +1,12 @@
 import { DeviceOS, PrismaClient } from "@prisma/client";
 import type { Request, Response } from "express";
 import { z } from "zod";
-import { validateProfileCreation } from "../../profiles/handlers/validate-profile";
+import {
+  validateOnChainName,
+  validateProfileRequiredFields,
+  validateProfileSchema,
+  validateUsernameUniqueness,
+} from "../../profiles/handlers/validate-profile";
 
 const prisma = new PrismaClient();
 
@@ -72,15 +77,39 @@ export async function createUser(
       throw error;
     }
 
-    const validationResult = await validateProfileCreation({
-      profileData: body.profile,
-    });
-    if (!validationResult.success) {
-      res.status(400).json({
-        success: false,
-        errors: validationResult.errors,
-      });
+    // Validate required fields
+    const requiredFieldsResult = validateProfileRequiredFields(body.profile);
+    if (!requiredFieldsResult.success) {
+      res.status(400).json(requiredFieldsResult);
       return;
+    }
+
+    // Validate profile schema
+    const schemaResult = validateProfileSchema(body.profile);
+    if (!schemaResult.success) {
+      res.status(400).json(schemaResult);
+      return;
+    }
+
+    // Validate username uniqueness
+    const uniquenessResult = await validateUsernameUniqueness(
+      body.profile.username,
+    );
+    if (!uniquenessResult.success) {
+      res.status(400).json(uniquenessResult);
+      return;
+    }
+
+    // If name contains a dot, validate on-chain name ownership
+    if (body.profile.name.includes(".")) {
+      const onChainResult = await validateOnChainName({
+        name: body.profile.name,
+        xmtpId: body.identity.xmtpId,
+      });
+      if (!onChainResult.success) {
+        res.status(400).json(onChainResult);
+        return;
+      }
     }
 
     // Create user

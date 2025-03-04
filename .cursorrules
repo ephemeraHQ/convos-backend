@@ -34,6 +34,11 @@ When asked to enter "Planner Mode" deeply reflect upon the changes being asked a
 - Follow RESTful principles for endpoint naming
 - Implement consistent error handling using AppError class
 
+### General
+
+- Use object parameter syntax for function arguments: `(args: { paramOne: string }) => {}` instead of `(paramOne: string) => {}` for better readability and extensibility
+- Keep functions focused and avoid optional parameters. If a function has many optional parameters, consider splitting it into multiple specialized functions for clearer intent and better maintainability
+
 ### TypeScript Patterns
 
 - Use Zod schemas for request validation and type inference
@@ -41,6 +46,7 @@ When asked to enter "Planner Mode" deeply reflect upon the changes being asked a
 - Keep types close to their usage (same directory)
 - Use type exports for shared types
 - Leverage path aliases (@/) for imports
+- Don't specifiy return type on funcitons. I prefer infering the value.
 
 ### Database & Prisma
 

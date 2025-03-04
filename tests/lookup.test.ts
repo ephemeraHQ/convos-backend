@@ -1,7 +1,7 @@
 import type { Server } from "http";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import express from "express";
-import lookupRouter from "@/api/v1/lookup";
+import lookupRouter, { type LookupResponse } from "@/api/v1/lookup";
 import { jsonMiddleware } from "@/middleware/json";
 
 const app = express();
@@ -22,32 +22,34 @@ afterAll(() => {
 
 describe("/lookup API", () => {
   /**
-   * Only uncomment this test when you want to test the actual lookup
-   * on an address.
+   * Test for the address lookup endpoint
+   * Using a known address that has social profiles
    */
-  // test("GET /lookup/address/:address returns social profiles", async () => {
-  //   const michaelWalletWithBasename =
-  //     "0x5222f538B29267a991B346EF61A2A2c389A9f320";
-  //   const shaneaddress = "0xa64af7f78de39a238ecd4fff7d6d410dbace2df0";
-  //   const response = await fetch(
-  //     `http://localhost:3006/lookup/address/${shaneaddress}`,
-  //   );
-  //   const data = await response.json();
-  //   expect(response.status).toBe(200);
-  //   console.log(data);
-  //   expect(data).toBeDefined();
-  // });
-
-  test("GET /lookup/address/:address returns 500 when THIRDWEB_SECRET_KEY is not set", async () => {
-    // Remove environment variable
-    delete process.env.THIRDWEB_SECRET_KEY;
-
+  test("GET /lookup/address/:address returns social profiles", async () => {
+    const testAddress = "0x1234567890123456789012345678901234567890";
     const response = await fetch(
-      "http://localhost:3006/lookup/address/0x123456789",
+      `http://localhost:3006/lookup/address/${testAddress}`,
     );
-    const data = (await response.json()) as { error: string };
+    const data = (await response.json()) as LookupResponse;
 
-    expect(response.status).toBe(500);
-    expect(data.error).toBe("Failed to lookup address");
+    expect(response.status).toBe(200);
+    expect(data.socialProfiles).toEqual([]);
+  });
+
+  test("GET /lookup/address/:address returns Vitalik's ENS social profiles", async () => {
+    const vitalikAddress = "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045";
+    const response = await fetch(
+      `http://localhost:3006/lookup/address/${vitalikAddress}`,
+    );
+    const data = (await response.json()) as LookupResponse;
+
+    expect(response.status).toBe(200);
+    expect(data.socialProfiles).toEqual([
+      {
+        type: "ens",
+        address: vitalikAddress,
+        name: "vitalik.eth",
+      },
+    ]);
   });
 });
