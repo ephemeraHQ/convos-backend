@@ -102,10 +102,10 @@ export async function createUser(
 
     // If name contains a dot, validate on-chain name ownership
     if (body.profile.name.includes(".")) {
-      const onChainResult = await validateOnChainName(
-        body.profile.name,
-        body.identity.xmtpId,
-      );
+      const onChainResult = await validateOnChainName({
+        name: body.profile.name,
+        xmtpId: body.identity.xmtpId,
+      });
       if (!onChainResult.success) {
         res.status(400).json(onChainResult);
         return;

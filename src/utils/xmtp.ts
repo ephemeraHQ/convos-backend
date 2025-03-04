@@ -6,12 +6,17 @@ import { createWalletClient, http, toBytes } from "viem";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import { mainnet } from "viem/chains";
 
-// Cache the XMTP client to avoid creating multiple instances
-let cachedXmtpClientCreationPromise: Promise<XmtpClient> | undefined;
-
 if (!process.env.XMTP_DB_ENCRYPTION_BASE_64_KEY) {
   throw new Error("Missing XMTP_DB_ENCRYPTION_BASE_64_KEY");
 }
+
+// Handle hex private key
+const encryptionKey = toBytes(
+  process.env.XMTP_DB_ENCRYPTION_BASE_64_KEY as `0x${string}`,
+);
+
+// Cache the XMTP client to avoid creating multiple instances
+let cachedXmtpClientCreationPromise: Promise<XmtpClient> | undefined;
 
 export const currentXmtpEnv = process.env.XMTP_ENV as
   | "local"
@@ -51,11 +56,6 @@ export async function getAddressesForInboxId(
     return [];
   }
 }
-
-// Get encryption key from environment variable
-const encryptionKey = new Uint8Array(
-  Buffer.from(process.env.XMTP_DB_ENCRYPTION_BASE_64_KEY, "base64"),
-);
 
 function createSigner(): XmtpSigner {
   const key = generatePrivateKey();

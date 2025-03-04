@@ -1,50 +1,11 @@
 import { Router, type Request, type Response } from "express";
-import { createThirdwebClient } from "thirdweb";
-import { getSocialProfiles } from "thirdweb/social";
-import { z } from "zod";
+import { getSocialProfilesForAddress } from "../../utils/thirdweb";
 
 const lookupRouter = Router();
-
-const ProfileType = z.enum([
-  "ens",
-  "farcaster",
-  "basename",
-  "lens",
-  "unstoppable-domains",
-]);
-type ProfileType = z.infer<typeof ProfileType>;
-
-// Note: We define our own schema instead of relying on thirdweb's types
-// as they may not be up to date with the actual API response.
-// This schema is based on actual API responses and excludes metadata
-// for simplicity and stability.
-const SocialProfileSchema = z
-  .object({
-    type: ProfileType,
-    address: z.string(),
-    name: z.string(),
-    bio: z.string().optional(),
-    avatar: z.string().optional(),
-  })
-  // removes additional properties that may be present in the API response
-  .strip();
-
-const SocialProfilesSchema = z.array(SocialProfileSchema);
 
 type GetAddressLookupRequestParams = {
   address: string;
 };
-
-const SocialProfilesResponseSchema = z.array(SocialProfileSchema);
-
-// Priority order for profile types
-const ProfileTypePriority: Record<ProfileType, number> = {
-  ens: 1,
-  farcaster: 2,
-  basename: 3,
-  lens: 4,
-  "unstoppable-domains": 5,
-} as const;
 
 // GET /lookup/address/:address - Lookup social profiles by address
 lookupRouter.get(
@@ -53,39 +14,12 @@ lookupRouter.get(
     try {
       const { address } = req.params;
 
-      if (!process.env.THIRDWEB_SECRET_KEY) {
-        throw new Error("THIRDWEB_SECRET_KEY is not set");
-      }
-
-      const client = createThirdwebClient({
-        secretKey: process.env.THIRDWEB_SECRET_KEY,
-      });
-
-      const profiles = await getSocialProfiles({
+      const socialProfiles = await getSocialProfilesForAddress({
         address,
-        client,
+        sortByPriority: true,
       });
 
-      const validatedProfiles = SocialProfilesResponseSchema.parse(profiles);
-      // Sort profiles by priority
-      const sortedProfiles = validatedProfiles.sort(
-        (a, b) => ProfileTypePriority[a.type] - ProfileTypePriority[b.type],
-      );
-
-      const validationResult = SocialProfilesSchema.safeParse(sortedProfiles);
-
-      if (!validationResult.success) {
-        console.error(
-          "Social profiles validation failed:",
-          validationResult.error,
-        );
-      }
-
-      res.json({
-        socialProfiles: validationResult.success
-          ? validationResult.data
-          : sortedProfiles,
-      });
+      res.json({ socialProfiles });
     } catch {
       res.status(500).json({
         error: "Failed to lookup address",

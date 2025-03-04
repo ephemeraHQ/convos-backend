@@ -1,7 +1,6 @@
 import { PrismaClient } from "@prisma/client";
-import { createThirdwebClient } from "thirdweb";
-import { getSocialProfiles } from "thirdweb/social";
 import { z } from "zod";
+import { checkNameOwnership } from "../../../../utils/thirdweb";
 import { getAddressesForInboxId } from "../../../../utils/xmtp";
 import { profileCreationSchema, profileUpdateSchema } from "../profile.schema";
 import type {
@@ -27,6 +26,67 @@ export type ProfileValidationError = {
 /**
  * Validates required fields in profile data
  */
+export function validateProfileRequiredFields(
+  profileData: ProfileValidationRequest,
+): ProfileValidationResponse {
+  const errors: ProfileValidationResponse["errors"] = {};
+
+  if (!profileData.name) {
+    errors.name = {
+      type: ProfileValidationErrorType.REQUIRED_FIELD,
+      message: "Name is required",
+    };
+  }
+
+  if (!profileData.username) {
+    errors.username = {
+      type: ProfileValidationErrorType.REQUIRED_FIELD,
+      message: "Username is required",
+    };
+  }
+
+  if (Object.keys(errors).length > 0) {
+    return {
+      success: false,
+      errors,
+    };
+  }
+
+  return { success: true };
+}
+
+/**
+ * Validates profile data against schema
+ */
+export function validateProfileSchema(
+  profileData: ProfileValidationRequest,
+): ProfileValidationResponse {
+  try {
+    profileCreationSchema.parse(profileData);
+    return { success: true };
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      return {
+        success: false,
+        errors: error.errors.reduce(
+          (acc, err) => ({
+            ...acc,
+            [err.path[0]]: {
+              type: ProfileValidationErrorType.INVALID_FORMAT,
+              message: err.message,
+            },
+          }),
+          {},
+        ),
+      };
+    }
+    throw error;
+  }
+}
+
+/**
+ * Checks if a username is already taken
+ */
 async function checkUsernameTaken(args: {
   username: string;
   excludeProfileId?: string;
@@ -42,7 +102,22 @@ async function checkUsernameTaken(args: {
     },
   });
 
-  if (existingProfile) {
+  return !!existingProfile;
+}
+
+/**
+ * Validates username uniqueness
+ */
+export async function validateUsernameUniqueness(
+  username: string,
+  excludeProfileId?: string,
+): Promise<ProfileValidationResponse> {
+  const isTaken = await checkUsernameTaken({
+    username,
+    excludeProfileId,
+  });
+
+  if (isTaken) {
     return {
       success: false,
       errors: {
@@ -60,19 +135,15 @@ async function checkUsernameTaken(args: {
 /**
  * Validates ownership of an on-chain name
  */
-export async function validateOnChainName(
-  name: string,
-  xmtpId: string,
-): Promise<ProfileValidationResponse> {
-  try {
-    // Validate against schema
-    profileCreationSchema.parse(args.profileData);
+export async function validateOnChainName(args: {
+  name: string;
+  xmtpId: string;
+}): Promise<ProfileValidationResponse> {
+  const { name, xmtpId } = args;
 
-    // Check for username uniqueness
-    if (
-      args.profileData.username &&
-      (await checkUsernameTaken({ username: args.profileData.username }))
-    ) {
+  try {
+    const addresses = await getAddressesForInboxId(xmtpId);
+    if (addresses.length === 0) {
       return {
         success: false,
         errors: {
@@ -84,37 +155,11 @@ export async function validateOnChainName(
       };
     }
 
-    // Initialize ThirdWeb client
-    if (!process.env.THIRDWEB_SECRET_KEY) {
-      throw new Error("THIRDWEB_SECRET_KEY is not set");
-    }
-
-    const thirdwebClient = createThirdwebClient({
-      secretKey: process.env.THIRDWEB_SECRET_KEY,
-    });
-
-    // Check each address for social profiles
+    // Check each address for name ownership
     for (const address of addresses) {
-      try {
-        const profiles = await getSocialProfiles({
-          address,
-          client: thirdwebClient,
-        });
-
-        // Check if any of the social profiles match the name
-        const hasMatchingName = profiles.some(
-          (profile) =>
-            profile.name && profile.name.toLowerCase() === name.toLowerCase(),
-        );
-        if (hasMatchingName) {
-          return { success: true };
-        }
-      } catch (error) {
-        console.error(
-          `Error fetching social profiles for address ${address}:`,
-          error,
-        );
-        continue;
+      const isOwner = await checkNameOwnership({ address, name });
+      if (isOwner) {
+        return { success: true };
       }
     }
 
@@ -152,29 +197,34 @@ export async function validateProfileUpdate(args: {
     // Validate against schema
     try {
       profileUpdateSchema.parse(args.profileData);
-      console.log("Schema validation passed");
     } catch (parseError) {
-      console.log("Schema validation failed:", parseError);
+      if (parseError instanceof z.ZodError) {
+        return {
+          success: false,
+          errors: parseError.errors.reduce(
+            (acc, err) => ({
+              ...acc,
+              [err.path[0]]: {
+                type: ProfileValidationErrorType.INVALID_FORMAT,
+                message: err.message,
+              },
+            }),
+            {},
+          ),
+        };
+      }
       throw parseError;
     }
 
     // Check for username uniqueness if username is being updated
-    if (
-      args.profileData.username &&
-      (await checkUsernameTaken({
-        username: args.profileData.username,
-        excludeProfileId: args.currentProfileId,
-      }))
-    ) {
-      return {
-        success: false,
-        errors: {
-          username: {
-            type: ProfileValidationErrorType.USERNAME_TAKEN,
-            message: "This username is already taken",
-          },
-        },
-      };
+    if (args.profileData.username) {
+      const uniquenessResult = await validateUsernameUniqueness(
+        args.profileData.username,
+        args.currentProfileId,
+      );
+      if (!uniquenessResult.success) {
+        return uniquenessResult;
+      }
     }
 
     return {
@@ -182,21 +232,7 @@ export async function validateProfileUpdate(args: {
       message: "Profile information is valid",
     };
   } catch (error) {
-    if (error instanceof z.ZodError) {
-      return {
-        success: false,
-        errors: error.errors.reduce(
-          (acc, err) => ({
-            ...acc,
-            [err.path[0]]: {
-              type: ProfileValidationErrorType.INVALID_FORMAT,
-              message: err.message,
-            },
-          }),
-          {},
-        ),
-      };
-    }
+    console.error("Error validating profile update:", error);
     throw error;
   }
 }

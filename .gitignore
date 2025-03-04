@@ -57,3 +57,5 @@ build
 
 # Cursor
 .specstory/*
+
+xmtp-local-*

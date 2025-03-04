@@ -6,6 +6,7 @@ import type { ProfileValidationResponse } from "../profile.types";
 import type { GetProfileRequestParams } from "../profiles.types";
 import {
   ProfileValidationErrorType,
+  validateOnChainName,
   validateProfileUpdate,
 } from "./validate-profile";
 
@@ -68,6 +69,17 @@ export async function updateProfile(
           : 400;
       res.status(status).json(validationResult);
       return;
+    }
+
+    if (preprocessedData.name?.includes(".")) {
+      const onChainResult = await validateOnChainName({
+        name: preprocessedData.name,
+        xmtpId,
+      });
+      if (!onChainResult.success) {
+        res.status(400).json(onChainResult);
+        return;
+      }
     }
 
     // Update the profile
