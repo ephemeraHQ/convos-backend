@@ -10,9 +10,10 @@ if (!process.env.XMTP_DB_ENCRYPTION_BASE_64_KEY) {
   throw new Error("Missing XMTP_DB_ENCRYPTION_BASE_64_KEY");
 }
 
-// Handle hex private key
-const encryptionKey = toBytes(
-  process.env.XMTP_DB_ENCRYPTION_BASE_64_KEY as `0x${string}`,
+// Generate random bytes for encryption key if none provided
+const encryptionKey = Buffer.from(
+  process.env.XMTP_DB_ENCRYPTION_BASE_64_KEY,
+  "base64",
 );
 
 // Cache the XMTP client to avoid creating multiple instances
