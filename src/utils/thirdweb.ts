@@ -2,13 +2,9 @@ import { createThirdwebClient } from "thirdweb";
 import { getSocialProfiles } from "thirdweb/social";
 import { z } from "zod";
 
-const _ProfileType = z.enum([
-  "ens",
-  "farcaster",
-  "basename",
-  "lens",
-  "unstoppable-domains",
-]);
+if (!process.env.THIRDWEB_SECRET_KEY) {
+  throw new Error("THIRDWEB_SECRET_KEY is not set");
+}
 
 // Note: We define our own schema instead of relying on thirdweb's types
 // as they may not be up to date with the actual API response.
@@ -28,13 +24,10 @@ const SocialProfileSchema = z
   })
   .strip();
 
-export type SocialProfile = z.infer<typeof SocialProfileSchema>;
+type SocialProfileType = z.infer<typeof SocialProfileSchema.shape.type>;
 
 // Priority order for profile types
-export const ProfileTypePriority: Record<
-  z.infer<typeof _ProfileType>,
-  number
-> = {
+const ProfileTypePriority: Record<SocialProfileType, number> = {
   ens: 1,
   farcaster: 2,
   basename: 3,
@@ -42,24 +35,9 @@ export const ProfileTypePriority: Record<
   "unstoppable-domains": 5,
 } as const;
 
-let thirdwebClient: ReturnType<typeof createThirdwebClient> | null = null;
-
-/**
- * Gets or creates a ThirdWeb client instance
- */
-function getThirdwebClient() {
-  if (!process.env.THIRDWEB_SECRET_KEY) {
-    throw new Error("THIRDWEB_SECRET_KEY is not set");
-  }
-
-  if (!thirdwebClient) {
-    thirdwebClient = createThirdwebClient({
-      secretKey: process.env.THIRDWEB_SECRET_KEY,
-    });
-  }
-
-  return thirdwebClient;
-}
+const thirdwebClient = createThirdwebClient({
+  secretKey: process.env.THIRDWEB_SECRET_KEY,
+});
 
 /**
  * Fetches and validates social profiles for an address
@@ -67,13 +45,11 @@ function getThirdwebClient() {
 export async function getSocialProfilesForAddress(args: {
   address: string;
   sortByPriority?: boolean;
-}): Promise<SocialProfile[]> {
-  const client = getThirdwebClient();
-
+}) {
   try {
     const profiles = await getSocialProfiles({
       address: args.address,
-      client,
+      client: thirdwebClient,
     });
 
     const validatedProfiles = z.array(SocialProfileSchema).parse(profiles);
