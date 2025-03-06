@@ -26,6 +26,11 @@ services:
       - db
       - mlsdb
       - validation
+    healthcheck:
+      test: ["CMD-SHELL", "sleep 5 && exit 0"]
+      interval: 10s
+      timeout: 30s
+      retries: 3
 
   validation:
     image: ghcr.io/xmtp/mls-validation-service:main
@@ -50,8 +55,10 @@ services:
     image: xmtp/notifications-server:latest
     platform: linux/amd64
     depends_on:
-      - node
-      - notification_db
+      node:
+        condition: service_healthy
+      notification_db:
+        condition: service_started
     command:
       - --xmtp-listener
       - --db-connection-string=postgres://postgres:notifications@notification_db:5432/postgres?sslmode=disable
