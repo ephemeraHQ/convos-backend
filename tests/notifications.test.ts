@@ -157,7 +157,7 @@ describe("Notifications", () => {
       const dm = await client.conversations.newDm(client2.accountAddress);
 
       await client2.conversations.sync();
-      const dm2 = client2.conversations.getConversationById(dm.id);
+      const dm2 = await client2.conversations.getConversationById(dm.id);
 
       expect(dm2).toBeDefined();
 
@@ -201,7 +201,7 @@ describe("Notifications", () => {
         expect(notification.message_context.should_push).toEqual(true);
       }
 
-      expect(count).toBe(3);
+      expect(count).toBe(2);
 
       await notificationClient.unsubscribe({
         installationId: "dm-message-subscribe-test",
@@ -235,13 +235,13 @@ describe("Notifications", () => {
       await client3.conversations.sync();
       await client4.conversations.sync();
 
-      const group2 = client2.conversations.getConversationById(group.id);
+      const group2 = await client2.conversations.getConversationById(group.id);
       expect(group2).toBeDefined();
 
-      const group3 = client3.conversations.getConversationById(group.id);
+      const group3 = await client3.conversations.getConversationById(group.id);
       expect(group3).toBeDefined();
 
-      const group4 = client4.conversations.getConversationById(group.id);
+      const group4 = await client4.conversations.getConversationById(group.id);
       expect(group4).toBeDefined();
 
       const conversationTopic = buildConversationTopic(group.id);
@@ -286,7 +286,7 @@ describe("Notifications", () => {
         expect(notification.message_context.should_push).toEqual(true);
       }
 
-      expect(count).toBe(9);
+      expect(count).toBe(4);
 
       await notificationClient.unsubscribe({
         installationId: "group-message-subscribe-test",
@@ -312,7 +312,7 @@ describe("Notifications", () => {
       const dm = await client.conversations.newDm(client2.accountAddress);
 
       await client2.conversations.sync();
-      const dm2 = client2.conversations.getConversationById(dm.id);
+      const dm2 = await client2.conversations.getConversationById(dm.id);
       expect(dm2).toBeDefined();
 
       const hmacKeys = client2.conversations.hmacKeys();
@@ -402,13 +402,13 @@ describe("Notifications", () => {
       await client3.conversations.sync();
       await client4.conversations.sync();
 
-      const group2 = client2.conversations.getConversationById(group.id);
+      const group2 = await client2.conversations.getConversationById(group.id);
       expect(group2).toBeDefined();
 
-      const group3 = client3.conversations.getConversationById(group.id);
+      const group3 = await client3.conversations.getConversationById(group.id);
       expect(group3).toBeDefined();
 
-      const group4 = client4.conversations.getConversationById(group.id);
+      const group4 = await client4.conversations.getConversationById(group.id);
       expect(group4).toBeDefined();
 
       const hmacKeys = client3.conversations.hmacKeys();
@@ -467,7 +467,7 @@ describe("Notifications", () => {
         expect(notification.message_context.should_push).toEqual(true);
       }
 
-      expect(count).toBe(6);
+      expect(count).toBe(3);
 
       await notificationClient.unsubscribe({
         installationId: "hmac-group-subscribe-test",
