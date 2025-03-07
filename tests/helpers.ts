@@ -1,7 +1,7 @@
 import { getRandomValues } from "node:crypto";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { Client } from "@xmtp/node-sdk";
+import { Client, type Signer } from "@xmtp/node-sdk";
 import * as jose from "jose";
 import { createWalletClient, http, toBytes, toHex } from "viem";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
@@ -24,8 +24,9 @@ export const createUser = () => {
   };
 };
 
-export const createSigner = (user: User) => {
+export const createSigner = (user: User): Signer => {
   return {
+    walletType: "EOA",
     getAddress: () => user.account.address,
     signMessage: async (message: string) => {
       const signature = await user.wallet.signMessage({

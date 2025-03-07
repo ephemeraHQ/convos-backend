@@ -68,6 +68,7 @@ function createSigner(): XmtpSigner {
   });
 
   return {
+    walletType: "EOA",
     getAddress: () => account.address,
     signMessage: async (message: string) => {
       const signature = await wallet.signMessage({ message });
