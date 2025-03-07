@@ -19,8 +19,7 @@ jobs:
           bun-version-file: ".bun-version"
       - run: bun install
       - run: bun check
-      - run: ./dev/convos-db/up
-      - run: ./dev/xmtp/up
+      - run: ./dev/up
       - run: sleep 5s
       - run: bun migrate:dev
         env:
@@ -32,3 +31,4 @@ jobs:
           SCALEWAY_ACCESS_KEY_ID: ${{ secrets.SCALEWAY_ACCESS_KEY_ID }}
           SCALEWAY_SECRET_KEY_ID: ${{ secrets.SCALEWAY_SECRET_KEY_ID }}
           SCALEWAY_ATTACHMENTS_BUCKET: ${{ secrets.SCALEWAY_ATTACHMENTS_BUCKET }}
+          NOTIFICATION_SERVER_URL: ${{ secrets.NOTIFICATION_SERVER_URL }}

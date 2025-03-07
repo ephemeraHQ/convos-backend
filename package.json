@@ -5,6 +5,7 @@
   "license": "MIT",
   "type": "module",
   "scripts": {
+    "buf:generate": "buf generate",
     "build": "bun build src/index.ts --outfile index.js --target bun --external @xmtp/node-bindings",
     "check": "bun typecheck && bun format:check && bun lint",
     "clean": "bun clean:dbs && rimraf node_modules",
@@ -21,8 +22,11 @@
   "dependencies": {
     "@aws-sdk/client-s3": "^3.750.0",
     "@aws-sdk/s3-request-presigner": "^3.750.0",
+    "@bufbuild/protobuf": "^2.2.3",
+    "@connectrpc/connect": "^2.0.1",
+    "@connectrpc/connect-node": "^2.0.1",
     "@prisma/client": "^6.3.1",
-    "@xmtp/node-sdk": "^0.0.42",
+    "@xmtp/node-sdk": "^0.0.47",
     "cors": "^2.8.5",
     "express": "^5.0.1",
     "express-rate-limit": "^7.5.0",
@@ -32,11 +36,14 @@
     "mime-types": "^2.1.35",
     "prisma": "^6.3.1",
     "thirdweb": "^5.88.2",
+    "uint8array-extras": "^1.4.0",
     "uuid": "^11.0.5",
     "viem": "^2.23.2",
     "zod": "^3.24.1"
   },
   "devDependencies": {
+    "@bufbuild/buf": "^1.50.0",
+    "@bufbuild/protoc-gen-es": "^2.2.3",
     "@eslint/compat": "^1.2.5",
     "@eslint/js": "^9.18.0",
     "@ianvs/prettier-plugin-sort-imports": "^4.4.1",

@@ -82,8 +82,7 @@ authenticateRouter.post("/", async (req: Request, res: Response) => {
       .sign(new TextEncoder().encode(process.env.JWT_SECRET));
 
     res.json({ token: jwt });
-  } catch (error) {
-    console.log("error:", error);
+  } catch {
     res.status(500).json({ error: "Failed to create authentication token" });
   }
 });
