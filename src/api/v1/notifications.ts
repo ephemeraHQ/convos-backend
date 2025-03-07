@@ -41,7 +41,6 @@ notificationsRouter.post(
         validUntil: Number(response.validUntil),
       });
     } catch (error) {
-      console.error(error);
       if (error instanceof z.ZodError) {
         res.status(400).json({ error: "Invalid request body" });
         return;

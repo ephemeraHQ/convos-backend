@@ -103,7 +103,7 @@ describe("/notifications API", () => {
     expect(response.status).toBe(200);
   });
 
-  test.only("POST /notifications/subscribe handles subscription with metadata", async () => {
+  test("POST /notifications/subscribe handles subscription with metadata", async () => {
     const response = await fetch(
       "http://localhost:3008/notifications/subscribe",
       {
