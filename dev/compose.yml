@@ -70,3 +70,5 @@ services:
       - --http-delivery-address=http://host.docker.internal:8081
     ports:
       - 8080:8080
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
