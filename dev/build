@@ -1,0 +1,6 @@
+#!/bin/bash
+set -eou pipefail
+
+DATABASE_URL=postgres://postgres:convos@localhost:5432/postgres?sslmode=disable
+
+docker build --build-arg DATABASE_URL=${DATABASE_URL} --network=host -t "convos-api-service" .
