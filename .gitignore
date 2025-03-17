@@ -38,9 +38,6 @@ logs
 *.sw?
 
 # build artifacts
-lib
-dist
-build
 /index.js
 
 # yarn
@@ -58,4 +55,5 @@ build
 # Cursor
 .specstory/*
 
-xmtp-local-*
+# local db files
+*.db3*
