@@ -15,7 +15,7 @@ COPY package.json bun.lock tsconfig.json /temp/prod/
 RUN mkdir -p /temp/prod/src
 COPY src /temp/prod/src
 RUN mkdir -p /temp/prod/prisma
-COPY prisma/schema.prisma /temp/prod/prisma/schema.prisma
+COPY prisma /temp/prod/prisma
 RUN cd /temp/prod && bun install --frozen-lockfile --production
 
 ENV NODE_ENV=production
@@ -23,7 +23,6 @@ ENV NODE_ENV=production
 # generate Prisma client
 RUN cd /temp/prod && bun prisma generate
 
-# copy production dependencies and source code into final image
 FROM base AS release
 
 # install bun
