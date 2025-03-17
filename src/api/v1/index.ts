@@ -4,6 +4,7 @@ import authenticateRouter from "@/api/v1/authenticate";
 import metadataRouter from "@/api/v1/metadata";
 import notificationsRouter from "@/api/v1/notifications";
 import profilesRouter from "@/api/v1/profiles/profiles.router";
+import publicProfilesRouter from "@/api/v1/profiles/public.router";
 import { authMiddleware } from "@/middleware/auth";
 import attachmentsRouter from "./attachments";
 import devicesRouter from "./devices";
@@ -28,14 +29,17 @@ v1Router.use("/devices", authMiddleware, devicesRouter);
 // mount identity routes under /identities
 v1Router.use("/identities", authMiddleware, identitiesRouter);
 
-// mount profile routes under /profiles
-v1Router.use("/profiles", authMiddleware, profilesRouter);
-
 // mount metadata routes under /metadata
 v1Router.use("/metadata", authMiddleware, metadataRouter);
 
 // mount lookup routes under /lookup
 v1Router.use("/lookup", authMiddleware, lookupRouter);
+
+// mount public profile routes under /profiles/public
+v1Router.use("/profiles/public", publicProfilesRouter);
+
+// mount authenticated profile routes under /profiles
+v1Router.use("/profiles", authMiddleware, profilesRouter);
 
 // mount attachments routes under /attachments
 v1Router.use("/attachments", authMiddleware, attachmentsRouter);
