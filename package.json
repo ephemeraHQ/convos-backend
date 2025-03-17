@@ -13,6 +13,7 @@
     "dev": "bun --watch run src/index.ts",
     "format": "prettier -w .",
     "format:check": "prettier -c .",
+    "generate:key": "bun run dev/scripts/generateDbKey.ts",
     "lint": "eslint .",
     "migrate:deploy": "prisma migrate deploy",
     "migrate:dev": "prisma migrate dev",

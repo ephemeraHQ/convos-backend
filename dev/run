@@ -1,0 +1,4 @@
+#!/bin/bash
+set -eou pipefail
+
+docker run --env-file .env -d -p 4000:4000 convos-api-service

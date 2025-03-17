@@ -1,5 +1,3 @@
-# use the official Bun image
-# see all versions at https://hub.docker.com/r/oven/bun/tags
 FROM ubuntu:22.04 AS base
 WORKDIR /usr/src/app
 
@@ -7,6 +5,7 @@ WORKDIR /usr/src/app
 # this will cache them and speed up future builds
 FROM base AS install
 
+# install bun
 RUN apt-get update && apt-get install -y curl unzip
 RUN curl -fsSL https://bun.sh/install | bash -s "bun-v1.2.2" && \
   ln -s $HOME/.bun/bin/bun /usr/local/bin/bun
@@ -27,10 +26,19 @@ RUN cd /temp/prod && bun prisma generate
 # copy production dependencies and source code into final image
 FROM base AS release
 
+# install bun
 RUN apt-get update && apt-get install -y curl unzip
 RUN curl -fsSL https://bun.sh/install | bash -s "bun-v1.2.2" && \
   ln -s $HOME/.bun/bin/bun /usr/local/bin/bun
+
+# copy production dependencies and source into release image
 COPY --from=install /temp/prod .
 
-# run the app
+ARG DATABASE_URL
+ENV DATABASE_URL=${DATABASE_URL}
+
+# deploy migrations
+RUN bun prisma migrate deploy
+
+# run the app from source
 ENTRYPOINT [ "bun", "start" ]
