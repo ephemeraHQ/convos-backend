@@ -1,6 +1,6 @@
 import { PrismaClient } from "@prisma/client";
 import type { Request, Response } from "express";
-import type { ProfileRequestResult } from "../profiles.types";
+import type { PublicProfileResult } from "../profiles.types";
 
 const prisma = new PrismaClient();
 
@@ -31,28 +31,26 @@ export async function getPublicProfile(
         deviceIdentity: {
           select: {
             xmtpId: true,
-            privyAddress: true,
           },
         },
       },
     });
 
-    if (!profile) {
+    if (!profile || !profile.deviceIdentity.xmtpId) {
       res.status(404).json({ error: "Profile not found" });
       return;
     }
 
-    const profileResult: ProfileRequestResult = {
-      id: profile.id,
+    // Return only public profile data
+    const publicProfile: PublicProfileResult = {
       name: profile.name,
       username: profile.username,
       description: profile.description,
       avatar: profile.avatar,
       xmtpId: profile.deviceIdentity.xmtpId,
-      privyAddress: profile.deviceIdentity.privyAddress,
     };
 
-    res.json(profileResult);
+    res.json(publicProfile);
   } catch {
     res.status(500).json({ error: "Failed to fetch profile" });
   }

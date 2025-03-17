@@ -9,3 +9,10 @@ export type ProfileRequestResult = Pick<
   "id" | "name" | "username" | "description" | "avatar"
 > &
   Pick<DeviceIdentity, "xmtpId" | "privyAddress">;
+
+// Public profile data exposed via API
+export type PublicProfileResult = Pick<
+  Profile,
+  "name" | "username" | "description" | "avatar"
+> &
+  Pick<DeviceIdentity, "xmtpId">;
