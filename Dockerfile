@@ -33,11 +33,5 @@ RUN curl -fsSL https://bun.sh/install | bash -s "bun-v1.2.2" && \
 # copy production dependencies and source into release image
 COPY --from=install /temp/prod .
 
-ARG DATABASE_URL
-ENV DATABASE_URL=${DATABASE_URL}
-
-# deploy migrations
-RUN bun prisma migrate deploy
-
 # run the app from source
 ENTRYPOINT [ "bun", "start" ]
