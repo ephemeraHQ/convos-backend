@@ -10,10 +10,16 @@ import {
 } from "bun:test";
 import express from "express";
 import devicesRouter from "@/api/v1/devices";
+import type {
+  CreatedReturnedUser,
+  CreateUserRequestBody,
+} from "@/api/v1/users/handlers/create-user";
+import usersRouter from "@/api/v1/users/users.router";
 import { jsonMiddleware } from "@/middleware/json";
 
 const app = express();
 app.use(jsonMiddleware);
+app.use("/users", usersRouter);
 app.use("/devices", devicesRouter);
 
 const prisma = new PrismaClient();
@@ -43,14 +49,34 @@ beforeEach(async () => {
 
 describe("/devices API", () => {
   test("POST /devices/:userId creates a new device", async () => {
-    // Create test user first
-    const userId = "test-user-id";
-    await prisma.user.create({
-      data: {
-        id: userId,
-        privyUserId: "test-devices-privy-user-id",
+    // Create test user first via API
+    const createUserBody: CreateUserRequestBody = {
+      privyUserId: "test-devices-privy-user-id",
+      device: {
+        os: DeviceOS.ios,
+        name: "Test Initial Device",
       },
+      identity: {
+        privyAddress: "test-privy-address",
+        xmtpId: "test-xmtp-id",
+      },
+      profile: {
+        name: "Test User",
+        username: "test-user",
+        description: "Test bio",
+      },
+    };
+
+    const createUserResponse = await fetch("http://localhost:3002/users", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(createUserBody),
     });
+    const createdUser =
+      (await createUserResponse.json()) as CreatedReturnedUser;
+    const userId = createdUser.id;
 
     const response = await fetch(`http://localhost:3002/devices/${userId}`, {
       method: "POST",
@@ -75,14 +101,34 @@ describe("/devices API", () => {
   });
 
   test("GET /devices/:userId/:deviceId returns 404 for non-existent device", async () => {
-    // Create test user first
-    const userId = "test-user-id";
-    await prisma.user.create({
-      data: {
-        id: userId,
-        privyUserId: "test-devices-privy-user-id",
+    // Create test user first via API
+    const createUserBody: CreateUserRequestBody = {
+      privyUserId: "test-devices-privy-user-id-2",
+      device: {
+        os: DeviceOS.ios,
+        name: "Test Initial Device",
       },
+      identity: {
+        privyAddress: "test-privy-address-2",
+        xmtpId: "test-xmtp-id-2",
+      },
+      profile: {
+        name: "Test User 2",
+        username: "test-user-2",
+        description: "Test bio 2",
+      },
+    };
+
+    const createUserResponse = await fetch("http://localhost:3002/users", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(createUserBody),
     });
+    const createdUser =
+      (await createUserResponse.json()) as CreatedReturnedUser;
+    const userId = createdUser.id;
 
     const response = await fetch(
       `http://localhost:3002/devices/${userId}/nonexistent-id`,
@@ -94,14 +140,34 @@ describe("/devices API", () => {
   });
 
   test("GET /devices/:userId/:deviceId returns device when exists", async () => {
-    // Create test user first
-    const userId = "test-user-id";
-    await prisma.user.create({
-      data: {
-        id: userId,
-        privyUserId: "test-devices-privy-user-id",
+    // Create test user first via API
+    const createUserBody: CreateUserRequestBody = {
+      privyUserId: "test-devices-privy-user-id-3",
+      device: {
+        os: DeviceOS.ios,
+        name: "Test Initial Device",
       },
+      identity: {
+        privyAddress: "test-privy-address-3",
+        xmtpId: "test-xmtp-id-3",
+      },
+      profile: {
+        name: "Test User 3",
+        username: "test-user-3",
+        description: "Test bio 3",
+      },
+    };
+
+    const createUserResponse = await fetch("http://localhost:3002/users", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(createUserBody),
     });
+    const createdUser =
+      (await createUserResponse.json()) as CreatedReturnedUser;
+    const userId = createdUser.id;
 
     // create a device
     const createResponse = await fetch(
@@ -134,14 +200,34 @@ describe("/devices API", () => {
   });
 
   test("GET /devices/:userId returns all devices for a user", async () => {
-    // Create test user first
-    const userId = "test-user-id";
-    await prisma.user.create({
-      data: {
-        id: userId,
-        privyUserId: "test-devices-privy-user-id",
+    // Create test user first via API
+    const createUserBody: CreateUserRequestBody = {
+      privyUserId: "test-devices-privy-user-id-4",
+      device: {
+        os: DeviceOS.ios,
+        name: "Test Initial Device",
       },
+      identity: {
+        privyAddress: "test-privy-address-4",
+        xmtpId: "test-xmtp-id-4",
+      },
+      profile: {
+        name: "Test User 4",
+        username: "test-user-4",
+        description: "Test bio 4",
+      },
+    };
+
+    const createUserResponse = await fetch("http://localhost:3002/users", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(createUserBody),
     });
+    const createdUser =
+      (await createUserResponse.json()) as CreatedReturnedUser;
+    const userId = createdUser.id;
 
     // create two devices
     await fetch(`http://localhost:3002/devices/${userId}`, {
@@ -170,20 +256,41 @@ describe("/devices API", () => {
     const devices = (await response.json()) as Device[];
 
     expect(response.status).toBe(200);
-    expect(devices).toHaveLength(2);
+    expect(devices).toHaveLength(3);
     expect(devices.map((d) => d.name)).toContain("Device 1");
     expect(devices.map((d) => d.name)).toContain("Device 2");
+    expect(devices.map((d) => d.name)).toContain("Test Initial Device");
   });
 
   test("PUT /devices/:userId/:deviceId updates device", async () => {
-    // Create test user first
-    const userId = "test-user-id";
-    await prisma.user.create({
-      data: {
-        id: userId,
-        privyUserId: "test-devices-privy-user-id",
+    // Create test user first via API
+    const createUserBody: CreateUserRequestBody = {
+      privyUserId: "test-devices-privy-user-id-5",
+      device: {
+        os: DeviceOS.ios,
+        name: "Test Initial Device",
       },
+      identity: {
+        privyAddress: "test-privy-address-5",
+        xmtpId: "test-xmtp-id-5",
+      },
+      profile: {
+        name: "Test User 5",
+        username: "test-user-5",
+        description: "Test bio 5",
+      },
+    };
+
+    const createUserResponse = await fetch("http://localhost:3002/users", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(createUserBody),
     });
+    const createdUser =
+      (await createUserResponse.json()) as CreatedReturnedUser;
+    const userId = createdUser.id;
 
     // create a device
     const createResponse = await fetch(
@@ -227,14 +334,34 @@ describe("/devices API", () => {
   });
 
   test("POST /devices/:userId validates request body", async () => {
-    // Create test user first
-    const userId = "test-user-id";
-    await prisma.user.create({
-      data: {
-        id: userId,
-        privyUserId: "test-devices-privy-user-id",
+    // Create test user first via API
+    const createUserBody: CreateUserRequestBody = {
+      privyUserId: "test-devices-privy-user-id-6",
+      device: {
+        os: DeviceOS.ios,
+        name: "Test Initial Device",
       },
+      identity: {
+        privyAddress: "test-privy-address-6",
+        xmtpId: "test-xmtp-id-6",
+      },
+      profile: {
+        name: "Test User 6",
+        username: "test-user-6",
+        description: "Test bio 6",
+      },
+    };
+
+    const createUserResponse = await fetch("http://localhost:3002/users", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(createUserBody),
     });
+    const createdUser =
+      (await createUserResponse.json()) as CreatedReturnedUser;
+    const userId = createdUser.id;
 
     const response = await fetch(`http://localhost:3002/devices/${userId}`, {
       method: "POST",

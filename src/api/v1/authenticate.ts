@@ -12,7 +12,6 @@ const xmtpEnv = (process.env.XMTP_ENV || "dev") as XmtpEnv;
 
 export type JWTPayload = {
   inboxId: string;
-  deviceId: string | undefined; // For now undefined until everyone updated their app
 };
 
 export type AuthenticateResponse = {
@@ -33,7 +32,6 @@ authenticateRouter.post("/", async (req: Request, res: Response) => {
     const appCheckToken = req.header("X-Firebase-AppCheck");
     const xmtpInstallationId = req.header("X-XMTP-InstallationId");
     const xmtpId = req.header("X-XMTP-InboxId");
-    const deviceId = req.header("X-XMTP-DeviceId");
     const xmtpSignature = req.header("X-XMTP-Signature");
 
     // make sure all headers are present
@@ -81,7 +79,6 @@ authenticateRouter.post("/", async (req: Request, res: Response) => {
     // Create JWT token
     const jwt = await new jose.SignJWT({
       inboxId: xmtpId,
-      deviceId,
     } satisfies JWTPayload)
       .setProtectedHeader({ alg: "HS256" })
       .setIssuedAt()
