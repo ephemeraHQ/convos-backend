@@ -19,29 +19,12 @@ app.use("/devices", devicesRouter);
 const prisma = new PrismaClient();
 let server: Server;
 
-const testUserId = "test-user-id";
-
-beforeAll(async () => {
+beforeAll(() => {
   // start the server on a test port
   server = app.listen(3002);
-
-  // Create a test user before each test
-  await prisma.user.create({
-    data: {
-      id: testUserId,
-      privyUserId: "test-devices-privy-user-id",
-    },
-  });
 });
 
 afterAll(async () => {
-  await prisma.identitiesOnDevice.deleteMany();
-  await prisma.device.deleteMany();
-  await prisma.user.delete({
-    where: {
-      id: testUserId,
-    },
-  });
   // disconnect from the database
   await prisma.$disconnect();
   // close the server
@@ -50,26 +33,36 @@ afterAll(async () => {
 
 beforeEach(async () => {
   // clean up the database before each test
+  await prisma.profile.deleteMany();
   await prisma.identitiesOnDevice.deleteMany();
+  await prisma.conversationMetadata.deleteMany();
+  await prisma.deviceIdentity.deleteMany();
   await prisma.device.deleteMany();
+  await prisma.user.deleteMany();
 });
 
 describe("/devices API", () => {
   test("POST /devices/:userId creates a new device", async () => {
-    const response = await fetch(
-      `http://localhost:3002/devices/${testUserId}`,
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          name: "Test Device",
-          os: DeviceOS.ios,
-          pushToken: "test-push-token",
-        }),
+    // Create test user first
+    const userId = "test-user-id";
+    await prisma.user.create({
+      data: {
+        id: userId,
+        privyUserId: "test-devices-privy-user-id",
       },
-    );
+    });
+
+    const response = await fetch(`http://localhost:3002/devices/${userId}`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        name: "Test Device",
+        os: DeviceOS.ios,
+        pushToken: "test-push-token",
+      }),
+    });
 
     const device = (await response.json()) as Device;
 
@@ -77,13 +70,22 @@ describe("/devices API", () => {
     expect(device.name).toBe("Test Device");
     expect(device.os).toBe(DeviceOS.ios);
     expect(device.pushToken).toBe("test-push-token");
-    expect(device.userId).toBe(testUserId);
+    expect(device.userId).toBe(userId);
     expect(device.id).toBeDefined();
   });
 
   test("GET /devices/:userId/:deviceId returns 404 for non-existent device", async () => {
+    // Create test user first
+    const userId = "test-user-id";
+    await prisma.user.create({
+      data: {
+        id: userId,
+        privyUserId: "test-devices-privy-user-id",
+      },
+    });
+
     const response = await fetch(
-      `http://localhost:3002/devices/${testUserId}/nonexistent-id`,
+      `http://localhost:3002/devices/${userId}/nonexistent-id`,
     );
     const data = (await response.json()) as { error: string };
 
@@ -92,9 +94,18 @@ describe("/devices API", () => {
   });
 
   test("GET /devices/:userId/:deviceId returns device when exists", async () => {
+    // Create test user first
+    const userId = "test-user-id";
+    await prisma.user.create({
+      data: {
+        id: userId,
+        privyUserId: "test-devices-privy-user-id",
+      },
+    });
+
     // create a device
     const createResponse = await fetch(
-      `http://localhost:3002/devices/${testUserId}`,
+      `http://localhost:3002/devices/${userId}`,
       {
         method: "POST",
         headers: {
@@ -111,7 +122,7 @@ describe("/devices API", () => {
 
     // fetch the device
     const response = await fetch(
-      `http://localhost:3002/devices/${testUserId}/${createdDevice.id}`,
+      `http://localhost:3002/devices/${userId}/${createdDevice.id}`,
     );
     const device = (await response.json()) as Device;
 
@@ -123,8 +134,17 @@ describe("/devices API", () => {
   });
 
   test("GET /devices/:userId returns all devices for a user", async () => {
+    // Create test user first
+    const userId = "test-user-id";
+    await prisma.user.create({
+      data: {
+        id: userId,
+        privyUserId: "test-devices-privy-user-id",
+      },
+    });
+
     // create two devices
-    await fetch(`http://localhost:3002/devices/${testUserId}`, {
+    await fetch(`http://localhost:3002/devices/${userId}`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -134,7 +154,7 @@ describe("/devices API", () => {
         os: DeviceOS.ios,
       }),
     });
-    await fetch(`http://localhost:3002/devices/${testUserId}`, {
+    await fetch(`http://localhost:3002/devices/${userId}`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -146,7 +166,7 @@ describe("/devices API", () => {
     });
 
     // fetch all devices
-    const response = await fetch(`http://localhost:3002/devices/${testUserId}`);
+    const response = await fetch(`http://localhost:3002/devices/${userId}`);
     const devices = (await response.json()) as Device[];
 
     expect(response.status).toBe(200);
@@ -156,9 +176,18 @@ describe("/devices API", () => {
   });
 
   test("PUT /devices/:userId/:deviceId updates device", async () => {
+    // Create test user first
+    const userId = "test-user-id";
+    await prisma.user.create({
+      data: {
+        id: userId,
+        privyUserId: "test-devices-privy-user-id",
+      },
+    });
+
     // create a device
     const createResponse = await fetch(
-      `http://localhost:3002/devices/${testUserId}`,
+      `http://localhost:3002/devices/${userId}`,
       {
         method: "POST",
         headers: {
@@ -175,7 +204,7 @@ describe("/devices API", () => {
 
     // update the device
     const updateResponse = await fetch(
-      `http://localhost:3002/devices/${testUserId}/${createdDevice.id}`,
+      `http://localhost:3002/devices/${userId}/${createdDevice.id}`,
       {
         method: "PUT",
         headers: {
@@ -198,19 +227,25 @@ describe("/devices API", () => {
   });
 
   test("POST /devices/:userId validates request body", async () => {
-    const response = await fetch(
-      `http://localhost:3002/devices/${testUserId}`,
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          name: "Test Device",
-          os: "INVALID_OS", // Invalid OS value
-        }),
+    // Create test user first
+    const userId = "test-user-id";
+    await prisma.user.create({
+      data: {
+        id: userId,
+        privyUserId: "test-devices-privy-user-id",
       },
-    );
+    });
+
+    const response = await fetch(`http://localhost:3002/devices/${userId}`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        name: "Test Device",
+        os: "INVALID_OS", // Invalid OS value
+      }),
+    });
     const data = (await response.json()) as { error: string };
 
     expect(response.status).toBe(400);

@@ -69,6 +69,7 @@ services:
 
       # HTTP Delivery
       - --http-delivery
+      # Default to local notification server but need env var for CI tests
       - --http-delivery-address=${NOTIFICATION_DELIVERY_URL:-http://host.docker.internal:4000/api/v1/notifications/xmtp/handle-notification}
     ports:
       - 8080:8080

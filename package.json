@@ -18,7 +18,7 @@
     "migrate:deploy": "prisma migrate deploy",
     "migrate:dev": "prisma migrate dev",
     "start": "bun run src/index.ts",
-    "test": "NOTIFICATION_DELIVERY_URL=http://host.docker.internal:8081 bun test",
+    "test": "bun test",
     "typecheck": "tsc"
   },
   "dependencies": {

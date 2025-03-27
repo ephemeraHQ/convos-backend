@@ -20,6 +20,8 @@ jobs:
       - run: bun install
       - run: bun check
       - run: ./dev/up
+        env:
+          NOTIFICATION_DELIVERY_URL: ${{ secrets.NOTIFICATION_DELIVERY_URL }}
       - run: sleep 5s
       - run: bun migrate:dev
         env:
@@ -32,3 +34,4 @@ jobs:
           SCALEWAY_SECRET_KEY_ID: ${{ secrets.SCALEWAY_SECRET_KEY_ID }}
           SCALEWAY_ATTACHMENTS_BUCKET: ${{ secrets.SCALEWAY_ATTACHMENTS_BUCKET }}
           NOTIFICATION_SERVER_URL: ${{ secrets.NOTIFICATION_SERVER_URL }}
+          NOTIFICATION_DELIVERY_URL: ${{ secrets.NOTIFICATION_DELIVERY_URL }}
