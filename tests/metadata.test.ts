@@ -49,14 +49,15 @@ beforeEach(async () => {
 });
 
 describe("/metadata API", () => {
-  test("GET /metadata/conversation/:conversationId returns 404 for non-existent metadata", async () => {
+  test("GET /metadata/conversation/:deviceIdentityId/:conversationId returns 403 for unauthorized access", async () => {
     const response = await fetch(
-      "http://localhost:3005/metadata/conversation/nonexistent-id",
+      "http://localhost:3005/metadata/conversation/nonexistent-id/nonexistent-convo-id",
     );
-    const data = (await response.json()) as { error: string };
 
-    expect(response.status).toBe(404);
-    expect(data.error).toBe("Conversation metadata not found");
+    expect(response.status).toBe(403);
+    expect(await response.json()).toEqual({
+      error: "Not authorized to access this device identity",
+    });
   });
 
   test("POST /metadata/conversation creates new metadata", async () => {
@@ -140,7 +141,7 @@ describe("/metadata API", () => {
     expect(data.error).toBe("Device identity not found");
   });
 
-  test("GET /metadata/conversation/:conversationId returns metadata when exists", async () => {
+  test("GET /metadata/conversation/:deviceIdentityId/:conversationId returns metadata when exists", async () => {
     // Create a user first
     const createUserBody: CreateUserRequestBody = {
       privyUserId: "test-metadata-privy-user-id",
@@ -192,9 +193,14 @@ describe("/metadata API", () => {
     const createdMetadata =
       (await createMetadataResponse.json()) as ConversationMetadata;
 
+    // Mock the xmtpId in app.locals for authentication
+    app.locals.xmtpId = "test-xmtp-id";
+
+    // Update route to match API implementation
     const response = await fetch(
-      `http://localhost:3005/metadata/conversation/${createdMetadata.conversationId}`,
+      `http://localhost:3005/metadata/conversation/${createdUser.identity.id}/${createdMetadata.conversationId}`,
     );
+
     const metadata = (await response.json()) as ConversationMetadata;
 
     expect(response.status).toBe(200);

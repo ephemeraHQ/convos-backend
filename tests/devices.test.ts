@@ -70,6 +70,7 @@ describe("/devices API", () => {
         }),
       },
     );
+
     const device = (await response.json()) as Device;
 
     expect(response.status).toBe(201);

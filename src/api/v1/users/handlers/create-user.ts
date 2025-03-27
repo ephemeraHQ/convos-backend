@@ -23,8 +23,8 @@ export const createUserRequestBodySchema = z.object({
   profile: z.object({
     name: z.string(),
     username: z.string(),
-    description: z.string().optional(),
-    avatar: z.string().url().optional(),
+    description: z.string().nullable().optional(),
+    avatar: z.string().url().nullable().optional(),
   }),
 });
 
@@ -48,6 +48,7 @@ export type CreatedReturnedUser = {
     name: string;
     username: string;
     description: string | null;
+    avatar: string | null;
   };
 };
 
@@ -167,6 +168,7 @@ export async function createUser(
                         name: true,
                         username: true,
                         description: true,
+                        avatar: true,
                       },
                     },
                   },
@@ -213,6 +215,7 @@ export async function createUser(
         name: createdProfile.name,
         username: createdProfile.username,
         description: createdProfile.description,
+        avatar: createdProfile.avatar,
       },
     };
 

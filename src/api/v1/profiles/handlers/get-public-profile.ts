@@ -31,6 +31,7 @@ export async function getPublicProfile(
         deviceIdentity: {
           select: {
             xmtpId: true,
+            privyAddress: true,
           },
         },
       },
@@ -48,6 +49,7 @@ export async function getPublicProfile(
       description: profile.description,
       avatar: profile.avatar,
       xmtpId: profile.deviceIdentity.xmtpId,
+      privyAddress: profile.deviceIdentity.privyAddress,
     };
 
     res.json(publicProfile);

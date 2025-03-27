@@ -9,7 +9,7 @@ import {
 } from "bun:test";
 import express from "express";
 import { uint8ArrayToHex } from "uint8array-extras";
-import notificationsRouter from "@/api/v1/notifications";
+import notificationsRouter from "@/api/v1/notifications/notifications.router";
 import { jsonMiddleware } from "@/middleware/json";
 import { createNotificationClient } from "@/notifications/client";
 import type { RegisterInstallationResponse } from "@/notifications/gen/notifications/v1/service_pb";

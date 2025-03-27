@@ -1,15 +1,27 @@
 import { PrismaClient, type DeviceIdentity } from "@prisma/client";
 import type { Request, Response } from "express";
+import { z } from "zod";
 
 const prisma = new PrismaClient();
+
+const querySchema = z.object({
+  device_id: z.string().optional(),
+});
+
+type QueryParams = z.infer<typeof querySchema>;
 
 export type ReturnedCurrentUser = {
   id: string;
   identities: Array<Pick<DeviceIdentity, "id" | "privyAddress" | "xmtpId">>;
 };
 
-export async function getCurrentUser(req: Request, res: Response) {
+export async function getCurrentUser(
+  req: Request<unknown, unknown, unknown, QueryParams>,
+  res: Response,
+) {
   try {
+    const { device_id: deviceId } = querySchema.parse(req.query);
+
     const user = await prisma.user.findFirst({
       where: {
         DeviceIdentity: {
@@ -21,6 +33,7 @@ export async function getCurrentUser(req: Request, res: Response) {
       select: {
         id: true,
         devices: {
+          where: deviceId ? { id: deviceId } : undefined,
           select: {
             identities: {
               select: {
@@ -43,19 +56,34 @@ export async function getCurrentUser(req: Request, res: Response) {
       return;
     }
 
-    const returnedUser: ReturnedCurrentUser = {
-      id: user.id,
-      identities: user.devices.flatMap((device) =>
-        device.identities.map(({ identity }) => ({
+    const uniqueIdentities = new Map<
+      string,
+      Pick<DeviceIdentity, "id" | "privyAddress" | "xmtpId">
+    >();
+
+    user.devices.forEach((device) => {
+      device.identities.forEach(({ identity }) => {
+        uniqueIdentities.set(identity.id, {
           id: identity.id,
           privyAddress: identity.privyAddress,
           xmtpId: identity.xmtpId,
-        })),
-      ),
+        });
+      });
+    });
+
+    const returnedUser: ReturnedCurrentUser = {
+      id: user.id,
+      identities: Array.from(uniqueIdentities.values()),
     };
 
     res.json(returnedUser);
   } catch (err) {
+    if (err instanceof z.ZodError) {
+      res
+        .status(400)
+        .json({ error: "Invalid query parameters", details: err.errors });
+      return;
+    }
     console.error("Error fetching current user:", err);
     res.status(500).json({ error: "Failed to fetch user" });
   }

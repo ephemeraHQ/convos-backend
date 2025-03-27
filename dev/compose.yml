@@ -62,12 +62,14 @@ services:
     command:
       - --xmtp-listener
       - --db-connection-string=postgres://postgres:notifications@notification_db:5432/postgres?sslmode=disable
-      - --xmtp-address=node:5556
+      - --xmtp-address=node:5556 # Local Xmtp Node
       - --log-level=debug
       - --api
       - --api-port=8080
+
+      # HTTP Delivery
       - --http-delivery
-      - --http-delivery-address=http://host.docker.internal:8081
+      - --http-delivery-address=${NOTIFICATION_DELIVERY_URL:-http://host.docker.internal:4000/api/v1/notifications/handle-notification}
     ports:
       - 8080:8080
     extra_hosts:

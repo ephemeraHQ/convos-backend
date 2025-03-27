@@ -15,4 +15,4 @@ export type PublicProfileResult = Pick<
   Profile,
   "name" | "username" | "description" | "avatar"
 > &
-  Pick<DeviceIdentity, "xmtpId">;
+  Pick<DeviceIdentity, "xmtpId" | "privyAddress">;

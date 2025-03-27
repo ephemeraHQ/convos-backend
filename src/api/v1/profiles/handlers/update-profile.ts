@@ -33,7 +33,7 @@ export async function updateProfile(
     const existingProfile = await prisma.profile.findFirst({
       where: {
         deviceIdentity: {
-          xmtpId: xmtpId,
+          xmtpId,
         },
       },
     });

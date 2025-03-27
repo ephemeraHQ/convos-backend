@@ -1,6 +1,7 @@
-import { DeviceOS, PrismaClient } from "@prisma/client";
+import { PrismaClient } from "@prisma/client";
 import { Router, type Request, type Response } from "express";
 import { z } from "zod";
+import { DeviceSchema } from "../../../prisma/generated/zod";
 
 const devicesRouter = Router();
 const prisma = new PrismaClient();
@@ -56,15 +57,17 @@ devicesRouter.get(
   },
 );
 
-// schema for creating and updating a device
-const deviceSchema = z.object({
-  name: z.string().optional(),
-  os: z.enum(Object.keys(DeviceOS) as [DeviceOS, ...DeviceOS[]]),
-  pushToken: z.string().optional(),
-  expoToken: z.string().optional(),
+export const DeviceInputSchema = DeviceSchema.pick({
+  name: true,
+  os: true,
+  pushToken: true,
+  expoToken: true,
+}).partial({
+  pushToken: true,
+  expoToken: true,
 });
 
-export type CreateOrUpdateDeviceRequestBody = z.infer<typeof deviceSchema>;
+export type CreateDeviceRequestBody = z.infer<typeof DeviceInputSchema>;
 
 export type CreateDeviceRequestParams = {
   userId: string;
@@ -74,28 +77,31 @@ export type CreateDeviceRequestParams = {
 devicesRouter.post(
   "/:userId",
   async (
-    req: Request<
-      CreateDeviceRequestParams,
-      unknown,
-      CreateOrUpdateDeviceRequestBody
-    >,
+    req: Request<CreateDeviceRequestParams, unknown, CreateDeviceRequestBody>,
     res: Response,
   ) => {
     try {
       const { userId } = req.params;
-      const validatedData = deviceSchema.parse(req.body);
+
+      const validatedData = DeviceInputSchema.parse(req.body);
 
       const device = await prisma.device.create({
         data: {
           ...validatedData,
-          userId,
+          user: {
+            connect: {
+              id: userId,
+            },
+          },
         },
       });
 
       res.status(201).json(device);
     } catch (error) {
       if (error instanceof z.ZodError) {
-        res.status(400).json({ error: "Invalid request body" });
+        res
+          .status(400)
+          .json({ error: "Invalid request body", details: error.errors });
         return;
       }
       res.status(500).json({ error: "Failed to create device" });
@@ -108,20 +114,26 @@ export type UpdateDeviceRequestParams = {
   deviceId: string;
 };
 
+const DeviceUpdateInputSchema = DeviceSchema.pick({
+  name: true,
+  os: true,
+  pushToken: true,
+  expoToken: true,
+}).partial();
+
+export type UpdateDeviceRequestBody = z.infer<typeof DeviceUpdateInputSchema>;
+
 // PUT /devices/:userId/:deviceId - Update a device
 devicesRouter.put(
   "/:userId/:deviceId",
   async (
-    req: Request<
-      UpdateDeviceRequestParams,
-      unknown,
-      CreateOrUpdateDeviceRequestBody
-    >,
+    req: Request<UpdateDeviceRequestParams, unknown, UpdateDeviceRequestBody>,
     res: Response,
   ) => {
     try {
       const { userId, deviceId } = req.params;
-      const validatedData = deviceSchema.parse(req.body);
+
+      const validatedData = DeviceUpdateInputSchema.parse(req.body);
 
       const device = await prisma.device.update({
         where: {
@@ -134,7 +146,9 @@ devicesRouter.put(
       res.json(device);
     } catch (error) {
       if (error instanceof z.ZodError) {
-        res.status(400).json({ error: "Invalid request body" });
+        res
+          .status(400)
+          .json({ error: "Invalid request body", details: error.errors });
         return;
       }
       res.status(500).json({ error: "Failed to update device" });
