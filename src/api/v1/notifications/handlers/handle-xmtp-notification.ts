@@ -1,38 +1,14 @@
 import { PrismaClient } from "@prisma/client";
 import { Expo, type ExpoPushMessage } from "expo-server-sdk";
 import type { Request, Response } from "express";
+import type { NotificationResponse } from "@/notifications/client";
 
 const prisma = new PrismaClient();
 const expo = new Expo();
 
-export type ReceivedNotification = {
-  idempotency_key: string;
-  message: {
-    content_topic: string;
-    timestamp_ns: number;
-    message: string;
-  };
-  message_context: {
-    message_type: string;
-    should_push: boolean;
-  };
-  installation: {
-    id: string;
-    delivery_mechanism: {
-      kind: "apns" | "fcm";
-      token: string;
-    };
-  };
-  subscription: {
-    created_at: string;
-    topic: string;
-    is_silent: boolean;
-  };
-};
-
-export async function handleNotification(req: Request, res: Response) {
+export async function handleXmtpNotification(req: Request, res: Response) {
   try {
-    const notification = req.body as ReceivedNotification;
+    const notification = req.body as NotificationResponse;
 
     // Log the notification for debugging
     console.log(
