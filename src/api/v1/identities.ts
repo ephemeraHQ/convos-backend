@@ -21,10 +21,13 @@ identitiesRouter.get(
   async (req: Request<GetDeviceIdentitiesRequestParams>, res: Response) => {
     try {
       const { deviceId } = req.params;
+      const { xmtpId } = req.app.locals;
 
-      const deviceWithIdentities = await prisma.device.findUnique({
+      // First find the device
+      const device = await prisma.device.findUnique({
         where: { id: deviceId },
         include: {
+          user: true,
           identities: {
             include: {
               identity: true,
@@ -33,15 +36,26 @@ identitiesRouter.get(
         },
       });
 
-      if (!deviceWithIdentities) {
+      if (!device) {
         res.status(404).json({ error: "Device not found" });
         return;
       }
 
+      // Check if the authenticated user has access to this device
+      const hasAccess = await prisma.deviceIdentity.findFirst({
+        where: {
+          xmtpId,
+          userId: device.userId,
+        },
+      });
+
+      if (!hasAccess) {
+        res.status(403).json({ error: "Not authorized to access this device" });
+        return;
+      }
+
       // Transform the response to return just the identities
-      const identities = deviceWithIdentities.identities.map(
-        (item) => item.identity,
-      );
+      const identities = device.identities.map((item) => item.identity);
 
       res.json(identities);
     } catch {
@@ -60,6 +74,22 @@ identitiesRouter.get(
   async (req: Request<GetUserIdentitiesRequestParams>, res: Response) => {
     try {
       const { userId } = req.params;
+      const { xmtpId } = req.app.locals;
+
+      // Check if the user is authorized to access this user's identities
+      const isAuthorized = await prisma.deviceIdentity.findFirst({
+        where: {
+          userId,
+          xmtpId,
+        },
+      });
+
+      if (!isAuthorized) {
+        res
+          .status(403)
+          .json({ error: "Not authorized to access this user's identities" });
+        return;
+      }
 
       const identities = await prisma.deviceIdentity.findMany({
         where: { userId },
@@ -82,12 +112,19 @@ identitiesRouter.get(
   async (req: Request<GetIdentityRequestParams>, res: Response) => {
     try {
       const { identityId } = req.params;
-      const identity = await prisma.deviceIdentity.findUnique({
-        where: { id: identityId },
+      const { xmtpId } = req.app.locals;
+
+      const identity = await prisma.deviceIdentity.findFirst({
+        where: {
+          id: identityId,
+          xmtpId,
+        },
       });
 
       if (!identity) {
-        res.status(404).json({ error: "Identity not found" });
+        res
+          .status(403)
+          .json({ error: "Not authorized to access this identity" });
         return;
       }
 
@@ -117,13 +154,13 @@ identitiesRouter.post(
   ) => {
     try {
       const { deviceId } = req.params;
+      const { xmtpId } = req.app.locals;
       const validatedData = deviceIdentitySchema.parse(req.body);
 
+      // Find the device with user to verify ownership
       const device = await prisma.device.findUnique({
         where: { id: deviceId },
-        include: {
-          user: true,
-        },
+        include: { user: true },
       });
 
       if (!device) {
@@ -131,9 +168,25 @@ identitiesRouter.post(
         return;
       }
 
+      // Check if the authenticated user has access to this device
+      const hasAccess = await prisma.deviceIdentity.findFirst({
+        where: {
+          xmtpId,
+          userId: device.userId,
+        },
+      });
+
+      if (!hasAccess) {
+        res
+          .status(403)
+          .json({ error: "Not authorized to add identity to this device" });
+        return;
+      }
+
       const identity = await prisma.deviceIdentity.create({
         data: {
           ...validatedData,
+          xmtpId,
           userId: device.user.id,
           devices: {
             create: {
@@ -171,7 +224,23 @@ identitiesRouter.put(
   ) => {
     try {
       const { identityId } = req.params;
+      const { xmtpId } = req.app.locals;
       const validatedData = deviceIdentitySchema.parse(req.body);
+
+      // First check if identity belongs to authenticated user
+      const existingIdentity = await prisma.deviceIdentity.findFirst({
+        where: {
+          id: identityId,
+          xmtpId,
+        },
+      });
+
+      if (!existingIdentity) {
+        res
+          .status(403)
+          .json({ error: "Not authorized to update this identity" });
+        return;
+      }
 
       const identity = await prisma.deviceIdentity.update({
         where: { id: identityId },
@@ -207,9 +276,49 @@ identitiesRouter.post(
     try {
       const { identityId } = req.params;
       const { deviceId } = req.body;
+      const { xmtpId } = req.app.locals;
 
       if (!deviceId) {
         res.status(400).json({ error: "deviceId is required in request body" });
+        return;
+      }
+
+      // Verify the identity belongs to the authenticated user
+      const identity = await prisma.deviceIdentity.findFirst({
+        where: {
+          id: identityId,
+          xmtpId,
+        },
+      });
+
+      if (!identity) {
+        res.status(403).json({ error: "Not authorized to link this identity" });
+        return;
+      }
+
+      // Find the device
+      const device = await prisma.device.findUnique({
+        where: { id: deviceId },
+        include: { user: true },
+      });
+
+      if (!device) {
+        res.status(404).json({ error: "Device not found" });
+        return;
+      }
+
+      // Check if the authenticated user has access to this device
+      const hasAccess = await prisma.deviceIdentity.findFirst({
+        where: {
+          xmtpId,
+          userId: device.userId,
+        },
+      });
+
+      if (!hasAccess) {
+        res
+          .status(403)
+          .json({ error: "Not authorized to link to this device" });
         return;
       }
 
@@ -245,9 +354,51 @@ identitiesRouter.delete(
     try {
       const { identityId } = req.params;
       const { deviceId } = req.body;
+      const { xmtpId } = req.app.locals;
 
       if (!deviceId) {
         res.status(400).json({ error: "deviceId is required in request body" });
+        return;
+      }
+
+      // Verify the identity belongs to the authenticated user
+      const identity = await prisma.deviceIdentity.findFirst({
+        where: {
+          id: identityId,
+          xmtpId,
+        },
+      });
+
+      if (!identity) {
+        res
+          .status(403)
+          .json({ error: "Not authorized to unlink this identity" });
+        return;
+      }
+
+      // Find the device
+      const device = await prisma.device.findUnique({
+        where: { id: deviceId },
+        include: { user: true },
+      });
+
+      if (!device) {
+        res.status(404).json({ error: "Device not found" });
+        return;
+      }
+
+      // Check if the authenticated user has access to this device
+      const hasAccess = await prisma.deviceIdentity.findFirst({
+        where: {
+          xmtpId,
+          userId: device.userId,
+        },
+      });
+
+      if (!hasAccess) {
+        res
+          .status(403)
+          .json({ error: "Not authorized to unlink from this device" });
         return;
       }
 

@@ -27,6 +27,14 @@ See [Docker's documentation](https://docs.docker.com/get-docker/) for installati
 
 Copy `.env.example` to `.env`.
 
+For secure communication with the XMTP notification server, generate a secret:
+
+```bash
+bun generate:notification-secret
+```
+
+Add the generated value to your `.env` file.
+
 #### Run the app locally
 
 ```bash
@@ -70,6 +78,8 @@ Adjust the `-p 4000:4000` flag to match the port in the `.env` file. The default
 - `bun dev`: Run the app in watch mode
 - `bun format:check`: Run prettier format check
 - `bun format`: Run prettier format and write changes
+- `bun generate:key`: Generate a key for XMTP database encryption
+- `bun generate:notification-secret`: Generate a secure token for XMTP notification authentication
 - `bun install`: Installs all dependencies
 - `bun lint`: Lint with ESLint
 - `bun migrate:dev`: Create a Prisma migration from changes in the Prisma schema, apply to the database, and generate Prisma client code

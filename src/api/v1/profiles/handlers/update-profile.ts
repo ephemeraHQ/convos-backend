@@ -22,10 +22,36 @@ export async function updateProfile(
   res: Response,
 ) {
   try {
-    const { xmtpId } = req.params;
+    const { xmtpId: targetXmtpId } = req.params;
+    const { xmtpId: authenticatedXmtpId } = req.app.locals;
 
-    if (!xmtpId) {
-      res.status(400).json({ error: "Invalid request body" });
+    if (!targetXmtpId) {
+      res.status(400).json({ error: "Invalid request parameters" });
+      return;
+    }
+
+    // First verify if the target device identity exists
+    const deviceIdentity = await prisma.deviceIdentity.findFirst({
+      where: {
+        xmtpId: targetXmtpId,
+      },
+    });
+
+    if (!deviceIdentity) {
+      res.status(404).json({ error: "Device identity not found" });
+      return;
+    }
+
+    // Check if the authenticated user has access to this profile
+    const hasAccess = await prisma.deviceIdentity.findFirst({
+      where: {
+        xmtpId: authenticatedXmtpId,
+        userId: deviceIdentity.userId,
+      },
+    });
+
+    if (!hasAccess) {
+      res.status(403).json({ error: "Not authorized to update this profile" });
       return;
     }
 
@@ -33,7 +59,7 @@ export async function updateProfile(
     const existingProfile = await prisma.profile.findFirst({
       where: {
         deviceIdentity: {
-          xmtpId,
+          xmtpId: targetXmtpId,
         },
       },
     });
@@ -74,7 +100,7 @@ export async function updateProfile(
     if (preprocessedData.name?.includes(".")) {
       const onChainResult = await validateOnChainName({
         name: preprocessedData.name,
-        xmtpId,
+        xmtpId: targetXmtpId,
       });
       if (!onChainResult.success) {
         res.status(400).json(onChainResult);
@@ -90,6 +116,7 @@ export async function updateProfile(
 
     res.json(updatedProfile);
   } catch (error) {
+    console.error("Failed to update profile:", error);
     if (error instanceof z.ZodError) {
       const validationResult: ProfileValidationResponse = {
         success: false,

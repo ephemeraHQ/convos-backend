@@ -1,8 +1,9 @@
 import { Router } from "express";
-import { registerInstallation } from "./handlers/register-installation";
-import { subscribeToTopics } from "./handlers/subscribe-to-topics";
-import { unregisterInstallation } from "./handlers/unregister-installation";
-import { unsubscribeFromTopics } from "./handlers/unsubscribe-from-topics";
+import { handleXmtpNotification } from "@/api/v1/notifications/handlers/handle-xmtp-notification";
+import { registerInstallation } from "@/api/v1/notifications/handlers/register-installation";
+import { subscribeToTopics } from "@/api/v1/notifications/handlers/subscribe-to-topics";
+import { unregisterInstallation } from "@/api/v1/notifications/handlers/unregister-installation";
+import { unsubscribeFromTopics } from "@/api/v1/notifications/handlers/unsubscribe-from-topics";
 
 const notificationsRouter = Router();
 
@@ -14,4 +15,8 @@ notificationsRouter.delete(
   unregisterInstallation,
 );
 
-export default notificationsRouter;
+const xmtpNotificationsRouter = Router();
+
+xmtpNotificationsRouter.post("/handle-notification", handleXmtpNotification);
+
+export { notificationsRouter, xmtpNotificationsRouter };

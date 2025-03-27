@@ -2,10 +2,22 @@ import { PrismaClient } from "@prisma/client";
 import { Expo, type ExpoPushMessage } from "expo-server-sdk";
 import type { Request, Response } from "express";
 import type { NotificationResponse } from "@/notifications/client";
+import { getHttpDeliveryNotificationAuthHeader } from "@/notifications/utils";
 
 const prisma = new PrismaClient();
 const expo = new Expo();
 
+if (!process.env.XMTP_NOTIFICATION_SECRET) {
+  throw new Error("XMTP_NOTIFICATION_SECRET is not set");
+}
+
+/**
+ * Webhook handler for XMTP notifications
+ *
+ * This endpoint uses custom header-based authentication instead of the standard authMiddleware.
+ * It validates the request using the XMTP_NOTIFICATION_SECRET to verify the webhook is coming
+ * from the authorized XMTP server.
+ */
 export async function handleXmtpNotification(req: Request, res: Response) {
   try {
     const notification = req.body as NotificationResponse;
@@ -15,6 +27,18 @@ export async function handleXmtpNotification(req: Request, res: Response) {
       "Received notification:",
       JSON.stringify(notification, null, 2),
     );
+
+    // Verify the authorization header
+    const authHeader = req.headers.authorization;
+    const expectedAuthHeader = getHttpDeliveryNotificationAuthHeader();
+
+    if (!authHeader || authHeader !== expectedAuthHeader) {
+      console.error("Invalid or missing authorization header");
+      res.status(401).json({
+        error: "Unauthorized: Invalid authentication token",
+      });
+      return;
+    }
 
     // Check if this notification should trigger a push
     if (!notification.message_context.should_push) {
@@ -96,6 +120,6 @@ export async function handleXmtpNotification(req: Request, res: Response) {
     res.status(200).end();
   } catch (error) {
     console.error("Error processing notification:", error);
-    res.status(500).end();
+    res.status(500).json({ error: "Internal server error" });
   }
 }

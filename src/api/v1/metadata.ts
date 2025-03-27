@@ -86,14 +86,20 @@ metadataRouter.post(
   ) => {
     try {
       const validatedData = conversationMetadataUpsertSchema.parse(req.body);
+      const { xmtpId } = req.app.locals;
 
-      // Check if device identity exists
-      const deviceIdentity = await prisma.deviceIdentity.findUnique({
-        where: { id: validatedData.deviceIdentityId },
+      // Check if device identity exists and belongs to the authenticated user
+      const deviceIdentity = await prisma.deviceIdentity.findFirst({
+        where: {
+          id: validatedData.deviceIdentityId,
+          xmtpId,
+        },
       });
 
       if (!deviceIdentity) {
-        res.status(404).json({ error: "Device identity not found" });
+        res
+          .status(403)
+          .json({ error: "Not authorized to access this device identity" });
         return;
       }
 

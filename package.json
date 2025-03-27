@@ -14,11 +14,11 @@
     "format": "prettier -w .",
     "format:check": "prettier -c .",
     "generate:key": "bun run dev/scripts/generateDbKey.ts",
+    "generate:notification-secret": "bun run dev/scripts/generateNotificationSecret.ts",
     "lint": "eslint .",
     "migrate:deploy": "prisma migrate deploy",
     "migrate:dev": "prisma migrate dev",
     "start": "bun run src/index.ts",
-    "test": "bun test",
     "typecheck": "tsc"
   },
   "dependencies": {

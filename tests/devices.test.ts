@@ -17,8 +17,19 @@ import type {
 import usersRouter from "@/api/v1/users/users.router";
 import { jsonMiddleware } from "@/middleware/json";
 
+// Constants used throughout tests
+const AUTH_XMTP_ID = "test-xmtp-id";
+
 const app = express();
 app.use(jsonMiddleware);
+
+// Add middleware to simulate authentication for tests
+app.use((req, res, next) => {
+  // Set xmtpId for testing - this simulates the auth middleware
+  req.app.locals.xmtpId = AUTH_XMTP_ID;
+  next();
+});
+
 app.use("/users", usersRouter);
 app.use("/devices", devicesRouter);
 
@@ -58,7 +69,7 @@ describe("/devices API", () => {
       },
       identity: {
         privyAddress: "test-privy-address",
-        xmtpId: "test-xmtp-id",
+        xmtpId: AUTH_XMTP_ID,
       },
       profile: {
         name: "Test User",
@@ -110,7 +121,7 @@ describe("/devices API", () => {
       },
       identity: {
         privyAddress: "test-privy-address-2",
-        xmtpId: "test-xmtp-id-2",
+        xmtpId: AUTH_XMTP_ID,
       },
       profile: {
         name: "Test User 2",
@@ -149,7 +160,7 @@ describe("/devices API", () => {
       },
       identity: {
         privyAddress: "test-privy-address-3",
-        xmtpId: "test-xmtp-id-3",
+        xmtpId: AUTH_XMTP_ID,
       },
       profile: {
         name: "Test User 3",
@@ -209,7 +220,7 @@ describe("/devices API", () => {
       },
       identity: {
         privyAddress: "test-privy-address-4",
-        xmtpId: "test-xmtp-id-4",
+        xmtpId: AUTH_XMTP_ID,
       },
       profile: {
         name: "Test User 4",
@@ -272,7 +283,7 @@ describe("/devices API", () => {
       },
       identity: {
         privyAddress: "test-privy-address-5",
-        xmtpId: "test-xmtp-id-5",
+        xmtpId: AUTH_XMTP_ID,
       },
       profile: {
         name: "Test User 5",
@@ -343,7 +354,7 @@ describe("/devices API", () => {
       },
       identity: {
         privyAddress: "test-privy-address-6",
-        xmtpId: "test-xmtp-id-6",
+        xmtpId: AUTH_XMTP_ID,
       },
       profile: {
         name: "Test User 6",

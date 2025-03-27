@@ -2,8 +2,10 @@ import { Router } from "express";
 import appConfigRouter from "@/api/v1/appConfig";
 import authenticateRouter from "@/api/v1/authenticate";
 import metadataRouter from "@/api/v1/metadata";
-import notificationsRouter from "@/api/v1/notifications/notifications.router";
-import xmtpNotificationsRouter from "@/api/v1/notifications/xmtp-notifications.router";
+import {
+  notificationsRouter,
+  xmtpNotificationsRouter,
+} from "@/api/v1/notifications/notifications.router";
 import publicProfilesRouter from "@/api/v1/profiles/profiles-public.router";
 import profilesRouter from "@/api/v1/profiles/profiles.router";
 import { authMiddleware } from "@/middleware/auth";
@@ -21,12 +23,8 @@ v1Router.use("/app-config", appConfigRouter);
 // mount authenticate routes under /authenticate
 v1Router.use("/authenticate", authenticateRouter);
 
-// mount xmtp notifications routes under /notifications/xmtp
-v1Router.use(
-  "/notifications/xmtp",
-  // TODO: add auth middleware
-  xmtpNotificationsRouter,
-);
+// mount xmtp notification webhook (no auth middleware)
+v1Router.use("/notifications/xmtp", xmtpNotificationsRouter);
 
 // mount notifications routes under /notifications
 v1Router.use("/notifications", authMiddleware, notificationsRouter);

@@ -18,6 +18,14 @@ import { jsonMiddleware } from "@/middleware/json";
 
 const app = express();
 app.use(jsonMiddleware);
+
+// Add middleware to simulate authentication for tests
+app.use((req, res, next) => {
+  // Set xmtpId for testing - this simulates the auth middleware
+  req.app.locals.xmtpId = "test-xmtp-id";
+  next();
+});
+
 app.use("/identities", identitiesRouter);
 
 const prisma = new PrismaClient();
@@ -35,6 +43,7 @@ afterAll(async () => {
 beforeEach(async () => {
   await prisma.profile.deleteMany();
   await prisma.identitiesOnDevice.deleteMany();
+  await prisma.conversationMetadata.deleteMany();
   await prisma.deviceIdentity.deleteMany();
   await prisma.device.deleteMany();
   await prisma.user.deleteMany();
@@ -57,6 +66,15 @@ describe("/identities API", () => {
             privyUserId: "test-identities-privy-user-id",
           },
         },
+      },
+    });
+
+    // Add a device identity with the same xmtpId as in the middleware
+    await prisma.deviceIdentity.create({
+      data: {
+        userId: testUserId,
+        privyAddress: "test-privy-address",
+        xmtpId: "test-xmtp-id",
       },
     });
   });
@@ -344,10 +362,16 @@ describe("/identities API", () => {
     const identities = (await response.json()) as DeviceIdentity[];
 
     expect(response.status).toBe(200);
-    expect(identities).toHaveLength(1);
-    expect(identities[0].id).toBe(createdIdentity.id);
-    expect(identities[0].privyAddress).toBe("0x123");
-    expect(identities[0].userId).toBe(testUserId);
+    // Expect 2 identities because we're creating one in the setup and one in this test
+    expect(identities).toHaveLength(2);
+
+    // Verify the identity we just created is in the list
+    const foundIdentity = identities.find(
+      (identity) => identity.id === createdIdentity.id,
+    );
+    expect(foundIdentity).toBeDefined();
+    expect(foundIdentity?.privyAddress).toBe("0x123");
+    expect(foundIdentity?.userId).toBe(testUserId);
 
     // unlink the identity
     const unlinkResponse = await fetch(
@@ -371,10 +395,16 @@ describe("/identities API", () => {
     const identities2 = (await response2.json()) as DeviceIdentity[];
 
     expect(response2.status).toBe(200);
-    expect(identities2).toHaveLength(1);
-    expect(identities2[0].id).toBe(createdIdentity.id);
-    expect(identities2[0].privyAddress).toBe("0x123");
-    expect(identities2[0].userId).toBe(testUserId);
+    // We still have 2 identities after unlinking because unlinking only removes the
+    // identity-device relationship, not the identity itself
+    expect(identities2).toHaveLength(2);
+
+    const foundIdentityAfterUnlink = identities2.find(
+      (identity) => identity.id === createdIdentity.id,
+    );
+    expect(foundIdentityAfterUnlink).toBeDefined();
+    expect(foundIdentityAfterUnlink?.privyAddress).toBe("0x123");
+    expect(foundIdentityAfterUnlink?.userId).toBe(testUserId);
   });
 
   test("GET /identities/user/:userId returns empty array for non-existent user", async () => {
@@ -382,9 +412,10 @@ describe("/identities API", () => {
     const response = await fetch(
       `http://localhost:3003/identities/user/${nonExistentUserId}`,
     );
-    const identities = (await response.json()) as DeviceIdentity[];
 
-    expect(response.status).toBe(200);
-    expect(identities).toHaveLength(0);
+    // Now we expect a 403 since the user doesn't have a device identity with the auth xmtpId
+    expect(response.status).toBe(403);
+    const data = (await response.json()) as { error: string };
+    expect(data.error).toBe("Not authorized to access this user's identities");
   });
 });

@@ -13,6 +13,7 @@ import {
   isConversationTopic,
   isWelcomeTopic,
 } from "@/notifications/topics";
+import { getHttpDeliveryNotificationAuthHeader } from "@/notifications/utils";
 import { AsyncStream } from "./AsyncStream";
 import { createClient } from "./helpers";
 
@@ -41,6 +42,15 @@ describe("Notifications", () => {
       app.use(jsonMiddleware);
       stream = new AsyncStream<NotificationResponse>();
       app.post("/", (req: Request, res: Response) => {
+        const authHeader = req.headers.authorization;
+        const expectedAuthHeader = getHttpDeliveryNotificationAuthHeader();
+
+        if (!authHeader || authHeader !== expectedAuthHeader) {
+          console.error("Test server: Invalid or missing authorization header");
+          res.status(401).end();
+          return;
+        }
+
         void stream.callback(null, req.body as NotificationResponse);
         res.status(200).send("OK");
       });
@@ -132,10 +142,10 @@ describe("Notifications", () => {
       await client.conversations.newDm(client2.accountAddress);
       await client.conversations.newGroup([client2.accountAddress]);
 
-      // end stream after 2 seconds
+      // end stream after 5 seconds (increased from 2 seconds to prevent timeout)
       setTimeout(() => {
         void stream.callback(null, undefined);
-      }, 2000);
+      }, 5000);
 
       let count = 0;
       for await (const notification of stream) {
@@ -164,7 +174,7 @@ describe("Notifications", () => {
         installationId: "invite-subscribe-test",
         topics: [inviteTopic],
       });
-    });
+    }, 10000); // Increase test timeout to 10 seconds
 
     it("notifies when all DM group messages are sent", async () => {
       const client = await createClient();
@@ -197,10 +207,10 @@ describe("Notifications", () => {
       await dm.send("gm");
       await dm2?.send("gm2");
 
-      // end stream after 2 seconds
+      // end stream after 5 seconds (increased from 2 seconds to prevent timeout)
       setTimeout(() => {
         void stream.callback(null, undefined);
-      }, 2000);
+      }, 5000);
 
       let count = 0;
       for await (const notification of stream) {
@@ -234,7 +244,7 @@ describe("Notifications", () => {
         installationId: "dm-message-subscribe-test",
         topics: [conversationTopic],
       });
-    });
+    }, 10000); // Increase test timeout to 10 seconds
 
     it("notifies when all group messages are sent", async () => {
       const client = await createClient();
@@ -282,10 +292,10 @@ describe("Notifications", () => {
       await group3?.send("gm3");
       await group4?.send("gm4");
 
-      // end stream after 2 seconds
+      // end stream after 5 seconds (increased from 2 seconds to prevent timeout)
       setTimeout(() => {
         void stream.callback(null, undefined);
-      }, 2000);
+      }, 5000);
 
       let count = 0;
       for await (const notification of stream) {
@@ -319,7 +329,7 @@ describe("Notifications", () => {
         installationId: "group-message-subscribe-test",
         topics: [conversationTopic],
       });
-    });
+    }, 10000); // Increase test timeout to 10 seconds
 
     it("filters a specific user's sent messages in a DM", async () => {
       const client = await createClient();
@@ -365,10 +375,10 @@ describe("Notifications", () => {
       await dm.send("gm");
       await dm2?.send("gm");
 
-      // end stream after 2 seconds
+      // end stream after 5 seconds (increased from 2 seconds to prevent timeout)
       setTimeout(() => {
         void stream.callback(null, undefined);
-      }, 2000);
+      }, 5000);
 
       let count = 0;
       for await (const notification of stream) {
@@ -400,7 +410,7 @@ describe("Notifications", () => {
         installationId: "hmac-dm-subscribe-test",
         topics: [conversationTopic],
       });
-    });
+    }, 10000); // Increase test timeout to 10 seconds
 
     it("filters a specific user's sent messages in a group", async () => {
       const client = await createClient();

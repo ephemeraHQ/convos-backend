@@ -23,6 +23,16 @@ import { jsonMiddleware } from "@/middleware/json";
 
 const app = express();
 app.use(jsonMiddleware);
+
+const AUTH_XMTP_ID = "test-xmtp-id";
+
+// Add middleware to simulate authentication for tests
+app.use((req, res, next) => {
+  // Set xmtpId for testing - this simulates the auth middleware
+  req.app.locals.xmtpId = AUTH_XMTP_ID;
+  next();
+});
+
 app.use("/users", usersRouter);
 app.use("/metadata", metadataRouter);
 
@@ -70,7 +80,7 @@ describe("/metadata API", () => {
       },
       identity: {
         privyAddress: "test-privy-address",
-        xmtpId: "test-xmtp-id",
+        xmtpId: AUTH_XMTP_ID,
       },
       profile: {
         name: "Test User",
@@ -117,7 +127,7 @@ describe("/metadata API", () => {
     expect(metadata.deleted).toBe(false);
   });
 
-  test("POST /metadata/conversation returns 404 for non-existent device", async () => {
+  test("POST /metadata/conversation returns 403 for non-existent device", async () => {
     const response = await fetch(
       "http://localhost:3005/metadata/conversation",
       {
@@ -137,8 +147,8 @@ describe("/metadata API", () => {
     );
     const data = (await response.json()) as { error: string };
 
-    expect(response.status).toBe(404);
-    expect(data.error).toBe("Device identity not found");
+    expect(response.status).toBe(403);
+    expect(data.error).toBe("Not authorized to access this device identity");
   });
 
   test("GET /metadata/conversation/:deviceIdentityId/:conversationId returns metadata when exists", async () => {
@@ -151,7 +161,7 @@ describe("/metadata API", () => {
       },
       identity: {
         privyAddress: "test-privy-address",
-        xmtpId: "test-xmtp-id",
+        xmtpId: AUTH_XMTP_ID,
       },
       profile: {
         name: "Test User 2",
@@ -193,10 +203,7 @@ describe("/metadata API", () => {
     const createdMetadata =
       (await createMetadataResponse.json()) as ConversationMetadata;
 
-    // Mock the xmtpId in app.locals for authentication
-    app.locals.xmtpId = "test-xmtp-id";
-
-    // Update route to match API implementation
+    // Get the metadata
     const response = await fetch(
       `http://localhost:3005/metadata/conversation/${createdUser.identity.id}/${createdMetadata.conversationId}`,
     );
@@ -222,7 +229,7 @@ describe("/metadata API", () => {
       },
       identity: {
         privyAddress: "test-privy-address",
-        xmtpId: "test-xmtp-id",
+        xmtpId: AUTH_XMTP_ID,
       },
       profile: {
         name: "Test User 3",

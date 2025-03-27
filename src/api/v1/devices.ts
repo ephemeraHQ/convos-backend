@@ -17,6 +17,28 @@ devicesRouter.get(
   async (req: Request<GetDeviceRequestParams>, res: Response) => {
     try {
       const { userId, deviceId } = req.params;
+      const { xmtpId } = req.app.locals;
+
+      // First find the user to verify they exist and are the authenticated user
+      const user = await prisma.user.findFirst({
+        where: {
+          id: userId,
+          DeviceIdentity: {
+            some: {
+              xmtpId,
+            },
+          },
+        },
+      });
+
+      if (!user) {
+        res
+          .status(403)
+          .json({ error: "Not authorized to access this user's devices" });
+        return;
+      }
+
+      // Now find the device
       const device = await prisma.device.findFirst({
         where: {
           id: deviceId,
@@ -46,6 +68,27 @@ devicesRouter.get(
   async (req: Request<GetDevicesRequestParams>, res: Response) => {
     try {
       const { userId } = req.params;
+      const { xmtpId } = req.app.locals;
+
+      // First find the user to verify they exist and are the authenticated user
+      const user = await prisma.user.findFirst({
+        where: {
+          id: userId,
+          DeviceIdentity: {
+            some: {
+              xmtpId,
+            },
+          },
+        },
+      });
+
+      if (!user) {
+        res
+          .status(403)
+          .json({ error: "Not authorized to access this user's devices" });
+        return;
+      }
+
       const devices = await prisma.device.findMany({
         where: { userId },
       });
@@ -82,6 +125,26 @@ devicesRouter.post(
   ) => {
     try {
       const { userId } = req.params;
+      const { xmtpId } = req.app.locals;
+
+      // First find the user to verify they exist and are the authenticated user
+      const user = await prisma.user.findFirst({
+        where: {
+          id: userId,
+          DeviceIdentity: {
+            some: {
+              xmtpId,
+            },
+          },
+        },
+      });
+
+      if (!user) {
+        res
+          .status(403)
+          .json({ error: "Not authorized to create a device for this user" });
+        return;
+      }
 
       const validatedData = DeviceInputSchema.parse(req.body);
 
@@ -132,6 +195,26 @@ devicesRouter.put(
   ) => {
     try {
       const { userId, deviceId } = req.params;
+      const { xmtpId } = req.app.locals;
+
+      // First find the user to verify they exist and are the authenticated user
+      const user = await prisma.user.findFirst({
+        where: {
+          id: userId,
+          DeviceIdentity: {
+            some: {
+              xmtpId,
+            },
+          },
+        },
+      });
+
+      if (!user) {
+        res
+          .status(403)
+          .json({ error: "Not authorized to update this user's device" });
+        return;
+      }
 
       const validatedData = DeviceUpdateInputSchema.parse(req.body);
 
