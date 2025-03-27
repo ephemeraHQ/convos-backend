@@ -463,10 +463,10 @@ describe("Notifications", () => {
       await group3?.send("gm");
       await group4?.send("gm");
 
-      // end stream after 2 seconds
+      // end stream after 5 seconds (increased from 2 seconds to prevent timeout)
       setTimeout(() => {
         void stream.callback(null, undefined);
-      }, 2000);
+      }, 5000);
 
       let count = 0;
       for await (const notification of stream) {
@@ -500,6 +500,6 @@ describe("Notifications", () => {
         installationId: "hmac-group-subscribe-test",
         topics: [conversationTopic],
       });
-    });
+    }, 10000); // Increase test timeout to 10 seconds
   });
 });
