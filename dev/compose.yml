@@ -69,8 +69,7 @@ services:
 
       # HTTP Delivery
       - --http-delivery
-      # Use the TEST_NOTIFICATION_DELIVERY_URL when provided, otherwise use the default app URL
-      - --http-delivery-address=${TEST_NOTIFICATION_DELIVERY_URL:-http://host.docker.internal:4000/api/v1/notifications/xmtp/handle-notification}}
+      - --http-delivery-address=${TEST_NOTIFICATION_DELIVERY_URL:-http://host.docker.internal:4000/api/v1/notifications/xmtp/handle-notification}
       - --http-auth-header=${XMTP_NOTIFICATION_SECRET}
 
     ports:
