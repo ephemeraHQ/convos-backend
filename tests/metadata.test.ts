@@ -23,6 +23,16 @@ import { jsonMiddleware } from "@/middleware/json";
 
 const app = express();
 app.use(jsonMiddleware);
+
+const AUTH_XMTP_ID = "test-xmtp-id";
+
+// Add middleware to simulate authentication for tests
+app.use((req, res, next) => {
+  // Set xmtpId for testing - this simulates the auth middleware
+  req.app.locals.xmtpId = AUTH_XMTP_ID;
+  next();
+});
+
 app.use("/users", usersRouter);
 app.use("/metadata", metadataRouter);
 
@@ -49,14 +59,15 @@ beforeEach(async () => {
 });
 
 describe("/metadata API", () => {
-  test("GET /metadata/conversation/:conversationId returns 404 for non-existent metadata", async () => {
+  test("GET /metadata/conversation/:deviceIdentityId/:conversationId returns 403 for unauthorized access", async () => {
     const response = await fetch(
-      "http://localhost:3005/metadata/conversation/nonexistent-id",
+      "http://localhost:3005/metadata/conversation/nonexistent-id/nonexistent-convo-id",
     );
-    const data = (await response.json()) as { error: string };
 
-    expect(response.status).toBe(404);
-    expect(data.error).toBe("Conversation metadata not found");
+    expect(response.status).toBe(403);
+    expect(await response.json()).toEqual({
+      error: "Not authorized to access this device identity",
+    });
   });
 
   test("POST /metadata/conversation creates new metadata", async () => {
@@ -69,7 +80,7 @@ describe("/metadata API", () => {
       },
       identity: {
         privyAddress: "test-privy-address",
-        xmtpId: "test-xmtp-id",
+        xmtpId: AUTH_XMTP_ID,
       },
       profile: {
         name: "Test User",
@@ -116,7 +127,7 @@ describe("/metadata API", () => {
     expect(metadata.deleted).toBe(false);
   });
 
-  test("POST /metadata/conversation returns 404 for non-existent device", async () => {
+  test("POST /metadata/conversation returns 403 for non-existent device", async () => {
     const response = await fetch(
       "http://localhost:3005/metadata/conversation",
       {
@@ -136,11 +147,11 @@ describe("/metadata API", () => {
     );
     const data = (await response.json()) as { error: string };
 
-    expect(response.status).toBe(404);
-    expect(data.error).toBe("Device identity not found");
+    expect(response.status).toBe(403);
+    expect(data.error).toBe("Not authorized to access this device identity");
   });
 
-  test("GET /metadata/conversation/:conversationId returns metadata when exists", async () => {
+  test("GET /metadata/conversation/:deviceIdentityId/:conversationId returns metadata when exists", async () => {
     // Create a user first
     const createUserBody: CreateUserRequestBody = {
       privyUserId: "test-metadata-privy-user-id",
@@ -150,7 +161,7 @@ describe("/metadata API", () => {
       },
       identity: {
         privyAddress: "test-privy-address",
-        xmtpId: "test-xmtp-id",
+        xmtpId: AUTH_XMTP_ID,
       },
       profile: {
         name: "Test User 2",
@@ -192,9 +203,11 @@ describe("/metadata API", () => {
     const createdMetadata =
       (await createMetadataResponse.json()) as ConversationMetadata;
 
+    // Get the metadata
     const response = await fetch(
-      `http://localhost:3005/metadata/conversation/${createdMetadata.conversationId}`,
+      `http://localhost:3005/metadata/conversation/${createdUser.identity.id}/${createdMetadata.conversationId}`,
     );
+
     const metadata = (await response.json()) as ConversationMetadata;
 
     expect(response.status).toBe(200);
@@ -216,7 +229,7 @@ describe("/metadata API", () => {
       },
       identity: {
         privyAddress: "test-privy-address",
-        xmtpId: "test-xmtp-id",
+        xmtpId: AUTH_XMTP_ID,
       },
       profile: {
         name: "Test User 3",

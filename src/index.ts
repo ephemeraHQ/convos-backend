@@ -2,7 +2,6 @@ import cors from "cors";
 import express, { type Request, type Response } from "express";
 import helmet from "helmet";
 import apiRouter from "./api";
-import { errorMiddleware } from "./middleware/error";
 import { errorHandlerMiddleware } from "./middleware/errorHandler";
 import { jsonMiddleware } from "./middleware/json";
 import { logMiddleware } from "./middleware/log";
@@ -10,19 +9,15 @@ import { noRouteMiddleware } from "./middleware/noRoute";
 import { rateLimitMiddleware } from "./middleware/rateLimit";
 
 const app = express();
-app.use(cors());
-app.use(helmet());
-app.use(jsonMiddleware);
 
-const port = process.env.PORT || 4000;
+app.use(helmet()); // Set security headers
+app.use(cors()); // Handle CORS
+app.use(jsonMiddleware); // Parse JSON requests
 
-// log all requests in dev mode
+// Logging should be early to capture all requests
 app.use(logMiddleware);
 
-// handle errors
-app.use(errorMiddleware);
-
-// rate limit all requests
+// Rate limiting should be before routes but after logging
 app.use(rateLimitMiddleware);
 
 // GET /healthcheck - Healthcheck endpoint
@@ -39,6 +34,7 @@ app.use(noRouteMiddleware);
 // Error handling middleware should be last
 app.use(errorHandlerMiddleware);
 
+const port = process.env.PORT || 4000;
 const server = app.listen(port, () => {
   console.log(`Convos API service is running on port ${port}`);
 });

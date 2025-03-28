@@ -22,7 +22,7 @@ export async function getProfile(
     const profile = await prisma.profile.findFirst({
       where: {
         deviceIdentity: {
-          xmtpId: xmtpId,
+          xmtpId,
         },
       },
       include: {

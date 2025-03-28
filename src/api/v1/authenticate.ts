@@ -10,6 +10,10 @@ const authenticateRouter = Router();
 
 const xmtpEnv = (process.env.XMTP_ENV || "dev") as XmtpEnv;
 
+export type JWTPayload = {
+  inboxId: string;
+};
+
 export type AuthenticateResponse = {
   token: string;
 };
@@ -75,7 +79,7 @@ authenticateRouter.post("/", async (req: Request, res: Response) => {
     // Create JWT token
     const jwt = await new jose.SignJWT({
       inboxId: xmtpId,
-    })
+    } satisfies JWTPayload)
       .setProtectedHeader({ alg: "HS256" })
       .setIssuedAt()
       .setExpirationTime("1h")

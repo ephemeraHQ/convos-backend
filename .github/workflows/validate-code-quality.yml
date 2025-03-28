@@ -20,6 +20,9 @@ jobs:
       - run: bun install
       - run: bun check
       - run: ./dev/up
+        env:
+          TEST_NOTIFICATION_DELIVERY_URL: "http://host.docker.internal:8081"
+          XMTP_NOTIFICATION_SECRET: ${{ secrets.XMTP_NOTIFICATION_SECRET }}
       - run: sleep 5s
       - run: bun migrate:dev
         env:
@@ -32,3 +35,4 @@ jobs:
           SCALEWAY_SECRET_KEY_ID: ${{ secrets.SCALEWAY_SECRET_KEY_ID }}
           SCALEWAY_ATTACHMENTS_BUCKET: ${{ secrets.SCALEWAY_ATTACHMENTS_BUCKET }}
           NOTIFICATION_SERVER_URL: ${{ secrets.NOTIFICATION_SERVER_URL }}
+          XMTP_NOTIFICATION_SECRET: ${{ secrets.XMTP_NOTIFICATION_SECRET }}

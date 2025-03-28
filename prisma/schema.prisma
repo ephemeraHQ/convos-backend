@@ -8,6 +8,10 @@ generator client {
   provider = "prisma-client-js"
 }
 
+generator zod {
+  provider = "zod-prisma-types"
+}
+
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
@@ -26,6 +30,7 @@ enum DeviceOS {
   ios
   android
   web
+  macos
 }
 
 model Device {
@@ -80,7 +85,7 @@ model Profile {
 model ConversationMetadata {
   id               String         @id @default(uuid())
   deviceIdentityId String
-  conversationId   String         @unique
+  conversationId   String
   pinned           Boolean        @default(false)
   unread           Boolean        @default(false)
   deleted          Boolean        @default(false)
@@ -88,4 +93,6 @@ model ConversationMetadata {
   createdAt        DateTime       @default(now())
   updatedAt        DateTime       @updatedAt
   deviceIdentity   DeviceIdentity @relation(fields: [deviceIdentityId], references: [id])
+
+  @@unique([deviceIdentityId, conversationId])
 }

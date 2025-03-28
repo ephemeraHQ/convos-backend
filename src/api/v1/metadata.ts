@@ -7,26 +7,59 @@ const prisma = new PrismaClient();
 
 type GetMetadataRequestParams = {
   conversationId: string;
+  deviceIdentityId: string;
 };
 
-// GET /metadata/conversation/:conversationId - Get conversation metadata by conversation ID
+// GET /metadata/conversation/:deviceIdentityId/:conversationId - Get conversation metadata by device identity and conversation ID
 metadataRouter.get(
-  "/conversation/:conversationId",
+  "/conversation/:deviceIdentityId/:conversationId",
   async (req: Request<GetMetadataRequestParams>, res: Response) => {
     try {
-      const { conversationId } = req.params;
-      const metadata = await prisma.conversationMetadata.findUnique({
-        where: { conversationId },
+      const { conversationId, deviceIdentityId } = req.params;
+      const { xmtpId } = req.app.locals;
+
+      // First check if the device identity exists and belongs to the authenticated user
+      const deviceIdentity = await prisma.deviceIdentity.findFirst({
+        where: {
+          id: deviceIdentityId,
+          xmtpId,
+        },
       });
 
-      if (!metadata) {
-        res.status(404).json({ error: "Conversation metadata not found" });
+      if (!deviceIdentity) {
+        res
+          .status(403)
+          .json({ error: "Not authorized to access this device identity" });
         return;
       }
 
+      // Try to find the metadata
+      let metadata = await prisma.conversationMetadata.findFirst({
+        where: {
+          conversationId,
+          deviceIdentityId,
+        },
+      });
+
+      // If not found, create it with default values
+      if (!metadata) {
+        metadata = await prisma.conversationMetadata.create({
+          data: {
+            conversationId,
+            deviceIdentityId,
+            pinned: false,
+            unread: true,
+            deleted: false,
+          },
+        });
+      }
+
       res.json(metadata);
-    } catch {
-      res.status(500).json({ error: "Failed to fetch conversation metadata" });
+    } catch (error) {
+      console.error("Failed to fetch or create conversation metadata:", error);
+      res
+        .status(500)
+        .json({ error: "Failed to fetch or create conversation metadata" });
     }
   },
 );
@@ -53,19 +86,30 @@ metadataRouter.post(
   ) => {
     try {
       const validatedData = conversationMetadataUpsertSchema.parse(req.body);
+      const { xmtpId } = req.app.locals;
 
-      // Check if device identity exists
-      const deviceIdentity = await prisma.deviceIdentity.findUnique({
-        where: { id: validatedData.deviceIdentityId },
+      // Check if device identity exists and belongs to the authenticated user
+      const deviceIdentity = await prisma.deviceIdentity.findFirst({
+        where: {
+          id: validatedData.deviceIdentityId,
+          xmtpId,
+        },
       });
 
       if (!deviceIdentity) {
-        res.status(404).json({ error: "Device identity not found" });
+        res
+          .status(403)
+          .json({ error: "Not authorized to access this device identity" });
         return;
       }
 
       const metadata = await prisma.conversationMetadata.upsert({
-        where: { conversationId: validatedData.conversationId },
+        where: {
+          deviceIdentityId_conversationId: {
+            deviceIdentityId: validatedData.deviceIdentityId,
+            conversationId: validatedData.conversationId,
+          },
+        },
         create: validatedData,
         update: {
           pinned: validatedData.pinned,

@@ -2,9 +2,12 @@ import { Router } from "express";
 import appConfigRouter from "@/api/v1/appConfig";
 import authenticateRouter from "@/api/v1/authenticate";
 import metadataRouter from "@/api/v1/metadata";
-import notificationsRouter from "@/api/v1/notifications";
+import {
+  notificationsRouter,
+  xmtpNotificationsRouter,
+} from "@/api/v1/notifications/notifications.router";
+import publicProfilesRouter from "@/api/v1/profiles/profiles-public.router";
 import profilesRouter from "@/api/v1/profiles/profiles.router";
-import publicProfilesRouter from "@/api/v1/profiles/public.router";
 import { authMiddleware } from "@/middleware/auth";
 import attachmentsRouter from "./attachments";
 import devicesRouter from "./devices";
@@ -19,6 +22,12 @@ v1Router.use("/app-config", appConfigRouter);
 
 // mount authenticate routes under /authenticate
 v1Router.use("/authenticate", authenticateRouter);
+
+// mount xmtp notification webhook (no auth middleware)
+v1Router.use("/notifications/xmtp", xmtpNotificationsRouter);
+
+// mount notifications routes under /notifications
+v1Router.use("/notifications", authMiddleware, notificationsRouter);
 
 // mount user routes under /users
 v1Router.use("/users", authMiddleware, usersRouter);
@@ -43,8 +52,5 @@ v1Router.use("/profiles", authMiddleware, profilesRouter);
 
 // mount attachments routes under /attachments
 v1Router.use("/attachments", authMiddleware, attachmentsRouter);
-
-// mount notifications routes under /notifications
-v1Router.use("/notifications", authMiddleware, notificationsRouter);
 
 export default v1Router;

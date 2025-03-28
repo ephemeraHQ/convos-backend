@@ -57,3 +57,9 @@ logs
 
 # local db files
 *.db3*
+
+# local p8 files
+*.p8
+
+# Prisma generated files
+/prisma/generated/

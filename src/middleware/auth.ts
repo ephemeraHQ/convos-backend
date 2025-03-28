@@ -1,11 +1,8 @@
 import type { NextFunction, Request, Response } from "express";
 import * as jose from "jose";
+import type { JWTPayload } from "@/api/v1/authenticate";
 
 export const AUTH_HEADER = "X-Convos-AuthToken";
-
-export type JWTPayload = {
-  inboxId: string;
-};
 
 export const authMiddleware = async (
   req: Request,
