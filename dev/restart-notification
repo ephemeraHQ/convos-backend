@@ -1,0 +1,11 @@
+#!/bin/bash
+set -eou pipefail
+script_dir="$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
+
+echo "Stopping notification_server..."
+"${script_dir}"/compose stop notification_server
+
+echo "Starting notification_server..."
+"${script_dir}"/compose up -d --wait notification_server
+
+echo "Notification server restarted successfully." 
