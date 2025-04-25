@@ -1,16 +1,20 @@
-import type express from "express";
-import { type NextFunction, type Request, type Response } from "express";
+import {
+  type ErrorRequestHandler,
+  type NextFunction,
+  type Request,
+  type Response,
+} from "express";
 import { ZodError } from "zod";
 import { AppError, logError } from "../utils/errors";
 
 // Express requires error handling middleware to have exactly 4 parameters
-function errorHandler(
+export const errorMiddleware = ((
   err: Error,
   req: Request,
   res: Response,
   // Rename 'next' to '_next' to satisfy the linter while keeping the 4 params Express needs
   _next: NextFunction,
-) {
+) => {
   // Log the error with request context
   logError(err, {
     path: req.path,
@@ -47,8 +51,4 @@ function errorHandler(
       message: err.message,
     }),
   });
-}
-
-// Add this type assertion to fix the error
-export const errorHandlerMiddleware =
-  errorHandler as express.ErrorRequestHandler;
+}) as ErrorRequestHandler;

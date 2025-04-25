@@ -2,7 +2,7 @@ import cors from "cors";
 import express, { type Request, type Response } from "express";
 import helmet from "helmet";
 import apiRouter from "./api";
-import { errorHandlerMiddleware } from "./middleware/errorHandler";
+import { errorMiddleware } from "./middleware/error-middleware";
 import { jsonMiddleware } from "./middleware/json";
 import { logMiddleware } from "./middleware/log";
 import { noRouteMiddleware } from "./middleware/noRoute";
@@ -32,7 +32,7 @@ app.use("/api", apiRouter);
 app.use(noRouteMiddleware);
 
 // Error handling middleware should be last
-app.use(errorHandlerMiddleware);
+app.use(errorMiddleware);
 
 const port = process.env.PORT || 4000;
 const server = app.listen(port, () => {

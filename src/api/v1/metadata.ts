@@ -1,6 +1,12 @@
 import { PrismaClient } from "@prisma/client";
-import { Router, type Request, type Response } from "express";
+import {
+  Router,
+  type NextFunction,
+  type Request,
+  type Response,
+} from "express";
 import { z } from "zod";
+import { AppError } from "../../utils/errors";
 
 const metadataRouter = Router();
 const prisma = new PrismaClient();
@@ -13,7 +19,11 @@ type GetMetadataRequestParams = {
 // GET /metadata/conversation/:deviceIdentityId/:conversationId - Get conversation metadata by device identity and conversation ID
 metadataRouter.get(
   "/conversation/:deviceIdentityId/:conversationId",
-  async (req: Request<GetMetadataRequestParams>, res: Response) => {
+  async (
+    req: Request<GetMetadataRequestParams>,
+    res: Response,
+    next: NextFunction,
+  ) => {
     try {
       const { conversationId, deviceIdentityId } = req.params;
       const { xmtpId } = req.app.locals;
@@ -27,10 +37,10 @@ metadataRouter.get(
       });
 
       if (!deviceIdentity) {
-        res
-          .status(403)
-          .json({ error: "Not authorized to access this device identity" });
-        return;
+        throw new AppError(
+          403,
+          "Not authorized to access this device identity",
+        );
       }
 
       // Try to find the metadata
@@ -56,10 +66,8 @@ metadataRouter.get(
 
       res.json(metadata);
     } catch (error) {
-      console.error("Failed to fetch or create conversation metadata:", error);
-      res
-        .status(500)
-        .json({ error: "Failed to fetch or create conversation metadata" });
+      // Pass all errors to the global error middleware
+      next(error);
     }
   },
 );
@@ -83,6 +91,7 @@ metadataRouter.post(
   async (
     req: Request<Record<string, never>, unknown, UpsertMetadataRequestBody>,
     res: Response,
+    next: NextFunction,
   ) => {
     try {
       const validatedData = conversationMetadataUpsertSchema.parse(req.body);
@@ -97,10 +106,10 @@ metadataRouter.post(
       });
 
       if (!deviceIdentity) {
-        res
-          .status(403)
-          .json({ error: "Not authorized to access this device identity" });
-        return;
+        throw new AppError(
+          403,
+          "Not authorized to access this device identity",
+        );
       }
 
       const metadata = await prisma.conversationMetadata.upsert({
@@ -121,11 +130,8 @@ metadataRouter.post(
 
       res.status(201).json(metadata);
     } catch (error) {
-      if (error instanceof z.ZodError) {
-        res.status(400).json({ error: "Invalid request body" });
-        return;
-      }
-      res.status(500).json({ error: "Failed to upsert conversation metadata" });
+      // Pass all errors to the global error middleware
+      next(error);
     }
   },
 );
