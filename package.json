@@ -30,6 +30,7 @@
     "@connectrpc/connect": "^2.0.1",
     "@connectrpc/connect-node": "^2.0.1",
     "@prisma/client": "^6.3.1",
+    "@turnkey/sdk-server": "^3.0.1",
     "@xmtp/node-sdk": "^0.0.47",
     "cors": "^2.8.5",
     "expo-server-sdk": "^3.14.0",
