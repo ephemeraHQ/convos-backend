@@ -58,3 +58,7 @@ void mock.module("@/utils/xmtp", () => ({
     return ["0x1234567890123456789012345678901234567890"];
   },
 }));
+
+void mock.module("@/api/v1/wallets/utils", () => ({
+  getTurnkeyConfig: () => {},
+}));

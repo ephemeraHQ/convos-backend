@@ -1,3 +1,4 @@
+import type { Server } from "http";
 import { getRandomValues } from "node:crypto";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -68,4 +69,12 @@ export const createJWT = async (client: Client, secret: string) => {
     .setExpirationTime("1h")
     .sign(new TextEncoder().encode(secret));
   return jwt;
+};
+
+export const getServerPort = (server: Server) => {
+  const address = server.address();
+  if (!address || typeof address === "string") {
+    throw new Error("Could not get server address");
+  }
+  return address.port;
 };
