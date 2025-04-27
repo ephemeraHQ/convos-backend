@@ -7,3 +7,5 @@
 export const ETHEREUM_WALLET_DEFAULT_PATH = "m/44'/60'/0'/0/0";
 export const DEFAULT_SUB_ORG_NAME = "Default SubOrg";
 export const DEFAULT_USER_NAME = "Default User";
+export const DEFAULT_API_KEY_NAME = "Default key";
+export const API_KEY_EXPIRATION_TIME = 60 * 60; // 1 hour

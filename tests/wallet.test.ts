@@ -10,7 +10,10 @@ import {
   test,
 } from "bun:test";
 import express from "express";
-import { DEFAULT_USER_NAME } from "@/api/v1/wallets/constants";
+import {
+  DEFAULT_API_KEY_NAME,
+  DEFAULT_USER_NAME,
+} from "@/api/v1/wallets/constants";
 import type {
   CreateSubOrgRequestBody,
   CreateSubOrgReturned,
@@ -74,6 +77,7 @@ describe("/wallets API", () => {
         attestationObject: "test-attestation-object",
         transports: [],
       },
+      ephemeralPublicKey: "test-api-key",
     };
 
     const response = await fetch(`http://localhost:${port}/wallets`, {
@@ -97,7 +101,13 @@ describe("/wallets API", () => {
         rootUsers: [
           expect.objectContaining({
             userName: DEFAULT_USER_NAME,
-            apiKeys: [],
+            apiKeys: [
+              expect.objectContaining({
+                apiKeyName: DEFAULT_API_KEY_NAME,
+                publicKey: createSubOrgBody.ephemeralPublicKey,
+                curveType: "API_KEY_CURVE_P256",
+              }),
+            ],
             authenticators: [
               {
                 authenticatorName: "Passkey",
