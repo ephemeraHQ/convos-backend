@@ -14,6 +14,7 @@ import devicesRouter from "./devices";
 import identitiesRouter from "./identities";
 import lookupRouter from "./lookup";
 import usersRouter from "./users/users.router";
+import walletsRouter from "./wallets/wallets.router";
 
 const v1Router = Router();
 
@@ -25,6 +26,9 @@ v1Router.use("/authenticate", authenticateRouter);
 
 // mount xmtp notification webhook (no auth middleware)
 v1Router.use("/notifications/xmtp", xmtpNotificationsRouter);
+
+// create and manage turnkey wallets/suborgs
+v1Router.use("/wallets", walletsRouter);
 
 // mount notifications routes under /notifications
 v1Router.use("/notifications", authMiddleware, notificationsRouter);

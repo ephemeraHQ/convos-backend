@@ -1,0 +1,113 @@
+import type { Server } from "http";
+import { PrismaClient } from "@prisma/client";
+import {
+  afterAll,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  mock,
+  test,
+} from "bun:test";
+import express from "express";
+import { DEFAULT_USER_NAME } from "@/api/v1/wallets/constants";
+import type {
+  CreateSubOrgRequestBody,
+  CreateSubOrgReturned,
+} from "@/api/v1/wallets/handlers/create-suborg";
+import walletsRouter from "@/api/v1/wallets/wallets.router";
+import { jsonMiddleware } from "@/middleware/json";
+import { getServerPort } from "./helpers";
+
+const app = express();
+app.use(jsonMiddleware);
+app.use("/wallets", walletsRouter);
+
+const prisma = new PrismaClient();
+let server: Server;
+let port: number;
+
+beforeAll(() => {
+  // start the server on a test port
+  server = app.listen();
+  port = getServerPort(server);
+});
+
+afterAll(async () => {
+  // disconnect from the database
+  await prisma.$disconnect();
+  // close the server
+  server.close();
+});
+
+beforeEach(async () => {
+  await prisma.subOrg.deleteMany();
+});
+
+describe("/wallets API", () => {
+  test("POST /wallets creates a new wallet", async () => {
+    const subOrgId = "foo";
+    const walletAddress = "0x1234";
+    const mockCreateSubOrg = mock(() =>
+      Promise.resolve({
+        subOrganizationId: subOrgId,
+        wallet: {
+          addresses: [walletAddress],
+        },
+      }),
+    );
+
+    await mock.module("@turnkey/sdk-server", () => ({
+      Turnkey: class {
+        apiClient() {
+          return {
+            createSubOrganization: mockCreateSubOrg,
+          };
+        }
+      },
+    }));
+    const createSubOrgBody: CreateSubOrgRequestBody = {
+      challenge: "test-challenge",
+      attestation: {
+        credentialId: "test-credential-id",
+        clientDataJson: "test-client-data-json",
+        attestationObject: "test-attestation-object",
+        transports: [],
+      },
+    };
+
+    const response = await fetch(`http://localhost:${port}/wallets`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(createSubOrgBody),
+    });
+
+    expect(response.status).toBe(201);
+
+    const data = (await response.json()) as CreateSubOrgReturned;
+
+    expect(data.subOrgId).toEqual(subOrgId);
+    expect(data.walletAddress).toEqual(walletAddress);
+    expect(mockCreateSubOrg).toHaveBeenCalledTimes(1);
+    // Verify that the createSubOrganization was called with the correct parameters
+    expect(mockCreateSubOrg).toHaveBeenCalledWith(
+      expect.objectContaining({
+        rootUsers: [
+          expect.objectContaining({
+            userName: DEFAULT_USER_NAME,
+            apiKeys: [],
+            authenticators: [
+              {
+                authenticatorName: "Passkey",
+                challenge: createSubOrgBody.challenge,
+                attestation: createSubOrgBody.attestation,
+              },
+            ],
+          }),
+        ],
+      }),
+    );
+  });
+});

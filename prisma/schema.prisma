@@ -76,7 +76,7 @@ model Profile {
   name             String
   username         String         @unique
   description      String?
-  avatar           String?        
+  avatar           String?
   createdAt        DateTime       @default(now())
   updatedAt        DateTime       @updatedAt
   deviceIdentity   DeviceIdentity @relation(fields: [deviceIdentityId], references: [id])
@@ -95,4 +95,11 @@ model ConversationMetadata {
   deviceIdentity   DeviceIdentity @relation(fields: [deviceIdentityId], references: [id])
 
   @@unique([deviceIdentityId, conversationId])
+}
+
+model SubOrg {
+  id                   String   @id
+  defaultWalletAddress String
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
 }
