@@ -40,11 +40,28 @@ function errorHandler(
     });
   }
 
-  // Handle unknown errors
+  // Extract useful error information
+  const errorDetails = {
+    message: err.message,
+    name: err.name,
+    stack: err.stack,
+    // Include additional properties from the error object
+    ...(err instanceof Error &&
+      Object.getOwnPropertyNames(err)
+        .filter((key) => key !== "stack" && key !== "message" && key !== "name")
+        .reduce<Record<string, unknown>>((acc, key) => {
+          // @ts-expect-error - dynamic property access
+          acc[key] = err[key];
+          return acc;
+        }, {})),
+  };
+
+  // Handle unknown errors - always include detailed info now
   return res.status(500).json({
     error: "Internal Server Error",
     ...(process.env.NODE_ENV === "development" && {
       message: err.message,
+      details: errorDetails,
     }),
   });
 }

@@ -24,11 +24,42 @@ export const logError = (error: unknown, context?: Record<string, unknown>) => {
     message:
       error instanceof Error ? error.message : "An unknown error occurred",
     stack: error instanceof Error ? error.stack : undefined,
-    details: error instanceof AppError ? error.details : undefined,
+    details:
+      error instanceof AppError
+        ? error.details
+        : error instanceof Error
+          ? Object.getOwnPropertyNames(error).reduce<Record<string, unknown>>(
+              (acc, key) => {
+                // @ts-expect-error - dynamic properties access
+                acc[key] = error[key];
+                return acc;
+              },
+              {},
+            )
+          : { rawError: String(error) },
     context,
   };
 
-  console.error(JSON.stringify(errorLog, null, 2));
+  console.error("\n=============== ERROR LOG ===============");
+  console.error(
+    `[${errorLog.timestamp}] ${errorLog.name}: ${errorLog.message}`,
+  );
+
+  if (errorLog.stack) {
+    console.error("\n--- Stack Trace ---");
+    console.error(errorLog.stack);
+  }
+
+  if (errorLog.details && Object.keys(errorLog.details).length > 0) {
+    console.error("\n--- Error Details ---");
+    console.error(JSON.stringify(errorLog.details, null, 2));
+  }
+
+  if (context && Object.keys(context).length > 0) {
+    console.error("\n--- Request Context ---");
+    console.error(JSON.stringify(context, null, 2));
+  }
+  console.error("==========================================\n");
 
   return errorLog;
 };
