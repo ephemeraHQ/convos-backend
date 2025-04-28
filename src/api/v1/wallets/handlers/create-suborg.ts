@@ -33,6 +33,7 @@ export const createSubOrgRequestBodySchema = z.object({
       ]),
     ),
   }),
+  publicKey: z.string(),
 });
 
 export type CreateSubOrgRequestBody = z.infer<
@@ -71,7 +72,7 @@ export async function createSubOrg(
       throw error;
     }
 
-    const { challenge, attestation } = body;
+    const { challenge, attestation, publicKey } = body;
     const walletName = `Default Wallet`;
 
     const turnkeyClient = new TurnkeyServerSDK(turnkeyConfig);
@@ -84,7 +85,13 @@ export async function createSubOrg(
         rootUsers: [
           {
             userName: DEFAULT_USER_NAME,
-            apiKeys: [],
+            apiKeys: [
+              {
+                apiKeyName: "Default API Key",
+                publicKey: publicKey,
+                curveType: "API_KEY_CURVE_P256",
+              },
+            ],
             authenticators: [
               {
                 authenticatorName: "Passkey",
