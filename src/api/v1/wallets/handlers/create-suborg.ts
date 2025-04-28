@@ -3,6 +3,8 @@ import { Turnkey as TurnkeyServerSDK } from "@turnkey/sdk-server";
 import type { Request, Response } from "express";
 import { z } from "zod";
 import {
+  API_KEY_EXPIRATION_TIME,
+  DEFAULT_API_KEY_NAME,
   DEFAULT_SUB_ORG_NAME,
   DEFAULT_USER_NAME,
   ETHEREUM_WALLET_DEFAULT_PATH,
@@ -33,6 +35,7 @@ export const createSubOrgRequestBodySchema = z.object({
       ]),
     ),
   }),
+  ephemeralPublicKey: z.string().optional(),
 });
 
 export type CreateSubOrgRequestBody = z.infer<
@@ -71,7 +74,7 @@ export async function createSubOrg(
       throw error;
     }
 
-    const { challenge, attestation } = body;
+    const { challenge, attestation, ephemeralPublicKey } = body;
     const walletName = `Default Wallet`;
 
     const turnkeyClient = new TurnkeyServerSDK(turnkeyConfig);
@@ -84,7 +87,16 @@ export async function createSubOrg(
         rootUsers: [
           {
             userName: DEFAULT_USER_NAME,
-            apiKeys: [],
+            apiKeys: ephemeralPublicKey
+              ? [
+                  {
+                    apiKeyName: DEFAULT_API_KEY_NAME,
+                    publicKey: ephemeralPublicKey,
+                    curveType: "API_KEY_CURVE_P256",
+                    expirationSeconds: API_KEY_EXPIRATION_TIME.toString(),
+                  },
+                ]
+              : [],
             authenticators: [
               {
                 authenticatorName: "Passkey",
