@@ -1,7 +1,7 @@
-import { PrismaClient } from "@prisma/client";
 import { Turnkey as TurnkeyServerSDK } from "@turnkey/sdk-server";
 import type { Request, Response } from "express";
 import { z } from "zod";
+import { prisma } from "@/utils/prisma";
 import {
   API_KEY_EXPIRATION_TIME,
   DEFAULT_API_KEY_NAME,
@@ -10,8 +10,6 @@ import {
   ETHEREUM_WALLET_DEFAULT_PATH,
 } from "../constants";
 import { getTurnkeyConfig } from "../utils";
-
-const prisma = new PrismaClient();
 
 const turnkeyConfig = getTurnkeyConfig();
 

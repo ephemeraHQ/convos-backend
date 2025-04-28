@@ -1,6 +1,6 @@
-import { PrismaClient } from "@prisma/client";
 import type { Request, Response } from "express";
 import { z } from "zod";
+import { prisma } from "@/utils/prisma";
 import type { profileBaseSchema } from "../profile.schema";
 import type { ProfileValidationResponse } from "../profile.types";
 import type { GetProfileRequestParams } from "../profiles.types";
@@ -9,8 +9,6 @@ import {
   validateOnChainName,
   validateProfileUpdate,
 } from "./validate-profile";
-
-const prisma = new PrismaClient();
 
 // Use Zod schema for type definition
 export type UpdateProfileRequestBody = Partial<

@@ -1,5 +1,5 @@
 import type { Server } from "http";
-import { DeviceOS, PrismaClient, type Device } from "@prisma/client";
+import { DeviceOS, type Device } from "@prisma/client";
 import {
   afterAll,
   beforeAll,
@@ -16,6 +16,7 @@ import type {
 } from "@/api/v1/users/handlers/create-user";
 import usersRouter from "@/api/v1/users/users.router";
 import { jsonMiddleware } from "@/middleware/json";
+import { prisma } from "@/utils/prisma";
 
 // Constants used throughout tests
 const AUTH_XMTP_ID = "test-xmtp-id";
@@ -33,7 +34,6 @@ app.use((req, res, next) => {
 app.use("/users", usersRouter);
 app.use("/devices", devicesRouter);
 
-const prisma = new PrismaClient();
 let server: Server;
 
 beforeAll(() => {

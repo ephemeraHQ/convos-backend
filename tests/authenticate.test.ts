@@ -1,5 +1,4 @@
 import type { Server } from "http";
-import { PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import express from "express";
 import * as jose from "jose";
@@ -9,6 +8,7 @@ import authenticateRouter, {
   type AuthenticateResponse,
 } from "@/api/v1/authenticate";
 import { jsonMiddleware } from "@/middleware/json";
+import { prisma } from "@/utils/prisma";
 import { createClient, createHeaders } from "./helpers";
 
 // mock environment variable
@@ -19,7 +19,6 @@ const app = express();
 app.use(jsonMiddleware);
 app.use("/authenticate", authenticateRouter);
 
-const prisma = new PrismaClient();
 let server: Server;
 
 beforeAll(() => {

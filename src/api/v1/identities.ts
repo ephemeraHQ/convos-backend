@@ -1,9 +1,8 @@
-import { PrismaClient } from "@prisma/client";
 import { Router, type Request, type Response } from "express";
 import { z } from "zod";
+import { prisma } from "@/utils/prisma";
 
 const identitiesRouter = Router();
-const prisma = new PrismaClient();
 
 // Schema for creating and updating a device identity
 const deviceIdentitySchema = z.object({

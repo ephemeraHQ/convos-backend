@@ -1,9 +1,8 @@
-import { PrismaClient } from "@prisma/client";
 import { Router, type Request, type Response } from "express";
 import { z } from "zod";
+import { prisma } from "@/utils/prisma";
 
 const metadataRouter = Router();
-const prisma = new PrismaClient();
 
 type GetMetadataRequestParams = {
   conversationId: string;

@@ -1,11 +1,9 @@
-import { PrismaClient } from "@prisma/client";
 import type { Request, Response } from "express";
+import { prisma } from "@/utils/prisma";
 import type {
   GetProfileRequestParams,
   ProfileRequestResult,
 } from "../profiles.types";
-
-const prisma = new PrismaClient();
 
 export async function getProfile(
   req: Request<GetProfileRequestParams>,

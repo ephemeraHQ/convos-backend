@@ -1,10 +1,9 @@
-import { PrismaClient } from "@prisma/client";
 import { Router, type Request, type Response } from "express";
 import { z } from "zod";
+import { prisma } from "@/utils/prisma";
 import { DeviceSchema } from "../../../prisma/generated/zod";
 
 const devicesRouter = Router();
-const prisma = new PrismaClient();
 
 export type GetDeviceRequestParams = {
   userId: string;
