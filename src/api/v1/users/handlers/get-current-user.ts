@@ -1,8 +1,7 @@
-import { PrismaClient, type DeviceIdentity } from "@prisma/client";
+import { type DeviceIdentity } from "@prisma/client";
 import type { Request, Response } from "express";
 import { z } from "zod";
-
-const prisma = new PrismaClient();
+import { prisma } from "@/utils/prisma";
 
 const querySchema = z.object({
   device_id: z.string().optional(),

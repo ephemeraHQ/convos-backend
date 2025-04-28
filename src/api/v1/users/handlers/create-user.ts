@@ -1,14 +1,13 @@
-import { DeviceOS, PrismaClient } from "@prisma/client";
+import { DeviceOS } from "@prisma/client";
 import type { Request, Response } from "express";
 import { z } from "zod";
+import { prisma } from "@/utils/prisma";
 import {
   validateOnChainName,
   validateProfileRequiredFields,
   validateProfileSchema,
   validateUsernameUniqueness,
 } from "../../profiles/handlers/validate-profile";
-
-const prisma = new PrismaClient();
 
 export const createUserRequestBodySchema = z.object({
   privyUserId: z.string(),

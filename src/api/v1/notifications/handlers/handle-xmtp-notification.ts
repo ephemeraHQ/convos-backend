@@ -1,10 +1,9 @@
-import { PrismaClient } from "@prisma/client";
 import { Expo, type ExpoPushMessage } from "expo-server-sdk";
 import type { Request, Response } from "express";
 import type { NotificationResponse } from "@/notifications/client";
 import { getHttpDeliveryNotificationAuthHeader } from "@/notifications/utils";
+import { prisma } from "@/utils/prisma";
 
-const prisma = new PrismaClient();
 const expo = new Expo();
 
 if (!process.env.XMTP_NOTIFICATION_SECRET) {

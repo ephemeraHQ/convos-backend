@@ -1,5 +1,5 @@
 import type { Server } from "http";
-import { DeviceOS, PrismaClient } from "@prisma/client";
+import { DeviceOS } from "@prisma/client";
 import {
   afterAll,
   beforeAll,
@@ -16,12 +16,12 @@ import type {
 import type { ReturnedCurrentUser } from "@/api/v1/users/handlers/get-current-user";
 import usersRouter from "@/api/v1/users/users.router";
 import { jsonMiddleware } from "@/middleware/json";
+import { prisma } from "@/utils/prisma";
 
 const app = express();
 app.use(jsonMiddleware);
 app.use("/users", usersRouter);
 
-const prisma = new PrismaClient();
 let server: Server;
 
 beforeAll(() => {

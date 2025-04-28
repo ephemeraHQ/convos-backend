@@ -1,5 +1,5 @@
-import { PrismaClient } from "@prisma/client";
 import { z } from "zod";
+import { prisma } from "@/utils/prisma";
 import { checkNameOwnership } from "../../../../utils/thirdweb";
 import { getAddressesForInboxId } from "../../../../utils/xmtp";
 import { profileCreationSchema, profileUpdateSchema } from "../profile.schema";
@@ -7,8 +7,6 @@ import type {
   ProfileValidationRequest,
   ProfileValidationResponse,
 } from "../profile.types";
-
-const prisma = new PrismaClient();
 
 export enum ProfileValidationErrorType {
   USERNAME_TAKEN = "USERNAME_TAKEN",

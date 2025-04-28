@@ -1,9 +1,5 @@
 import type { Server } from "http";
-import {
-  DeviceOS,
-  PrismaClient,
-  type ConversationMetadata,
-} from "@prisma/client";
+import { DeviceOS, type ConversationMetadata } from "@prisma/client";
 import {
   afterAll,
   beforeAll,
@@ -20,6 +16,7 @@ import type {
 } from "@/api/v1/users/handlers/create-user";
 import usersRouter from "@/api/v1/users/users.router";
 import { jsonMiddleware } from "@/middleware/json";
+import { prisma } from "@/utils/prisma";
 
 const app = express();
 app.use(jsonMiddleware);
@@ -36,7 +33,6 @@ app.use((req, res, next) => {
 app.use("/users", usersRouter);
 app.use("/metadata", metadataRouter);
 
-const prisma = new PrismaClient();
 let server: Server;
 
 beforeAll(() => {

@@ -1,9 +1,5 @@
 import type { Server } from "http";
-import {
-  PrismaClient,
-  type DeviceIdentity,
-  type IdentitiesOnDevice,
-} from "@prisma/client";
+import { type DeviceIdentity, type IdentitiesOnDevice } from "@prisma/client";
 import {
   afterAll,
   beforeAll,
@@ -15,6 +11,7 @@ import {
 import express from "express";
 import identitiesRouter from "@/api/v1/identities";
 import { jsonMiddleware } from "@/middleware/json";
+import { prisma } from "@/utils/prisma";
 
 const app = express();
 app.use(jsonMiddleware);
@@ -28,7 +25,6 @@ app.use((req, res, next) => {
 
 app.use("/identities", identitiesRouter);
 
-const prisma = new PrismaClient();
 let server: Server;
 
 beforeAll(() => {

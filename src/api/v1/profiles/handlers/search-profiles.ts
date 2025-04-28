@@ -1,9 +1,7 @@
-import { PrismaClient } from "@prisma/client";
 import type { Request, Response } from "express";
 import { isAddress } from "viem";
+import { prisma } from "@/utils/prisma";
 import type { ProfileRequestResult } from "../profiles.types";
-
-const prisma = new PrismaClient();
 
 type SearchProfilesQuery = {
   query: string;

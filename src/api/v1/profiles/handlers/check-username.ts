@@ -1,7 +1,5 @@
-import { PrismaClient } from "@prisma/client";
 import type { Request, Response } from "express";
-
-const prisma = new PrismaClient();
+import { prisma } from "@/utils/prisma";
 
 type CheckUsernameParams = {
   username: string;

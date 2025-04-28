@@ -1,8 +1,6 @@
-import { PrismaClient } from "@prisma/client";
 import type { Request, Response } from "express";
+import { prisma } from "@/utils/prisma";
 import type { PublicProfileResult } from "../profiles.types";
-
-const prisma = new PrismaClient();
 
 type GetPublicProfileParams = {
   username: string;

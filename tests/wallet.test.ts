@@ -1,5 +1,4 @@
 import type { Server } from "http";
-import { PrismaClient } from "@prisma/client";
 import {
   afterAll,
   beforeAll,
@@ -20,13 +19,13 @@ import type {
 } from "@/api/v1/wallets/handlers/create-suborg";
 import walletsRouter from "@/api/v1/wallets/wallets.router";
 import { jsonMiddleware } from "@/middleware/json";
+import { prisma } from "@/utils/prisma";
 import { getServerPort } from "./helpers";
 
 const app = express();
 app.use(jsonMiddleware);
 app.use("/wallets", walletsRouter);
 
-const prisma = new PrismaClient();
 let server: Server;
 let port: number;
 
