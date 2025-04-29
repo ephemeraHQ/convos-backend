@@ -62,13 +62,13 @@ describe("/devices API", () => {
   test("POST /devices/:userId creates a new device", async () => {
     // Create test user first via API
     const createUserBody: CreateUserRequestBody = {
-      privyUserId: "test-devices-privy-user-id",
+      turnkeyUserId: "test-devices-turnkey-user-id",
       device: {
         os: DeviceOS.ios,
         name: "Test Initial Device",
       },
       identity: {
-        privyAddress: "test-privy-address",
+        turnkeyAddress: "test-turnkey-address",
         xmtpId: AUTH_XMTP_ID,
       },
       profile: {
@@ -114,13 +114,13 @@ describe("/devices API", () => {
   test("GET /devices/:userId/:deviceId returns 404 for non-existent device", async () => {
     // Create test user first via API
     const createUserBody: CreateUserRequestBody = {
-      privyUserId: "test-devices-privy-user-id-2",
+      turnkeyUserId: "test-devices-turnkey-user-id-2",
       device: {
         os: DeviceOS.ios,
         name: "Test Initial Device",
       },
       identity: {
-        privyAddress: "test-privy-address-2",
+        turnkeyAddress: "test-turnkey-address-2",
         xmtpId: AUTH_XMTP_ID,
       },
       profile: {
@@ -153,13 +153,13 @@ describe("/devices API", () => {
   test("GET /devices/:userId/:deviceId returns device when exists", async () => {
     // Create test user first via API
     const createUserBody: CreateUserRequestBody = {
-      privyUserId: "test-devices-privy-user-id-3",
+      turnkeyUserId: "test-devices-turnkey-user-id-3",
       device: {
         os: DeviceOS.ios,
         name: "Test Initial Device",
       },
       identity: {
-        privyAddress: "test-privy-address-3",
+        turnkeyAddress: "test-turnkey-address-3",
         xmtpId: AUTH_XMTP_ID,
       },
       profile: {
@@ -213,13 +213,13 @@ describe("/devices API", () => {
   test("GET /devices/:userId returns all devices for a user", async () => {
     // Create test user first via API
     const createUserBody: CreateUserRequestBody = {
-      privyUserId: "test-devices-privy-user-id-4",
+      turnkeyUserId: "test-devices-turnkey-user-id-4",
       device: {
         os: DeviceOS.ios,
         name: "Test Initial Device",
       },
       identity: {
-        privyAddress: "test-privy-address-4",
+        turnkeyAddress: "test-turnkey-address-4",
         xmtpId: AUTH_XMTP_ID,
       },
       profile: {
@@ -276,13 +276,13 @@ describe("/devices API", () => {
   test("PUT /devices/:userId/:deviceId updates device", async () => {
     // Create test user first via API
     const createUserBody: CreateUserRequestBody = {
-      privyUserId: "test-devices-privy-user-id-5",
+      turnkeyUserId: "test-devices-turnkey-user-id-5",
       device: {
         os: DeviceOS.ios,
         name: "Test Initial Device",
       },
       identity: {
-        privyAddress: "test-privy-address-5",
+        turnkeyAddress: "test-turnkey-address-5",
         xmtpId: AUTH_XMTP_ID,
       },
       profile: {
@@ -347,13 +347,13 @@ describe("/devices API", () => {
   test("POST /devices/:userId validates request body", async () => {
     // Create test user first via API
     const createUserBody: CreateUserRequestBody = {
-      privyUserId: "test-devices-privy-user-id-6",
+      turnkeyUserId: "test-devices-turnkey-user-id-6",
       device: {
         os: DeviceOS.ios,
         name: "Test Initial Device",
       },
       identity: {
-        privyAddress: "test-privy-address-6",
+        turnkeyAddress: "test-turnkey-address-6",
         xmtpId: AUTH_XMTP_ID,
       },
       profile: {

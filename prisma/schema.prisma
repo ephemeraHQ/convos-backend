@@ -19,7 +19,7 @@ datasource db {
 
 model User {
   id             String           @id @default(uuid())
-  privyUserId    String           @unique
+  turnkeyUserId    String           @unique
   createdAt      DateTime         @default(now())
   updatedAt      DateTime         @updatedAt
   devices        Device[]
@@ -50,7 +50,7 @@ model DeviceIdentity {
   id                   String                 @id @default(uuid())
   userId               String
   xmtpId               String?
-  privyAddress         String
+  turnkeyAddress         String
   createdAt            DateTime               @default(now())
   updatedAt            DateTime               @updatedAt
   profile              Profile?

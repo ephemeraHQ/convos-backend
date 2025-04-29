@@ -10,13 +10,13 @@ import {
 } from "../../profiles/handlers/validate-profile";
 
 export const createUserRequestBodySchema = z.object({
-  privyUserId: z.string(),
+  turnkeyUserId: z.string(),
   device: z.object({
     os: z.enum(Object.keys(DeviceOS) as [DeviceOS, ...DeviceOS[]]),
     name: z.string().nullable().optional(),
   }),
   identity: z.object({
-    privyAddress: z.string(),
+    turnkeyAddress: z.string(),
     xmtpId: z.string(),
   }),
   profile: z.object({
@@ -31,7 +31,7 @@ export type CreateUserRequestBody = z.infer<typeof createUserRequestBodySchema>;
 
 export type CreatedReturnedUser = {
   id: string;
-  privyUserId: string;
+  turnkeyUserId: string;
   device: {
     id: string;
     os: DeviceOS;
@@ -39,7 +39,7 @@ export type CreatedReturnedUser = {
   };
   identity: {
     id: string;
-    privyAddress: string;
+    turnkeyAddress: string;
     xmtpId: string | null;
   };
   profile: {
@@ -115,7 +115,7 @@ export async function createUser(
     // Create user
     const createdUser = await prisma.user.create({
       data: {
-        privyUserId: body.privyUserId,
+        turnkeyUserId: body.turnkeyUserId,
         devices: {
           create: {
             os: body.device.os,
@@ -124,11 +124,11 @@ export async function createUser(
               create: {
                 identity: {
                   create: {
-                    privyAddress: body.identity.privyAddress,
+                    turnkeyAddress: body.identity.turnkeyAddress,
                     xmtpId: body.identity.xmtpId,
                     user: {
                       connect: {
-                        privyUserId: body.privyUserId,
+                        turnkeyUserId: body.turnkeyUserId,
                       },
                     },
                     profile: {
@@ -148,7 +148,7 @@ export async function createUser(
       },
       select: {
         id: true,
-        privyUserId: true,
+        turnkeyUserId: true,
         devices: {
           select: {
             id: true,
@@ -159,7 +159,7 @@ export async function createUser(
                 identity: {
                   select: {
                     id: true,
-                    privyAddress: true,
+                    turnkeyAddress: true,
                     xmtpId: true,
                     profile: {
                       select: {
@@ -198,7 +198,7 @@ export async function createUser(
 
     const returnedUser: CreatedReturnedUser = {
       id: createdUser.id,
-      privyUserId: createdUser.privyUserId,
+      turnkeyUserId: createdUser.turnkeyUserId,
       device: {
         id: createdDevice.id,
         os: createdDevice.os,
@@ -206,7 +206,7 @@ export async function createUser(
       },
       identity: {
         id: createdIdentity.id,
-        privyAddress: createdIdentity.privyAddress,
+        turnkeyAddress: createdIdentity.turnkeyAddress,
         xmtpId: createdIdentity.xmtpId,
       },
       profile: {

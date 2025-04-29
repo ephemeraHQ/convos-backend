@@ -69,13 +69,13 @@ describe("/metadata API", () => {
   test("POST /metadata/conversation creates new metadata", async () => {
     // Create a user first with profile
     const createUserBody: CreateUserRequestBody = {
-      privyUserId: "test-metadata-privy-user-id",
+      turnkeyUserId: "test-metadata-turnkey-user-id",
       device: {
         os: DeviceOS.ios,
         name: "iPhone 14",
       },
       identity: {
-        privyAddress: "test-privy-address",
+        turnkeyAddress: "test-turnkey-address",
         xmtpId: AUTH_XMTP_ID,
       },
       profile: {
@@ -150,13 +150,13 @@ describe("/metadata API", () => {
   test("GET /metadata/conversation/:deviceIdentityId/:conversationId returns metadata when exists", async () => {
     // Create a user first
     const createUserBody: CreateUserRequestBody = {
-      privyUserId: "test-metadata-privy-user-id",
+      turnkeyUserId: "test-metadata-turnkey-user-id",
       device: {
         os: DeviceOS.ios,
         name: "iPhone 14",
       },
       identity: {
-        privyAddress: "test-privy-address",
+        turnkeyAddress: "test-turnkey-address",
         xmtpId: AUTH_XMTP_ID,
       },
       profile: {
@@ -218,13 +218,13 @@ describe("/metadata API", () => {
   test("POST /metadata/conversation updates existing metadata", async () => {
     // Create a user first
     const createUserBody: CreateUserRequestBody = {
-      privyUserId: "test-metadata-privy-user-id",
+      turnkeyUserId: "test-metadata-turnkey-user-id",
       device: {
         os: DeviceOS.ios,
         name: "iPhone 14",
       },
       identity: {
-        privyAddress: "test-privy-address",
+        turnkeyAddress: "test-turnkey-address",
         xmtpId: AUTH_XMTP_ID,
       },
       profile: {
