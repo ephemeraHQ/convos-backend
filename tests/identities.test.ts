@@ -59,7 +59,7 @@ describe("/identities API", () => {
         user: {
           create: {
             id: "test-user-id",
-            privyUserId: "test-identities-privy-user-id",
+            turnkeyUserId: "test-identities-turnkey-user-id",
           },
         },
       },
@@ -69,7 +69,7 @@ describe("/identities API", () => {
     await prisma.deviceIdentity.create({
       data: {
         userId: testUserId,
-        privyAddress: "test-privy-address",
+        turnkeyAddress: "test-turnkey-address",
         xmtpId: "test-xmtp-id",
       },
     });
@@ -84,7 +84,7 @@ describe("/identities API", () => {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          privyAddress: "0x123",
+          turnkeyAddress: "0x123",
           xmtpId: "test-xmtp-id",
         }),
       },
@@ -92,7 +92,7 @@ describe("/identities API", () => {
     const identity = (await response.json()) as DeviceIdentity;
 
     expect(response.status).toBe(201);
-    expect(identity.privyAddress).toBe("0x123");
+    expect(identity.turnkeyAddress).toBe("0x123");
     expect(identity.xmtpId).toBe("test-xmtp-id");
 
     const response2 = await fetch(
@@ -103,7 +103,7 @@ describe("/identities API", () => {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          privyAddress: "0x123",
+          turnkeyAddress: "0x123",
           xmtpId: "test-xmtp-id",
         }),
       },
@@ -124,7 +124,7 @@ describe("/identities API", () => {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          privyAddress: "0x123",
+          turnkeyAddress: "0x123",
           xmtpId: "test-xmtp-id",
         }),
       },
@@ -139,7 +139,7 @@ describe("/identities API", () => {
     expect(response.status).toBe(200);
     expect(identities).toHaveLength(1);
     expect(identities[0].id).toBe(createdIdentity.id);
-    expect(identities[0].privyAddress).toBe("0x123");
+    expect(identities[0].turnkeyAddress).toBe("0x123");
   });
 
   test("GET /identities/:identityId returns single identity", async () => {
@@ -152,7 +152,7 @@ describe("/identities API", () => {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          privyAddress: "0x123",
+          turnkeyAddress: "0x123",
           xmtpId: "test-xmtp-id",
         }),
       },
@@ -166,7 +166,7 @@ describe("/identities API", () => {
 
     expect(response.status).toBe(200);
     expect(identity.id).toBe(createdIdentity.id);
-    expect(identity.privyAddress).toBe("0x123");
+    expect(identity.turnkeyAddress).toBe("0x123");
     expect(identity.xmtpId).toBe("test-xmtp-id");
   });
 
@@ -180,7 +180,7 @@ describe("/identities API", () => {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          privyAddress: "0x123",
+          turnkeyAddress: "0x123",
           xmtpId: "test-xmtp-id",
         }),
       },
@@ -195,7 +195,7 @@ describe("/identities API", () => {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          privyAddress: "0x456",
+          turnkeyAddress: "0x456",
           xmtpId: "new-xmtp-id",
         }),
       },
@@ -204,7 +204,7 @@ describe("/identities API", () => {
 
     expect(response.status).toBe(200);
     expect(updatedIdentity.id).toBe(createdIdentity.id);
-    expect(updatedIdentity.privyAddress).toBe("0x456");
+    expect(updatedIdentity.turnkeyAddress).toBe("0x456");
     expect(updatedIdentity.xmtpId).toBe("new-xmtp-id");
   });
 
@@ -218,7 +218,7 @@ describe("/identities API", () => {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          privyAddress: "0x123",
+          turnkeyAddress: "0x123",
           xmtpId: "test-xmtp-id",
         }),
       },
@@ -269,7 +269,7 @@ describe("/identities API", () => {
     expect(getResponse.status).toBe(200);
     expect(deviceIdentities).toHaveLength(1);
     expect(deviceIdentities[0].id).toBe(createdIdentity.id);
-    expect(deviceIdentities[0].privyAddress).toBe("0x123");
+    expect(deviceIdentities[0].turnkeyAddress).toBe("0x123");
   });
 
   test("DELETE /identities/:identityId/link unlinks identity from device", async () => {
@@ -282,7 +282,7 @@ describe("/identities API", () => {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          privyAddress: "0x123",
+          turnkeyAddress: "0x123",
           xmtpId: "test-xmtp-id",
         }),
       },
@@ -324,7 +324,7 @@ describe("/identities API", () => {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          // missing required privyAddress
+          // missing required turnkeyAddress
           xmtpId: "test-xmtp-id",
         }),
       },
@@ -345,7 +345,7 @@ describe("/identities API", () => {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          privyAddress: "0x123",
+          turnkeyAddress: "0x123",
           xmtpId: "test-xmtp-id",
         }),
       },
@@ -366,7 +366,7 @@ describe("/identities API", () => {
       (identity) => identity.id === createdIdentity.id,
     );
     expect(foundIdentity).toBeDefined();
-    expect(foundIdentity?.privyAddress).toBe("0x123");
+    expect(foundIdentity?.turnkeyAddress).toBe("0x123");
     expect(foundIdentity?.userId).toBe(testUserId);
 
     // unlink the identity
@@ -399,7 +399,7 @@ describe("/identities API", () => {
       (identity) => identity.id === createdIdentity.id,
     );
     expect(foundIdentityAfterUnlink).toBeDefined();
-    expect(foundIdentityAfterUnlink?.privyAddress).toBe("0x123");
+    expect(foundIdentityAfterUnlink?.turnkeyAddress).toBe("0x123");
     expect(foundIdentityAfterUnlink?.userId).toBe(testUserId);
   });
 

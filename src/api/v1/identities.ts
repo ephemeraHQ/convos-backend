@@ -7,7 +7,7 @@ const identitiesRouter = Router();
 // Schema for creating and updating a device identity
 const deviceIdentitySchema = z.object({
   xmtpId: z.string().optional(),
-  privyAddress: z.string(),
+  turnkeyAddress: z.string(),
 });
 
 export type GetDeviceIdentitiesRequestParams = {

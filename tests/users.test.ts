@@ -49,13 +49,13 @@ beforeEach(async () => {
 describe("/users API", () => {
   test("POST /users creates a new user", async () => {
     const createUserBody: CreateUserRequestBody = {
-      privyUserId: "test-users-privy-user-id",
+      turnkeyUserId: "test-users-turnkey-user-id",
       device: {
         os: DeviceOS.ios,
         name: "iPhone 14",
       },
       identity: {
-        privyAddress: "test-privy-address",
+        turnkeyAddress: "test-turnkey-address",
         xmtpId: "test-xmtp-id",
       },
       profile: {
@@ -75,14 +75,14 @@ describe("/users API", () => {
     expect(response.status).toBe(201);
 
     const user = (await response.json()) as CreatedReturnedUser;
-    expect(user.privyUserId).toBe(createUserBody.privyUserId);
+    expect(user.turnkeyUserId).toBe(createUserBody.turnkeyUserId);
     expect(user.id).toBeDefined();
     expect(user.device.id).toBeDefined();
     expect(user.device.os).toBe(createUserBody.device.os);
     expect(user.device.name!).toBe(createUserBody.device.name!);
     expect(user.identity.id).toBeDefined();
-    expect(user.identity.privyAddress).toBe(
-      createUserBody.identity.privyAddress,
+    expect(user.identity.turnkeyAddress).toBe(
+      createUserBody.identity.turnkeyAddress,
     );
     expect(user.identity.xmtpId).toBe(createUserBody.identity.xmtpId);
     expect(user.profile.name).toBe(createUserBody.profile.name);
@@ -98,13 +98,13 @@ describe("/users API", () => {
   test("GET /users/me returns current user", async () => {
     // First create a user
     const createUserBody: CreateUserRequestBody = {
-      privyUserId: "test-privy-user-id",
+      turnkeyUserId: "test-turnkey-user-id",
       device: {
         os: DeviceOS.ios,
         name: "iPhone 14",
       },
       identity: {
-        privyAddress: "test-privy-address",
+        turnkeyAddress: "test-turnkey-address",
         xmtpId: "test-xmtp-id",
       },
       profile: {
@@ -117,7 +117,7 @@ describe("/users API", () => {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        Authorization: "Bearer test-privy-user-id",
+        Authorization: "Bearer test-turnkey-user-id",
       },
       body: JSON.stringify(createUserBody),
     });
@@ -126,7 +126,7 @@ describe("/users API", () => {
     // Then try to get /me with auth header
     const response = await fetch("http://localhost:3001/users/me", {
       headers: {
-        Authorization: "Bearer test-privy-user-id",
+        Authorization: "Bearer test-turnkey-user-id",
       },
     });
 
@@ -135,7 +135,7 @@ describe("/users API", () => {
     const user = (await response.json()) as ReturnedCurrentUser;
     expect(user.id).toBeDefined();
     expect(user.identities).toHaveLength(1);
-    expect(user.identities[0].privyAddress).toBe("test-privy-address");
+    expect(user.identities[0].turnkeyAddress).toBe("test-turnkey-address");
     expect(user.identities[0].xmtpId).toBe("test-xmtp-id");
   });
 });

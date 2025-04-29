@@ -8,11 +8,11 @@ export type ProfileRequestResult = Pick<
   Profile,
   "id" | "name" | "username" | "description" | "avatar"
 > &
-  Pick<DeviceIdentity, "xmtpId" | "privyAddress">;
+  Pick<DeviceIdentity, "xmtpId" | "turnkeyAddress">;
 
 // Public profile data exposed via API
 export type PublicProfileResult = Pick<
   Profile,
   "name" | "username" | "description" | "avatar"
 > &
-  Pick<DeviceIdentity, "xmtpId" | "privyAddress">;
+  Pick<DeviceIdentity, "xmtpId" | "turnkeyAddress">;

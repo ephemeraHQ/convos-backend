@@ -48,13 +48,13 @@ beforeEach(async () => {
 });
 
 const createUserBody: CreateUserRequestBody = {
-  privyUserId: "test-profiles-privy-user-id",
+  turnkeyUserId: "test-profiles-turnkey-user-id",
   device: {
     os: DeviceOS.ios,
     name: "iPhone 14",
   },
   identity: {
-    privyAddress: "test-privy-address",
+    turnkeyAddress: "test-turnkey-address",
     xmtpId: "test-xmtp-id",
   },
   profile: {
@@ -65,13 +65,13 @@ const createUserBody: CreateUserRequestBody = {
 };
 
 const firstUserBody: CreateUserRequestBody = {
-  privyUserId: "test-profiles-privy-user-id-6",
+  turnkeyUserId: "test-profiles-turnkey-user-id-6",
   device: {
     os: DeviceOS.ios,
     name: "iPhone 14 Pro",
   },
   identity: {
-    privyAddress: "test-privy-address-6",
+    turnkeyAddress: "test-turnkey-address-6",
     xmtpId: "test-xmtp-id-6",
   },
   profile: {
@@ -82,13 +82,13 @@ const firstUserBody: CreateUserRequestBody = {
 };
 
 const secondUserBody: CreateUserRequestBody = {
-  privyUserId: "test-profiles-privy-user-id-7",
+  turnkeyUserId: "test-profiles-turnkey-user-id-7",
   device: {
     os: DeviceOS.ios,
     name: "iPhone 14",
   },
   identity: {
-    privyAddress: "test-privy-address-7",
+    turnkeyAddress: "test-turnkey-address-7",
     xmtpId: "test-xmtp-id-7",
   },
   profile: {
@@ -800,7 +800,7 @@ describe("/profiles API", () => {
     const vitalikUserBody = {
       ...createUserBody,
       identity: {
-        privyAddress: "test-privy-address",
+        turnkeyAddress: "test-turnkey-address",
         xmtpId: "vitalik-xmtp-id", // This will return vitalik's address in the mock
       },
     };
