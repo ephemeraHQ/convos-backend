@@ -86,6 +86,7 @@ export async function handleXmtpNotification(req: Request, res: Response) {
           data: baseMessageData,
           // Required for iOS silent notifications
           _contentAvailable: true,
+          mutableContent: true,
           // Required for Android silent notifications
           priority: "normal",
           // Ensure no visible alerts
