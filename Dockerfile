@@ -30,8 +30,9 @@ RUN apt-get update && apt-get install -y curl unzip
 RUN curl -fsSL https://bun.sh/install | bash -s "bun-v1.2.2" && \
   ln -s $HOME/.bun/bin/bun /usr/local/bin/bun
 
+COPY --chmod=0755 dev/entrypoint.sh .
 # copy production dependencies and source into release image
 COPY --from=install /temp/prod .
 
 # run the app from source
-ENTRYPOINT [ "bun", "start" ]
+ENTRYPOINT [ "./entrypoint.sh" ]
