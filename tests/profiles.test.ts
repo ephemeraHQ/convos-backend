@@ -19,10 +19,12 @@ import type {
 } from "@/api/v1/users/handlers/create-user";
 import usersRouter from "@/api/v1/users/users.router";
 import { jsonMiddleware } from "@/middleware/json";
+import { pinoMiddleware } from "@/middleware/pino";
 import { prisma } from "@/utils/prisma";
 
 const app = express();
 app.use(jsonMiddleware);
+app.use(pinoMiddleware);
 app.use("/users", usersRouter);
 app.use("/profiles", profilesRouter);
 

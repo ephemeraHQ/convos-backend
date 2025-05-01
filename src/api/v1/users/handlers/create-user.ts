@@ -61,6 +61,7 @@ export async function createUser(
       body = await createUserRequestBodySchema.parseAsync(req.body);
     } catch (error) {
       if (error instanceof z.ZodError) {
+        req.log.error({ error }, "Invalid request body");
         res.status(400).json({
           success: false,
           errors: {

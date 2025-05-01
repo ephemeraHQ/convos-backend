@@ -4,9 +4,10 @@ import helmet from "helmet";
 import apiRouter from "./api";
 import { errorHandlerMiddleware } from "./middleware/errorHandler";
 import { jsonMiddleware } from "./middleware/json";
-import { logMiddleware } from "./middleware/log";
 import { noRouteMiddleware } from "./middleware/noRoute";
+import { pinoMiddleware } from "./middleware/pino";
 import { rateLimitMiddleware } from "./middleware/rateLimit";
+import logger from "./utils/logger";
 
 const app = express();
 
@@ -17,9 +18,7 @@ app.set("trust proxy", 1);
 app.use(helmet()); // Set security headers
 app.use(cors()); // Handle CORS
 app.use(jsonMiddleware); // Parse JSON requests
-
-// Logging should be early to capture all requests
-app.use(logMiddleware);
+app.use(pinoMiddleware);
 
 // Rate limiting should be before routes but after logging
 app.use(rateLimitMiddleware);
@@ -40,12 +39,12 @@ app.use(errorHandlerMiddleware);
 
 const port = process.env.PORT || 4000;
 const server = app.listen(port, () => {
-  console.log(`Convos API service is running on port ${port}`);
+  logger.info(`Convos API service is running on port ${port}`);
 });
 
 process.on("SIGTERM", () => {
-  console.log("SIGTERM signal received: closing Convos API service");
+  logger.info("SIGTERM signal received: closing Convos API service");
   server.close(() => {
-    console.log("Convos API service closed");
+    logger.info("Convos API service closed");
   });
 });
