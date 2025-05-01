@@ -22,9 +22,12 @@ export async function handleXmtpNotification(req: Request, res: Response) {
     const notification = req.body as NotificationResponse;
 
     // Log the notification for debugging
-    console.log(
-      "Received notification:",
-      JSON.stringify(notification, null, 2),
+    req.log.info(
+      {
+        contentTopic: notification.message.content_topic,
+        installationId: notification.installation.id,
+      },
+      "received notification",
     );
 
     // Verify the authorization header
@@ -32,7 +35,7 @@ export async function handleXmtpNotification(req: Request, res: Response) {
     const expectedAuthHeader = getHttpDeliveryNotificationAuthHeader();
 
     if (!authHeader || authHeader !== expectedAuthHeader) {
-      console.error("Invalid or missing authorization header");
+      req.log.error("Invalid or missing authorization header");
       res.status(401).json({
         error: "Unauthorized: Invalid authentication token",
       });
@@ -52,7 +55,7 @@ export async function handleXmtpNotification(req: Request, res: Response) {
     });
 
     if (!device) {
-      console.error(
+      req.log.error(
         `Device with push token ${notification.installation.delivery_mechanism.token} not found`,
       );
       res.status(404).end();
@@ -63,7 +66,7 @@ export async function handleXmtpNotification(req: Request, res: Response) {
 
     // Validate the Expo push token
     if (!Expo.isExpoPushToken(expoPushToken)) {
-      console.error(
+      req.log.error(
         `Push token ${expoPushToken} is not a valid Expo push token`,
       );
       res.status(200).end();
@@ -106,10 +109,10 @@ export async function handleXmtpNotification(req: Request, res: Response) {
     const sendPromises = chunks.map(async (chunk) => {
       try {
         const ticketChunk = await expo.sendPushNotificationsAsync(chunk);
-        console.log("Push notification sent:", ticketChunk);
+        req.log.info({ ticketChunk }, "push notification sent");
         return ticketChunk;
       } catch (error) {
-        console.error("Error sending push notification:", error);
+        req.log.error({ error }, "Error sending push notification:");
         throw error;
       }
     });

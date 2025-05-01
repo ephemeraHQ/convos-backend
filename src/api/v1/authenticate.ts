@@ -5,6 +5,7 @@ import { Router, type Request, type Response } from "express";
 // import { getAppCheck } from "firebase-admin/app-check";
 import * as jose from "jose";
 import { hexToBytes, type Hex } from "viem";
+import { AppError } from "@/utils/errors";
 
 const authenticateRouter = Router();
 
@@ -36,7 +37,7 @@ authenticateRouter.post("/", async (req: Request, res: Response) => {
 
     // make sure all headers are present
     if (!appCheckToken || !xmtpInstallationId || !xmtpId || !xmtpSignature) {
-      throw new Error("Missing headers");
+      throw new AppError(400, "Missing headers");
     }
 
     // convert installation ID to bytes
@@ -86,8 +87,15 @@ authenticateRouter.post("/", async (req: Request, res: Response) => {
       .sign(new TextEncoder().encode(process.env.JWT_SECRET));
 
     res.json({ token: jwt });
-  } catch {
-    res.status(500).json({ error: "Failed to create authentication token" });
+  } catch (error) {
+    req.log.error(
+      { error, stack: (error as Error).stack },
+      "failed to create auth token",
+    );
+    if (error instanceof AppError) {
+      throw error;
+    }
+    throw new AppError(500, "Failed to create authentication token");
   }
 });
 

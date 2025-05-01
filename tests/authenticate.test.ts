@@ -7,7 +7,9 @@ import { toHex } from "viem";
 import authenticateRouter, {
   type AuthenticateResponse,
 } from "@/api/v1/authenticate";
+import { errorHandlerMiddleware } from "@/middleware/errorHandler";
 import { jsonMiddleware } from "@/middleware/json";
+import { pinoMiddleware } from "@/middleware/pino";
 import { prisma } from "@/utils/prisma";
 import { createClient, createHeaders } from "./helpers";
 
@@ -17,7 +19,9 @@ process.env.FIREBASE_SERVICE_ACCOUNT = `{"projectId": "test-project-id","private
 
 const app = express();
 app.use(jsonMiddleware);
+app.use(pinoMiddleware);
 app.use("/authenticate", authenticateRouter);
+app.use(errorHandlerMiddleware);
 
 let server: Server;
 
@@ -59,8 +63,8 @@ describe("/authenticate API", () => {
       headers: {},
     });
     const data = (await response.json()) as { error: string };
-    expect(response.status).toBe(500);
-    expect(data.error).toBe("Failed to create authentication token");
+    expect(response.status).toBe(400);
+    expect(data.error).toBe("Missing headers");
 
     const response2 = await fetch("http://localhost:3009/authenticate", {
       method: "POST",
@@ -69,8 +73,8 @@ describe("/authenticate API", () => {
       },
     });
     const data2 = (await response2.json()) as { error: string };
-    expect(response2.status).toBe(500);
-    expect(data2.error).toBe("Failed to create authentication token");
+    expect(response2.status).toBe(400);
+    expect(data2.error).toBe("Missing headers");
 
     const response3 = await fetch("http://localhost:3009/authenticate", {
       method: "POST",
@@ -80,8 +84,8 @@ describe("/authenticate API", () => {
       },
     });
     const data3 = (await response3.json()) as { error: string };
-    expect(response3.status).toBe(500);
-    expect(data3.error).toBe("Failed to create authentication token");
+    expect(response3.status).toBe(400);
+    expect(data3.error).toBe("Missing headers");
   });
 
   test("POST /authenticate fails with invalid signature", async () => {

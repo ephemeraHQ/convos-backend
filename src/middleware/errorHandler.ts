@@ -1,7 +1,7 @@
 import type express from "express";
 import { type NextFunction, type Request, type Response } from "express";
 import { ZodError } from "zod";
-import { AppError, logError } from "../utils/errors";
+import { AppError } from "../utils/errors";
 
 // Express requires error handling middleware to have exactly 4 parameters
 function errorHandler(
@@ -12,13 +12,7 @@ function errorHandler(
   _next: NextFunction,
 ) {
   // Log the error with request context
-  logError(err, {
-    path: req.path,
-    method: req.method,
-    body: req.body,
-    query: req.query,
-    params: req.params,
-  });
+  req.log.error(err);
 
   // If response is already sent, just log the error and return
   if (res.headersSent) {
