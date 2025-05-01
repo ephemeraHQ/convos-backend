@@ -10,6 +10,10 @@ import { rateLimitMiddleware } from "./middleware/rateLimit";
 
 const app = express();
 
+// The application may be behind a reverse proxy
+// and will need to trust the X-Forwarded-For header to get the client
+// IP address
+app.set("trust proxy", 1);
 app.use(helmet()); // Set security headers
 app.use(cors()); // Handle CORS
 app.use(jsonMiddleware); // Parse JSON requests
