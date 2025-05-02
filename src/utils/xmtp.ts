@@ -1,4 +1,5 @@
 import {
+  IdentifierKind,
   Client as XmtpClient,
   type Signer as XmtpSigner,
 } from "@xmtp/node-sdk";
@@ -17,7 +18,8 @@ const encryptionKey = Buffer.from(
 );
 
 // Cache the XMTP client to avoid creating multiple instances
-let cachedXmtpClientCreationPromise: Promise<XmtpClient> | undefined;
+let cachedXmtpClientCreationPromise: Promise<XmtpClient> | undefined =
+  undefined;
 
 export const currentXmtpEnv = process.env.XMTP_ENV as
   | "local"
@@ -34,7 +36,8 @@ export async function getXmtpClient(): Promise<XmtpClient> {
   }
 
   const signer = createSigner();
-  cachedXmtpClientCreationPromise = XmtpClient.create(signer, encryptionKey, {
+  cachedXmtpClientCreationPromise = XmtpClient.create(signer, {
+    dbEncryptionKey: encryptionKey,
     env: currentXmtpEnv,
   });
 
@@ -50,8 +53,13 @@ export async function getAddressesForInboxId(
 ): Promise<string[]> {
   try {
     const client = await getXmtpClient();
-    const { accountAddresses } = await client.getLatestInboxState(inboxId);
-    return accountAddresses;
+    const { identifiers } =
+      await client.preferences.getLatestInboxState(inboxId);
+    return identifiers
+      .filter(
+        (identifier) => identifier.identifierKind == IdentifierKind.Ethereum,
+      )
+      .map((identifier) => identifier.identifier);
   } catch (error) {
     console.error("Error getting addresses for inbox:", error);
     return [];
@@ -68,8 +76,11 @@ function createSigner(): XmtpSigner {
   });
 
   return {
-    walletType: "EOA",
-    getAddress: () => account.address,
+    type: "EOA",
+    getIdentifier: () => ({
+      identifier: account.address,
+      identifierKind: IdentifierKind.Ethereum,
+    }),
     signMessage: async (message: string) => {
       const signature = await wallet.signMessage({ message });
       return toBytes(signature);
