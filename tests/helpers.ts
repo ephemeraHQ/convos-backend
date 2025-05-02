@@ -7,6 +7,7 @@ import * as jose from "jose";
 import { createWalletClient, http, toBytes, toHex } from "viem";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import { sepolia } from "viem/chains";
+import { addressToIdentifier } from "@/utils/identifier";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const testEncryptionKey = getRandomValues(new Uint8Array(32));
@@ -27,8 +28,8 @@ export const createUser = () => {
 
 export const createSigner = (user: User): Signer => {
   return {
-    walletType: "EOA",
-    getAddress: () => user.account.address,
+    type: "EOA",
+    getIdentifier: () => addressToIdentifier(user.account.address),
     signMessage: async (message: string) => {
       const signature = await user.wallet.signMessage({
         message,
@@ -42,7 +43,8 @@ export type User = ReturnType<typeof createUser>;
 
 export const createClient = async () => {
   const user = createUser();
-  return Client.create(createSigner(user), testEncryptionKey, {
+  return Client.create(createSigner(user), {
+    dbEncryptionKey: testEncryptionKey,
     env: process.env.XMTP_ENV as "local" | "dev" | "production",
     dbPath: join(__dirname, `./test-${user.account.address}.db3`),
   });

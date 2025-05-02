@@ -139,8 +139,8 @@ describe("Notifications", () => {
         installationId: "invite-subscribe-test",
         topics: [inviteTopic],
       });
-      await client.conversations.newDm(client2.accountAddress);
-      await client.conversations.newGroup([client2.accountAddress]);
+      await client.conversations.newDm(client2.inboxId);
+      await client.conversations.newGroup([client2.inboxId]);
 
       // end stream after 5 seconds (increased from 2 seconds to prevent timeout)
       setTimeout(() => {
@@ -191,7 +191,7 @@ describe("Notifications", () => {
         },
       });
 
-      const dm = await client.conversations.newDm(client2.accountAddress);
+      const dm = await client.conversations.newDm(client2.inboxId);
 
       await client2.conversations.sync();
       const dm2 = await client2.conversations.getConversationById(dm.id);
@@ -264,9 +264,9 @@ describe("Notifications", () => {
       });
 
       const group = await client.conversations.newGroup([
-        client2.accountAddress,
-        client3.accountAddress,
-        client4.accountAddress,
+        client2.inboxId,
+        client3.inboxId,
+        client4.inboxId,
       ]);
       await client2.conversations.sync();
       await client3.conversations.sync();
@@ -346,7 +346,7 @@ describe("Notifications", () => {
         },
       });
 
-      const dm = await client.conversations.newDm(client2.accountAddress);
+      const dm = await client.conversations.newDm(client2.inboxId);
 
       await client2.conversations.sync();
       const dm2 = await client2.conversations.getConversationById(dm.id);
@@ -430,9 +430,9 @@ describe("Notifications", () => {
       });
 
       const group = await client.conversations.newGroup([
-        client2.accountAddress,
-        client3.accountAddress,
-        client4.accountAddress,
+        client2.inboxId,
+        client3.inboxId,
+        client4.inboxId,
       ]);
 
       await client2.conversations.sync();
