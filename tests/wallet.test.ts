@@ -19,11 +19,13 @@ import type {
 } from "@/api/v1/wallets/handlers/create-suborg";
 import walletsRouter from "@/api/v1/wallets/wallets.router";
 import { jsonMiddleware } from "@/middleware/json";
+import { pinoMiddleware } from "@/middleware/pino";
 import { prisma } from "@/utils/prisma";
 import { getServerPort } from "./helpers";
 
 const app = express();
 app.use(jsonMiddleware);
+app.use(pinoMiddleware);
 app.use("/wallets", walletsRouter);
 
 let server: Server;

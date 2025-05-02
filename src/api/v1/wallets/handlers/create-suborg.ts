@@ -134,6 +134,14 @@ export async function createSubOrg(
       },
     });
 
+    req.log.info(
+      {
+        subOrgId: createdSubOrg.id,
+        walletAddress: createdSubOrg.defaultWalletAddress,
+      },
+      "suborg created",
+    );
+
     res.status(201).json({
       subOrgId: createdSubOrg.id,
       walletAddress: createdSubOrg.defaultWalletAddress,
