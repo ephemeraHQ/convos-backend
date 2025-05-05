@@ -42,42 +42,42 @@ jobs:
         id: digest
         run: echo "digest=${{ steps.push.outputs.digest }}" >> $GITHUB_OUTPUT
 
-  # deploy_dev:
-  #   name: Deploy new images to infra
-  #   runs-on: ubuntu-latest
-  #   needs: push_to_registry
-  #   if: github.ref == 'refs/heads/dev'
-  #   steps:
-  #     - name: Checkout
-  #       uses: actions/checkout@v4
-  #     - name: Deploy Testnet
-  #       uses: xmtp-labs/terraform-deployer@v1
-  #       timeout-minutes: 20
-  #       with:
-  #         timeout: 20m
-  #         terraform-token: ${{ secrets.TERRAFORM_TOKEN }}
-  #         terraform-org: xmtp
-  #         terraform-workspace: convos_dev
-  #         variable-name: api_image
-  #         variable-value: "ghcr.io/${{ github.repository_owner }}/convos-backend@${{ needs.push_to_registry.outputs.digest }}"
-  #         variable-value-required-prefix: "ghcr.io/${{ github.repository_owner }}/convos-backend@sha256:"
+  deploy_dev:
+    name: Deploy new images to infra
+    runs-on: ubuntu-latest
+    needs: push_to_registry
+    if: github.ref == 'refs/heads/dev'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Deploy Testnet
+        uses: xmtp-labs/terraform-deployer@v1
+        timeout-minutes: 20
+        with:
+          timeout: 20m
+          terraform-token: ${{ secrets.TERRAFORM_TOKEN }}
+          terraform-org: xmtp
+          terraform-workspace: convos_dev
+          variable-name: api_image
+          variable-value: "ghcr.io/${{ github.repository_owner }}/convos-backend@${{ needs.push_to_registry.outputs.digest }}"
+          variable-value-required-prefix: "ghcr.io/${{ github.repository_owner }}/convos-backend@sha256:"
 
-  # deploy_prod:
-  #   name: Deploy new images to infra
-  #   runs-on: ubuntu-latest
-  #   needs: push_to_registry
-  #   if: github.ref == 'refs/heads/main'
-  #   steps:
-  #     - name: Checkout
-  #       uses: actions/checkout@v4
-  #     - name: Deploy Testnet
-  #       uses: xmtp-labs/terraform-deployer@v1
-  #       timeout-minutes: 20
-  #       with:
-  #         timeout: 20m
-  #         terraform-token: ${{ secrets.TERRAFORM_TOKEN }}
-  #         terraform-org: xmtp
-  #         terraform-workspace: convos_production
-  #         variable-name: api_image
-  #         variable-value: "ghcr.io/${{ github.repository_owner }}/convos-backend@${{ needs.push_to_registry.outputs.digest }}"
-  #         variable-value-required-prefix: "ghcr.io/${{ github.repository_owner }}/convos-backend@sha256:"
+  deploy_prod:
+    name: Deploy new images to infra
+    runs-on: ubuntu-latest
+    needs: push_to_registry
+    if: github.ref == 'refs/heads/dev'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Deploy Testnet
+        uses: xmtp-labs/terraform-deployer@v1
+        timeout-minutes: 20
+        with:
+          timeout: 20m
+          terraform-token: ${{ secrets.TERRAFORM_TOKEN }}
+          terraform-org: xmtp
+          terraform-workspace: convos_production
+          variable-name: api_image
+          variable-value: "ghcr.io/${{ github.repository_owner }}/convos-backend@${{ needs.push_to_registry.outputs.digest }}"
+          variable-value-required-prefix: "ghcr.io/${{ github.repository_owner }}/convos-backend@sha256:"
