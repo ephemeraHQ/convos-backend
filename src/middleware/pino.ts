@@ -17,6 +17,8 @@ export const pinoMiddleware = pinoHttp({
     }
 
     const { traceId, spanId } = span.spanContext();
-    return { pathname, trace_id: traceId, span_id: spanId }; // adds to every log
+    // https://docs.datadoghq.com/opentelemetry/correlate/logs_and_traces/?tab=nodejs
+    const ddSpanId = BigInt(`0x${spanId}`).toString();
+    return { pathname, "dd.trace_id": traceId, "dd.span_id": ddSpanId }; // adds to every log
   },
 });
