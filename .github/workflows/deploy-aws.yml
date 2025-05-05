@@ -59,8 +59,8 @@ jobs:
           terraform-org: xmtp
           terraform-workspace: convos_dev
           variable-name: api_image
-          variable-value: "ghcr.io/${{ github.repository_owner }}/convos-backend@${{ needs.push_to_registry.outputs.digest }}"
-          variable-value-required-prefix: "ghcr.io/${{ github.repository_owner }}/convos-backend@sha256:"
+          variable-value: "ghcr.io/ephemerahq/convos-backend@${{ needs.push_to_registry.outputs.digest }}"
+          variable-value-required-prefix: "ghcr.io/ephemerahq/convos-backend@sha256:"
 
   deploy_prod:
     name: Deploy new images to infra
@@ -79,5 +79,5 @@ jobs:
           terraform-org: xmtp
           terraform-workspace: convos_prod
           variable-name: api_image
-          variable-value: "ghcr.io/${{ github.repository_owner }}/convos-backend@${{ needs.push_to_registry.outputs.digest }}"
-          variable-value-required-prefix: "ghcr.io/${{ github.repository_owner }}/convos-backend@sha256:"
+          variable-value: "ghcr.io/ephemerahq/convos-backend@${{ needs.push_to_registry.outputs.digest }}"
+          variable-value-required-prefix: "ghcr.io/ephemerahq/convos-backend@sha256:"
