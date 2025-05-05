@@ -77,7 +77,7 @@ jobs:
           timeout: 20m
           terraform-token: ${{ secrets.TERRAFORM_TOKEN }}
           terraform-org: xmtp
-          terraform-workspace: convos_production
+          terraform-workspace: convos_prod
           variable-name: api_image
           variable-value: "ghcr.io/${{ github.repository_owner }}/convos-backend@${{ needs.push_to_registry.outputs.digest }}"
           variable-value-required-prefix: "ghcr.io/${{ github.repository_owner }}/convos-backend@sha256:"
