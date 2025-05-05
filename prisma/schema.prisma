@@ -19,7 +19,7 @@ datasource db {
 
 model User {
   id             String           @id @default(uuid())
-  turnkeyUserId    String           @unique
+  turnkeyUserId  String           @unique
   createdAt      DateTime         @default(now())
   updatedAt      DateTime         @updatedAt
   devices        Device[]
@@ -50,7 +50,7 @@ model DeviceIdentity {
   id                   String                 @id @default(uuid())
   userId               String
   xmtpId               String?
-  turnkeyAddress         String
+  turnkeyAddress       String
   createdAt            DateTime               @default(now())
   updatedAt            DateTime               @updatedAt
   profile              Profile?
@@ -100,6 +100,7 @@ model ConversationMetadata {
 model SubOrg {
   id                   String   @id
   defaultWalletAddress String
+  credentialId         String   @unique
   createdAt            DateTime @default(now())
   updatedAt            DateTime @updatedAt
 }
