@@ -46,6 +46,7 @@ afterAll(async () => {
 
 beforeEach(async () => {
   await prisma.subOrg.deleteMany();
+  mock.restore();
 });
 
 describe("/wallets API", () => {
@@ -120,5 +121,19 @@ describe("/wallets API", () => {
         ],
       }),
     );
+
+    // Try again with the same credentialId
+    const response2 = await fetch(`http://localhost:${port}/wallets`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(createSubOrgBody),
+    });
+    expect(response2.status).toBe(200);
+
+    const data2 = (await response2.json()) as CreateSubOrgReturned;
+    expect(data2).toEqual(data);
+    expect(mockCreateSubOrg).toHaveBeenCalledTimes(1);
   });
 });

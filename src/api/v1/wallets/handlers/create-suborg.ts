@@ -55,6 +55,8 @@ export async function createSubOrg(
       body = await createSubOrgRequestBodySchema.parseAsync(req.body);
     } catch (error) {
       if (error instanceof z.ZodError) {
+        req.log.error(error);
+
         res.status(400).json({
           success: false,
           errors: {
@@ -73,6 +75,25 @@ export async function createSubOrg(
     }
 
     const { challenge, attestation, ephemeralPublicKey } = body;
+    const credentialId = attestation.credentialId;
+
+    const existingSuborg = await findExistingSuborg(credentialId);
+
+    if (existingSuborg) {
+      req.log.info(
+        {
+          subOrgId: existingSuborg.id,
+        },
+        "suborg already exists",
+      );
+
+      res.status(200).json({
+        subOrgId: existingSuborg.id,
+        walletAddress: existingSuborg.defaultWalletAddress,
+      });
+      return;
+    }
+
     const walletName = `Default Wallet`;
 
     const turnkeyClient = new TurnkeyServerSDK(turnkeyConfig);
@@ -126,6 +147,7 @@ export async function createSubOrg(
     const createdSubOrg = await prisma.subOrg.create({
       data: {
         defaultWalletAddress: walletAddress,
+        credentialId,
         id: subOrgId,
       },
       select: {
@@ -161,4 +183,16 @@ function refineNonNull<T>(
   }
 
   return input;
+}
+
+function findExistingSuborg(credentialId: string) {
+  return prisma.subOrg.findUnique({
+    where: {
+      credentialId,
+    },
+    select: {
+      id: true,
+      defaultWalletAddress: true,
+    },
+  });
 }
