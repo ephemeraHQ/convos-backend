@@ -69,11 +69,19 @@ export async function handleXmtpNotification(req: Request, res: Response) {
       return;
     }
 
-    const primaryIdentity = device.identities[0].identity;
-
-    const turnkeyAddress = primaryIdentity.turnkeyAddress;
-
     const expoPushToken = device.expoToken;
+    const turnkeyAddress =
+      device.identities.length > 0
+        ? device.identities[0].identity.turnkeyAddress
+        : undefined;
+
+    if (!turnkeyAddress) {
+      req.log.error(
+        `Device with push token ${notification.installation.delivery_mechanism.token} has no identity`,
+      );
+      res.status(200).end();
+      return;
+    }
 
     // Validate the Expo push token
     if (!Expo.isExpoPushToken(expoPushToken)) {
