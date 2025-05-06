@@ -52,6 +52,13 @@ export async function handleXmtpNotification(req: Request, res: Response) {
       where: {
         pushToken: notification.installation.delivery_mechanism.token,
       },
+      include: {
+        identities: {
+          include: {
+            identity: true,
+          },
+        },
+      },
     });
 
     if (!device) {
@@ -63,6 +70,18 @@ export async function handleXmtpNotification(req: Request, res: Response) {
     }
 
     const expoPushToken = device.expoToken;
+    const turnkeyAddress =
+      device.identities.length > 0
+        ? device.identities[0].identity.turnkeyAddress
+        : undefined;
+
+    if (!turnkeyAddress) {
+      req.log.error(
+        `Device with push token ${notification.installation.delivery_mechanism.token} has no identity`,
+      );
+      res.status(200).end();
+      return;
+    }
 
     // Validate the Expo push token
     if (!Expo.isExpoPushToken(expoPushToken)) {
@@ -79,6 +98,7 @@ export async function handleXmtpNotification(req: Request, res: Response) {
       messageType: notification.message_context.message_type,
       encryptedMessage: notification.message.message,
       timestamp: notification.message.timestamp_ns,
+      ethAddress: turnkeyAddress,
     };
 
     // Create the message based on whether it's silent or regular
