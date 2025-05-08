@@ -3,7 +3,8 @@ import { prisma } from "@/utils/prisma";
 import type { PublicProfileResult } from "../profiles.types";
 
 type GetPublicProfileParams = {
-  username: string;
+  username?: string;
+  xmtpId?: string;
 };
 
 export async function getPublicProfile(
@@ -11,20 +12,26 @@ export async function getPublicProfile(
   res: Response,
 ) {
   try {
-    const { username } = req.params;
+    const { username, xmtpId } = req.params;
 
-    if (!username) {
-      res.status(400).json({ error: "Username is required" });
+    if (!username && !xmtpId) {
+      res.status(400).json({ error: "Either username or xmtpId is required" });
       return;
     }
 
     const profile = await prisma.profile.findFirst({
-      where: {
-        username: {
-          equals: username,
-          mode: "insensitive",
-        },
-      },
+      where: username
+        ? {
+            username: {
+              equals: username,
+              mode: "insensitive",
+            },
+          }
+        : {
+            deviceIdentity: {
+              xmtpId,
+            },
+          },
       include: {
         deviceIdentity: {
           select: {
