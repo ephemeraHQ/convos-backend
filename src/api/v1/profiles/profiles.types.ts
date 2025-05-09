@@ -16,3 +16,13 @@ export type PublicProfileResult = Pick<
   "name" | "username" | "description" | "avatar"
 > &
   Pick<DeviceIdentity, "xmtpId" | "turnkeyAddress">;
+
+// Batch profile request body
+export type BatchGetProfilesRequestBody = {
+  xmtpIds: string[];
+};
+
+// Batch profiles response format
+export type BatchProfilesResponse = {
+  profiles: Record<string, ProfileRequestResult>;
+};
