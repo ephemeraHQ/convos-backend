@@ -53,3 +53,13 @@ export const profileUpdateSchema = profileBaseSchema.partial();
 export type ProfileSchemaType = z.infer<typeof profileBaseSchema>;
 export type ProfileCreationType = z.infer<typeof profileCreationSchema>;
 export type ProfileUpdateType = z.infer<typeof profileUpdateSchema>;
+
+// Batch profiles schemas
+export const batchGetProfilesSchema = z.object({
+  xmtpIds: z
+    .array(z.string())
+    .min(1, "At least one xmtpId is required")
+    .max(1000, "Maximum of 1000 xmtpIds allowed"),
+});
+
+export type BatchGetProfilesSchemaType = z.infer<typeof batchGetProfilesSchema>;
