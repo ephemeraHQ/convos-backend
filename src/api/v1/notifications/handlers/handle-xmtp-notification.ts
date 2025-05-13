@@ -106,11 +106,11 @@ export async function handleXmtpNotification(req: Request, res: Response) {
         `Expo push token for Device ${device.id} (xmtpInstallationId ${notification.installation.id}) is invalid or missing: ${expoPushToken}. Cleaning up.`,
       );
       if (identityOnDeviceToCleanup.xmtpInstallationId) {
-        await cleanupFailedInstallation(
-          identityOnDeviceToCleanup.xmtpInstallationId,
-          identityOnDeviceToCleanup.deviceId,
+        await cleanupFailedInstallation({
+          xmtpInstallationId: identityOnDeviceToCleanup.xmtpInstallationId,
+          deviceId: identityOnDeviceToCleanup.deviceId,
           req,
-        );
+        });
       }
       return res.status(200).end();
     }
@@ -141,17 +141,14 @@ export async function handleXmtpNotification(req: Request, res: Response) {
         };
 
     const chunks = expo.chunkPushNotifications([message]);
-    let pushFailed = false;
 
     for (const chunk of chunks) {
       try {
         const tickets = await expo.sendPushNotificationsAsync(chunk);
-        req.log.info(
-          { tickets, xmtpInstallationId: notification.installation.id },
-          "Push notification tickets received",
-        );
+
         for (const ticket of tickets) {
           const expoPushReceipt = ticket;
+
           if (expoPushReceipt.status === "error") {
             req.log.error(
               {
@@ -160,26 +157,27 @@ export async function handleXmtpNotification(req: Request, res: Response) {
               },
               `Error sending push notification: ${expoPushReceipt.message}`,
             );
+
             if (
               expoPushReceipt.details &&
               expoPushReceipt.details.error === "DeviceNotRegistered"
             ) {
-              pushFailed = true;
               req.log.info(
                 `DeviceNotRegistered error for token ${expoPushToken} (xmtpInstallationId ${notification.installation.id}). Initiating cleanup.`,
               );
+
               if (identityOnDeviceToCleanup.xmtpInstallationId) {
-                await cleanupFailedInstallation(
-                  identityOnDeviceToCleanup.xmtpInstallationId,
-                  identityOnDeviceToCleanup.deviceId,
+                await cleanupFailedInstallation({
+                  xmtpInstallationId:
+                    identityOnDeviceToCleanup.xmtpInstallationId,
+                  deviceId: identityOnDeviceToCleanup.deviceId,
                   req,
-                );
+                });
               }
             }
           }
         }
       } catch (error) {
-        pushFailed = true;
         req.log.error(
           { error, xmtpInstallationId: notification.installation.id },
           "Critical error sending push notifications chunk",
@@ -187,36 +185,20 @@ export async function handleXmtpNotification(req: Request, res: Response) {
       }
     }
 
-    if (pushFailed) {
-      if (!res.headersSent) {
-        return res
-          .status(200)
-          .json({ message: "Processed, with some push failures and cleanup." });
-      }
-      return;
-    }
-
-    if (!res.headersSent) {
-      res.status(200).end();
-    }
+    res.status(200).end();
   } catch (error) {
     req.log.error({ error }, "Outer error processing notification");
-    if (!res.headersSent && identityOnDeviceToCleanup?.xmtpInstallationId) {
-      req.log.error(
-        `Outer error occurred while processing xmtpInstallationId: ${identityOnDeviceToCleanup.xmtpInstallationId}`,
-      );
-    }
-    if (!res.headersSent) {
-      res.status(500).json({ error: "Internal server error" });
-    }
+    res.status(500).json({ error: "Internal server error" });
   }
 }
 
-async function cleanupFailedInstallation(
-  xmtpInstallationId: string,
-  deviceId: string,
-  req: Request,
-) {
+async function cleanupFailedInstallation(args: {
+  xmtpInstallationId: string;
+  deviceId: string;
+  req: Request;
+}) {
+  const { xmtpInstallationId, deviceId, req } = args;
+
   try {
     req.log.info(
       `Cleaning up installation: ${xmtpInstallationId} for device: ${deviceId}`,
