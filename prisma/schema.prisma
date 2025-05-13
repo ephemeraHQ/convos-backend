@@ -53,7 +53,7 @@ model DeviceIdentity {
   turnkeyAddress       String
   createdAt            DateTime               @default(now())
   updatedAt            DateTime               @updatedAt
-  profile               Profile?
+  profile              Profile?
   conversationMetadata ConversationMetadata[]
   devices              IdentitiesOnDevice[]
   user                 User                   @relation(fields: [userId], references: [id])
