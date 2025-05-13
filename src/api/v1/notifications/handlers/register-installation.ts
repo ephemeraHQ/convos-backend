@@ -8,6 +8,7 @@ const registrationSchema = z.object({
   identityId: z.string(),
   xmtpInstallationId: z.string(),
   expoToken: z.string(),
+  pushToken: z.string(),
 });
 
 type RegisterInstallationRequestBody = z.infer<typeof registrationSchema>;
@@ -60,13 +61,14 @@ export async function registerInstallation(
     }
 
     await prisma.$transaction([
-      // 1. Update Device with the new expoToken
+      // 1. Update Device the device push tokens
       prisma.device.update({
         where: {
           id: validatedData.deviceId,
         },
         data: {
           expoToken: validatedData.expoToken,
+          pushToken: validatedData.pushToken,
         },
       }),
       // 2. Update IdentitiesOnDevice with the xmtpInstallationId
