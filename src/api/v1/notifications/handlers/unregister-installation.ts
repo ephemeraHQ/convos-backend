@@ -19,31 +19,37 @@ export async function unregisterInstallation(
   try {
     const authenticatedXmtpId = req.app.locals.xmtpId;
 
-    const authenticatedUser = await prisma.deviceIdentity.findFirstOrThrow({
-      where: { xmtpId: authenticatedXmtpId },
-    });
-
     const { xmtpInstallationId } = unregisterRequestParamsSchema.parse(
       req.params,
     );
 
-    const identityOnDevice = await prisma.identitiesOnDevice.findUnique({
-      where: {
-        xmtpInstallationId: xmtpInstallationId,
-      },
-      include: {
-        device: { select: { userId: true } },
-      },
-    });
+    const [deviceIdentityForUser, identityOnDeviceForInstallation] =
+      await Promise.all([
+        prisma.deviceIdentity.findFirstOrThrow({
+          where: { xmtpId: authenticatedXmtpId },
+          select: { userId: true },
+        }),
+        prisma.identitiesOnDevice.findUnique({
+          where: {
+            xmtpInstallationId: xmtpInstallationId,
+          },
+          include: {
+            device: { select: { userId: true } },
+          },
+        }),
+      ]);
 
-    if (!identityOnDevice) {
+    if (!identityOnDeviceForInstallation) {
       return res.status(404).json({ error: "Installation not found" });
     }
 
     // Verify that the installation belongs to the authenticated user
-    if (identityOnDevice.device.userId !== authenticatedUser.id) {
+    if (
+      identityOnDeviceForInstallation.device.userId !==
+      deviceIdentityForUser.userId
+    ) {
       req.log.warn(
-        `User ${authenticatedUser.id} attempt to unregister unowned installation ${xmtpInstallationId}`,
+        `User ${deviceIdentityForUser.id} attempt to unregister unowned installation ${xmtpInstallationId}`,
       );
       return res
         .status(403)

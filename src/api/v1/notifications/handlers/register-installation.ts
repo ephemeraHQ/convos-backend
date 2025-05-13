@@ -22,13 +22,17 @@ export async function registerInstallation(
   try {
     const authenticatedXmtpId = req.app.locals.xmtpId;
 
-    const authenticatedUser = await prisma.deviceIdentity.findFirstOrThrow({
-      where: { xmtpId: authenticatedXmtpId },
-    });
-
     const validatedData = registrationSchema.parse(req.body);
 
-    const [deviceOwnerCheck, identityOwnerCheck] = await Promise.all([
+    const [
+      deviceIdentityForAuthenticatedUser,
+      deviceOwnerCheck,
+      identityOwnerCheck,
+    ] = await Promise.all([
+      prisma.deviceIdentity.findFirstOrThrow({
+        where: { xmtpId: authenticatedXmtpId },
+        select: { userId: true },
+      }),
       prisma.device.findUnique({
         where: { id: validatedData.deviceId },
         select: { userId: true },
@@ -40,9 +44,12 @@ export async function registerInstallation(
     ]);
 
     // Check device ownership
-    if (!deviceOwnerCheck || deviceOwnerCheck.userId !== authenticatedUser.id) {
+    if (
+      !deviceOwnerCheck ||
+      deviceOwnerCheck.userId !== deviceIdentityForAuthenticatedUser.userId
+    ) {
       req.log.warn(
-        `User ${authenticatedUser.id} attempt to register for unowned/unknown device ${validatedData.deviceId}`,
+        `User ${deviceIdentityForAuthenticatedUser.userId} attempt to register for unowned/unknown device ${validatedData.deviceId}`,
       );
       return res.status(403).json({ error: "Forbidden: Device access denied" });
     }
@@ -50,10 +57,10 @@ export async function registerInstallation(
     // Check identity ownership
     if (
       !identityOwnerCheck ||
-      identityOwnerCheck.userId !== authenticatedUser.id
+      identityOwnerCheck.userId !== deviceIdentityForAuthenticatedUser.userId
     ) {
       req.log.warn(
-        `User ${authenticatedUser.id} attempt to register for unowned/unknown identity ${validatedData.identityId}`,
+        `User ${deviceIdentityForAuthenticatedUser.userId} attempt to register for unowned/unknown identity ${validatedData.identityId}`,
       );
       return res
         .status(403)
