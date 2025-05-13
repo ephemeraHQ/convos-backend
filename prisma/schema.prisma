@@ -53,7 +53,7 @@ model DeviceIdentity {
   turnkeyAddress       String
   createdAt            DateTime               @default(now())
   updatedAt            DateTime               @updatedAt
-  profile              Profile?
+  profile               Profile?
   conversationMetadata ConversationMetadata[]
   devices              IdentitiesOnDevice[]
   user                 User                   @relation(fields: [userId], references: [id])
@@ -66,6 +66,7 @@ model IdentitiesOnDevice {
   device     Device         @relation(fields: [deviceId], references: [id])
   identityId String
   identity   DeviceIdentity @relation(fields: [identityId], references: [id])
+  xmtpInstallationId String?    @unique
 
   @@id([deviceId, identityId])
 }
