@@ -182,11 +182,30 @@ identitiesRouter.post(
         return;
       }
 
+      // Check if an identity with this user ID and XMTP ID is already linked to this device
+      const existingLink = await prisma.identitiesOnDevice.findFirst({
+        where: {
+          deviceId: deviceId,
+          identity: {
+            userId: device.user.id,
+            xmtpId: xmtpId,
+          },
+        },
+      });
+
+      if (existingLink) {
+        return res.status(409).json({
+          error:
+            "An identity for this user and XMTP ID is already associated with this device.",
+        });
+      }
+
       const identity = await prisma.deviceIdentity.create({
         data: {
-          ...validatedData,
+          turnkeyAddress: validatedData.turnkeyAddress,
           xmtpId,
           userId: device.user.id,
+          // Create a new link between the identity and the device
           devices: {
             create: {
               deviceId,

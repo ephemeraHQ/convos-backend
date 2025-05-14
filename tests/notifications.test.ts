@@ -23,6 +23,7 @@ app.use(jsonMiddleware);
 app.use(pinoMiddleware);
 
 const AUTH_XMTP_ID = "test-auth-xmtp-id";
+
 app.use((req, res, next) => {
   req.app.locals.xmtpId = AUTH_XMTP_ID;
   next();
@@ -43,24 +44,8 @@ beforeAll(() => {
 });
 
 afterAll(async () => {
-  server.close();
   await prisma.$disconnect();
-  try {
-    await notificationClient.deleteInstallation({
-      installationId: genericTestInstallationId1,
-    });
-    await notificationClient.deleteInstallation({
-      installationId: genericTestInstallationId2,
-    });
-    await notificationClient.deleteInstallation({
-      installationId: genericTestInstallationId3,
-    });
-    await notificationClient.deleteInstallation({
-      installationId: genericTestInstallationId4,
-    });
-  } catch {
-    /* ignore */
-  }
+  server.close();
 });
 
 describe("/notifications API - Register/Unregister (Auth Required)", () => {
