@@ -11,7 +11,7 @@ notificationsRouter.post("/register", registerInstallation);
 notificationsRouter.post("/subscribe", subscribeToTopics);
 notificationsRouter.post("/unsubscribe", unsubscribeFromTopics);
 notificationsRouter.delete(
-  "/unregister/:xmtpInstallationId",
+  "/unregister/:installationId",
   unregisterInstallation,
 );
 
