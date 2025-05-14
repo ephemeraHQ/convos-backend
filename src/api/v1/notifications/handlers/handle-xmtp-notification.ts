@@ -45,14 +45,16 @@ export async function handleXmtpNotification(req: Request, res: Response) {
 
     if (!authHeader || authHeader !== expectedAuthHeader) {
       req.log.error("Invalid or missing authorization header");
-      return res.status(401).json({
+      res.status(401).json({
         error: "Unauthorized: Invalid authentication token",
       });
+      return;
     }
 
     // Check if this notification should trigger a push
     if (!notification.message_context.should_push) {
-      return res.status(200).end();
+      res.status(200).end();
+      return;
     }
 
     const identityOnDevice = await prisma.identitiesOnDevice.findUnique({
@@ -82,7 +84,8 @@ export async function handleXmtpNotification(req: Request, res: Response) {
           `Failed to request deletion of orphaned xmtpInstallationId ${notification.installation.id}`,
         );
       }
-      return res.status(200).end();
+      res.status(200).end();
+      return;
     }
 
     identityOnDeviceToCleanup = {
@@ -98,7 +101,8 @@ export async function handleXmtpNotification(req: Request, res: Response) {
       req.log.error(
         `DeviceIdentity ${identity.id} for xmtpInstallationId ${notification.installation.id} has no turnkeyAddress`,
       );
-      return res.status(200).end();
+      res.status(200).end();
+      return;
     }
 
     if (!expoPushToken || !Expo.isExpoPushToken(expoPushToken)) {
@@ -112,7 +116,8 @@ export async function handleXmtpNotification(req: Request, res: Response) {
           req,
         });
       }
-      return res.status(200).end();
+      res.status(200).end();
+      return;
     }
 
     const baseMessageData = {

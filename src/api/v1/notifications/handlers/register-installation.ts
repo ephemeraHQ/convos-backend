@@ -51,7 +51,8 @@ export async function registerInstallation(
       req.log.warn(
         `User ${deviceIdentityForAuthenticatedUser.userId} attempt to register for unowned/unknown device ${validatedData.deviceId}`,
       );
-      return res.status(403).json({ error: "Forbidden: Device access denied" });
+      res.status(403).json({ error: "Forbidden: Device access denied" });
+      return;
     }
 
     // Check identity ownership
@@ -62,9 +63,8 @@ export async function registerInstallation(
       req.log.warn(
         `User ${deviceIdentityForAuthenticatedUser.userId} attempt to register for unowned/unknown identity ${validatedData.identityId}`,
       );
-      return res
-        .status(403)
-        .json({ error: "Forbidden: Identity access denied" });
+      res.status(403).json({ error: "Forbidden: Identity access denied" });
+      return;
     }
 
     await prisma.$transaction([
@@ -114,7 +114,8 @@ export async function registerInstallation(
     });
   } catch (error) {
     if (error instanceof z.ZodError) {
-      return res.status(400).json({ errors: error.errors });
+      res.status(400).json({ errors: error.errors });
+      return;
     }
     req.log.error({ error }, "Failed to register installation");
     res.status(500).json({ error: "Failed to register installation" });

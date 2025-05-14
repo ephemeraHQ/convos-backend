@@ -40,7 +40,8 @@ export async function unregisterInstallation(
       ]);
 
     if (!identityOnDeviceForInstallation) {
-      return res.status(404).json({ error: "Installation not found" });
+      res.status(404).json({ error: "Installation not found" });
+      return;
     }
 
     // Verify that the installation belongs to the authenticated user
@@ -49,11 +50,10 @@ export async function unregisterInstallation(
       deviceIdentityForUser.userId
     ) {
       req.log.warn(
-        `User ${deviceIdentityForUser.id} attempt to unregister unowned installation ${xmtpInstallationId}`,
+        `User ${deviceIdentityForUser.userId} attempt to unregister unowned installation ${xmtpInstallationId}`,
       );
-      return res
-        .status(403)
-        .json({ error: "Forbidden: Installation access denied" });
+      res.status(403).json({ error: "Forbidden: Installation access denied" });
+      return;
     }
 
     // 1. Nullify xmtpInstallationId in our DB
@@ -76,7 +76,8 @@ export async function unregisterInstallation(
     res.status(200).send("Installation unregistered successfully");
   } catch (error) {
     if (error instanceof z.ZodError) {
-      return res.status(400).json({ errors: error.errors });
+      res.status(400).json({ errors: error.errors });
+      return;
     }
     req.log.error({ error }, "Failed to unregister installation");
     res.status(500).json({ error: "Failed to delete installation" });
