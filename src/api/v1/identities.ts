@@ -194,10 +194,11 @@ identitiesRouter.post(
       });
 
       if (existingLink) {
-        return res.status(409).json({
+        res.status(409).json({
           error:
             "An identity for this user and XMTP ID is already associated with this device.",
         });
+        return;
       }
 
       const identity = await prisma.deviceIdentity.create({
