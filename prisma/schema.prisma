@@ -66,6 +66,7 @@ model IdentitiesOnDevice {
   device     Device         @relation(fields: [deviceId], references: [id])
   identityId String
   identity   DeviceIdentity @relation(fields: [identityId], references: [id])
+  xmtpInstallationId String?    @unique
 
   @@id([deviceId, identityId])
 }

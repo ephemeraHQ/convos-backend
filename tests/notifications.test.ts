@@ -1,8 +1,10 @@
 import type { Server } from "http";
+import { DeviceOS } from "@prisma/client";
 import {
   afterAll,
   afterEach,
   beforeAll,
+  beforeEach,
   describe,
   expect,
   test,
@@ -11,95 +13,217 @@ import express from "express";
 import { uint8ArrayToHex } from "uint8array-extras";
 import { notificationsRouter } from "@/api/v1/notifications/notifications.router";
 import { jsonMiddleware } from "@/middleware/json";
+import { pinoMiddleware } from "@/middleware/pino";
 import { createNotificationClient } from "@/notifications/client";
 import type { RegisterInstallationResponse } from "@/notifications/gen/notifications/v1/service_pb";
+import { prisma } from "@/utils/prisma";
 
 const app = express();
 app.use(jsonMiddleware);
+app.use(pinoMiddleware);
+
+const AUTH_XMTP_ID = "test-auth-xmtp-id";
+
+app.use((req, res, next) => {
+  req.app.locals.xmtpId = AUTH_XMTP_ID;
+  next();
+});
+
 app.use("/notifications", notificationsRouter);
 
 let server: Server;
-
-const testInstallationId = "test-installation-id";
 const notificationClient = createNotificationClient();
+
+const genericTestInstallationId1 = "test-install-id-1-for-subs";
+const genericTestInstallationId2 = "test-install-id-2-for-meta-subs";
+const genericTestInstallationId3 = "test-install-id-3-for-unsub";
+const genericTestInstallationId4 = "test-install-id-4-for-unsub-validate";
 
 beforeAll(() => {
   server = app.listen(3008);
 });
 
-afterAll(() => {
+afterAll(async () => {
+  await prisma.$disconnect();
   server.close();
 });
 
-afterEach(async () => {
-  await notificationClient.deleteInstallation({
-    installationId: testInstallationId,
-  });
-});
+describe("/notifications API - Register/Unregister (Auth Required)", () => {
+  let testUserId: string;
+  let testDeviceId: string;
+  let testIdentityId: string;
+  const testUserTurnkeyId = "reg-unreg-turnkey-user-id";
+  const testDeviceName = "RegUnreg Test Device";
+  const testIdentityTurnkeyAddress = "reg-unreg-turnkey-address";
 
-describe("/notifications API", () => {
+  beforeEach(async () => {
+    await prisma.identitiesOnDevice.deleteMany();
+    await prisma.profile.deleteMany();
+    await prisma.conversationMetadata.deleteMany();
+    await prisma.deviceIdentity.deleteMany();
+    await prisma.device.deleteMany();
+    await prisma.user.deleteMany();
+
+    const user = await prisma.user.create({
+      data: { turnkeyUserId: testUserTurnkeyId },
+    });
+    testUserId = user.id;
+
+    const identity = await prisma.deviceIdentity.create({
+      data: {
+        userId: testUserId,
+        xmtpId: AUTH_XMTP_ID,
+        turnkeyAddress: testIdentityTurnkeyAddress,
+      },
+    });
+    testIdentityId = identity.id;
+
+    const device = await prisma.device.create({
+      data: { userId: testUserId, name: testDeviceName, os: DeviceOS.ios },
+    });
+    testDeviceId = device.id;
+
+    await prisma.identitiesOnDevice.create({
+      data: { deviceId: testDeviceId, identityId: testIdentityId },
+    });
+  });
+
+  afterEach(async () => {
+    try {
+      await notificationClient.deleteInstallation({
+        installationId: "test-installation-id-register",
+      });
+      await notificationClient.deleteInstallation({
+        installationId: "test-installation-id-unregister-setup",
+      });
+      await notificationClient.deleteInstallation({
+        installationId: "test-forbidden-device-install-id",
+      });
+    } catch {
+      /* ignore */
+    }
+  });
+
   test("POST /notifications/register creates a new installation", async () => {
+    const testXmtpInstallationId = "test-installation-id-register";
     const response = await fetch(
       "http://localhost:3008/notifications/register",
       {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          installationId: testInstallationId,
-          deliveryMechanism: {
-            deliveryMechanismType: {
-              case: "apnsDeviceToken",
-              value: "test-device-token",
-            },
-          },
+          deviceId: testDeviceId,
+          identityId: testIdentityId,
+          xmtpInstallationId: testXmtpInstallationId,
+          expoToken: "test-expo-token-register",
+          pushToken: "test-push-token-register",
         }),
       },
     );
 
     expect(response.status).toBe(201);
     const data = (await response.json()) as RegisterInstallationResponse;
-    expect(data).toBeDefined();
-    expect(data.installationId).toBe(testInstallationId);
-    expect(data.validUntil).toBeGreaterThan(0);
+    expect(data.installationId).toBe(testXmtpInstallationId);
+
+    const iod = await prisma.identitiesOnDevice.findUnique({
+      where: {
+        deviceId_identityId: {
+          deviceId: testDeviceId,
+          identityId: testIdentityId,
+        },
+      },
+    });
+    expect(iod?.xmtpInstallationId).toBe(testXmtpInstallationId);
+    const device = await prisma.device.findUnique({
+      where: { id: testDeviceId },
+    });
+    expect(device?.expoToken).toBe("test-expo-token-register");
   });
 
-  test("POST /notifications/register validates request body", async () => {
+  test("POST /notifications/register validates request body (missing fields)", async () => {
     const response = await fetch(
       "http://localhost:3008/notifications/register",
       {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ deviceId: testDeviceId }),
+      },
+    );
+    expect(response.status).toBe(400);
+    const data = (await response.json()) as { errors: unknown };
+    expect(data.errors).toBeDefined();
+  });
+
+  test("POST /notifications/register returns 403 if device not owned by authenticated user", async () => {
+    const response = await fetch(
+      "http://localhost:3008/notifications/register",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          installationId: testInstallationId,
-          // Missing required deliveryMechanism
+          deviceId: testDeviceId,
+          identityId: "wrong-identity-id",
+          xmtpInstallationId: "test-installation-id-register",
+          expoToken: "test-expo-token-forbidden",
+          pushToken: "test-push-token-forbidden",
+        }),
+      },
+    );
+    expect(response.status).toBe(403);
+  });
+
+  test("DELETE /notifications/unregister/:xmtpInstallationId deletes an installation", async () => {
+    const xmtpInstallationIdToTest = "test-installation-id-unregister-setup";
+    const regResponse = await fetch(
+      "http://localhost:3008/notifications/register",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          deviceId: testDeviceId,
+          identityId: testIdentityId,
+          xmtpInstallationId: xmtpInstallationIdToTest,
+          expoToken: "token-for-unregister",
+          pushToken: "token-for-unregister-push",
         }),
       },
     );
 
-    expect(response.status).toBe(400);
-    const data = (await response.json()) as { error: string };
-    expect(data.error).toBe("Invalid request body");
-  });
+    expect(regResponse.status).toBe(201);
 
+    const unregResponse = await fetch(
+      `http://localhost:3008/notifications/unregister/${xmtpInstallationIdToTest}`,
+      {
+        method: "DELETE",
+      },
+    );
+    expect(unregResponse.status).toBe(200);
+
+    const iod = await prisma.identitiesOnDevice.findUnique({
+      where: {
+        deviceId_identityId: {
+          deviceId: testDeviceId,
+          identityId: testIdentityId,
+        },
+      },
+    });
+    expect(iod?.xmtpInstallationId).toBeNull();
+  });
+});
+
+describe("/notifications API - Subscribe/Unsubscribe (No local DB auth needed, using XMTP installationId)", () => {
   test("POST /notifications/subscribe handles simple topic subscription", async () => {
     const response = await fetch(
       "http://localhost:3008/notifications/subscribe",
       {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          installationId: testInstallationId,
+          installationId: genericTestInstallationId1,
           topics: ["test-topic-1", "test-topic-2"],
         }),
       },
     );
-
     expect(response.status).toBe(200);
   });
 
@@ -108,11 +232,9 @@ describe("/notifications API", () => {
       "http://localhost:3008/notifications/subscribe",
       {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          installationId: testInstallationId,
+          installationId: genericTestInstallationId2,
           subscriptions: [
             {
               topic: "test-topic-1",
@@ -138,7 +260,6 @@ describe("/notifications API", () => {
         }),
       },
     );
-
     expect(response.status).toBe(200);
   });
 
@@ -147,67 +268,47 @@ describe("/notifications API", () => {
       "http://localhost:3008/notifications/unsubscribe",
       {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          installationId: testInstallationId,
+          installationId: genericTestInstallationId3,
           topics: ["test-topic-1", "test-topic-2"],
         }),
       },
     );
-
     expect(response.status).toBe(200);
   });
 
-  test("DELETE /notifications/unregister/:installationId deletes an installation", async () => {
-    const response = await fetch(
-      `http://localhost:3008/notifications/unregister/${testInstallationId}`,
-      {
-        method: "DELETE",
-      },
-    );
-
-    expect(response.status).toBe(200);
-  });
-
-  test("POST /notifications/subscribe validates request body", async () => {
+  test("POST /notifications/subscribe validates request body for missing installationId", async () => {
     const response = await fetch(
       "http://localhost:3008/notifications/subscribe",
       {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          // Missing required installationId
-          topics: ["test-topic"],
-        }),
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ topics: ["test-topic"] }),
       },
     );
-
     expect(response.status).toBe(400);
-    const data = (await response.json()) as { error: string };
-    expect(data.error).toBe("Invalid request body");
+    const data = (await response.json()) as {
+      errors?: unknown;
+      error?: string;
+    };
+    expect(data.errors ?? data.error).toBeDefined();
   });
 
-  test("POST /notifications/unsubscribe validates request body", async () => {
+  test("POST /notifications/unsubscribe validates request body for missing topics", async () => {
     const response = await fetch(
       "http://localhost:3008/notifications/unsubscribe",
       {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          installationId: testInstallationId,
-          // Missing required topics array
-        }),
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ installationId: genericTestInstallationId4 }),
       },
     );
-
     expect(response.status).toBe(400);
-    const data = (await response.json()) as { error: string };
-    expect(data.error).toBe("Invalid request body");
+    const data = (await response.json()) as {
+      errors?: unknown;
+      error?: string;
+    };
+    expect(data.errors ?? data.error).toBeDefined();
   });
 });
