@@ -1,14 +1,10 @@
 import { Expo, type ExpoPushMessage } from "expo-server-sdk";
 import type { Request, Response } from "express";
-import {
-  createNotificationClient,
-  type NotificationResponse,
-} from "@/notifications/client";
+import type { NotificationResponse } from "@/notifications/client";
 import { getHttpDeliveryNotificationAuthHeader } from "@/notifications/utils";
 import { prisma } from "@/utils/prisma";
 
 const expo = new Expo();
-const notificationClient = createNotificationClient();
 
 if (!process.env.XMTP_NOTIFICATION_SECRET) {
   throw new Error("XMTP_NOTIFICATION_SECRET is not set");
@@ -22,11 +18,6 @@ if (!process.env.XMTP_NOTIFICATION_SECRET) {
  * from the authorized XMTP server.
  */
 export async function handleXmtpNotification(req: Request, res: Response) {
-  let identityOnDeviceToCleanup: {
-    xmtpInstallationId: string | null;
-    deviceId: string;
-  } | null = null;
-
   try {
     const notification = req.body as NotificationResponse;
 
@@ -57,69 +48,51 @@ export async function handleXmtpNotification(req: Request, res: Response) {
       return;
     }
 
-    const identityOnDevice = await prisma.identitiesOnDevice.findUnique({
+    const device = await prisma.device.findFirst({
       where: {
-        xmtpInstallationId: notification.installation.id,
+        pushToken: notification.installation.delivery_mechanism.token,
       },
       include: {
-        device: true,
-        identity: true,
+        identities: {
+          include: {
+            identity: true,
+          },
+        },
       },
     });
 
-    if (!identityOnDevice || !identityOnDevice.xmtpInstallationId) {
-      req.log.warn(
-        `No active device/identity found for xmtpInstallationId ${notification.installation.id}. This installation might have been cleaned up already.`,
+    if (!device) {
+      req.log.error(
+        `Device with push token ${notification.installation.delivery_mechanism.token} not found`,
       );
-      try {
-        await notificationClient.deleteInstallation({
-          installationId: notification.installation.id,
-        });
-        req.log.info(
-          `Requested deletion of orphaned xmtpInstallationId ${notification.installation.id} from XMTP server.`,
-        );
-      } catch (deleteError) {
-        req.log.error(
-          { error: deleteError },
-          `Failed to request deletion of orphaned xmtpInstallationId ${notification.installation.id}`,
-        );
-      }
-      res.status(200).end();
+      res.status(404).end();
       return;
     }
 
-    identityOnDeviceToCleanup = {
-      xmtpInstallationId: identityOnDevice.xmtpInstallationId,
-      deviceId: identityOnDevice.deviceId,
-    };
-
-    const { device, identity } = identityOnDevice;
     const expoPushToken = device.expoToken;
-    const turnkeyAddress = identity.turnkeyAddress;
+    const turnkeyAddress =
+      device.identities.length > 0
+        ? device.identities[0].identity.turnkeyAddress
+        : undefined;
 
     if (!turnkeyAddress) {
       req.log.error(
-        `DeviceIdentity ${identity.id} for xmtpInstallationId ${notification.installation.id} has no turnkeyAddress`,
+        `Device with push token ${notification.installation.delivery_mechanism.token} has no identity`,
       );
       res.status(200).end();
       return;
     }
 
-    if (!expoPushToken || !Expo.isExpoPushToken(expoPushToken)) {
-      req.log.warn(
-        `Expo push token for Device ${device.id} (xmtpInstallationId ${notification.installation.id}) is invalid or missing: ${expoPushToken}. Cleaning up.`,
+    // Validate the Expo push token
+    if (!Expo.isExpoPushToken(expoPushToken)) {
+      req.log.error(
+        `Push token ${expoPushToken} is not a valid Expo push token`,
       );
-      if (identityOnDeviceToCleanup.xmtpInstallationId) {
-        await cleanupFailedInstallation({
-          xmtpInstallationId: identityOnDeviceToCleanup.xmtpInstallationId,
-          deviceId: identityOnDeviceToCleanup.deviceId,
-          req,
-        });
-      }
       res.status(200).end();
       return;
     }
 
+    // Prepare the base message data that's common for both silent and regular notifications
     const baseMessageData = {
       contentTopic: notification.message.content_topic,
       messageType: notification.message_context.message_type,
@@ -128,15 +101,21 @@ export async function handleXmtpNotification(req: Request, res: Response) {
       ethAddress: turnkeyAddress,
     };
 
+    // Create the message based on whether it's silent or regular
     const message: ExpoPushMessage = notification.subscription.is_silent
       ? {
+          // Silent notification configuration
           to: expoPushToken,
           data: baseMessageData,
+          // Required for iOS silent notifications
           _contentAvailable: true,
+          // Required for Android silent notifications
           priority: "normal",
+          // Ensure no visible alerts
           sound: undefined,
         }
       : {
+          // Regular notification configuration
           to: expoPushToken,
           sound: "default",
           body: "New message",
@@ -145,93 +124,25 @@ export async function handleXmtpNotification(req: Request, res: Response) {
           mutableContent: true,
         };
 
+    // Send the notification
     const chunks = expo.chunkPushNotifications([message]);
-
-    for (const chunk of chunks) {
+    const sendPromises = chunks.map(async (chunk) => {
       try {
-        const tickets = await expo.sendPushNotificationsAsync(chunk);
-
-        for (const ticket of tickets) {
-          const expoPushReceipt = ticket;
-
-          if (expoPushReceipt.status === "error") {
-            req.log.error(
-              {
-                details: expoPushReceipt.details,
-                xmtpInstallationId: notification.installation.id,
-              },
-              `Error sending push notification: ${expoPushReceipt.message}`,
-            );
-
-            if (
-              expoPushReceipt.details &&
-              expoPushReceipt.details.error === "DeviceNotRegistered"
-            ) {
-              req.log.info(
-                `DeviceNotRegistered error for token ${expoPushToken} (xmtpInstallationId ${notification.installation.id}). Initiating cleanup.`,
-              );
-
-              if (identityOnDeviceToCleanup.xmtpInstallationId) {
-                await cleanupFailedInstallation({
-                  xmtpInstallationId:
-                    identityOnDeviceToCleanup.xmtpInstallationId,
-                  deviceId: identityOnDeviceToCleanup.deviceId,
-                  req,
-                });
-              }
-            }
-          }
-        }
+        const ticketChunk = await expo.sendPushNotificationsAsync(chunk);
+        req.log.info({ ticketChunk }, "push notification sent");
+        return ticketChunk;
       } catch (error) {
-        req.log.error(
-          { error, xmtpInstallationId: notification.installation.id },
-          "Critical error sending push notifications chunk",
-        );
+        req.log.error({ error }, "Error sending push notification:");
+        throw error;
       }
-    }
+    });
 
+    await Promise.all(sendPromises);
+
+    // Respond with success
     res.status(200).end();
   } catch (error) {
-    req.log.error({ error }, "Outer error processing notification");
+    console.error("Error processing notification:", error);
     res.status(500).json({ error: "Internal server error" });
-  }
-}
-
-async function cleanupFailedInstallation(args: {
-  xmtpInstallationId: string;
-  deviceId: string;
-  req: Request;
-}) {
-  const { xmtpInstallationId, deviceId, req } = args;
-
-  try {
-    req.log.info(
-      `Cleaning up installation: ${xmtpInstallationId} for device: ${deviceId}`,
-    );
-    await prisma.$transaction([
-      prisma.identitiesOnDevice.updateMany({
-        where: { xmtpInstallationId: xmtpInstallationId },
-        data: { xmtpInstallationId: null },
-      }),
-      prisma.device.update({
-        where: { id: deviceId },
-        data: { expoToken: null },
-      }),
-    ]);
-    req.log.info(
-      `Successfully cleaned xmtpInstallationId ${xmtpInstallationId} and expoToken for device ${deviceId} from local DB.`,
-    );
-
-    await notificationClient.deleteInstallation({
-      installationId: xmtpInstallationId,
-    });
-    req.log.info(
-      `Successfully requested deletion of xmtpInstallationId ${xmtpInstallationId} from XMTP server.`,
-    );
-  } catch (cleanupError) {
-    req.log.error(
-      { error: cleanupError, xmtpInstallationId, deviceId },
-      "Failed during cleanup of installation",
-    );
   }
 }
