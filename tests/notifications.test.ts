@@ -58,7 +58,7 @@ afterAll(async () => {
     await notificationClient.deleteInstallation({
       installationId: genericTestInstallationId4,
     });
-  } catch (error) {
+  } catch {
     /* ignore */
   }
 });
@@ -113,7 +113,7 @@ describe("/notifications API - Register/Unregister (Auth Required)", () => {
       await notificationClient.deleteInstallation({
         installationId: "test-forbidden-device-install-id",
       });
-    } catch (error) {
+    } catch {
       /* ignore */
     }
   });
