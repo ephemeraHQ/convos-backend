@@ -59,6 +59,7 @@ describe("/notifications API - Register/Unregister (Auth Required)", () => {
   beforeEach(async () => {
     await prisma.identitiesOnDevice.deleteMany();
     await prisma.profile.deleteMany();
+    await prisma.conversationMetadata.deleteMany();
     await prisma.deviceIdentity.deleteMany();
     await prisma.device.deleteMany();
     await prisma.user.deleteMany();
