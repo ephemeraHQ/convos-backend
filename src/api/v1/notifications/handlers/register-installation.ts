@@ -29,7 +29,7 @@ export async function registerInstallation(
       deviceOwnerCheck,
       identityOwnerCheck,
     ] = await Promise.all([
-      prisma.deviceIdentity.findFirstOrThrow({
+      prisma.deviceIdentity.findFirst({
         where: { xmtpId: authenticatedXmtpId },
         select: { userId: true },
       }),
@@ -42,6 +42,18 @@ export async function registerInstallation(
         select: { userId: true },
       }),
     ]);
+
+    console.log(
+      "deviceIdentityForAuthenticatedUser:",
+      deviceIdentityForAuthenticatedUser,
+    );
+    console.log("deviceOwnerCheck:", deviceOwnerCheck);
+    console.log("identityOwnerCheck:", identityOwnerCheck);
+
+    if (!deviceIdentityForAuthenticatedUser) {
+      res.status(403).json({ error: "Forbidden: Device access denied" });
+      return;
+    }
 
     // Check device ownership
     if (
