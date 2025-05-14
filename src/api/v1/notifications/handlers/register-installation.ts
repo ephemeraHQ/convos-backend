@@ -43,13 +43,6 @@ export async function registerInstallation(
       }),
     ]);
 
-    console.log(
-      "deviceIdentityForAuthenticatedUser:",
-      deviceIdentityForAuthenticatedUser,
-    );
-    console.log("deviceOwnerCheck:", deviceOwnerCheck);
-    console.log("identityOwnerCheck:", identityOwnerCheck);
-
     if (!deviceIdentityForAuthenticatedUser) {
       res.status(403).json({ error: "Forbidden: Device access denied" });
       return;
