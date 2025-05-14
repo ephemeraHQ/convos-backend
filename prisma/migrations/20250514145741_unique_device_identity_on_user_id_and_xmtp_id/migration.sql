@@ -1,4 +1,5 @@
-/* Query to find DeviceIdentity records that should be deleted */
+-- Delete duplicate DeviceIdentity records that lack a profile,
+-- keeping the one that has a profile for the same userId and xmtpId.
 DELETE FROM "DeviceIdentity"
 WHERE id IN (
     SELECT di.id
@@ -11,7 +12,7 @@ WHERE id IN (
             WHERE p."deviceIdentityId" = di.id
         )
         -- Condition B: There EXISTS another DeviceIdentity for the same userId and xmtpId
-        -- that DOES have an associated profile. (Duplicated were created without creating a profile. The used one is the one with the profile)
+        -- that DOES have an associated profile.
         AND EXISTS (
             SELECT 1
             FROM "DeviceIdentity" di_valid
