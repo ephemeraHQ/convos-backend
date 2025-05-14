@@ -1,6 +1,7 @@
 import { Router } from "express";
 import appConfigRouter from "@/api/v1/appConfig";
 import authenticateRouter from "@/api/v1/authenticate";
+import identitiesRouter from "@/api/v1/identities/identities.router";
 import metadataRouter from "@/api/v1/metadata";
 import {
   notificationsRouter,
@@ -11,7 +12,6 @@ import profilesRouter from "@/api/v1/profiles/profiles.router";
 import { authMiddleware } from "@/middleware/auth";
 import attachmentsRouter from "./attachments";
 import devicesRouter from "./devices";
-import identitiesRouter from "./identities";
 import lookupRouter from "./lookup";
 import usersRouter from "./users/users.router";
 import walletsRouter from "./wallets/wallets.router";

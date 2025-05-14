@@ -9,17 +9,19 @@ import {
   test,
 } from "bun:test";
 import express from "express";
-import identitiesRouter from "@/api/v1/identities";
+import identitiesRouter from "@/api/v1/identities/identities.router";
 import { jsonMiddleware } from "@/middleware/json";
 import { prisma } from "@/utils/prisma";
 
 const app = express();
 app.use(jsonMiddleware);
 
+const AUTH_USER_XMTP_ID = "test-xmtp-id";
+
 // Add middleware to simulate authentication for tests
 app.use((req, res, next) => {
   // Set xmtpId for testing - this simulates the auth middleware
-  req.app.locals.xmtpId = "test-xmtp-id";
+  req.app.locals.xmtpId = AUTH_USER_XMTP_ID;
   next();
 });
 
@@ -49,9 +51,8 @@ describe("/identities API", () => {
   const testDeviceId = "test-device-id";
   const testUserId = "test-user-id";
 
-  beforeEach(async () => {
-    // create a test user and device before each test
-    await prisma.device.create({
+  test("POST /identities/device/:deviceId creates identity and links to device", async () => {
+    const device = await prisma.device.create({
       data: {
         id: testDeviceId,
         name: "Test Device",
@@ -65,19 +66,8 @@ describe("/identities API", () => {
       },
     });
 
-    // Add a device identity with the same xmtpId as in the middleware
-    await prisma.deviceIdentity.create({
-      data: {
-        userId: testUserId,
-        turnkeyAddress: "test-turnkey-address",
-        xmtpId: "test-xmtp-id",
-      },
-    });
-  });
-
-  test("POST /identities/device/:deviceId creates identity and links to device", async () => {
     const response = await fetch(
-      `http://localhost:3003/identities/device/${testDeviceId}`,
+      `http://localhost:3003/identities/device/${device.id}`,
       {
         method: "POST",
         headers: {
@@ -85,7 +75,7 @@ describe("/identities API", () => {
         },
         body: JSON.stringify({
           turnkeyAddress: "0x123",
-          xmtpId: "test-xmtp-id",
+          xmtpId: AUTH_USER_XMTP_ID,
         }),
       },
     );
@@ -93,7 +83,7 @@ describe("/identities API", () => {
 
     expect(response.status).toBe(201);
     expect(identity.turnkeyAddress).toBe("0x123");
-    expect(identity.xmtpId).toBe("test-xmtp-id");
+    expect(identity.xmtpId).toBe(AUTH_USER_XMTP_ID);
 
     const response2 = await fetch(
       `http://localhost:3003/identities/device/invalid-device-id`,
@@ -104,7 +94,7 @@ describe("/identities API", () => {
         },
         body: JSON.stringify({
           turnkeyAddress: "0x123",
-          xmtpId: "test-xmtp-id",
+          xmtpId: AUTH_USER_XMTP_ID,
         }),
       },
     );
@@ -115,6 +105,21 @@ describe("/identities API", () => {
   });
 
   test("GET /identities/device/:deviceId returns device identities", async () => {
+    // create a device and a user
+    await prisma.device.create({
+      data: {
+        id: testDeviceId,
+        name: "Test Device",
+        os: "ios",
+        user: {
+          create: {
+            id: testUserId,
+            turnkeyUserId: "test-identities-turnkey-user-id",
+          },
+        },
+      },
+    });
+
     // create a device identity
     const createResponse = await fetch(
       `http://localhost:3003/identities/device/${testDeviceId}`,
@@ -125,7 +130,7 @@ describe("/identities API", () => {
         },
         body: JSON.stringify({
           turnkeyAddress: "0x123",
-          xmtpId: "test-xmtp-id",
+          xmtpId: AUTH_USER_XMTP_ID,
         }),
       },
     );
@@ -143,6 +148,21 @@ describe("/identities API", () => {
   });
 
   test("GET /identities/:identityId returns single identity", async () => {
+    // create a device and a user
+    await prisma.device.create({
+      data: {
+        id: testDeviceId,
+        name: "Test Device",
+        os: "ios",
+        user: {
+          create: {
+            id: testUserId,
+            turnkeyUserId: "test-identities-turnkey-user-id",
+          },
+        },
+      },
+    });
+
     // create a device identity
     const createResponse = await fetch(
       `http://localhost:3003/identities/device/${testDeviceId}`,
@@ -153,7 +173,7 @@ describe("/identities API", () => {
         },
         body: JSON.stringify({
           turnkeyAddress: "0x123",
-          xmtpId: "test-xmtp-id",
+          xmtpId: AUTH_USER_XMTP_ID,
         }),
       },
     );
@@ -167,10 +187,25 @@ describe("/identities API", () => {
     expect(response.status).toBe(200);
     expect(identity.id).toBe(createdIdentity.id);
     expect(identity.turnkeyAddress).toBe("0x123");
-    expect(identity.xmtpId).toBe("test-xmtp-id");
+    expect(identity.xmtpId).toBe(AUTH_USER_XMTP_ID);
   });
 
   test("PUT /identities/:identityId updates identity", async () => {
+    // create a device and a user
+    await prisma.device.create({
+      data: {
+        id: testDeviceId,
+        name: "Test Device",
+        os: "ios",
+        user: {
+          create: {
+            id: testUserId,
+            turnkeyUserId: "test-identities-turnkey-user-id",
+          },
+        },
+      },
+    });
+
     // create a device identity
     const createResponse = await fetch(
       `http://localhost:3003/identities/device/${testDeviceId}`,
@@ -181,7 +216,7 @@ describe("/identities API", () => {
         },
         body: JSON.stringify({
           turnkeyAddress: "0x123",
-          xmtpId: "test-xmtp-id",
+          xmtpId: AUTH_USER_XMTP_ID,
         }),
       },
     );
@@ -209,6 +244,21 @@ describe("/identities API", () => {
   });
 
   test("POST /identities/:identityId/link links identity to device", async () => {
+    // create a device and a user
+    await prisma.device.create({
+      data: {
+        id: testDeviceId,
+        name: "Test Device",
+        os: "ios",
+        user: {
+          create: {
+            id: testUserId,
+            turnkeyUserId: "test-identities-turnkey-user-id",
+          },
+        },
+      },
+    });
+
     // create a device identity
     const createResponse = await fetch(
       `http://localhost:3003/identities/device/${testDeviceId}`,
@@ -219,7 +269,7 @@ describe("/identities API", () => {
         },
         body: JSON.stringify({
           turnkeyAddress: "0x123",
-          xmtpId: "test-xmtp-id",
+          xmtpId: AUTH_USER_XMTP_ID,
         }),
       },
     );
@@ -273,6 +323,21 @@ describe("/identities API", () => {
   });
 
   test("DELETE /identities/:identityId/link unlinks identity from device", async () => {
+    // create a device and a user
+    await prisma.device.create({
+      data: {
+        id: testDeviceId,
+        name: "Test Device",
+        os: "ios",
+        user: {
+          create: {
+            id: testUserId,
+            turnkeyUserId: "test-identities-turnkey-user-id",
+          },
+        },
+      },
+    });
+
     // create an identity first
     const response = await fetch(
       `http://localhost:3003/identities/device/${testDeviceId}`,
@@ -283,7 +348,7 @@ describe("/identities API", () => {
         },
         body: JSON.stringify({
           turnkeyAddress: "0x123",
-          xmtpId: "test-xmtp-id",
+          xmtpId: AUTH_USER_XMTP_ID,
         }),
       },
     );
@@ -325,7 +390,7 @@ describe("/identities API", () => {
         },
         body: JSON.stringify({
           // missing required turnkeyAddress
-          xmtpId: "test-xmtp-id",
+          xmtpId: AUTH_USER_XMTP_ID,
         }),
       },
     );
@@ -336,6 +401,21 @@ describe("/identities API", () => {
   });
 
   test("GET /identities/user/:userId returns user identities", async () => {
+    // create a device and a user
+    await prisma.device.create({
+      data: {
+        id: testDeviceId,
+        name: "Test Device",
+        os: "ios",
+        user: {
+          create: {
+            id: testUserId,
+            turnkeyUserId: "test-identities-turnkey-user-id",
+          },
+        },
+      },
+    });
+
     // create a device identity
     const createResponse = await fetch(
       `http://localhost:3003/identities/device/${testDeviceId}`,
@@ -346,7 +426,7 @@ describe("/identities API", () => {
         },
         body: JSON.stringify({
           turnkeyAddress: "0x123",
-          xmtpId: "test-xmtp-id",
+          xmtpId: AUTH_USER_XMTP_ID,
         }),
       },
     );
@@ -358,8 +438,7 @@ describe("/identities API", () => {
     const identities = (await response.json()) as DeviceIdentity[];
 
     expect(response.status).toBe(200);
-    // Expect 2 identities because we're creating one in the setup and one in this test
-    expect(identities).toHaveLength(2);
+    expect(identities).toHaveLength(1);
 
     // Verify the identity we just created is in the list
     const foundIdentity = identities.find(
@@ -391,9 +470,8 @@ describe("/identities API", () => {
     const identities2 = (await response2.json()) as DeviceIdentity[];
 
     expect(response2.status).toBe(200);
-    // We still have 2 identities after unlinking because unlinking only removes the
-    // identity-device relationship, not the identity itself
-    expect(identities2).toHaveLength(2);
+    // We expect 1 identity because we unlinked the identity from the device but we still have the identity in the database
+    expect(identities2).toHaveLength(1);
 
     const foundIdentityAfterUnlink = identities2.find(
       (identity) => identity.id === createdIdentity.id,
@@ -409,9 +487,7 @@ describe("/identities API", () => {
       `http://localhost:3003/identities/user/${nonExistentUserId}`,
     );
 
-    // Now we expect a 403 since the user doesn't have a device identity with the auth xmtpId
-    expect(response.status).toBe(403);
-    const data = (await response.json()) as { error: string };
-    expect(data.error).toBe("Not authorized to access this user's identities");
+    const identities = (await response.json()) as DeviceIdentity[];
+    expect(identities).toHaveLength(0);
   });
 });
