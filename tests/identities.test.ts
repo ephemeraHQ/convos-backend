@@ -50,24 +50,30 @@ beforeEach(async () => {
 describe("/identities API", () => {
   const testDeviceId = "test-device-id";
   const testUserId = "test-user-id";
+  const testDeviceName = "Test Device";
+  const testDeviceOs = "ios";
+  const testTurnkeyUserId = "test-identities-turnkey-user-id";
 
-  test("POST /identities/device/:deviceId creates identity and links to device", async () => {
-    const device = await prisma.device.create({
+  beforeEach(async () => {
+    // create a device and a user
+    await prisma.device.create({
       data: {
         id: testDeviceId,
-        name: "Test Device",
-        os: "ios",
+        name: testDeviceName,
+        os: testDeviceOs,
         user: {
           create: {
-            id: "test-user-id",
-            turnkeyUserId: "test-identities-turnkey-user-id",
+            id: testUserId,
+            turnkeyUserId: testTurnkeyUserId,
           },
         },
       },
     });
+  });
 
+  test("POST /identities/device/:deviceId creates identity and links to device", async () => {
     const response = await fetch(
-      `http://localhost:3003/identities/device/${device.id}`,
+      `http://localhost:3003/identities/device/${testDeviceId}`,
       {
         method: "POST",
         headers: {
@@ -105,21 +111,6 @@ describe("/identities API", () => {
   });
 
   test("GET /identities/device/:deviceId returns device identities", async () => {
-    // create a device and a user
-    await prisma.device.create({
-      data: {
-        id: testDeviceId,
-        name: "Test Device",
-        os: "ios",
-        user: {
-          create: {
-            id: testUserId,
-            turnkeyUserId: "test-identities-turnkey-user-id",
-          },
-        },
-      },
-    });
-
     // create a device identity
     const createResponse = await fetch(
       `http://localhost:3003/identities/device/${testDeviceId}`,
@@ -148,21 +139,6 @@ describe("/identities API", () => {
   });
 
   test("GET /identities/:identityId returns single identity", async () => {
-    // create a device and a user
-    await prisma.device.create({
-      data: {
-        id: testDeviceId,
-        name: "Test Device",
-        os: "ios",
-        user: {
-          create: {
-            id: testUserId,
-            turnkeyUserId: "test-identities-turnkey-user-id",
-          },
-        },
-      },
-    });
-
     // create a device identity
     const createResponse = await fetch(
       `http://localhost:3003/identities/device/${testDeviceId}`,
@@ -191,21 +167,6 @@ describe("/identities API", () => {
   });
 
   test("PUT /identities/:identityId updates identity", async () => {
-    // create a device and a user
-    await prisma.device.create({
-      data: {
-        id: testDeviceId,
-        name: "Test Device",
-        os: "ios",
-        user: {
-          create: {
-            id: testUserId,
-            turnkeyUserId: "test-identities-turnkey-user-id",
-          },
-        },
-      },
-    });
-
     // create a device identity
     const createResponse = await fetch(
       `http://localhost:3003/identities/device/${testDeviceId}`,
@@ -244,21 +205,6 @@ describe("/identities API", () => {
   });
 
   test("POST /identities/:identityId/link links identity to device", async () => {
-    // create a device and a user
-    await prisma.device.create({
-      data: {
-        id: testDeviceId,
-        name: "Test Device",
-        os: "ios",
-        user: {
-          create: {
-            id: testUserId,
-            turnkeyUserId: "test-identities-turnkey-user-id",
-          },
-        },
-      },
-    });
-
     // create a device identity
     const createResponse = await fetch(
       `http://localhost:3003/identities/device/${testDeviceId}`,
@@ -323,21 +269,6 @@ describe("/identities API", () => {
   });
 
   test("DELETE /identities/:identityId/link unlinks identity from device", async () => {
-    // create a device and a user
-    await prisma.device.create({
-      data: {
-        id: testDeviceId,
-        name: "Test Device",
-        os: "ios",
-        user: {
-          create: {
-            id: testUserId,
-            turnkeyUserId: "test-identities-turnkey-user-id",
-          },
-        },
-      },
-    });
-
     // create an identity first
     const response = await fetch(
       `http://localhost:3003/identities/device/${testDeviceId}`,
@@ -401,21 +332,6 @@ describe("/identities API", () => {
   });
 
   test("GET /identities/user/:userId returns user identities", async () => {
-    // create a device and a user
-    await prisma.device.create({
-      data: {
-        id: testDeviceId,
-        name: "Test Device",
-        os: "ios",
-        user: {
-          create: {
-            id: testUserId,
-            turnkeyUserId: "test-identities-turnkey-user-id",
-          },
-        },
-      },
-    });
-
     // create a device identity
     const createResponse = await fetch(
       `http://localhost:3003/identities/device/${testDeviceId}`,
