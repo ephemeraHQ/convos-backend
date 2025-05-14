@@ -59,6 +59,7 @@ model DeviceIdentity {
   user                 User                   @relation(fields: [userId], references: [id])
 
   @@index([xmtpId])
+  @@unique([userId, xmtpId])
 }
 
 model IdentitiesOnDevice {
