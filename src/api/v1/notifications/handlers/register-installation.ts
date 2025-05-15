@@ -28,11 +28,13 @@ const registerInstallationResponseSchema = z.array(
   ]),
 );
 
-type IRegisterInstallationResponse = z.infer<
+export type IRegisterInstallationResponse = z.infer<
   typeof registerInstallationResponseSchema
 >;
 
-type RegisterInstallationRequestBody = z.infer<typeof registrationSchema>;
+export type RegisterInstallationRequestBody = z.infer<
+  typeof registrationSchema
+>;
 
 const notificationClient = createNotificationClient();
 
@@ -180,8 +182,12 @@ export async function registerInstallation(
         .filter((installation) => installation.xmtpInstallationId)
         .map(async (removedInstallation) => {
           try {
+            // TODO: Shouldn't happen later but added this until we put xmtpInstallationId as required in the DB
+            if (!removedInstallation.xmtpInstallationId) {
+              return;
+            }
             await notificationClient.deleteInstallation({
-              installationId: removedInstallation.xmtpInstallationId!,
+              installationId: removedInstallation.xmtpInstallationId,
             });
             req.log.info(
               `Successfully deleted stale XMTP installation ${removedInstallation.xmtpInstallationId} for identity ${removedInstallation.identityId}`,
@@ -239,7 +245,7 @@ export async function registerInstallation(
       req.log.error({ error: safeResponse.error }, "Response validation error");
     }
 
-    res.status(200).json(safeResponse.data);
+    res.status(201).json(response);
     return;
   } catch (error) {
     if (error instanceof z.ZodError) {

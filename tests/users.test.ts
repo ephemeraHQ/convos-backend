@@ -57,6 +57,7 @@ describe("/users API", () => {
       identity: {
         turnkeyAddress: "test-turnkey-address",
         xmtpId: "test-xmtp-id",
+        xmtpInstallationId: "test-xmtp-installation-id",
       },
       profile: {
         name: "Test User",
@@ -106,6 +107,7 @@ describe("/users API", () => {
       identity: {
         turnkeyAddress: "test-turnkey-address",
         xmtpId: "test-xmtp-id",
+        xmtpInstallationId: "test-xmtp-installation-id",
       },
       profile: {
         name: "Test User",
