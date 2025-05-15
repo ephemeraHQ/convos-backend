@@ -42,7 +42,7 @@ model Device {
   expoToken  String?
   createdAt  DateTime             @default(now())
   updatedAt  DateTime             @updatedAt
-  user       User                 @relation(fields: [userId], references: [id])
+  user       User                 @relation(fields: [userId], references: [id], onDelete: Cascade) // If a User is deleted, their associated Devices are also deleted as they cannot exist without a user.
   identities IdentitiesOnDevice[]
 }
 
@@ -56,7 +56,7 @@ model DeviceIdentity {
   profile              Profile?
   conversationMetadata ConversationMetadata[]
   devices              IdentitiesOnDevice[]
-  user                 User                   @relation(fields: [userId], references: [id])
+  user                 User                   @relation(fields: [userId], references: [id], onDelete: Cascade) // If a User is deleted, their DeviceIdentities are also deleted as they are user-specific.
 
   @@index([xmtpId])
   @@unique([userId, xmtpId])
@@ -64,9 +64,9 @@ model DeviceIdentity {
 
 model IdentitiesOnDevice {
   deviceId   String
-  device     Device         @relation(fields: [deviceId], references: [id])
+  device     Device         @relation(fields: [deviceId], references: [id], onDelete: Cascade) // If a Device is deleted, the record linking it to an Identity is no longer valid and should be removed.
   identityId String
-  identity   DeviceIdentity @relation(fields: [identityId], references: [id])
+  identity   DeviceIdentity @relation(fields: [identityId], references: [id], onDelete: Cascade) // If a DeviceIdentity is deleted, its presence on any device is invalidated and should be removed.
   xmtpInstallationId String?    @unique
 
   @@id([deviceId, identityId])
@@ -81,7 +81,7 @@ model Profile {
   avatar           String?
   createdAt        DateTime       @default(now())
   updatedAt        DateTime       @updatedAt
-  deviceIdentity   DeviceIdentity @relation(fields: [deviceIdentityId], references: [id])
+  deviceIdentity   DeviceIdentity @relation(fields: [deviceIdentityId], references: [id], onDelete: Cascade) // A Profile is intrinsically linked to a DeviceIdentity; if the identity is gone, the profile is meaningless.
 }
 
 model ConversationMetadata {
@@ -94,7 +94,7 @@ model ConversationMetadata {
   readUntil        DateTime?
   createdAt        DateTime       @default(now())
   updatedAt        DateTime       @updatedAt
-  deviceIdentity   DeviceIdentity @relation(fields: [deviceIdentityId], references: [id])
+  deviceIdentity   DeviceIdentity @relation(fields: [deviceIdentityId], references: [id], onDelete: Cascade) // Conversation metadata is specific to a DeviceIdentity; if the identity is deleted, its metadata should also be removed.
 
   @@unique([deviceIdentityId, conversationId])
 }
