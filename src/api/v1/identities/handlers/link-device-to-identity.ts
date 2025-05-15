@@ -17,7 +17,7 @@ export const linkDeviceToIdentity = async (
   try {
     const { identityId } = req.params;
     const { deviceId } = req.body;
-    const { xmtpId } = req.app.locals;
+    const { xmtpId, xmtpInstallationId } = req.app.locals;
 
     if (!deviceId) {
       res.status(400).json({ error: "deviceId is required in request body" });
@@ -61,10 +61,20 @@ export const linkDeviceToIdentity = async (
       return;
     }
 
-    const identityOnDevice = await prisma.identitiesOnDevice.create({
-      data: {
+    const identityOnDevice = await prisma.identitiesOnDevice.upsert({
+      where: {
+        deviceId_identityId: {
+          deviceId,
+          identityId,
+        },
+      },
+      update: {
+        xmtpInstallationId: xmtpInstallationId,
+      },
+      create: {
         deviceId,
         identityId,
+        xmtpInstallationId: xmtpInstallationId,
       },
     });
 

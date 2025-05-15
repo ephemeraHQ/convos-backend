@@ -1,4 +1,5 @@
 import { type Request, type Response } from "express";
+import { createNotificationClient } from "@/notifications/client";
 import { prisma } from "@/utils/prisma";
 
 export type UnlinkDeviceRequestParams = {
@@ -8,6 +9,8 @@ export type UnlinkDeviceRequestParams = {
 export type UnlinkDeviceRequestBody = {
   deviceId: string;
 };
+
+const notificationClient = createNotificationClient();
 
 // DELETE /identities/:identityId/link - Unlink an identity from a device
 export const unlinkDeviceFromIdentity = async (
@@ -61,6 +64,35 @@ export const unlinkDeviceFromIdentity = async (
         .status(403)
         .json({ error: "Not authorized to unlink from this device" });
       return;
+    }
+
+    const identitiesOnDeviceToUnlink = await prisma.identitiesOnDevice.findMany(
+      {
+        where: {
+          deviceId,
+          identityId,
+        },
+      },
+    );
+
+    // Unregister from notifications. We make it allSettled because if this fails, it's not a big deal.
+    // Because when sending a noticicatin, we chekc for identity on device anyway and if we can't find it, we also remove it there.
+    const results = await Promise.allSettled(
+      identitiesOnDeviceToUnlink
+        .map((identityOnDevice) =>
+          identityOnDevice.xmtpInstallationId
+            ? notificationClient.deleteInstallation({
+                installationId: identityOnDevice.xmtpInstallationId,
+              })
+            : undefined,
+        )
+        .filter(Boolean),
+    );
+
+    for (const result of results) {
+      if (result.status === "rejected") {
+        req.log.error("Failed to unregister installation:", result.reason);
+      }
     }
 
     await prisma.identitiesOnDevice.delete({

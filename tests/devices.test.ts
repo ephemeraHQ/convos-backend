@@ -9,7 +9,7 @@ import {
   test,
 } from "bun:test";
 import express from "express";
-import devicesRouter from "@/api/v1/devices";
+import devicesRouter from "@/api/v1/devices/devices.router";
 import type {
   CreatedReturnedUser,
   CreateUserRequestBody,
