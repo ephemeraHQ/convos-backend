@@ -76,7 +76,7 @@ export const unlinkDeviceFromIdentity = async (
     );
 
     // Unregister from notifications. We make it allSettled because if this fails, it's not a big deal.
-    // Because when sending a noticicatin, we chekc for identity on device anyway and if we can't find it, we also remove it there.
+    // Because when sending a notification, we check for identity on device anyway and if we can't find it, we also remove it there.
     const results = await Promise.allSettled(
       identitiesOnDeviceToUnlink
         .map((identityOnDevice) =>
