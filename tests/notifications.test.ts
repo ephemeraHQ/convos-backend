@@ -11,11 +11,14 @@ import {
 } from "bun:test";
 import express from "express";
 import { uint8ArrayToHex } from "uint8array-extras";
+import type {
+  IRegisterInstallationResponse,
+  RegisterInstallationRequestBody,
+} from "@/api/v1/notifications/handlers/register-installation";
 import { notificationsRouter } from "@/api/v1/notifications/notifications.router";
 import { jsonMiddleware } from "@/middleware/json";
 import { pinoMiddleware } from "@/middleware/pino";
 import { createNotificationClient } from "@/notifications/client";
-import type { RegisterInstallationResponse } from "@/notifications/gen/notifications/v1/service_pb";
 import { prisma } from "@/utils/prisma";
 
 const app = express();
@@ -113,17 +116,21 @@ describe("/notifications API - Register/Unregister (Auth Required)", () => {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           deviceId: testDeviceId,
-          identityId: testIdentityId,
-          xmtpInstallationId: testXmtpInstallationId,
           expoToken: "test-expo-token-register",
           pushToken: "test-push-token-register",
-        }),
+          installations: [
+            {
+              identityId: testIdentityId,
+              xmtpInstallationId: testXmtpInstallationId,
+            },
+          ],
+        } satisfies RegisterInstallationRequestBody),
       },
     );
 
     expect(response.status).toBe(201);
-    const data = (await response.json()) as RegisterInstallationResponse;
-    expect(data.installationId).toBe(testXmtpInstallationId);
+    const data = (await response.json()) as IRegisterInstallationResponse;
+    expect(data[0].status).toBe("success");
 
     const iod = await prisma.identitiesOnDevice.findUnique({
       where: {
@@ -161,12 +168,16 @@ describe("/notifications API - Register/Unregister (Auth Required)", () => {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          deviceId: testDeviceId,
-          identityId: "wrong-identity-id",
-          xmtpInstallationId: "test-installation-id-register",
+          deviceId: "wrong-device-id",
           expoToken: "test-expo-token-forbidden",
           pushToken: "test-push-token-forbidden",
-        }),
+          installations: [
+            {
+              identityId: testIdentityId,
+              xmtpInstallationId: "test-installation-id-register",
+            },
+          ],
+        } satisfies RegisterInstallationRequestBody),
       },
     );
     expect(response.status).toBe(403);
@@ -181,11 +192,15 @@ describe("/notifications API - Register/Unregister (Auth Required)", () => {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           deviceId: testDeviceId,
-          identityId: testIdentityId,
-          xmtpInstallationId: xmtpInstallationIdToTest,
           expoToken: "token-for-unregister",
           pushToken: "token-for-unregister-push",
-        }),
+          installations: [
+            {
+              identityId: testIdentityId,
+              xmtpInstallationId: xmtpInstallationIdToTest,
+            },
+          ],
+        } satisfies RegisterInstallationRequestBody),
       },
     );
 

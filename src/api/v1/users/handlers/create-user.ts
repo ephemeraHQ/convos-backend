@@ -18,6 +18,7 @@ export const createUserRequestBodySchema = z.object({
   identity: z.object({
     turnkeyAddress: z.string(),
     xmtpId: z.string(),
+    xmtpInstallationId: z.string().optional(), // TO DO remove optional once all users have fully migrated to newer version of app
   }),
   profile: z.object({
     name: z.string(),
@@ -123,6 +124,7 @@ export async function createUser(
             name: body.device.name,
             identities: {
               create: {
+                xmtpInstallationId: body.identity.xmtpInstallationId,
                 identity: {
                   create: {
                     turnkeyAddress: body.identity.turnkeyAddress,

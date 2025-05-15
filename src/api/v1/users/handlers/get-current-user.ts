@@ -19,20 +19,21 @@ export async function getCurrentUser(
   res: Response,
 ) {
   try {
+    const { xmtpId } = req.app.locals;
     const { device_id: deviceId } = querySchema.parse(req.query);
 
     const user = await prisma.user.findFirst({
       where: {
         DeviceIdentity: {
           some: {
-            xmtpId: req.app.locals.xmtpId,
+            xmtpId,
           },
         },
       },
       select: {
         id: true,
         devices: {
-          where: deviceId ? { id: deviceId } : undefined,
+          ...(deviceId && { where: { id: deviceId } }),
           select: {
             identities: {
               select: {
