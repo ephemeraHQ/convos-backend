@@ -12,7 +12,7 @@ const registrationSchema = z.object({
   deviceId: z.string(),
   pushToken: z.string(),
   expoToken: z.string(),
-  installations: z.array(installationItemSchema).default([]),
+  installations: z.array(installationItemSchema),
 });
 
 const registerInstallationResponseSchema = z.array(
