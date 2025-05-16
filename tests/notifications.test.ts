@@ -153,7 +153,11 @@ describe("/notifications API - Register/Unregister (Auth Required)", () => {
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ deviceId: testDeviceId }),
+        body: JSON.stringify({
+          deviceId: testDeviceId,
+          expoToken: "test-expo-token-register",
+          pushToken: "test-push-token-register",
+        }),
       },
     );
     expect(response.status).toBe(400);
