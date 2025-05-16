@@ -40,6 +40,9 @@ export async function unregisterInstallation(
       ]);
 
     if (!identityOnDeviceForInstallation) {
+      req.log.warn(
+        `Installation ${xmtpInstallationId} not found for user ${authenticatedXmtpId}`,
+      );
       res.status(404).json({ error: "Installation not found" });
       return;
     }

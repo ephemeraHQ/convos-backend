@@ -14,6 +14,7 @@ const xmtpEnv = (process.env.XMTP_ENV || "dev") as XmtpEnv;
 
 export type JWTPayload = {
   inboxId: string;
+  xmtpInstallationId: string;
 };
 
 export type AuthenticateResponse = {
@@ -90,6 +91,7 @@ authenticateRouter.post("/", async (req: Request, res: Response) => {
   const { data: jwt, error: jwtError } = await tryCatch(
     new jose.SignJWT({
       inboxId: xmtpId,
+      xmtpInstallationId,
     } satisfies JWTPayload)
       .setProtectedHeader({ alg: "HS256" })
       .setIssuedAt()

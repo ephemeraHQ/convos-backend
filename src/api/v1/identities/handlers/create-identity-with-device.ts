@@ -25,7 +25,7 @@ export const createIdentityWithDevice = async (
 ) => {
   try {
     const { deviceId } = req.params;
-    const { xmtpId: callerXmtpId } = req.app.locals;
+    const { xmtpId, xmtpInstallationId } = req.app.locals;
     const validatedData = deviceIdentitySchema.parse(req.body);
 
     const device = await prisma.device.findUnique({
@@ -51,12 +51,12 @@ export const createIdentityWithDevice = async (
       where: {
         userId_xmtpId: {
           userId: deviceOwnerUserId,
-          xmtpId: callerXmtpId,
+          xmtpId: xmtpId,
         },
       },
       create: {
         userId: deviceOwnerUserId,
-        xmtpId: callerXmtpId,
+        xmtpId: xmtpId,
         turnkeyAddress: validatedData.turnkeyAddress,
       },
       update: {
@@ -75,8 +75,11 @@ export const createIdentityWithDevice = async (
       create: {
         deviceId: deviceId,
         identityId: identity.id,
+        xmtpInstallationId: xmtpInstallationId,
       },
-      update: {}, // No fields to update on the link itself in this operation
+      update: {
+        xmtpInstallationId: xmtpInstallationId,
+      },
     });
 
     // Return the created or updated identity.

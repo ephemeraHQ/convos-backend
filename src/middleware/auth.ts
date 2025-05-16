@@ -23,8 +23,9 @@ export const authMiddleware = async (
       new TextEncoder().encode(process.env.JWT_SECRET),
     );
 
-    // add xmtpId to app local variables
+    // So we can use them in request handlers
     req.app.locals.xmtpId = payload.inboxId;
+    req.app.locals.xmtpInstallationId = payload.xmtpInstallationId;
 
     next();
   } catch {
