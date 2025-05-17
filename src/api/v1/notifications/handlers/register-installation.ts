@@ -12,6 +12,8 @@ const registrationSchema = z.object({
   deviceId: z.string(),
   pushToken: z.string(),
   expoToken: z.string(),
+  // List of installations to register
+  // We will also check for any other identities on device that don't have any of those installations and delete them
   installations: z.array(installationItemSchema),
 });
 
@@ -118,6 +120,7 @@ export async function registerInstallation(
         // Find all the identities on the device that are not in the new installations
         const staleIdentitiesOnDevice = await tx.identitiesOnDevice.findMany({
           where: {
+            deviceId: validatedData.deviceId,
             AND: [
               {
                 xmtpInstallationId: {
