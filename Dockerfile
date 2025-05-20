@@ -1,37 +1,38 @@
-# use the official Bun image
-# see all versions at https://hub.docker.com/r/oven/bun/tags
-FROM oven/bun:1 AS base
+FROM ubuntu:22.04 AS base
 WORKDIR /usr/src/app
 
 # install dependencies into temp directory
 # this will cache them and speed up future builds
 FROM base AS install
-RUN mkdir -p /temp/dev
-COPY package.json bun.lock /temp/dev/
-RUN cd /temp/dev && bun install --frozen-lockfile
 
-# install with --production (exclude devDependencies)
+# install bun
+RUN apt-get update && apt-get install -y curl unzip
+RUN curl -fsSL https://bun.sh/install | bash -s "bun-v1.2.2" && \
+  ln -s $HOME/.bun/bin/bun /usr/local/bin/bun
+
 RUN mkdir -p /temp/prod
-COPY package.json bun.lock /temp/prod/
+COPY package.json bun.lock tsconfig.json /temp/prod/
+RUN mkdir -p /temp/prod/src
+COPY src /temp/prod/src
+RUN mkdir -p /temp/prod/prisma
+COPY prisma /temp/prod/prisma
 RUN cd /temp/prod && bun install --frozen-lockfile --production
-
-# copy node_modules from temp directory
-# then copy all (non-ignored) project files into the image
-FROM base AS prerelease
-COPY --from=install /temp/dev/node_modules node_modules
-COPY . .
 
 ENV NODE_ENV=production
 
-# build the app
-RUN bun run build
+# generate Prisma client
+RUN cd /temp/prod && bun prisma generate
 
-# copy production dependencies and source code into final image
 FROM base AS release
-COPY --from=install /temp/prod/node_modules node_modules
-COPY --from=prerelease /usr/src/app/index.js .
-COPY --from=prerelease /usr/src/app/package.json .
 
-# run the app
-USER bun
-ENTRYPOINT [ "bun", "run", "index.js" ]
+# install bun
+RUN apt-get update && apt-get install -y curl unzip
+RUN curl -fsSL https://bun.sh/install | bash -s "bun-v1.2.2" && \
+  ln -s $HOME/.bun/bin/bun /usr/local/bin/bun
+
+COPY --chmod=0755 dev/entrypoint.sh .
+# copy production dependencies and source into release image
+COPY --from=install /temp/prod .
+
+# run the app from source
+ENTRYPOINT [ "./entrypoint.sh" ]

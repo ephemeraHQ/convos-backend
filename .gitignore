@@ -38,9 +38,6 @@ logs
 *.sw?
 
 # build artifacts
-lib
-dist
-build
 /index.js
 
 # yarn
@@ -54,3 +51,15 @@ build
 
 # typescript
 *.tsbuildinfo
+
+# Cursor
+.specstory/*
+
+# local db files
+*.db3*
+
+# local p8 files
+*.p8
+
+# Prisma generated files
+/prisma/generated/

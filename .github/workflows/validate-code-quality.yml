@@ -18,4 +18,21 @@ jobs:
         with:
           bun-version-file: ".bun-version"
       - run: bun install
+      - run: ./dev/up
+        env:
+          TEST_NOTIFICATION_DELIVERY_URL: "http://host.docker.internal:8081"
+          XMTP_NOTIFICATION_SECRET: ${{ secrets.XMTP_NOTIFICATION_SECRET }}
+      - run: sleep 5s
+      - run: bun migrate:dev
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
       - run: bun check
+      - run: bun test
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          XMTP_ENV: local
+          SCALEWAY_ACCESS_KEY_ID: ${{ secrets.SCALEWAY_ACCESS_KEY_ID }}
+          SCALEWAY_SECRET_KEY_ID: ${{ secrets.SCALEWAY_SECRET_KEY_ID }}
+          SCALEWAY_ATTACHMENTS_BUCKET: ${{ secrets.SCALEWAY_ATTACHMENTS_BUCKET }}
+          NOTIFICATION_SERVER_URL: ${{ secrets.NOTIFICATION_SERVER_URL }}
+          XMTP_NOTIFICATION_SECRET: ${{ secrets.XMTP_NOTIFICATION_SECRET }}

@@ -1,10 +1,78 @@
 services:
-  db:
+  convos_db:
     image: postgres:16
     environment:
-      POSTGRES_DB: convos-backend
-      POSTGRES_USER: xmtp
-      POSTGRES_PASSWORD: xmtp
-      POSTGRES_PORT: 5432
+      POSTGRES_PASSWORD: convos
     ports:
       - 5432:5432
+
+  node:
+    image: xmtp/node-go:latest
+    platform: linux/amd64
+    environment:
+      - GOWAKU-NODEKEY=8a30dcb604b0b53627a5adc054dbf434b446628d4bd1eccc681d223f0550ce67
+    command:
+      - --store.enable
+      - --store.db-connection-string=postgres://postgres:xmtp@db:5432/postgres?sslmode=disable
+      - --store.reader-db-connection-string=postgres://postgres:xmtp@db:5432/postgres?sslmode=disable
+      - --mls-store.db-connection-string=postgres://postgres:xmtp@mlsdb:5432/postgres?sslmode=disable
+      - --mls-validation.grpc-address=validation:50051
+      - --api.enable-mls
+      - --wait-for-db=30s
+    ports:
+      - 5555:5555
+      - 5556:5556
+    depends_on:
+      - db
+      - mlsdb
+      - validation
+    healthcheck:
+      test: ["CMD-SHELL", "sleep 5 && exit 0"]
+      interval: 10s
+      timeout: 30s
+      retries: 3
+
+  validation:
+    image: ghcr.io/xmtp/mls-validation-service:main
+    platform: linux/amd64
+
+  db:
+    image: postgres:13
+    environment:
+      POSTGRES_PASSWORD: xmtp
+
+  mlsdb:
+    image: postgres:13
+    environment:
+      POSTGRES_PASSWORD: xmtp
+
+  notification_db:
+    image: postgres:16
+    environment:
+      POSTGRES_PASSWORD: notifications
+
+  notification_server:
+    image: xmtp/notifications-server:latest
+    platform: linux/amd64
+    depends_on:
+      node:
+        condition: service_healthy
+      notification_db:
+        condition: service_started
+    command:
+      - --xmtp-listener
+      - --db-connection-string=postgres://postgres:notifications@notification_db:5432/postgres?sslmode=disable
+      - --xmtp-address=node:5556 # Local Xmtp Node
+      - --log-level=debug
+      - --api
+      - --api-port=8080
+
+      # HTTP Delivery
+      - --http-delivery
+      - --http-delivery-address=${TEST_NOTIFICATION_DELIVERY_URL:-http://host.docker.internal:4000/api/v1/notifications/xmtp/handle-notification}
+      - --http-auth-header=${XMTP_NOTIFICATION_SECRET}
+
+    ports:
+      - 8080:8080
+    extra_hosts:
+      - "host.docker.internal:host-gateway"

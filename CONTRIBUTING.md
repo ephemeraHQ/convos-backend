@@ -20,26 +20,25 @@ PRs are encouraged, but consider starting with a feature request to temperature-
 
 After a pull request is submitted, a single approval is required to merge it.
 
-## 🔧 Developing
+### AI-Generated Contributions Policy
 
-### Prerequisites
+We do not accept pull requests that are generated entirely or primarily by AI/LLM tools (e.g., GitHub Copilot, ChatGPT, Claude). This includes:
 
-#### Bun
+- Automated typo fixes or formatting changes
+- Generic code improvements without context
+- Mass automated updates or refactoring
 
-See [Bun's documentation](https://bun.sh/docs/installation) for installation instructions.
+Pull requests that appear to be AI-generated without meaningful human oversight will be closed without review. We value human-driven, thoughtful contributions that demonstrate an understanding of the codebase and project goals.
 
-### Useful commands
+> [!CAUTION]
+> To protect project quality and maintain contributor trust, we will restrict access for users who continue to submit AI-generated pull requests.
 
-- `bun clean`: Removes `node_modules` folder and `*.db3*` files
-- `bun dev`: Run the app in watch mode
-- `bun format:check`: Run prettier format check
-- `bun format`: Run prettier format and write changes
-- `bun install`: Installs all dependencies
-- `bun lint`: Lint with ESLint
-- `bun run build`: Builds the app
-- `bun start`: Run the app
-- `bun typecheck`: Typecheck with `tsc`
+If you use AI tools to assist your development process, please:
 
-### Testing
+1. Thoroughly review and understand all generated code
+2. Provide detailed PR descriptions explaining your changes and reasoning
+3. Be prepared to discuss your implementation decisions and how they align with the project goals
+
+## 🧪 Testing
 
 Please add unit tests when appropriate and ensure that all unit tests are passing before submitting a pull request. Note that some unit tests require a backend service to be running locally. The `./dev/up` script can be run a single time to start the service in the background using Docker.
