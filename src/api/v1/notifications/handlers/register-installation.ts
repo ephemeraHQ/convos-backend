@@ -9,7 +9,6 @@ const installationItemSchema = z.object({
 });
 
 const currentRegistrationSchema = z.object({
-  type: z.literal("current"),
   deviceId: z.string(),
   pushToken: z.string(),
   expoToken: z.string(),
@@ -19,7 +18,6 @@ const currentRegistrationSchema = z.object({
 });
 
 const legacyRegistrationSchema = z.object({
-  type: z.literal("legacy"),
   deviceId: z.string(),
   installationId: z.string(),
   deliveryMechanism: z.object({
@@ -29,11 +27,6 @@ const legacyRegistrationSchema = z.object({
     }),
   }),
 });
-
-const registrationSchema = z.discriminatedUnion("type", [
-  currentRegistrationSchema,
-  legacyRegistrationSchema,
-]);
 
 const registerInstallationResponseSchema = z.array(
   z.discriminatedUnion("status", [
@@ -52,35 +45,51 @@ export type IRegisterInstallationResponse = z.infer<
   typeof registerInstallationResponseSchema
 >;
 
-export type RegisterInstallationRequestBody = z.infer<
-  typeof registrationSchema
+export type ICurrentRegisterInstallationRequestBody = z.infer<
+  typeof currentRegistrationSchema
+>;
+
+export type ILegacyRegisterInstallationRequestBody = z.infer<
+  typeof legacyRegistrationSchema
 >;
 
 const notificationClient = createNotificationClient();
 
 export async function registerInstallation(
-  req: Request<unknown, unknown, RegisterInstallationRequestBody>,
+  req: Request<unknown, unknown, ICurrentRegisterInstallationRequestBody>,
   res: Response,
 ) {
-  const validatedData = registrationSchema.parse(req.body);
-
-  if (validatedData.type === "legacy") {
-    await handleLegacyRegistration({ req, res });
+  const legacyParseResult = legacyRegistrationSchema.safeParse(req.body);
+  if (legacyParseResult.success) {
+    await handleLegacyRegistration({
+      res,
+      body: legacyParseResult.data,
+    });
     return;
   }
 
-  await handleCurrentRegistration({ req, res });
+  const currentParseResult = currentRegistrationSchema.safeParse(req.body);
+  if (currentParseResult.success) {
+    await handleCurrentRegistration({
+      req,
+      res,
+      body: currentParseResult.data,
+    });
+    return;
+  }
+
+  return res.status(400).json({ error: "Invalid request body" });
 }
 
 async function handleCurrentRegistration(args: {
-  req: Request<unknown, unknown, RegisterInstallationRequestBody>;
+  req: Request<unknown, unknown, ICurrentRegisterInstallationRequestBody>;
   res: Response;
+  body: ICurrentRegisterInstallationRequestBody;
 }) {
-  const { req, res } = args;
+  const { req, res, body } = args;
 
   try {
     const authenticatedXmtpId = req.app.locals.xmtpId;
-    const validatedData = currentRegistrationSchema.parse(req.body);
 
     // Make sure the authenticated user has a DeviceIdentity
     const deviceIdentityForAuthenticatedUser =
@@ -98,7 +107,7 @@ async function handleCurrentRegistration(args: {
 
     // Make sure the device belongs to the authenticated user
     const deviceOwnerCheck = await prisma.device.findUnique({
-      where: { id: validatedData.deviceId },
+      where: { id: body.deviceId },
       select: { userId: true },
     });
 
@@ -107,15 +116,15 @@ async function handleCurrentRegistration(args: {
       deviceOwnerCheck.userId !== deviceIdentityForAuthenticatedUser.userId
     ) {
       req.log.warn(
-        `User ${deviceIdentityForAuthenticatedUser.userId} attempt to register for unowned/unknown device ${validatedData.deviceId}`,
+        `User ${deviceIdentityForAuthenticatedUser.userId} attempt to register for unowned/unknown device ${body.deviceId}`,
       );
       res.status(403).json({ error: "Forbidden: Device access denied" });
       return;
     }
 
     // Make sure all the identities being registered belong to the authenticated user
-    if (validatedData.installations.length > 0) {
-      const identityIdsToVerify = validatedData.installations.map(
+    if (body.installations.length > 0) {
+      const identityIdsToVerify = body.installations.map(
         (inst) => inst.identityId,
       );
       const ownedIdentities = await prisma.deviceIdentity.findMany({
@@ -142,23 +151,23 @@ async function handleCurrentRegistration(args: {
         // Update the device with the new push token and expo token
         await tx.device.update({
           where: {
-            id: validatedData.deviceId,
+            id: body.deviceId,
           },
           data: {
-            expoToken: validatedData.expoToken,
-            pushToken: validatedData.pushToken,
+            expoToken: body.expoToken,
+            pushToken: body.pushToken,
           },
         });
 
         // Find all the identities on the device that are not in the new installations
         const staleIdentitiesOnDevice = await tx.identitiesOnDevice.findMany({
           where: {
-            deviceId: validatedData.deviceId,
+            deviceId: body.deviceId,
             AND: [
               {
                 xmtpInstallationId: {
                   not: {
-                    in: validatedData.installations.map(
+                    in: body.installations.map(
                       (inst) => inst.xmtpInstallationId,
                     ),
                   },
@@ -181,23 +190,23 @@ async function handleCurrentRegistration(args: {
           );
           await tx.identitiesOnDevice.deleteMany({
             where: {
-              deviceId: validatedData.deviceId,
+              deviceId: body.deviceId,
               identityId: { in: staleIdentityIds },
             },
           });
         }
 
         // Upsert the new installations
-        for (const installation of validatedData.installations) {
+        for (const installation of body.installations) {
           await tx.identitiesOnDevice.upsert({
             where: {
               deviceId_identityId: {
-                deviceId: validatedData.deviceId,
+                deviceId: body.deviceId,
                 identityId: installation.identityId,
               },
             },
             create: {
-              deviceId: validatedData.deviceId,
+              deviceId: body.deviceId,
               identityId: installation.identityId,
               xmtpInstallationId: installation.xmtpInstallationId,
             },
@@ -244,14 +253,14 @@ async function handleCurrentRegistration(args: {
     // Register the new installations with XMTP
     // Process registrations in parallel for better performance
     const registrationResults = await Promise.all(
-      validatedData.installations.map(async (installation) => {
+      body.installations.map(async (installation) => {
         try {
           const response = await notificationClient.registerInstallation({
             installationId: installation.xmtpInstallationId,
             deliveryMechanism: {
               deliveryMechanismType: {
                 case: "customToken",
-                value: validatedData.expoToken,
+                value: body.expoToken,
               },
             },
           });
@@ -285,7 +294,7 @@ async function handleCurrentRegistration(args: {
     return;
   } catch (error) {
     if (error instanceof z.ZodError) {
-      res.status(400).json({ errors: error.errors });
+      res.status(400).json({ error: error.errors[0].message });
       return;
     }
     req.log.error({ error }, "Failed to register installation(s)");
@@ -294,17 +303,15 @@ async function handleCurrentRegistration(args: {
 }
 
 async function handleLegacyRegistration(args: {
-  req: Request<unknown, unknown, RegisterInstallationRequestBody>;
   res: Response;
+  body: ILegacyRegisterInstallationRequestBody;
 }) {
-  const { req, res } = args;
+  const { res, body } = args;
 
   try {
-    const validatedData = legacyRegistrationSchema.parse(req.body);
-
     const response = await notificationClient.registerInstallation({
-      installationId: validatedData.installationId,
-      deliveryMechanism: validatedData.deliveryMechanism,
+      installationId: body.installationId,
+      deliveryMechanism: body.deliveryMechanism,
     });
 
     res.status(201).json({
@@ -313,7 +320,7 @@ async function handleLegacyRegistration(args: {
     });
   } catch (error) {
     if (error instanceof z.ZodError) {
-      res.status(400).json({ error: "Invalid request body" });
+      res.status(400).json({ error: error.errors[0].message });
       return;
     }
     res.status(500).json({ error: "Failed to register installation" });
