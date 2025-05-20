@@ -8,7 +8,8 @@ const installationItemSchema = z.object({
   xmtpInstallationId: z.string(),
 });
 
-const registrationSchema = z.object({
+const currentRegistrationSchema = z.object({
+  type: z.literal("current"),
   deviceId: z.string(),
   pushToken: z.string(),
   expoToken: z.string(),
@@ -16,6 +17,23 @@ const registrationSchema = z.object({
   // We will also check for any other identities on device that don't have any of those installations and delete them
   installations: z.array(installationItemSchema),
 });
+
+const legacyRegistrationSchema = z.object({
+  type: z.literal("legacy"),
+  deviceId: z.string(),
+  installationId: z.string(),
+  deliveryMechanism: z.object({
+    deliveryMechanismType: z.object({
+      case: z.enum(["apnsDeviceToken", "firebaseDeviceToken", "customToken"]),
+      value: z.string(),
+    }),
+  }),
+});
+
+const registrationSchema = z.discriminatedUnion("type", [
+  currentRegistrationSchema,
+  legacyRegistrationSchema,
+]);
 
 const registerInstallationResponseSchema = z.array(
   z.discriminatedUnion("status", [
@@ -44,10 +62,25 @@ export async function registerInstallation(
   req: Request<unknown, unknown, RegisterInstallationRequestBody>,
   res: Response,
 ) {
+  const validatedData = registrationSchema.parse(req.body);
+
+  if (validatedData.type === "legacy") {
+    await handleLegacyRegistration({ req, res });
+    return;
+  }
+
+  await handleCurrentRegistration({ req, res });
+}
+
+async function handleCurrentRegistration(args: {
+  req: Request<unknown, unknown, RegisterInstallationRequestBody>;
+  res: Response;
+}) {
+  const { req, res } = args;
+
   try {
     const authenticatedXmtpId = req.app.locals.xmtpId;
-
-    const validatedData = registrationSchema.parse(req.body);
+    const validatedData = currentRegistrationSchema.parse(req.body);
 
     // Make sure the authenticated user has a DeviceIdentity
     const deviceIdentityForAuthenticatedUser =
@@ -257,5 +290,32 @@ export async function registerInstallation(
     }
     req.log.error({ error }, "Failed to register installation(s)");
     res.status(500).json({ error: "Failed to register installation(s)" });
+  }
+}
+
+async function handleLegacyRegistration(args: {
+  req: Request<unknown, unknown, RegisterInstallationRequestBody>;
+  res: Response;
+}) {
+  const { req, res } = args;
+
+  try {
+    const validatedData = legacyRegistrationSchema.parse(req.body);
+
+    const response = await notificationClient.registerInstallation({
+      installationId: validatedData.installationId,
+      deliveryMechanism: validatedData.deliveryMechanism,
+    });
+
+    res.status(201).json({
+      installationId: response.installationId,
+      validUntil: Number(response.validUntil),
+    });
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      res.status(400).json({ error: "Invalid request body" });
+      return;
+    }
+    res.status(500).json({ error: "Failed to register installation" });
   }
 }

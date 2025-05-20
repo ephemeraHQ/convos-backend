@@ -68,6 +68,30 @@ export async function handleXmtpNotification(req: Request, res: Response) {
     });
 
     if (!identityOnDevice || !identityOnDevice.xmtpInstallationId) {
+      // Trying old way of sending notifications
+      const device = await prisma.device.findFirst({
+        where: {
+          pushToken: notification.installation.delivery_mechanism.token,
+        },
+        include: {
+          identities: {
+            include: {
+              identity: true,
+            },
+          },
+        },
+      });
+      if (device && device.expoToken) {
+        await trySendingNotificationWithOldway({
+          notification,
+          ethAddress: device.identities[0].identity.turnkeyAddress,
+          expoPushToken: device.expoToken,
+          req,
+        });
+        res.status(200).end();
+        return;
+      }
+
       req.log.warn(
         `No active device/identity found for xmtpInstallationId ${notification.installation.id}. This installation might have been cleaned up already.`,
       );
@@ -234,4 +258,60 @@ async function cleanupFailedInstallation(args: {
       "Failed during cleanup of installation",
     );
   }
+}
+
+async function trySendingNotificationWithOldway(args: {
+  notification: NotificationResponse;
+  ethAddress: string;
+  expoPushToken: string;
+  req: Request;
+}) {
+  const { notification, ethAddress, expoPushToken, req } = args;
+
+  // Prepare the base message data that's common for both silent and regular notifications
+  const baseMessageData = {
+    contentTopic: notification.message.content_topic,
+    messageType: notification.message_context.message_type,
+    encryptedMessage: notification.message.message,
+    timestamp: notification.message.timestamp_ns,
+    ethAddress: ethAddress,
+  };
+
+  // Create the message based on whether it's silent or regular
+  const message: ExpoPushMessage = notification.subscription.is_silent
+    ? {
+        // Silent notification configuration
+        to: expoPushToken,
+        data: baseMessageData,
+        // Required for iOS silent notifications
+        _contentAvailable: true,
+        // Required for Android silent notifications
+        priority: "normal",
+        // Ensure no visible alerts
+        sound: undefined,
+      }
+    : {
+        // Regular notification configuration
+        to: expoPushToken,
+        sound: "default",
+        body: "New message",
+        data: baseMessageData,
+        priority: "high",
+        mutableContent: true,
+      };
+
+  // Send the notification
+  const chunks = expo.chunkPushNotifications([message]);
+  const sendPromises = chunks.map(async (chunk) => {
+    try {
+      const ticketChunk = await expo.sendPushNotificationsAsync(chunk);
+      req.log.info({ ticketChunk }, "push notification sent");
+      return ticketChunk;
+    } catch (error) {
+      req.log.error({ error }, "Error sending push notification:");
+      throw error;
+    }
+  });
+
+  await Promise.all(sendPromises);
 }
