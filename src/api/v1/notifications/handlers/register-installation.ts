@@ -18,7 +18,6 @@ const currentRegistrationSchema = z.object({
 });
 
 const legacyRegistrationSchema = z.object({
-  deviceId: z.string(),
   installationId: z.string(),
   deliveryMechanism: z.object({
     deliveryMechanismType: z.object({
