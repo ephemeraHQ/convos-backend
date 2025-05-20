@@ -8,13 +8,24 @@ const installationItemSchema = z.object({
   xmtpInstallationId: z.string(),
 });
 
-const registrationSchema = z.object({
+const currentRegistrationSchema = z.object({
   deviceId: z.string(),
   pushToken: z.string(),
   expoToken: z.string(),
   // List of installations to register
   // We will also check for any other identities on device that don't have any of those installations and delete them
   installations: z.array(installationItemSchema),
+});
+
+const legacyRegistrationSchema = z.object({
+  deviceId: z.string(),
+  installationId: z.string(),
+  deliveryMechanism: z.object({
+    deliveryMechanismType: z.object({
+      case: z.enum(["apnsDeviceToken", "firebaseDeviceToken", "customToken"]),
+      value: z.string(),
+    }),
+  }),
 });
 
 const registerInstallationResponseSchema = z.array(
@@ -34,20 +45,51 @@ export type IRegisterInstallationResponse = z.infer<
   typeof registerInstallationResponseSchema
 >;
 
-export type RegisterInstallationRequestBody = z.infer<
-  typeof registrationSchema
+export type ICurrentRegisterInstallationRequestBody = z.infer<
+  typeof currentRegistrationSchema
+>;
+
+export type ILegacyRegisterInstallationRequestBody = z.infer<
+  typeof legacyRegistrationSchema
 >;
 
 const notificationClient = createNotificationClient();
 
 export async function registerInstallation(
-  req: Request<unknown, unknown, RegisterInstallationRequestBody>,
+  req: Request<unknown, unknown, ICurrentRegisterInstallationRequestBody>,
   res: Response,
 ) {
+  const legacyParseResult = legacyRegistrationSchema.safeParse(req.body);
+  if (legacyParseResult.success) {
+    await handleLegacyRegistration({
+      res,
+      body: legacyParseResult.data,
+    });
+    return;
+  }
+
+  const currentParseResult = currentRegistrationSchema.safeParse(req.body);
+  if (currentParseResult.success) {
+    await handleCurrentRegistration({
+      req,
+      res,
+      body: currentParseResult.data,
+    });
+    return;
+  }
+
+  res.status(400).json({ error: "Invalid request body" });
+}
+
+async function handleCurrentRegistration(args: {
+  req: Request<unknown, unknown, ICurrentRegisterInstallationRequestBody>;
+  res: Response;
+  body: ICurrentRegisterInstallationRequestBody;
+}) {
+  const { req, res, body } = args;
+
   try {
     const authenticatedXmtpId = req.app.locals.xmtpId;
-
-    const validatedData = registrationSchema.parse(req.body);
 
     // Make sure the authenticated user has a DeviceIdentity
     const deviceIdentityForAuthenticatedUser =
@@ -65,7 +107,7 @@ export async function registerInstallation(
 
     // Make sure the device belongs to the authenticated user
     const deviceOwnerCheck = await prisma.device.findUnique({
-      where: { id: validatedData.deviceId },
+      where: { id: body.deviceId },
       select: { userId: true },
     });
 
@@ -74,15 +116,15 @@ export async function registerInstallation(
       deviceOwnerCheck.userId !== deviceIdentityForAuthenticatedUser.userId
     ) {
       req.log.warn(
-        `User ${deviceIdentityForAuthenticatedUser.userId} attempt to register for unowned/unknown device ${validatedData.deviceId}`,
+        `User ${deviceIdentityForAuthenticatedUser.userId} attempt to register for unowned/unknown device ${body.deviceId}`,
       );
       res.status(403).json({ error: "Forbidden: Device access denied" });
       return;
     }
 
     // Make sure all the identities being registered belong to the authenticated user
-    if (validatedData.installations.length > 0) {
-      const identityIdsToVerify = validatedData.installations.map(
+    if (body.installations.length > 0) {
+      const identityIdsToVerify = body.installations.map(
         (inst) => inst.identityId,
       );
       const ownedIdentities = await prisma.deviceIdentity.findMany({
@@ -109,23 +151,23 @@ export async function registerInstallation(
         // Update the device with the new push token and expo token
         await tx.device.update({
           where: {
-            id: validatedData.deviceId,
+            id: body.deviceId,
           },
           data: {
-            expoToken: validatedData.expoToken,
-            pushToken: validatedData.pushToken,
+            expoToken: body.expoToken,
+            pushToken: body.pushToken,
           },
         });
 
         // Find all the identities on the device that are not in the new installations
         const staleIdentitiesOnDevice = await tx.identitiesOnDevice.findMany({
           where: {
-            deviceId: validatedData.deviceId,
+            deviceId: body.deviceId,
             AND: [
               {
                 xmtpInstallationId: {
                   not: {
-                    in: validatedData.installations.map(
+                    in: body.installations.map(
                       (inst) => inst.xmtpInstallationId,
                     ),
                   },
@@ -148,23 +190,23 @@ export async function registerInstallation(
           );
           await tx.identitiesOnDevice.deleteMany({
             where: {
-              deviceId: validatedData.deviceId,
+              deviceId: body.deviceId,
               identityId: { in: staleIdentityIds },
             },
           });
         }
 
         // Upsert the new installations
-        for (const installation of validatedData.installations) {
+        for (const installation of body.installations) {
           await tx.identitiesOnDevice.upsert({
             where: {
               deviceId_identityId: {
-                deviceId: validatedData.deviceId,
+                deviceId: body.deviceId,
                 identityId: installation.identityId,
               },
             },
             create: {
-              deviceId: validatedData.deviceId,
+              deviceId: body.deviceId,
               identityId: installation.identityId,
               xmtpInstallationId: installation.xmtpInstallationId,
             },
@@ -211,14 +253,14 @@ export async function registerInstallation(
     // Register the new installations with XMTP
     // Process registrations in parallel for better performance
     const registrationResults = await Promise.all(
-      validatedData.installations.map(async (installation) => {
+      body.installations.map(async (installation) => {
         try {
           const response = await notificationClient.registerInstallation({
             installationId: installation.xmtpInstallationId,
             deliveryMechanism: {
               deliveryMechanismType: {
                 case: "customToken",
-                value: validatedData.expoToken,
+                value: body.expoToken,
               },
             },
           });
@@ -252,10 +294,35 @@ export async function registerInstallation(
     return;
   } catch (error) {
     if (error instanceof z.ZodError) {
-      res.status(400).json({ errors: error.errors });
+      res.status(400).json({ error: error.errors[0].message });
       return;
     }
     req.log.error({ error }, "Failed to register installation(s)");
     res.status(500).json({ error: "Failed to register installation(s)" });
+  }
+}
+
+async function handleLegacyRegistration(args: {
+  res: Response;
+  body: ILegacyRegisterInstallationRequestBody;
+}) {
+  const { res, body } = args;
+
+  try {
+    const response = await notificationClient.registerInstallation({
+      installationId: body.installationId,
+      deliveryMechanism: body.deliveryMechanism,
+    });
+
+    res.status(201).json({
+      installationId: response.installationId,
+      validUntil: Number(response.validUntil),
+    });
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      res.status(400).json({ error: error.errors[0].message });
+      return;
+    }
+    res.status(500).json({ error: "Failed to register installation" });
   }
 }

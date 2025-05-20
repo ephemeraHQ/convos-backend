@@ -12,8 +12,8 @@ import {
 import express from "express";
 import { uint8ArrayToHex } from "uint8array-extras";
 import type {
+  ICurrentRegisterInstallationRequestBody,
   IRegisterInstallationResponse,
-  RegisterInstallationRequestBody,
 } from "@/api/v1/notifications/handlers/register-installation";
 import { notificationsRouter } from "@/api/v1/notifications/notifications.router";
 import { jsonMiddleware } from "@/middleware/json";
@@ -124,7 +124,7 @@ describe("/notifications API - Register/Unregister (Auth Required)", () => {
               xmtpInstallationId: testXmtpInstallationId,
             },
           ],
-        } satisfies RegisterInstallationRequestBody),
+        } satisfies ICurrentRegisterInstallationRequestBody),
       },
     );
 
@@ -161,8 +161,8 @@ describe("/notifications API - Register/Unregister (Auth Required)", () => {
       },
     );
     expect(response.status).toBe(400);
-    const data = (await response.json()) as { errors: unknown };
-    expect(data.errors).toBeDefined();
+    const data = (await response.json()) as { error: unknown };
+    expect(data.error).toBeDefined();
   });
 
   test("POST /notifications/register returns 403 if device not owned by authenticated user", async () => {
@@ -181,7 +181,7 @@ describe("/notifications API - Register/Unregister (Auth Required)", () => {
               xmtpInstallationId: "test-installation-id-register",
             },
           ],
-        } satisfies RegisterInstallationRequestBody),
+        } satisfies ICurrentRegisterInstallationRequestBody),
       },
     );
     expect(response.status).toBe(403);
@@ -204,7 +204,7 @@ describe("/notifications API - Register/Unregister (Auth Required)", () => {
               xmtpInstallationId: xmtpInstallationIdToTest,
             },
           ],
-        } satisfies RegisterInstallationRequestBody),
+        } satisfies ICurrentRegisterInstallationRequestBody),
       },
     );
 
@@ -308,10 +308,9 @@ describe("/notifications API - Subscribe/Unsubscribe (No local DB auth needed, u
     );
     expect(response.status).toBe(400);
     const data = (await response.json()) as {
-      errors?: unknown;
       error?: string;
     };
-    expect(data.errors ?? data.error).toBeDefined();
+    expect(data.error).toBeDefined();
   });
 
   test("POST /notifications/unsubscribe validates request body for missing topics", async () => {
@@ -325,9 +324,8 @@ describe("/notifications API - Subscribe/Unsubscribe (No local DB auth needed, u
     );
     expect(response.status).toBe(400);
     const data = (await response.json()) as {
-      errors?: unknown;
       error?: string;
     };
-    expect(data.errors ?? data.error).toBeDefined();
+    expect(data.error).toBeDefined();
   });
 });

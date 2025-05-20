@@ -13,6 +13,8 @@ const DeviceUpdateInputSchema = DeviceSchema.pick({
   os: true,
   pushToken: true,
   expoToken: true,
+  appVersion: true,
+  appBuildNumber: true,
 }).partial();
 
 export type UpdateDeviceRequestBody = z.infer<typeof DeviceUpdateInputSchema>;

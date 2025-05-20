@@ -18,7 +18,6 @@ jobs:
         with:
           bun-version-file: ".bun-version"
       - run: bun install
-      - run: bun check
       - run: ./dev/up
         env:
           TEST_NOTIFICATION_DELIVERY_URL: "http://host.docker.internal:8081"
@@ -27,6 +26,7 @@ jobs:
       - run: bun migrate:dev
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      - run: bun check
       - run: bun test
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
