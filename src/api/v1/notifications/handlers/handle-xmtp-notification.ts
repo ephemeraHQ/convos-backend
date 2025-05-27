@@ -150,6 +150,7 @@ export async function handleXmtpNotification(req: Request, res: Response) {
       encryptedMessage: notification.message.message,
       timestamp: notification.message.timestamp_ns,
       ethAddress: turnkeyAddress,
+      installationId: notification.installation.id,
     };
 
     const message: ExpoPushMessage = notification.subscription.is_silent
