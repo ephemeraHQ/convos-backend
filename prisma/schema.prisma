@@ -93,6 +93,7 @@ model ConversationMetadata {
   pinned           Boolean        @default(false)
   unread           Boolean        @default(false)
   deleted          Boolean        @default(false)
+  muted            Boolean        @default(false)
   readUntil        DateTime?
   createdAt        DateTime       @default(now())
   updatedAt        DateTime       @updatedAt
