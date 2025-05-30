@@ -50,6 +50,8 @@ services:
     image: postgres:16
     environment:
       POSTGRES_PASSWORD: notifications
+    ports:
+      - 5433:5432
 
   notification_server:
     image: xmtp/notifications-server:latest

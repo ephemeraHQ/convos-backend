@@ -17,11 +17,7 @@ export type UpsertConversationMetadataRequestBody = z.infer<
 >;
 
 export async function upsertConversationMetadataHandler(
-  req: Request<
-    Record<string, never>,
-    unknown,
-    UpsertConversationMetadataRequestBody
-  >,
+  req: Request<unknown, unknown, UpsertConversationMetadataRequestBody>,
   res: Response,
 ) {
   try {
