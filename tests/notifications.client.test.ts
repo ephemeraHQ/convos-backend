@@ -511,5 +511,81 @@ describe("Notifications", () => {
         topics: [conversationTopic],
       });
     }, 10000); // Increase test timeout to 10 seconds
+
+    it("stops receiving notifications after unsubscribing", async () => {
+      const client = await createClient();
+      const client2 = await createClient();
+      const notificationClient = createNotificationClient();
+
+      await notificationClient.registerInstallation({
+        installationId: "unsubscribe-verification-test",
+        deliveryMechanism: {
+          deliveryMechanismType: {
+            case: "apnsDeviceToken",
+            value: "token",
+          },
+        },
+      });
+
+      const dm = await client.conversations.newDm(client2.inboxId);
+      const conversationTopic = buildConversationTopic(dm.id);
+
+      // Subscribe to the topic
+      await notificationClient.subscribe({
+        installationId: "unsubscribe-verification-test",
+        topics: [conversationTopic],
+      });
+
+      // Send a message and verify we receive the notification
+      await dm.send("first message");
+
+      // Wait for the first notification
+      setTimeout(() => {
+        void stream.callback(null, undefined);
+      }, 2000);
+
+      let firstPhaseCount = 0;
+      for await (const notification of stream) {
+        console.log("notification1:", notification);
+        if (notification === undefined) {
+          break;
+        }
+        firstPhaseCount++;
+        expect(notification.message.content_topic).toEqual(conversationTopic);
+        expect(notification.installation.id).toEqual(
+          "unsubscribe-verification-test",
+        );
+      }
+
+      expect(firstPhaseCount).toBe(1);
+
+      // Now unsubscribe
+      await notificationClient.unsubscribe({
+        installationId: "unsubscribe-verification-test",
+        topics: [conversationTopic],
+      });
+
+      // Create a new stream for the second phase
+      stream = new AsyncStream<NotificationResponse>();
+
+      // Send another message - we should NOT receive a notification
+      await dm.send("second message after unsubscribe");
+
+      // Wait for potential notifications (but we expect none)
+      setTimeout(() => {
+        void stream.callback(null, undefined);
+      }, 2000);
+
+      let secondPhaseCount = 0;
+      for await (const notification of stream) {
+        if (notification === undefined) {
+          break;
+        }
+        secondPhaseCount++;
+      }
+
+      // Verify we received NO notifications after unsubscribing
+      expect(secondPhaseCount).toBe(0);
+    }, 10000);
   });
 });
