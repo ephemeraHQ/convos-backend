@@ -1,7 +1,13 @@
+import { create } from "@bufbuild/protobuf";
 import { createClient } from "@connectrpc/connect";
 import { createConnectTransport } from "@connectrpc/connect-node";
 import { type HmacKey } from "@xmtp/node-sdk";
-import { Notifications } from "@/notifications/gen/notifications/v1/service_pb";
+import {
+  Notifications,
+  Subscription_HmacKeySchema,
+  SubscriptionSchema,
+  type Subscription,
+} from "@/notifications/gen/notifications/v1/service_pb";
 
 export function createNotificationClient() {
   if (!process.env.NOTIFICATION_SERVER_URL) {
@@ -43,3 +49,31 @@ export type NotificationResponse = {
     is_silent: boolean;
   };
 };
+
+export async function subscribeToTopics(
+  // The installationId we want to apply the subscription to
+  installationId: string,
+  // A notifications server client, like the one generated above.
+  notificationClient: ReturnType<typeof createNotificationClient>,
+  topics: Topic[],
+) {
+  // convert topics to subscriptions
+  const subscriptions = topics.map(
+    (topic): Subscription =>
+      create(SubscriptionSchema, {
+        topic: topic.topic,
+        isSilent: false,
+        hmacKeys: topic.hmacKeys.map((v) =>
+          create(Subscription_HmacKeySchema, {
+            thirtyDayPeriodsSinceEpoch: Number(v.epoch),
+            key: Uint8Array.from(v.key),
+          }),
+        ),
+      }),
+  );
+
+  await notificationClient.subscribeWithMetadata({
+    installationId,
+    subscriptions,
+  });
+}

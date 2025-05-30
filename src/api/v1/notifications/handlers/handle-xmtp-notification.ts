@@ -14,9 +14,6 @@ if (!process.env.XMTP_NOTIFICATION_SECRET) {
   throw new Error("XMTP_NOTIFICATION_SECRET is not set");
 }
 
-// Name of the token we send from the simulator
-const TEST_TOKEN = "TEST_EXPO_TOKEN";
-
 /**
  * Webhook handler for XMTP notifications
  *
@@ -132,12 +129,6 @@ export async function handleXmtpNotification(req: Request, res: Response) {
       return;
     }
 
-    if (expoPushToken === TEST_TOKEN) {
-      req.log.info("Skipping notification for test token");
-      res.status(200).end();
-      return;
-    }
-
     if (!expoPushToken || !Expo.isExpoPushToken(expoPushToken)) {
       req.log.warn(
         `Expo push token for Device ${device.id} (xmtpInstallationId ${notification.installation.id}) is invalid or missing: ${expoPushToken}. Cleaning up.`,
@@ -159,7 +150,6 @@ export async function handleXmtpNotification(req: Request, res: Response) {
       encryptedMessage: notification.message.message,
       timestamp: notification.message.timestamp_ns,
       ethAddress: turnkeyAddress,
-      installationId: notification.installation.id,
     };
 
     const message: ExpoPushMessage = notification.subscription.is_silent
