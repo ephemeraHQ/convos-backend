@@ -9,7 +9,7 @@ import {
   test,
 } from "bun:test";
 import express from "express";
-import metadataRouter from "@/api/v1/metadata/metadata.router";
+import metadataRouter from "@/api/v1/metadata";
 import type {
   CreatedReturnedUser,
   CreateUserRequestBody,
