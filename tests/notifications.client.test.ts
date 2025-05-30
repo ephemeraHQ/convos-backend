@@ -512,7 +512,7 @@ describe("Notifications", () => {
       });
     }, 10000); // Increase test timeout to 10 seconds
 
-    it.only("stops receiving notifications after unsubscribing", async () => {
+    it("stops receiving notifications after unsubscribing", async () => {
       const client = await createClient();
       const client2 = await createClient();
       const notificationClient = createNotificationClient();
