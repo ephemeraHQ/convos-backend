@@ -2,7 +2,7 @@ import { Router } from "express";
 import appConfigRouter from "@/api/v1/appConfig";
 import authenticateRouter from "@/api/v1/authenticate";
 import identitiesRouter from "@/api/v1/identities/identities.router";
-import metadataRouter from "@/api/v1/metadata";
+import metadataRouter from "@/api/v1/metadata/metadata.router";
 import {
   notificationsRouter,
   xmtpNotificationsRouter,
