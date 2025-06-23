@@ -9,6 +9,7 @@ import {
   validateOnChainName,
   validateProfileUpdate,
 } from "./validate-profile";
+import { namestoneService } from "../../../../utils/namestone";
 
 // Use Zod schema for type definition
 export type UpdateProfileRequestBody = Partial<
@@ -110,9 +111,73 @@ export async function updateProfile(
     const updatedProfile = await prisma.profile.update({
       where: { id: existingProfile.id },
       data: preprocessedData,
+      include: {
+        deviceIdentity: {
+          select: {
+            turnkeyAddress: true,
+          },
+        },
+      },
     });
 
-    res.json(updatedProfile);
+    // Handle Namestone name changes
+    const isUsernameChanging = preprocessedData.username && 
+      preprocessedData.username !== existingProfile.username;
+
+    if (isUsernameChanging) {
+      // Delete old name and set new name
+      // Don't await to avoid blocking the response
+      Promise.all([
+        // Delete old username
+        namestoneService.deleteName({ username: existingProfile.username }),
+        // Set new username
+        namestoneService.setName({
+          username: updatedProfile.username,
+          address: updatedProfile.deviceIdentity.turnkeyAddress,
+          textRecords: {
+            "display.name": updatedProfile.name,
+            ...(updatedProfile.description && { "description": updatedProfile.description }),
+            ...(updatedProfile.avatar && { "avatar": updatedProfile.avatar }),
+          },
+        }),
+      ]).catch((error) => {
+        // Log error but don't fail profile update
+        req.log.error(
+          { 
+            error, 
+            oldUsername: existingProfile.username,
+            newUsername: updatedProfile.username,
+            address: updatedProfile.deviceIdentity.turnkeyAddress,
+          },
+          "Failed to update Namestone name during profile update"
+        );
+      });
+    } else if (preprocessedData.name || preprocessedData.description || preprocessedData.avatar) {
+      // If other profile fields changed but not username, update the text records
+      namestoneService.setName({
+        username: updatedProfile.username,
+        address: updatedProfile.deviceIdentity.turnkeyAddress,
+        textRecords: {
+          "display.name": updatedProfile.name,
+          ...(updatedProfile.description && { "description": updatedProfile.description }),
+          ...(updatedProfile.avatar && { "avatar": updatedProfile.avatar }),
+        },
+      }).catch((error) => {
+        // Log error but don't fail profile update
+        req.log.error(
+          { 
+            error, 
+            username: updatedProfile.username,
+            address: updatedProfile.deviceIdentity.turnkeyAddress,
+          },
+          "Failed to update Namestone text records during profile update"
+        );
+      });
+    }
+
+    // Return the profile without the deviceIdentity relation to match the expected response
+    const { deviceIdentity: _, ...profileResponse } = updatedProfile;
+    res.json(profileResponse);
   } catch (error) {
     console.error("Failed to update profile:", error);
     if (error instanceof z.ZodError) {
