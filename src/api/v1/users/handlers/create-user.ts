@@ -2,13 +2,13 @@ import { DeviceOS } from "@prisma/client";
 import type { Request, Response } from "express";
 import { z } from "zod";
 import { prisma } from "@/utils/prisma";
+import { namestoneService } from "../../../../utils/namestone";
 import {
   validateOnChainName,
   validateProfileRequiredFields,
   validateProfileSchema,
   validateUsernameUniqueness,
 } from "../../profiles/handlers/validate-profile";
-import { namestoneService } from "../../../../utils/namestone";
 
 export const createUserRequestBodySchema = z.object({
   turnkeyUserId: z.string(),
@@ -224,21 +224,29 @@ export async function createUser(
 
     // Register the username with Namestone
     // Don't await to avoid blocking the user creation response
-    namestoneService.setName({
-      username: createdProfile.username,
-      address: createdIdentity.turnkeyAddress,
-      textRecords: {
-        "display.name": createdProfile.name,
-        ...(createdProfile.description && { "description": createdProfile.description }),
-        ...(createdProfile.avatar && { "avatar": createdProfile.avatar }),
-      },
-    }).catch((error) => {
-      // Log error but don't fail user creation
-      req.log.error(
-        { error, username: createdProfile.username, address: createdIdentity.turnkeyAddress },
-        "Failed to register username with Namestone during user creation"
-      );
-    });
+    namestoneService
+      .setName({
+        username: createdProfile.username,
+        address: createdIdentity.turnkeyAddress,
+        textRecords: {
+          "display.name": createdProfile.name,
+          ...(createdProfile.description && {
+            description: createdProfile.description,
+          }),
+          ...(createdProfile.avatar && { avatar: createdProfile.avatar }),
+        },
+      })
+      .catch((error: unknown) => {
+        // Log error but don't fail user creation
+        req.log.error(
+          {
+            error,
+            username: createdProfile.username,
+            address: createdIdentity.turnkeyAddress,
+          },
+          "Failed to register username with Namestone during user creation",
+        );
+      });
 
     res.status(201).json(returnedUser);
   } catch (error) {

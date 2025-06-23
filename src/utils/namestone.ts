@@ -28,13 +28,18 @@ class NamestoneService {
   constructor() {
     this.apiKey = process.env.NAMESTONE_API_KEY || "";
     this.domain = process.env.NAMESTONE_DOMAIN || "";
-    this.baseUrl = process.env.NAMESTONE_BASE_URL || "https://namestone.com/api/public_v1";
+    this.baseUrl =
+      process.env.NAMESTONE_BASE_URL || "https://namestone.com/api/public_v1";
 
     if (!this.apiKey) {
-      console.warn("NAMESTONE_API_KEY not configured - Namestone integration disabled");
+      console.warn(
+        "NAMESTONE_API_KEY not configured - Namestone integration disabled",
+      );
     }
     if (!this.domain) {
-      console.warn("NAMESTONE_DOMAIN not configured - Namestone integration disabled");
+      console.warn(
+        "NAMESTONE_DOMAIN not configured - Namestone integration disabled",
+      );
     }
   }
 
@@ -69,7 +74,7 @@ class NamestoneService {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "Authorization": this.apiKey,
+          Authorization: this.apiKey,
         },
         body: JSON.stringify(requestBody),
       });
@@ -79,14 +84,15 @@ class NamestoneService {
         throw new Error(`HTTP ${response.status}: ${errorText}`);
       }
 
-      const result = await response.json();
+      const result = (await response.json()) as NamestoneResponse;
       return {
+        ...result,
         success: true,
         message: `Successfully set name ${args.username}.${this.domain}`,
-        ...result,
       };
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : "Unknown error";
+      const errorMessage =
+        error instanceof Error ? error.message : "Unknown error";
       logError("Failed to set Namestone name", {
         username: args.username,
         domain: this.domain,
@@ -122,7 +128,7 @@ class NamestoneService {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "Authorization": this.apiKey,
+          Authorization: this.apiKey,
         },
         body: JSON.stringify(requestBody),
       });
@@ -132,14 +138,15 @@ class NamestoneService {
         throw new Error(`HTTP ${response.status}: ${errorText}`);
       }
 
-      const result = await response.json();
+      const result = (await response.json()) as NamestoneResponse;
       return {
+        ...result,
         success: true,
         message: `Successfully deleted name ${args.username}.${this.domain}`,
-        ...result,
       };
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : "Unknown error";
+      const errorMessage =
+        error instanceof Error ? error.message : "Unknown error";
       logError("Failed to delete Namestone name", {
         username: args.username,
         domain: this.domain,

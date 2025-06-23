@@ -1,6 +1,7 @@
 import type { Request, Response } from "express";
 import { z } from "zod";
 import { prisma } from "@/utils/prisma";
+import { namestoneService } from "../../../../utils/namestone";
 import type { profileBaseSchema } from "../profile.schema";
 import type { ProfileValidationResponse } from "../profile.types";
 import type { GetProfileRequestParams } from "../profiles.types";
@@ -9,7 +10,6 @@ import {
   validateOnChainName,
   validateProfileUpdate,
 } from "./validate-profile";
-import { namestoneService } from "../../../../utils/namestone";
 
 // Use Zod schema for type definition
 export type UpdateProfileRequestBody = Partial<
@@ -114,7 +114,8 @@ export async function updateProfile(
     });
 
     // Handle Namestone name changes
-    const isUsernameChanging = preprocessedData.username && 
+    const isUsernameChanging =
+      preprocessedData.username &&
       preprocessedData.username !== existingProfile.username;
 
     if (isUsernameChanging) {
@@ -129,46 +130,56 @@ export async function updateProfile(
           address: deviceIdentity.turnkeyAddress,
           textRecords: {
             "display.name": updatedProfile.name,
-            ...(updatedProfile.description && { "description": updatedProfile.description }),
-            ...(updatedProfile.avatar && { "avatar": updatedProfile.avatar }),
+            ...(updatedProfile.description && {
+              description: updatedProfile.description,
+            }),
+            ...(updatedProfile.avatar && { avatar: updatedProfile.avatar }),
           },
         }),
-      ]).catch((error) => {
+      ]).catch((error: unknown) => {
         // Log error but don't fail profile update
-                 req.log.error(
-           { 
-             error, 
-             oldUsername: existingProfile.username,
-             newUsername: updatedProfile.username,
-             address: deviceIdentity.turnkeyAddress,
-           },
-           "Failed to update Namestone name during profile update"
-         );
+        req.log.error(
+          {
+            error,
+            oldUsername: existingProfile.username,
+            newUsername: updatedProfile.username,
+            address: deviceIdentity.turnkeyAddress,
+          },
+          "Failed to update Namestone name during profile update",
+        );
       });
-    } else if (preprocessedData.name || preprocessedData.description || preprocessedData.avatar) {
-             // If other profile fields changed but not username, update the text records
-       namestoneService.setName({
-         username: updatedProfile.username,
-         address: deviceIdentity.turnkeyAddress,
-         textRecords: {
-           "display.name": updatedProfile.name,
-           ...(updatedProfile.description && { "description": updatedProfile.description }),
-           ...(updatedProfile.avatar && { "avatar": updatedProfile.avatar }),
-         },
-       }).catch((error) => {
-         // Log error but don't fail profile update
-         req.log.error(
-           { 
-             error, 
-             username: updatedProfile.username,
-             address: deviceIdentity.turnkeyAddress,
-           },
-           "Failed to update Namestone text records during profile update"
-         );
-       });
+    } else if (
+      preprocessedData.name ||
+      preprocessedData.description ||
+      preprocessedData.avatar
+    ) {
+      // If other profile fields changed but not username, update the text records
+      namestoneService
+        .setName({
+          username: updatedProfile.username,
+          address: deviceIdentity.turnkeyAddress,
+          textRecords: {
+            "display.name": updatedProfile.name,
+            ...(updatedProfile.description && {
+              description: updatedProfile.description,
+            }),
+            ...(updatedProfile.avatar && { avatar: updatedProfile.avatar }),
+          },
+        })
+        .catch((error: unknown) => {
+          // Log error but don't fail profile update
+          req.log.error(
+            {
+              error,
+              username: updatedProfile.username,
+              address: deviceIdentity.turnkeyAddress,
+            },
+            "Failed to update Namestone text records during profile update",
+          );
+        });
     }
 
-         res.json(updatedProfile);
+    res.json(updatedProfile);
   } catch (error) {
     console.error("Failed to update profile:", error);
     if (error instanceof z.ZodError) {
