@@ -36,7 +36,7 @@ let baseUrl: string;
 describe("Batch Profile endpoints", () => {
   const testProfiles: (Profile & { deviceIdentity: DeviceIdentity })[] = [];
   const xmtpIds = ["test-xmtp-id-1", "test-xmtp-id-2", "test-xmtp-id-3"];
-  const testUserId = "test-user-id";
+  const testUserId = "test-user-id-batch-profiles";
 
   beforeAll(async () => {
     // Wait a bit in CI environments
@@ -46,10 +46,11 @@ describe("Batch Profile endpoints", () => {
 
     // Your existing setup but with better error handling
     try {
+      // Create test user
       const testUser = await prisma.user.create({
         data: {
           id: testUserId,
-          turnkeyUserId: "test-turnkey-user-id",
+          turnkeyUserId: "test-turnkey-user-id-batch-profiles",
         },
       });
 
