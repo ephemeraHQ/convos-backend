@@ -1,0 +1,68 @@
+name: Sync dev to main
+
+on:
+  workflow_dispatch: # Only manual triggering via GitHub UI
+
+permissions:
+  contents: write # Need write access to push to main
+
+jobs:
+  sync-branches:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # Need full history for merge
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configure Git
+        run: |
+          git config user.name "${{ github.actor }}"
+          git config user.email "${{ github.actor }}@users.noreply.github.com"
+
+      - name: Merge dev to main (prefer fast-forward)
+        id: merge
+        run: |
+          git checkout main
+          git pull origin main # Ensure we have latest main
+
+          # Try fast-forward first, fall back to regular merge if needed
+          if git merge --ff origin/dev 2>/dev/null; then
+            echo "success=true" >> $GITHUB_OUTPUT
+            echo "merge_type=fast-forward" >> $GITHUB_OUTPUT
+            echo "✅ Fast-forward merge successful - clean linear history maintained"
+          elif git merge origin/dev --no-edit; then
+            echo "success=true" >> $GITHUB_OUTPUT
+            echo "merge_type=merge-commit" >> $GITHUB_OUTPUT
+            echo "✅ Merge successful with merge commit (main had diverged)"
+          else
+            echo "success=false" >> $GITHUB_OUTPUT
+            echo "❌ Merge failed due to conflicts"
+            git merge --abort
+          fi
+
+      - name: Push successful merge
+        if: steps.merge.outputs.success == 'true'
+        run: |
+          git push origin main
+          echo "✅ Successfully synced main with dev" >> $GITHUB_STEP_SUMMARY
+          echo "**Merge Details:**" >> $GITHUB_STEP_SUMMARY
+          echo "- Merge commit: \`$(git log -1 --oneline)\`" >> $GITHUB_STEP_SUMMARY
+          echo "- Triggered by: ${{ github.actor }}" >> $GITHUB_STEP_SUMMARY
+
+      - name: Report merge failure
+        if: steps.merge.outputs.success == 'false'
+        run: |
+          echo "⚠️ **Merge failed due to conflicts**" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**To resolve manually:**" >> $GITHUB_STEP_SUMMARY
+          echo "1. \`git checkout main && git pull\`" >> $GITHUB_STEP_SUMMARY
+          echo "2. \`git merge dev\`" >> $GITHUB_STEP_SUMMARY
+          echo "3. Resolve conflicts in your editor" >> $GITHUB_STEP_SUMMARY
+          echo "4. \`git add . && git commit\`" >> $GITHUB_STEP_SUMMARY
+          echo "5. \`git push origin main\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "After resolving conflicts, future syncs should work smoothly." >> $GITHUB_STEP_SUMMARY
+          exit 1
