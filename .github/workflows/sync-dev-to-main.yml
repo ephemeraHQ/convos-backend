@@ -22,6 +22,11 @@ jobs:
           git config user.name "${{ github.actor }}"
           git config user.email "${{ github.actor }}@users.noreply.github.com"
 
+      - name: Fetch both branches
+        run: |
+          git fetch origin main:main || git fetch origin main
+          git fetch origin dev:dev || git fetch origin dev
+
       - name: Merge dev to main (prefer fast-forward)
         id: merge
         run: |
@@ -29,7 +34,7 @@ jobs:
           git pull origin main # Ensure we have latest main
 
           # Try fast-forward first, fall back to regular merge if needed
-          if git merge --ff origin/dev 2>/dev/null; then
+          if git merge --ff-only origin/dev 2>/dev/null; then
             echo "success=true" >> $GITHUB_OUTPUT
             echo "merge_type=fast-forward" >> $GITHUB_OUTPUT
             echo "✅ Fast-forward merge successful - clean linear history maintained"
