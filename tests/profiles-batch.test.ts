@@ -36,47 +36,69 @@ let baseUrl: string;
 describe("Batch Profile endpoints", () => {
   const testProfiles: (Profile & { deviceIdentity: DeviceIdentity })[] = [];
   const xmtpIds = ["test-xmtp-id-1", "test-xmtp-id-2", "test-xmtp-id-3"];
-  const testUserId = "test-user-id";
+  const testUserId = "test-user-id-batch-profiles";
 
   beforeAll(async () => {
-    // Create test user
-    const testUser = await prisma.user.create({
-      data: {
-        id: testUserId,
-        turnkeyUserId: "test-turnkey-user-id",
-      },
-    });
+    // Wait a bit in CI environments
+    if (process.env.CI) {
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    }
 
-    // Start server on random port
-    server = app.listen(0);
-    const address = server.address();
-    const port = typeof address === "object" ? address?.port : 0;
-    baseUrl = `http://localhost:${port}`;
-
-    // Create test device identities and profiles
-    for (let i = 0; i < xmtpIds.length; i++) {
-      const deviceIdentity = await prisma.deviceIdentity.create({
+    // Your existing setup but with better error handling
+    try {
+      // Create test user
+      const testUser = await prisma.user.create({
         data: {
-          xmtpId: xmtpIds[i],
-          turnkeyAddress: `0x${i}123456789`,
-          userId: testUser.id,
+          id: testUserId,
+          turnkeyUserId: "test-turnkey-user-id-batch-profiles",
         },
       });
 
-      const profile = await prisma.profile.create({
-        data: {
-          name: `Test User ${i}`,
-          username: `testuser${i}`,
-          description: `Test description ${i}`,
-          avatar: `https://example.com/avatar${i}.png`,
-          deviceIdentityId: deviceIdentity.id,
-        },
-        include: {
-          deviceIdentity: true,
-        },
+      server = app.listen(0);
+
+      // Wait for server to be ready
+      await new Promise((resolve, reject) => {
+        server.on("listening", resolve);
+        server.on("error", reject);
+        setTimeout(() => {
+          reject(new Error("Server start timeout"));
+        }, 5000);
       });
 
-      testProfiles.push(profile);
+      const address = server.address();
+      if (!address || typeof address === "string") {
+        throw new Error("Could not get server port");
+      }
+      baseUrl = `http://localhost:${address.port}`;
+
+      // Create test device identities and profiles
+      for (let i = 0; i < xmtpIds.length; i++) {
+        const deviceIdentity = await prisma.deviceIdentity.create({
+          data: {
+            xmtpId: xmtpIds[i],
+            turnkeyAddress: `0x${i}123456789`,
+            userId: testUser.id,
+          },
+        });
+
+        const profile = await prisma.profile.create({
+          data: {
+            name: `Test User ${i}`,
+            username: `testuser${i}`,
+            description: `Test description ${i}`,
+            avatar: `https://example.com/avatar${i}.png`,
+            deviceIdentityId: deviceIdentity.id,
+          },
+          include: {
+            deviceIdentity: true,
+          },
+        });
+
+        testProfiles.push(profile);
+      }
+    } catch (error) {
+      console.error("Test setup failed:", error);
+      throw error;
     }
   });
 
