@@ -5,7 +5,7 @@ on:
 
 permissions:
   contents: write # Need write access to push to main
-  actions: write # Need to trigger repository dispatch events
+  packages: write # Need to push Docker images in deploy workflow
 
 jobs:
   sync-branches:
