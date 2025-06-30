@@ -10,6 +10,10 @@ permissions:
 jobs:
   sync-branches:
     runs-on: ubuntu-latest
+    outputs:
+      success: ${{ steps.merge.outputs.success }}
+      commit_hash: ${{ steps.get_commit_info.outputs.commit_hash }}
+      commit_message: ${{ steps.get_commit_info.outputs.commit_message }}
 
     steps:
       - name: Checkout repository
@@ -77,15 +81,6 @@ jobs:
           echo "commit_hash=$commit_hash" >> $GITHUB_OUTPUT
           echo "commit_message=$commit_message" >> $GITHUB_OUTPUT
 
-      - name: Trigger deployment workflow
-        if: steps.merge.outputs.success == 'true'
-        uses: ./.github/workflows/deploy-aws.yml
-        with:
-          ref: main
-          commit_hash: ${{ steps.get_commit_info.outputs.commit_hash }}
-          commit_message: ${{ steps.get_commit_info.outputs.commit_message }}
-          triggered_by: sync-workflow
-
       - name: Report merge failure
         if: steps.merge.outputs.success == 'false'
         run: |
@@ -100,3 +95,13 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "After resolving conflicts, future syncs should work smoothly." >> $GITHUB_STEP_SUMMARY
           exit 1
+
+  trigger-deploy:
+    needs: sync-branches
+    if: needs.sync-branches.outputs.success == 'true'
+    uses: ./.github/workflows/deploy-aws.yml
+    with:
+      ref: main
+      commit_hash: ${{ needs.sync-branches.outputs.commit_hash }}
+      commit_message: ${{ needs.sync-branches.outputs.commit_message }}
+      triggered_by: sync-workflow
