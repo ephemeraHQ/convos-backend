@@ -105,3 +105,4 @@ jobs:
       commit_hash: ${{ needs.sync-branches.outputs.commit_hash }}
       commit_message: ${{ needs.sync-branches.outputs.commit_message }}
       triggered_by: sync-workflow
+    secrets: inherit
