@@ -6,6 +6,9 @@ on:
       - main
       - dev
   pull_request:
+  repository_dispatch:
+    types: [deploy-main]
+
 permissions:
   contents: read
   packages: write
@@ -17,6 +20,8 @@ jobs:
       digest: ${{ steps.digest.outputs.digest }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'repository_dispatch' && 'main' || github.ref }}
       - name: Log in to the container registry
         uses: docker/login-action@v3
         with:
@@ -66,7 +71,7 @@ jobs:
     name: Deploy new images to infra
     runs-on: ubuntu-latest
     needs: push_to_registry
-    if: github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main' || (github.event_name == 'repository_dispatch' && github.event.client_payload.ref == 'main')
     steps:
       - name: Checkout
         uses: actions/checkout@v4
