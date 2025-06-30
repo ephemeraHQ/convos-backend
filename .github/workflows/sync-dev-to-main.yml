@@ -5,6 +5,7 @@ on:
 
 permissions:
   contents: write # Need write access to push to main
+  actions: write # Need to trigger repository dispatch events
 
 jobs:
   sync-branches:
@@ -16,6 +17,16 @@ jobs:
         with:
           fetch-depth: 0 # Need full history for merge
           token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Validate branch
+        run: |
+          if [ "${{ github.ref_name }}" != "dev" ]; then
+            echo "❌ This workflow must be run from the 'dev' branch only"
+            echo "Current branch: ${{ github.ref_name }}"
+            echo "Expected branch: dev"
+            exit 1
+          fi
+          echo "✅ Running from correct branch: dev"
 
       - name: Configure Git
         run: |
@@ -56,6 +67,44 @@ jobs:
           echo "**Merge Details:**" >> $GITHUB_STEP_SUMMARY
           echo "- Merge commit: \`$(git log -1 --oneline)\`" >> $GITHUB_STEP_SUMMARY
           echo "- Triggered by: ${{ github.actor }}" >> $GITHUB_STEP_SUMMARY
+
+      - name: Trigger deployment workflow
+        if: steps.merge.outputs.success == 'true'
+        run: |
+          # Create temp files for response and status code
+          response_file=$(mktemp)
+          http_code_file=$(mktemp)
+
+          # Make API call with proper separation of response body and status code
+          if curl -sf -X POST \
+            -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+            -H "Accept: application/vnd.github+json" \
+            -o "$response_file" \
+            -w "%{http_code}" \
+            https://api.github.com/repos/${{ github.repository }}/dispatches \
+            -d '{"event_type":"deploy-main","client_payload":{"ref":"main","triggered_by":"sync-workflow"}}' \
+            > "$http_code_file" 2>/dev/null; then
+
+            http_code=$(cat "$http_code_file")
+            response=$(cat "$response_file")
+
+            # Clean up temp files
+            rm -f "$response_file" "$http_code_file"
+
+            if [ "$http_code" = "204" ]; then
+              echo "✅ Successfully triggered deployment workflow"
+            else
+              echo "❌ Unexpected HTTP status code: $http_code"
+              [ -n "$response" ] && echo "Response: $response"
+              exit 1
+            fi
+          else
+            # Clean up temp files on failure
+            rm -f "$response_file" "$http_code_file"
+            echo "❌ Failed to trigger deployment workflow - curl command failed"
+            echo "This could be due to network issues, authentication problems, or API errors"
+            exit 1
+          fi
 
       - name: Report merge failure
         if: steps.merge.outputs.success == 'false'
