@@ -17,6 +17,16 @@ jobs:
           fetch-depth: 0 # Need full history for merge
           token: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Validate branch
+        run: |
+          if [ "${{ github.ref_name }}" != "dev" ]; then
+            echo "❌ This workflow must be run from the 'dev' branch only"
+            echo "Current branch: ${{ github.ref_name }}"
+            echo "Expected branch: dev"
+            exit 1
+          fi
+          echo "✅ Running from correct branch: dev"
+
       - name: Configure Git
         run: |
           git config user.name "${{ github.actor }}"
