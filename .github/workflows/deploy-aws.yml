@@ -13,19 +13,19 @@ on:
   workflow_call:
     inputs:
       ref:
-        description: 'Branch/ref to deploy'
+        description: "Branch/ref to deploy"
         required: true
         type: string
       commit_hash:
-        description: 'Commit hash being deployed'
+        description: "Commit hash being deployed"
         required: true
         type: string
       commit_message:
-        description: 'Commit message'
+        description: "Commit message"
         required: true
         type: string
       triggered_by:
-        description: 'What triggered this deployment'
+        description: "What triggered this deployment"
         required: true
         type: string
 
