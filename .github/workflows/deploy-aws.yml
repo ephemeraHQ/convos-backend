@@ -68,9 +68,8 @@ jobs:
         with:
           images: ghcr.io/${{ github.repository_owner }}/convos-backend
           tags: |
-            type=ref,event=branch
-            type=ref,event=pr
             type=raw,value=${{ (github.event_name == 'workflow_call' && inputs.ref) || github.ref_name }}
+            type=ref,event=pr
 
       - name: Build and push Docker image
         uses: docker/build-push-action@v6
