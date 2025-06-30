@@ -1,5 +1,7 @@
 name: Deploy to AWS
 
+run-name: ${{ github.event_name == 'repository_dispatch' && format('[{0}] {1}', github.event.client_payload.ref, github.event.client_payload.commit_message) || format('Deploy to AWS ({0})', github.ref_name) }}
+
 on:
   push:
     branches:
@@ -19,6 +21,18 @@ jobs:
     outputs:
       digest: ${{ steps.digest.outputs.digest }}
     steps:
+      - name: Display deployment info
+        if: github.event_name == 'repository_dispatch'
+        run: |
+          echo "🚀 **Deployment triggered by sync workflow**" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Details:**" >> $GITHUB_STEP_SUMMARY
+          echo "- Branch: \`${{ github.event.client_payload.ref }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- Commit: \`${{ github.event.client_payload.commit_hash }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- Message: ${{ github.event.client_payload.commit_message }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Triggered by: ${{ github.event.client_payload.triggered_by }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.event_name == 'repository_dispatch' && 'main' || github.ref }}
