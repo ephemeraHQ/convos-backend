@@ -1,6 +1,6 @@
 name: Deploy to AWS
 
-run-name: ${{ github.event_name == 'repository_dispatch' && format('[{0}] {1}', github.event.client_payload.ref, github.event.client_payload.commit_message) || format('Deploy to AWS ({0})', github.ref_name) }}
+run-name: ${{ (github.event_name == 'repository_dispatch' && format('[{0}] {1}', github.event.client_payload.ref, github.event.client_payload.commit_message)) || (github.event_name == 'workflow_call' && format('[{0}] {1}', inputs.ref, inputs.commit_message)) || format('Deploy to AWS ({0})', github.ref_name) }}
 
 on:
   push:
@@ -10,6 +10,24 @@ on:
   pull_request:
   repository_dispatch:
     types: [deploy-main]
+  workflow_call:
+    inputs:
+      ref:
+        description: 'Branch/ref to deploy'
+        required: true
+        type: string
+      commit_hash:
+        description: 'Commit hash being deployed'
+        required: true
+        type: string
+      commit_message:
+        description: 'Commit message'
+        required: true
+        type: string
+      triggered_by:
+        description: 'What triggered this deployment'
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -22,31 +40,34 @@ jobs:
       digest: ${{ steps.digest.outputs.digest }}
     steps:
       - name: Display deployment info
-        if: github.event_name == 'repository_dispatch'
+        if: github.event_name == 'repository_dispatch' || github.event_name == 'workflow_call'
         run: |
           echo "🚀 **Deployment triggered by sync workflow**" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "**Details:**" >> $GITHUB_STEP_SUMMARY
-          echo "- Branch: \`${{ github.event.client_payload.ref }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "- Commit: \`${{ github.event.client_payload.commit_hash }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "- Message: ${{ github.event.client_payload.commit_message }}" >> $GITHUB_STEP_SUMMARY
-          echo "- Triggered by: ${{ github.event.client_payload.triggered_by }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Branch: \`${{ github.event_name == 'workflow_call' && inputs.ref || github.event.client_payload.ref }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- Commit: \`${{ github.event_name == 'workflow_call' && inputs.commit_hash || github.event.client_payload.commit_hash }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- Message: ${{ github.event_name == 'workflow_call' && inputs.commit_message || github.event.client_payload.commit_message }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Triggered by: ${{ github.event_name == 'workflow_call' && inputs.triggered_by || github.event.client_payload.triggered_by }}" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
 
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event_name == 'repository_dispatch' && 'main' || github.ref }}
+          ref: ${{ (github.event_name == 'repository_dispatch' && 'main') || (github.event_name == 'workflow_call' && inputs.ref) || github.ref }}
+
       - name: Log in to the container registry
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Extract metadata (tags, labels) for Docker
         id: meta
         uses: docker/metadata-action@v5
         with:
           images: ghcr.io/${{ github.repository_owner }}/convos-backend
+
       - name: Build and push Docker image
         uses: docker/build-push-action@v6
         id: push
@@ -62,14 +83,14 @@ jobs:
         run: echo "digest=${{ steps.push.outputs.digest }}" >> $GITHUB_OUTPUT
 
   deploy_dev:
-    name: Deploy new images to infra
+    name: Deploy to Development
     runs-on: ubuntu-latest
     needs: push_to_registry
     if: github.ref == 'refs/heads/dev'
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-      - name: Deploy Testnet
+      - name: Deploy to Dev Environment
         uses: xmtp-labs/terraform-deployer@v1
         timeout-minutes: 20
         with:
@@ -82,16 +103,28 @@ jobs:
           variable-value-required-prefix: "ghcr.io/ephemerahq/convos-backend@sha256:"
 
   deploy_prod:
-    name: Deploy new images to infra
+    name: Deploy to Production
     runs-on: ubuntu-latest
     needs: push_to_registry
-    if: github.ref == 'refs/heads/main' || (github.event_name == 'repository_dispatch' && github.event.client_payload.ref == 'main')
+    if: github.ref == 'refs/heads/main' || (github.event_name == 'repository_dispatch' && github.event.client_payload.ref == 'main') || (github.event_name == 'workflow_call' && inputs.ref == 'main')
     steps:
+      - name: Debug deployment trigger
+        run: |
+          echo "🔍 **Deploy to Production - Trigger Analysis**" >> $GITHUB_STEP_SUMMARY
+          echo "- Event name: ${{ github.event_name }}" >> $GITHUB_STEP_SUMMARY
+          echo "- GitHub ref: ${{ github.ref }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Input ref: ${{ inputs.ref }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Client payload ref: ${{ github.event.client_payload.ref }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Condition 1 (push to main): ${{ github.ref == 'refs/heads/main' }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Condition 2 (dispatch main): ${{ github.event_name == 'repository_dispatch' && github.event.client_payload.ref == 'main' }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Condition 3 (workflow_call main): ${{ github.event_name == 'workflow_call' && inputs.ref == 'main' }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event_name == 'repository_dispatch' && 'main' || github.ref }}
-      - name: Deploy Testnet
+          ref: ${{ (github.event_name == 'repository_dispatch' && 'main') || (github.event_name == 'workflow_call' && inputs.ref) || github.ref }}
+      - name: Deploy to Production Environment
         uses: xmtp-labs/terraform-deployer@v1
         timeout-minutes: 20
         with:

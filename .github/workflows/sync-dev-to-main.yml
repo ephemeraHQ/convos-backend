@@ -68,69 +68,23 @@ jobs:
           echo "- Merge commit: \`$(git log -1 --oneline)\`" >> $GITHUB_STEP_SUMMARY
           echo "- Triggered by: ${{ github.actor }}" >> $GITHUB_STEP_SUMMARY
 
-      - name: Trigger deployment workflow
+      - name: Get commit info
         if: steps.merge.outputs.success == 'true'
+        id: get_commit_info
         run: |
-          # Get commit information for the payload
           commit_hash=$(git rev-parse HEAD)
           commit_message=$(git log -1 --pretty=format:"%s")
+          echo "commit_hash=$commit_hash" >> $GITHUB_OUTPUT
+          echo "commit_message=$commit_message" >> $GITHUB_OUTPUT
 
-          # Create JSON payload with proper escaping
-          payload=$(jq -n \
-            --arg event_type "deploy-main" \
-            --arg ref "main" \
-            --arg triggered_by "sync-workflow" \
-            --arg commit_hash "$commit_hash" \
-            --arg commit_message "$commit_message" \
-            '{
-              event_type: $event_type,
-              client_payload: {
-                ref: $ref,
-                triggered_by: $triggered_by,
-                commit_hash: $commit_hash,
-                commit_message: $commit_message
-              }
-            }')
-
-          # Create temp files for response and status code
-          response_file=$(mktemp)
-          http_code_file=$(mktemp)
-
-          # Make API call with proper separation of response body and status code
-          if curl -sf -X POST \
-            -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
-            -H "Accept: application/vnd.github+json" \
-            -H "Content-Type: application/json" \
-            -o "$response_file" \
-            -w "%{http_code}" \
-            https://api.github.com/repos/${{ github.repository }}/dispatches \
-            -d "$payload" \
-            > "$http_code_file" 2>/dev/null; then
-
-            http_code=$(cat "$http_code_file")
-            response=$(cat "$response_file")
-
-            # Clean up temp files
-            rm -f "$response_file" "$http_code_file"
-
-            if [ "$http_code" = "204" ]; then
-              echo "✅ Successfully triggered deployment workflow"
-              echo "**Deployment Info:**" >> $GITHUB_STEP_SUMMARY
-              echo "- Commit: \`$commit_hash\`" >> $GITHUB_STEP_SUMMARY
-              echo "- Message: $commit_message" >> $GITHUB_STEP_SUMMARY
-              echo "- Target: Production (main branch)" >> $GITHUB_STEP_SUMMARY
-            else
-              echo "❌ Unexpected HTTP status code: $http_code"
-              [ -n "$response" ] && echo "Response: $response"
-              exit 1
-            fi
-          else
-            # Clean up temp files on failure
-            rm -f "$response_file" "$http_code_file"
-            echo "❌ Failed to trigger deployment workflow - curl command failed"
-            echo "This could be due to network issues, authentication problems, or API errors"
-            exit 1
-          fi
+      - name: Trigger deployment workflow
+        if: steps.merge.outputs.success == 'true'
+        uses: ./.github/workflows/deploy-aws.yml
+        with:
+          ref: main
+          commit_hash: ${{ steps.get_commit_info.outputs.commit_hash }}
+          commit_message: ${{ steps.get_commit_info.outputs.commit_message }}
+          triggered_by: sync-workflow
 
       - name: Report merge failure
         if: steps.merge.outputs.success == 'false'
