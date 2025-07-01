@@ -1,0 +1,45 @@
+name: Post-Sync Deploy
+
+on:
+  workflow_run:
+    workflows: ["Sync dev to main"]
+    types:
+      - completed
+    branches:
+      - dev
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  get-commit-info:
+    runs-on: ubuntu-latest
+    if: github.event.workflow_run.conclusion == 'success'
+    outputs:
+      commit_hash: ${{ steps.get_commit_info.outputs.commit_hash }}
+      commit_message: ${{ steps.get_commit_info.outputs.commit_message }}
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Get latest commit info
+        id: get_commit_info
+        run: |
+          commit_hash=$(git rev-parse HEAD)
+          commit_message=$(git log -1 --pretty=format:"%s")
+          echo "commit_hash=$commit_hash" >> $GITHUB_OUTPUT
+          echo "commit_message=$commit_message" >> $GITHUB_OUTPUT
+
+  deploy:
+    needs: get-commit-info
+    uses: ./.github/workflows/deploy-aws.yml
+    with:
+      ref: main
+      commit_hash: ${{ needs.get-commit-info.outputs.commit_hash }}
+      commit_message: ${{ needs.get-commit-info.outputs.commit_message }}
+      triggered_by: post-sync-workflow
+    secrets: inherit
