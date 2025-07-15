@@ -59,6 +59,9 @@ model DeviceIdentity {
   conversationMetadata ConversationMetadata[]
   devices              IdentitiesOnDevice[]
   user                 User                   @relation(fields: [userId], references: [id], onDelete: Cascade) // If a User is deleted, their DeviceIdentities are also deleted as they are user-specific.
+  createdInviteCodes   InviteCode[]
+  usedInviteCodes      InviteCodeUse[]
+  inviteRequests       InviteCodeRequest[]
 
   @@index([xmtpId])
   @@unique([userId, xmtpId])
@@ -108,4 +111,66 @@ model SubOrg {
   credentialId         String   @unique
   createdAt            DateTime @default(now())
   updatedAt            DateTime @updatedAt
+}
+
+enum InviteCodeStatus {
+  ACTIVE
+  EXPIRED
+  DISABLED
+}
+
+enum InviteCodeRequestStatus {
+  PENDING
+  ACCEPTED
+  REJECTED
+}
+
+model InviteCode {
+  id               String                @id @default(dbgenerated("nanoid()"))
+  name             String?               // Group name or descriptive name
+  description      String?
+  imageUrl         String?               // Optional image for the invite
+  maxUses          Int?                  // null = unlimited uses
+  usesCount        Int                   @default(0)
+  status           InviteCodeStatus      @default(ACTIVE)
+  expiresAt        DateTime?             // null = no expiration
+  autoApprove      Boolean               @default(false) // true = auto-join, false = requires approval
+  createdById      String
+  createdBy        DeviceIdentity        @relation(fields: [createdById], references: [id], onDelete: Cascade)
+  createdAt        DateTime              @default(now())
+  updatedAt        DateTime              @updatedAt
+  inviteCodeUses   InviteCodeUse[]
+  inviteRequests   InviteCodeRequest[]
+
+  @@index([status])
+  @@index([createdById])
+}
+
+model InviteCodeUse {
+  id            String         @id @default(dbgenerated("nanoid()"))
+  inviteCodeId  String
+  inviteCode    InviteCode     @relation(fields: [inviteCodeId], references: [id], onDelete: Cascade)
+  usedById      String
+  usedBy        DeviceIdentity @relation(fields: [usedById], references: [id], onDelete: Cascade)
+  usedAt        DateTime       @default(now())
+
+  @@unique([inviteCodeId, usedById])
+  @@index([inviteCodeId])
+  @@index([usedById])
+}
+
+model InviteCodeRequest {
+  id            String                   @id @default(dbgenerated("nanoid()"))
+  inviteCodeId  String
+  inviteCode    InviteCode              @relation(fields: [inviteCodeId], references: [id], onDelete: Cascade)
+  requesterId   String
+  requester     DeviceIdentity          @relation(fields: [requesterId], references: [id], onDelete: Cascade)
+  status        InviteCodeRequestStatus @default(PENDING)
+  createdAt     DateTime                @default(now())
+  updatedAt     DateTime                @updatedAt
+
+  @@unique([inviteCodeId, requesterId])
+  @@index([inviteCodeId])
+  @@index([requesterId])
+  @@index([status])
 }
