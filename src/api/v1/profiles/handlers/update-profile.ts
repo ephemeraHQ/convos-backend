@@ -118,7 +118,7 @@ export async function updateProfile(
       preprocessedData.username &&
       preprocessedData.username !== existingProfile.username;
 
-    if (isUsernameChanging) {
+    if (isUsernameChanging && deviceIdentity.turnkeyAddress) {
       // Delete old name and set new name
       // Don't await to avoid blocking the response
       Promise.all([
@@ -149,9 +149,10 @@ export async function updateProfile(
         );
       });
     } else if (
-      preprocessedData.name ||
-      preprocessedData.description ||
-      preprocessedData.avatar
+      (preprocessedData.name ||
+        preprocessedData.description ||
+        preprocessedData.avatar) &&
+      deviceIdentity.turnkeyAddress
     ) {
       // If other profile fields changed but not username, update the text records
       namestoneService

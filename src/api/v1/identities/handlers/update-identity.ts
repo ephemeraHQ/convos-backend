@@ -5,7 +5,7 @@ import { prisma } from "@/utils/prisma";
 // Schema for creating and updating a device identity
 const deviceIdentitySchema = z.object({
   xmtpId: z.string().optional(),
-  turnkeyAddress: z.string(),
+  turnkeyAddress: z.string().optional(),
 });
 
 export type UpdateIdentityRequestBody = z.infer<typeof deviceIdentitySchema>;

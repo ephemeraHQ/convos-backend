@@ -17,7 +17,7 @@ export const createUserRequestBodySchema = z.object({
     name: z.string().nullable().optional(),
   }),
   identity: z.object({
-    turnkeyAddress: z.string(),
+    turnkeyAddress: z.string().optional(),
     xmtpId: z.string(),
     xmtpInstallationId: z.string().optional(), // TO DO remove optional once all users have fully migrated to newer version of app
   }),
@@ -41,7 +41,7 @@ export type CreatedReturnedUser = {
   };
   identity: {
     id: string;
-    turnkeyAddress: string;
+    turnkeyAddress: string | null;
     xmtpId: string | null;
   };
   profile: {
@@ -222,31 +222,33 @@ export async function createUser(
       },
     };
 
-    // Register the username with Namestone
-    // Don't await to avoid blocking the user creation response
-    namestoneService
-      .setName({
-        username: createdProfile.username,
-        address: createdIdentity.turnkeyAddress,
-        textRecords: {
-          "display.name": createdProfile.name,
-          ...(createdProfile.description && {
-            description: createdProfile.description,
-          }),
-          ...(createdProfile.avatar && { avatar: createdProfile.avatar }),
-        },
-      })
-      .catch((error: unknown) => {
-        // Log error but don't fail user creation
-        req.log.error(
-          {
-            error,
-            username: createdProfile.username,
-            address: createdIdentity.turnkeyAddress,
+    // Register the username with Namestone (only if turnkeyAddress is available)
+    if (createdIdentity.turnkeyAddress) {
+      // Don't await to avoid blocking the user creation response
+      namestoneService
+        .setName({
+          username: createdProfile.username,
+          address: createdIdentity.turnkeyAddress,
+          textRecords: {
+            "display.name": createdProfile.name,
+            ...(createdProfile.description && {
+              description: createdProfile.description,
+            }),
+            ...(createdProfile.avatar && { avatar: createdProfile.avatar }),
           },
-          "Failed to register username with Namestone during user creation",
-        );
-      });
+        })
+        .catch((error: unknown) => {
+          // Log error but don't fail user creation
+          req.log.error(
+            {
+              error,
+              username: createdProfile.username,
+              address: createdIdentity.turnkeyAddress,
+            },
+            "Failed to register username with Namestone during user creation",
+          );
+        });
+    }
 
     res.status(201).json(returnedUser);
   } catch (error) {
