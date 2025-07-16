@@ -12,6 +12,7 @@ import profilesRouter from "@/api/v1/profiles/profiles.router";
 import { authMiddleware } from "@/middleware/auth";
 import attachmentsRouter from "./attachments";
 import devicesRouter from "./devices/devices.router";
+import invitesRouter from "./invites/invites.router";
 import lookupRouter from "./lookup";
 import usersRouter from "./users/users.router";
 import walletsRouter from "./wallets/wallets.router";
@@ -56,5 +57,8 @@ v1Router.use("/profiles", authMiddleware, profilesRouter);
 
 // mount attachments routes under /attachments
 v1Router.use("/attachments", authMiddleware, attachmentsRouter);
+
+// mount invites routes under /invites
+v1Router.use("/invites", authMiddleware, invitesRouter);
 
 export default v1Router;
