@@ -87,6 +87,7 @@ export async function handleXmtpNotification(req: Request, res: Response) {
       if (
         device &&
         device.expoToken &&
+        device.identities.length > 0 &&
         device.identities[0].identity.turnkeyAddress
       ) {
         await trySendingNotificationWithOldway({

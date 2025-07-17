@@ -1,4 +1,4 @@
-import { InviteCodeStatus } from "@prisma/client";
+import type { InviteCodeStatus } from "@prisma/client";
 import type { Request, Response } from "express";
 import { z } from "zod";
 import { prisma } from "@/utils/prisma";
