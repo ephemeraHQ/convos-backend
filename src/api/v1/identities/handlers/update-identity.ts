@@ -2,9 +2,9 @@ import { type Request, type Response } from "express";
 import { z } from "zod";
 import { prisma } from "@/utils/prisma";
 
-// Schema for creating and updating a device identity
+// Schema for updating a device identity
 const deviceIdentitySchema = z.object({
-  xmtpId: z.string().optional(),
+  xmtpId: z.string().optional(), // Only include if we want to change it, after key rotation for instance
   turnkeyAddress: z.string().optional(),
 });
 
