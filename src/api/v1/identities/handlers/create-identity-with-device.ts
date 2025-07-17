@@ -49,10 +49,7 @@ export const createIdentityWithDevice = async (
     // Upsert the DeviceIdentity
     const identity = await prisma.deviceIdentity.upsert({
       where: {
-        userId_xmtpId: {
-          userId: deviceOwnerUserId,
-          xmtpId: xmtpId,
-        },
+        xmtpId: xmtpId,
       },
       create: {
         userId: deviceOwnerUserId,
