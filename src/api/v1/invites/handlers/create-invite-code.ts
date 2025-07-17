@@ -29,7 +29,12 @@ export type CreateInviteCodeResponse = {
   autoApprove: boolean;
   groupId: string;
   createdAt: string;
+  inviteLinkURL: string;
 };
+
+function getInviteLink(inviteId: string): string {
+  return `${process.env.WEBSITE_URL}/join/${inviteId}`;
+}
 
 export async function createInviteCode(
   req: Request<unknown, unknown, CreateInviteCodeRequestBody>,
@@ -93,6 +98,7 @@ export async function createInviteCode(
       autoApprove: inviteCode.autoApprove,
       groupId: inviteCode.groupId,
       createdAt: inviteCode.createdAt.toISOString(),
+      inviteLinkURL: getInviteLink(inviteCode.id),
     };
 
     res.status(201).json(response);
