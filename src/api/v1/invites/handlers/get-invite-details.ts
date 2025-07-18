@@ -47,6 +47,24 @@ export const getInviteDetailsHandler = async (req: Request, res: Response) => {
       return;
     }
 
+    // Check if invite is active
+    if (inviteCode.status !== "ACTIVE") {
+      res.status(404).json({
+        success: false,
+        message: "Invite not found",
+      });
+      return;
+    }
+
+    // Check if invite is expired
+    if (inviteCode.expiresAt && inviteCode.expiresAt < new Date()) {
+      res.status(404).json({
+        success: false,
+        message: "Invite not found",
+      });
+      return;
+    }
+
     const response: GetPublicInviteDetailsResponse = {
       id: inviteCode.id,
       name: inviteCode.name,
