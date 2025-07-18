@@ -49,19 +49,20 @@ model Device {
 }
 
 model DeviceIdentity {
-  id                   String                 @id @default(uuid())
+  id                   String                         @id @default(uuid())
   userId               String
   xmtpId               String // This is the inboxID
   turnkeyAddress       String? // Optional Turnkey address
-  createdAt            DateTime               @default(now())
-  updatedAt            DateTime               @updatedAt
+  createdAt            DateTime                       @default(now())
+  updatedAt            DateTime                       @updatedAt
   profile              Profile?
   conversationMetadata ConversationMetadata[]
   devices              IdentitiesOnDevice[]
-  user                 User                   @relation(fields: [userId], references: [id], onDelete: Cascade) // If a User is deleted, their DeviceIdentities are also deleted as they are user-specific.
+  user                 User                           @relation(fields: [userId], references: [id], onDelete: Cascade) // If a User is deleted, their DeviceIdentities are also deleted as they are user-specific.
   createdInviteCodes   InviteCode[]
   usedInviteCodes      InviteCodeUse[]
   inviteRequests       InviteCodeRequest[]
+  notificationTargets  InviteCodeNotificationTarget[]
 
   @@unique([xmtpId])
 }
@@ -126,9 +127,9 @@ enum InviteCodeRequestStatus {
 
 model InviteCode {
   id          String           @id @default(cuid())
-  name        String? // Group name or descriptive name
+  name        String?
   description String?
-  imageUrl    String? // Optional image for the invite
+  imageUrl    String?
   maxUses     Int? // null = unlimited uses
   usesCount   Int              @default(0)
   status      InviteCodeStatus @default(ACTIVE)
@@ -142,10 +143,11 @@ model InviteCode {
   createdById String
   createdBy   DeviceIdentity @relation(fields: [createdById], references: [id], onDelete: Cascade)
 
-  createdAt      DateTime            @default(now())
-  updatedAt      DateTime            @updatedAt
-  inviteCodeUses InviteCodeUse[]
-  inviteRequests InviteCodeRequest[]
+  createdAt           DateTime                       @default(now())
+  updatedAt           DateTime                       @updatedAt
+  inviteCodeUses      InviteCodeUse[]
+  inviteRequests      InviteCodeRequest[]
+  notificationTargets InviteCodeNotificationTarget[]
 
   @@index([status])
   @@index([createdById])
@@ -163,6 +165,19 @@ model InviteCodeUse {
   @@unique([inviteCodeId, usedById])
   @@index([inviteCodeId])
   @@index([usedById])
+}
+
+model InviteCodeNotificationTarget {
+  id               String         @id @default(cuid())
+  inviteCodeId     String
+  inviteCode       InviteCode     @relation(fields: [inviteCodeId], references: [id], onDelete: Cascade)
+  deviceIdentityId String
+  deviceIdentity   DeviceIdentity @relation(fields: [deviceIdentityId], references: [id], onDelete: Cascade)
+  createdAt        DateTime       @default(now())
+
+  @@unique([inviteCodeId, deviceIdentityId])
+  @@index([inviteCodeId])
+  @@index([deviceIdentityId])
 }
 
 model InviteCodeRequest {
