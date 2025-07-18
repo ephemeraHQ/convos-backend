@@ -11,7 +11,7 @@ export const createInviteCodeRequestBodySchema = z.object({
   maxUses: z.number().int().positive().optional(),
   expiresAt: z.string().datetime().optional(),
   autoApprove: z.boolean().default(false),
-  notificationTargets: z.array(z.string()).optional().default([]),
+  notificationTargets: z.array(z.string()).default([]),
 });
 
 export type CreateInviteCodeRequestBody = z.infer<
