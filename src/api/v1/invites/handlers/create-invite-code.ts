@@ -11,6 +11,7 @@ export const createInviteCodeRequestBodySchema = z.object({
   maxUses: z.number().int().positive().optional(),
   expiresAt: z.string().datetime().optional(),
   autoApprove: z.boolean().default(false),
+  notificationTargets: z.array(z.string()).optional().default([]),
 });
 
 export type CreateInviteCodeRequestBody = z.infer<
@@ -72,7 +73,37 @@ export async function createInviteCode(
       return;
     }
 
-    // Create the invite code
+    // Validate notification targets exist if provided
+    let notificationTargetIds: string[] = [];
+    if (body.notificationTargets.length > 0) {
+      const targetIdentities = await prisma.deviceIdentity.findMany({
+        where: {
+          xmtpId: {
+            in: body.notificationTargets,
+          },
+        },
+        select: {
+          id: true,
+          xmtpId: true,
+        },
+      });
+
+      const foundXmtpIds = targetIdentities.map((identity) => identity.xmtpId);
+      const missingXmtpIds = body.notificationTargets.filter(
+        (xmtpId) => !foundXmtpIds.includes(xmtpId),
+      );
+
+      if (missingXmtpIds.length > 0) {
+        req.log.warn(
+          { missingXmtpIds },
+          "Some notification targets not found, skipping them",
+        );
+      }
+
+      notificationTargetIds = targetIdentities.map((identity) => identity.id);
+    }
+
+    // Create the invite code with notification targets
     const inviteCode = await prisma.inviteCode.create({
       data: {
         name: body.name,
@@ -83,6 +114,11 @@ export async function createInviteCode(
         autoApprove: body.autoApprove,
         groupId: body.groupId,
         createdById: identity.id,
+        notificationTargets: {
+          create: notificationTargetIds.map((deviceIdentityId) => ({
+            deviceIdentityId,
+          })),
+        },
       },
     });
 
