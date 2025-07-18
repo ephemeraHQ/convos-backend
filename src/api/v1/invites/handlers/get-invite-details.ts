@@ -23,6 +23,14 @@ export type GetInviteDetailsResponse = {
   inviteLinkURL: string;
 };
 
+export type GetPublicInviteDetailsResponse = {
+  id: string;
+  name: string | null;
+  description: string | null;
+  imageUrl: string | null;
+  inviteLinkURL: string;
+};
+
 export const getInviteDetailsHandler = async (req: Request, res: Response) => {
   try {
     const { inviteId } = await paramsSchema.parseAsync(req.params);
@@ -39,18 +47,11 @@ export const getInviteDetailsHandler = async (req: Request, res: Response) => {
       return;
     }
 
-    const response: GetInviteDetailsResponse = {
+    const response: GetPublicInviteDetailsResponse = {
       id: inviteCode.id,
       name: inviteCode.name,
       description: inviteCode.description,
       imageUrl: inviteCode.imageUrl,
-      maxUses: inviteCode.maxUses,
-      usesCount: inviteCode.usesCount,
-      status: inviteCode.status,
-      expiresAt: inviteCode.expiresAt?.toISOString() || null,
-      autoApprove: inviteCode.autoApprove,
-      groupId: inviteCode.groupId,
-      createdAt: inviteCode.createdAt.toISOString(),
       inviteLinkURL: getInviteLink(inviteCode.id),
     };
 
