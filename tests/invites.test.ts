@@ -195,6 +195,7 @@ describe("/invites API", () => {
       maxUses: 50,
       expiresAt: expiresAt.toISOString(),
       autoApprove: true,
+      notificationTargets: [],
     };
 
     const response = await fetch("http://localhost:3010/invites", {
