@@ -7,6 +7,7 @@ on:
     branches:
       - main
       - dev
+      - otr-dev
   pull_request:
   repository_dispatch:
     types: [deploy-main]
@@ -86,14 +87,14 @@ jobs:
         run: echo "digest=${{ steps.push.outputs.digest }}" >> $GITHUB_OUTPUT
 
   deploy_otr_dev:
-    name: Deploy to Development
+    name: Deploy to OTR Development
     runs-on: ubuntu-latest
     needs: push_to_registry
     if: (inputs.ref == 'otr-dev') || (github.ref == 'refs/heads/otr-dev' && !inputs.ref)
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-      - name: Deploy to Dev Environment
+      - name: Deploy to OTR Dev Environment
         uses: xmtp-labs/terraform-deployer@v1
         timeout-minutes: 20
         with:
