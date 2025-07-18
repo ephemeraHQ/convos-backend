@@ -1,8 +1,8 @@
 import type { InviteCodeStatus } from "@prisma/client";
 import type { Request, Response } from "express";
 import { z } from "zod";
-import { prisma } from "@/utils/prisma";
 import { getInviteLink } from "@/utils/invites";
+import { prisma } from "@/utils/prisma";
 
 export const createInviteCodeRequestBodySchema = z.object({
   groupId: z.string(),
@@ -33,7 +33,6 @@ export type CreateInviteCodeResponse = {
   createdAt: string;
   inviteLinkURL: string;
 };
-
 
 export async function createInviteCode(
   req: Request<unknown, unknown, CreateInviteCodeRequestBody>,
