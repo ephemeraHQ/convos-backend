@@ -45,13 +45,13 @@ export async function searchProfiles(
             },
           },
         ],
-        deviceIdentity: {
-          xmtpId: {
-            not: null,
-          },
-        },
       },
-      include: {
+      select: {
+        id: true,
+        name: true,
+        username: true,
+        avatar: true,
+        description: true,
         deviceIdentity: {
           select: {
             xmtpId: true,

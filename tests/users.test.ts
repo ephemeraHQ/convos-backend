@@ -83,7 +83,7 @@ describe("/users API", () => {
     expect(user.device.name!).toBe(createUserBody.device.name!);
     expect(user.identity.id).toBeDefined();
     expect(user.identity.turnkeyAddress).toBe(
-      createUserBody.identity.turnkeyAddress,
+      createUserBody.identity.turnkeyAddress || null,
     );
     expect(user.identity.xmtpId).toBe(createUserBody.identity.xmtpId);
     expect(user.profile.name).toBe(createUserBody.profile.name);

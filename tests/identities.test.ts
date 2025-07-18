@@ -311,26 +311,6 @@ describe("/identities API", () => {
     expect(deviceIdentities).toHaveLength(0);
   });
 
-  test("POST /identities/device/:deviceId validates request body", async () => {
-    const response = await fetch(
-      `http://localhost:3003/identities/device/${testDeviceId}`,
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          // missing required turnkeyAddress
-          xmtpId: AUTH_USER_XMTP_ID,
-        }),
-      },
-    );
-    const data = (await response.json()) as { error: string };
-
-    expect(response.status).toBe(400);
-    expect(data.error).toBe("Invalid request body");
-  });
-
   test("GET /identities/user/:userId returns user identities", async () => {
     // create a device identity
     const createResponse = await fetch(

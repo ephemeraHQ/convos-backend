@@ -4,8 +4,7 @@ import { prisma } from "@/utils/prisma";
 
 // Schema for creating and updating a device identity
 const deviceIdentitySchema = z.object({
-  xmtpId: z.string().optional(),
-  turnkeyAddress: z.string(),
+  turnkeyAddress: z.string().optional(),
 });
 
 export type CreateIdentityRequestBody = z.infer<typeof deviceIdentitySchema>;
@@ -49,10 +48,7 @@ export const createIdentityWithDevice = async (
     // Upsert the DeviceIdentity
     const identity = await prisma.deviceIdentity.upsert({
       where: {
-        userId_xmtpId: {
-          userId: deviceOwnerUserId,
-          xmtpId: xmtpId,
-        },
+        xmtpId: xmtpId,
       },
       create: {
         userId: deviceOwnerUserId,
