@@ -62,7 +62,6 @@ describe("/attachments API", () => {
         body: blob,
         headers: {
           "Content-Type": "text/plain",
-          "x-amz-acl": "public-read",
         },
       });
       expect(uploadResponse.status).toBe(200);
@@ -108,7 +107,6 @@ describe("/attachments API", () => {
         body: pngImageBytes,
         headers: {
           "Content-Type": "image/png",
-          "x-amz-acl": "public-read",
         },
       });
       expect(uploadResponse.status).toBe(200);

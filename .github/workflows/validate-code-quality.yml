@@ -31,8 +31,5 @@ jobs:
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           XMTP_ENV: local
-          SCALEWAY_ACCESS_KEY_ID: ${{ secrets.SCALEWAY_ACCESS_KEY_ID }}
-          SCALEWAY_SECRET_KEY_ID: ${{ secrets.SCALEWAY_SECRET_KEY_ID }}
-          SCALEWAY_ATTACHMENTS_BUCKET: ${{ secrets.SCALEWAY_ATTACHMENTS_BUCKET }}
           NOTIFICATION_SERVER_URL: ${{ secrets.NOTIFICATION_SERVER_URL }}
           XMTP_NOTIFICATION_SECRET: ${{ secrets.XMTP_NOTIFICATION_SECRET }}

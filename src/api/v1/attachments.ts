@@ -6,27 +6,18 @@ import { v4 as uuidv4 } from "uuid";
 import { z } from "zod";
 
 const envSchema = z.object({
-  SCALEWAY_ACCESS_KEY_ID: z.string().min(1),
-  SCALEWAY_SECRET_KEY_ID: z.string().min(1),
-  SCALEWAY_ATTACHMENTS_BUCKET: z.string().min(1),
+  PUBLIC_ASSETS_BUCKET: z.string().min(1),
+  AWS_REGION: z.string().optional(), // Optional - can be inferred from AWS environment
 });
 
 // Validate environment variables at startup
 const env = envSchema.parse({
-  SCALEWAY_ACCESS_KEY_ID: process.env.SCALEWAY_ACCESS_KEY_ID,
-  SCALEWAY_SECRET_KEY_ID: process.env.SCALEWAY_SECRET_KEY_ID,
-  SCALEWAY_ATTACHMENTS_BUCKET: process.env.SCALEWAY_ATTACHMENTS_BUCKET,
+  PUBLIC_ASSETS_BUCKET: process.env.PUBLIC_ASSETS_BUCKET,
 });
 
 // Create S3 client once at startup
-const s3Client = new S3Client({
-  endpoint: `https://s3.fr-par.scw.cloud`,
-  region: "fr-par",
-  credentials: {
-    accessKeyId: env.SCALEWAY_ACCESS_KEY_ID,
-    secretAccessKey: env.SCALEWAY_SECRET_KEY_ID,
-  },
-});
+// No credentials needed - will use IAM role automatically
+const s3Client = new S3Client({});
 
 const getPresignedURL = async (contentType?: string) => {
   const objectKey = uuidv4();
@@ -35,10 +26,10 @@ const getPresignedURL = async (contentType?: string) => {
     extension = mime.extension(contentType) as string;
   }
   const command = new PutObjectCommand({
-    Bucket: env.SCALEWAY_ATTACHMENTS_BUCKET,
+    Bucket: env.PUBLIC_ASSETS_BUCKET,
     Key: `${objectKey}${extension ? `.${extension}` : ""}`,
-    ACL: "public-read",
     ContentType: contentType,
+    // No ACL needed - bucket policy handles public read access
   });
   const url = await getSignedUrl(s3Client, command, { expiresIn: 3600 });
   return { objectKey, url };
@@ -52,9 +43,11 @@ router.get("/presigned", async (req: Request, res: Response) => {
       req.query.contentType as string | undefined,
     );
     res.json({ objectKey, url });
+    return;
   } catch (error) {
     console.error("Error generating presigned URL:", error);
     res.status(500).json({ error: "Failed to generate presigned URL" });
+    return;
   }
 });
 
