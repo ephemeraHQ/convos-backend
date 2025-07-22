@@ -18,8 +18,8 @@ export interface InviteRequestItem {
     id: string;
     xmtpId: string;
     profile: {
-      name: string;
-      username: string;
+      name: string | null;
+      username: string | null;
       description: string | null;
       avatar: string | null;
     } | null;

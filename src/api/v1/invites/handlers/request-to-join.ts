@@ -114,9 +114,9 @@ export async function requestToJoin(
 
     // Log notification info (no actual notifications sent)
     logRequestNotification({
-      requesterName: requesterIdentity.profile?.name,
+      requesterName: requesterIdentity.profile?.name ?? undefined,
       requesterXmtpId: requesterIdentity.xmtpId,
-      inviteCreatorName: inviteCode.createdBy.profile?.name,
+      inviteCreatorName: inviteCode.createdBy.profile?.name ?? undefined,
       groupId: inviteCode.groupId,
     });
 
