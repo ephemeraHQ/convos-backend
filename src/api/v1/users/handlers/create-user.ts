@@ -5,8 +5,6 @@ import { prisma } from "@/utils/prisma";
 import { namestoneService } from "../../../../utils/namestone";
 import {
   validateOnChainName,
-  validateProfileRequiredFields,
-  validateProfileSchema,
   validateUsernameUniqueness,
 } from "../../profiles/handlers/validate-profile";
 
@@ -22,8 +20,8 @@ export const createUserRequestBodySchema = z.object({
     xmtpInstallationId: z.string().optional(), // TO DO remove optional once all users have fully migrated to newer version of app
   }),
   profile: z.object({
-    name: z.string(),
-    username: z.string(),
+    name: z.string().optional(),
+    username: z.string().optional(),
     description: z.string().nullable().optional(),
     avatar: z.string().url().nullable().optional(),
   }),
@@ -46,8 +44,8 @@ export type CreatedReturnedUser = {
   };
   profile: {
     id: string;
-    name: string;
-    username: string;
+    name: string | null;
+    username: string | null;
     description: string | null;
     avatar: string | null;
   };
@@ -61,50 +59,32 @@ export async function createUser(
     let body;
     try {
       body = await createUserRequestBodySchema.parseAsync(req.body);
-    } catch (error) {
-      if (error instanceof z.ZodError) {
-        req.log.error({ error }, "Invalid request body");
+    } catch (parseError) {
+      if (parseError instanceof z.ZodError) {
+        req.log.error({ error: parseError }, "Invalid request body");
         res.status(400).json({
           success: false,
-          errors: {
-            name:
-              error.errors.find((e) => e.path.join(".") === "profile.name")
-                ?.message || "Name is required",
-            username:
-              error.errors.find((e) => e.path.join(".") === "profile.username")
-                ?.message || "Username is required",
-          },
+          message: "Invalid request body",
+          errors: parseError.errors,
         });
         return;
       }
-      throw error;
+      throw parseError;
     }
 
-    // Validate required fields
-    const requiredFieldsResult = validateProfileRequiredFields(body.profile);
-    if (!requiredFieldsResult.success) {
-      res.status(400).json(requiredFieldsResult);
-      return;
-    }
-
-    // Validate profile schema
-    const schemaResult = validateProfileSchema(body.profile);
-    if (!schemaResult.success) {
-      res.status(400).json(schemaResult);
-      return;
-    }
-
-    // Validate username uniqueness
-    const uniquenessResult = await validateUsernameUniqueness(
-      body.profile.username,
-    );
-    if (!uniquenessResult.success) {
-      res.status(400).json(uniquenessResult);
-      return;
+    // Validate username uniqueness only if username is provided
+    if (body.profile.username) {
+      const uniquenessResult = await validateUsernameUniqueness(
+        body.profile.username,
+      );
+      if (!uniquenessResult.success) {
+        res.status(400).json(uniquenessResult);
+        return;
+      }
     }
 
     // If name contains a dot, validate on-chain name ownership
-    if (body.profile.name.includes(".")) {
+    if (body.profile.name && body.profile.name.includes(".")) {
       const onChainResult = await validateOnChainName({
         name: body.profile.name,
         xmtpId: body.identity.xmtpId,
@@ -137,8 +117,8 @@ export async function createUser(
                     },
                     profile: {
                       create: {
-                        name: body.profile.name,
-                        username: body.profile.username,
+                        name: body.profile.name || null,
+                        username: body.profile.username || null,
                         description: body.profile.description,
                         avatar: body.profile.avatar,
                       },
@@ -194,8 +174,8 @@ export async function createUser(
     }
 
     const createdIdentity = createdDevice.identities[0].identity;
-    const createdProfile = createdIdentity.profile;
 
+    const createdProfile = createdIdentity.profile;
     if (!createdProfile) {
       throw new Error("Profile was not created successfully");
     }
@@ -222,26 +202,26 @@ export async function createUser(
       },
     };
 
-    // Register the username with Namestone (only if turnkeyAddress is available)
-    if (createdIdentity.turnkeyAddress) {
+    // Register the username with Namestone only if both username and turnkeyAddress are available
+    if (createdIdentity.turnkeyAddress && createdProfile.username) {
       // Don't await to avoid blocking the user creation response
       namestoneService
         .setName({
           username: createdProfile.username,
           address: createdIdentity.turnkeyAddress,
           textRecords: {
-            "display.name": createdProfile.name,
+            ...(createdProfile.name && { "display.name": createdProfile.name }),
             ...(createdProfile.description && {
               description: createdProfile.description,
             }),
             ...(createdProfile.avatar && { avatar: createdProfile.avatar }),
           },
         })
-        .catch((error: unknown) => {
+        .catch((namestoneError: unknown) => {
           // Log error but don't fail user creation
           req.log.error(
             {
-              error,
+              error: namestoneError,
               username: createdProfile.username,
               address: createdIdentity.turnkeyAddress,
             },
