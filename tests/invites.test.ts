@@ -79,7 +79,7 @@ async function createTestUser(suffix = "", xmtpId = AUTH_USER_XMTP_ID) {
       profile: {
         create: {
           name: `Test User${suffix}`,
-          username: `test-user${suffix.replace(/-/g, "")}${xmtpId === AUTH_USER_XMTP_ID ? "" : "diff"}`,
+          username: `test-user${suffix.replace(/-/g, "")}`,
           description: "Test bio",
         },
       },
