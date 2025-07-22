@@ -6,7 +6,6 @@ import { AUTH_HEADER, authMiddleware } from "@/middleware/auth";
 import { createClient, createJWT } from "./helpers";
 
 // mock environment variable
-process.env.JWT_SECRET = "test-jwt-secret";
 
 const app = express();
 app.use(authMiddleware);
