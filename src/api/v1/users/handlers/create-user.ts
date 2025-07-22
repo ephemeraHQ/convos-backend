@@ -20,8 +20,8 @@ export const createUserRequestBodySchema = z.object({
     xmtpInstallationId: z.string().optional(), // TO DO remove optional once all users have fully migrated to newer version of app
   }),
   profile: z.object({
-    name: z.string().optional(),
-    username: z.string().optional(),
+    name: z.string().min(1).optional(),
+    username: z.string().min(1).optional(),
     description: z.string().nullable().optional(),
     avatar: z.string().url().nullable().optional(),
   }),
@@ -73,7 +73,7 @@ export async function createUser(
     }
 
     // Validate username uniqueness only if username is provided
-    if (body.profile.username) {
+    if (body.profile.username?.trim()) {
       const uniquenessResult = await validateUsernameUniqueness(
         body.profile.username,
       );
