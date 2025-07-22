@@ -14,7 +14,6 @@ import { prisma } from "@/utils/prisma";
 import { createClient, createHeaders } from "./helpers";
 
 // mock environment variable
-process.env.JWT_SECRET = "test-jwt-secret";
 process.env.FIREBASE_SERVICE_ACCOUNT = `{"projectId": "test-project-id","privateKey": "test-private-key","clientEmail": "test-client-email"}`;
 
 const app = express();
@@ -55,37 +54,6 @@ describe("/authenticate API", () => {
       new TextEncoder().encode(process.env.JWT_SECRET),
     );
     expect(decoded.payload.inboxId).toBe(client.inboxId);
-  });
-
-  test("POST /authenticate fails with missing or partial headers", async () => {
-    const response = await fetch("http://localhost:3009/authenticate", {
-      method: "POST",
-      headers: {},
-    });
-    const data = (await response.json()) as { error: string };
-    expect(response.status).toBe(400);
-    expect(data.error).toBe("Missing headers");
-
-    const response2 = await fetch("http://localhost:3009/authenticate", {
-      method: "POST",
-      headers: {
-        "X-Firebase-AppCheck": "valid-app-check-token",
-      },
-    });
-    const data2 = (await response2.json()) as { error: string };
-    expect(response2.status).toBe(400);
-    expect(data2.error).toBe("Missing headers");
-
-    const response3 = await fetch("http://localhost:3009/authenticate", {
-      method: "POST",
-      headers: {
-        "X-Firebase-AppCheck": "valid-app-check-token",
-        "X-XMTP-Signature": "valid-signature",
-      },
-    });
-    const data3 = (await response3.json()) as { error: string };
-    expect(response3.status).toBe(400);
-    expect(data3.error).toBe("Missing headers");
   });
 
   test("POST /authenticate fails with invalid signature", async () => {

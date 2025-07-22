@@ -660,11 +660,11 @@ describe("/profiles API", () => {
     });
   });
 
-  test("POST /users validates required profile fields", async () => {
-    const invalidBody = {
+  test("POST /users allows optional profile fields", async () => {
+    const bodyWithOptionalFields = {
       ...createUserBody,
       profile: {
-        // Missing required fields
+        // Only description provided, name and username are optional
         description: "Test Description",
       },
     };
@@ -674,14 +674,14 @@ describe("/profiles API", () => {
       headers: {
         "Content-Type": "application/json",
       },
-      body: JSON.stringify(invalidBody),
+      body: JSON.stringify(bodyWithOptionalFields),
     });
 
-    expect(response.status).toBe(400);
-    const result = (await response.json()) as ProfileValidationResponse;
-    expect(result.success).toBe(false);
-    expect(result.errors?.name).toBeTruthy();
-    expect(result.errors?.username).toBeTruthy();
+    expect(response.status).toBe(201);
+    const user = (await response.json()) as CreatedReturnedUser;
+    expect(user.profile.name).toBe(null);
+    expect(user.profile.username).toBe(null);
+    expect(user.profile.description).toBe("Test Description");
   });
 
   test("PUT /profiles/:id allows optional fields to be omitted", async () => {

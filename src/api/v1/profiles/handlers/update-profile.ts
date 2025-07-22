@@ -119,23 +119,35 @@ export async function updateProfile(
       preprocessedData.username !== existingProfile.username;
 
     if (isUsernameChanging && deviceIdentity.turnkeyAddress) {
-      // Delete old name and set new name
-      // Don't await to avoid blocking the response
       Promise.all([
         // Delete old username
-        namestoneService.deleteName({ username: existingProfile.username }),
+        ...(existingProfile.username
+          ? [
+              namestoneService.deleteName({
+                username: existingProfile.username,
+              }),
+            ]
+          : []),
         // Set new username
-        namestoneService.setName({
-          username: updatedProfile.username,
-          address: deviceIdentity.turnkeyAddress,
-          textRecords: {
-            "display.name": updatedProfile.name,
-            ...(updatedProfile.description && {
-              description: updatedProfile.description,
-            }),
-            ...(updatedProfile.avatar && { avatar: updatedProfile.avatar }),
-          },
-        }),
+        ...(updatedProfile.username
+          ? [
+              namestoneService.setName({
+                username: updatedProfile.username,
+                address: deviceIdentity.turnkeyAddress,
+                textRecords: {
+                  ...(updatedProfile.name && {
+                    "display.name": updatedProfile.name,
+                  }),
+                  ...(updatedProfile.description && {
+                    description: updatedProfile.description,
+                  }),
+                  ...(updatedProfile.avatar && {
+                    avatar: updatedProfile.avatar,
+                  }),
+                },
+              }),
+            ]
+          : []),
       ]).catch((error: unknown) => {
         // Log error but don't fail profile update
         req.log.error(
@@ -152,7 +164,8 @@ export async function updateProfile(
       (preprocessedData.name ||
         preprocessedData.description ||
         preprocessedData.avatar) &&
-      deviceIdentity.turnkeyAddress
+      deviceIdentity.turnkeyAddress &&
+      updatedProfile.username // Only update if username exists
     ) {
       // If other profile fields changed but not username, update the text records
       namestoneService
@@ -160,7 +173,7 @@ export async function updateProfile(
           username: updatedProfile.username,
           address: deviceIdentity.turnkeyAddress,
           textRecords: {
-            "display.name": updatedProfile.name,
+            ...(updatedProfile.name && { "display.name": updatedProfile.name }),
             ...(updatedProfile.description && {
               description: updatedProfile.description,
             }),

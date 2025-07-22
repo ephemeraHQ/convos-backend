@@ -86,7 +86,7 @@ describe("/users API", () => {
       createUserBody.identity.turnkeyAddress || null,
     );
     expect(user.identity.xmtpId).toBe(createUserBody.identity.xmtpId);
-    expect(user.profile.name).toBe(createUserBody.profile.name);
+    expect(user.profile.name).toBe(createUserBody.profile.name ?? null);
   });
 
   test("GET /users/me returns 401 without auth header", async () => {

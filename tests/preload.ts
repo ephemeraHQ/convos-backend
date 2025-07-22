@@ -1,6 +1,11 @@
 import { mock } from "bun:test";
 import type { SocialProfile } from "@/utils/thirdweb";
 
+// Set required environment variables for tests
+process.env.PUBLIC_ASSETS_BUCKET = "test-public-assets-bucket";
+process.env.JWT_SECRET = "test-jwt-secret";
+process.env.FIREBASE_SERVICE_ACCOUNT = "test-firebase-service-account";
+
 // mock Firebase functions
 
 void mock.module("firebase-admin/app-check", () => ({
