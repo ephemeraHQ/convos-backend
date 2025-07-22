@@ -62,7 +62,7 @@ beforeEach(async () => {
 });
 
 // Helper function to create a test user with DeviceIdentity
-async function createTestUser(suffix = "") {
+async function createTestUser(suffix = "", xmtpId = AUTH_USER_XMTP_ID) {
   // Create user first
   const user = await prisma.user.create({
     data: {
@@ -74,12 +74,12 @@ async function createTestUser(suffix = "") {
   const deviceIdentity = await prisma.deviceIdentity.create({
     data: {
       userId: user.id,
-      xmtpId: AUTH_USER_XMTP_ID,
+      xmtpId,
       turnkeyAddress: `test-turnkey-address${suffix}`,
       profile: {
         create: {
           name: `Test User${suffix}`,
-          username: `test-user${suffix}`,
+          username: `test-user${suffix.replace(/-/g, "")}${xmtpId === AUTH_USER_XMTP_ID ? "" : "diff"}`,
           description: "Test bio",
         },
       },
@@ -441,5 +441,152 @@ describe("/invites API", () => {
     expect(inviteCode.usesCount).toBe(0); // Default value
     expect(inviteCode.inviteLinkURL).toBeDefined();
     expect(inviteCode.inviteLinkURL).toMatch(/^.*\/join\/c[a-z0-9]{24}$/);
+  });
+
+  test("POST /invites/:inviteId updates existing invite code", async () => {
+    // Create test user first
+    await createTestUser("-update-test");
+
+    // First create an invite
+    const createBody = {
+      groupId: "test-group-update",
+      name: "Original Name",
+      description: "Original Description",
+      autoApprove: false,
+    };
+
+    const createResponse = await fetch("http://localhost:3010/invites", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(createBody),
+    });
+
+    expect(createResponse.status).toBe(201);
+    const originalInvite =
+      (await createResponse.json()) as CreateInviteCodeResponse;
+
+    // Now update the invite
+    const updateBody = {
+      groupId: "test-group-update",
+      name: "Updated Name",
+      description: "Updated Description",
+      autoApprove: true,
+    };
+
+    const updateResponse = await fetch(
+      `http://localhost:3010/invites/${originalInvite.id}`,
+      {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(updateBody),
+      },
+    );
+
+    expect(updateResponse.status).toBe(200);
+    const updatedInvite =
+      (await updateResponse.json()) as CreateInviteCodeResponse;
+
+    // Verify the update
+    expect(updatedInvite.id).toBe(originalInvite.id); // Same ID
+    expect(updatedInvite.name).toBe("Updated Name");
+    expect(updatedInvite.description).toBe("Updated Description");
+    expect(updatedInvite.autoApprove).toBe(true);
+    expect(updatedInvite.inviteLinkURL).toBe(originalInvite.inviteLinkURL); // Same URL
+  });
+
+  test("POST /invites/:inviteId returns 404 for non-existent invite", async () => {
+    // Create test user first
+    await createTestUser("-update-404-test");
+
+    const updateBody = {
+      groupId: "test-group-404",
+      name: "Test Name",
+    };
+
+    const response = await fetch(
+      "http://localhost:3010/invites/non-existent-id",
+      {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(updateBody),
+      },
+    );
+
+    expect(response.status).toBe(404);
+    const error = (await response.json()) as {
+      success: boolean;
+      message: string;
+    };
+    expect(error.success).toBe(false);
+    expect(error.message).toBe("Invite not found");
+  });
+
+  test("POST /invites/:inviteId returns 403 for unauthorized update", async () => {
+    // Create first user and invite
+    await createTestUser("-owner");
+    const createBody = {
+      groupId: "test-group-auth",
+      name: "Owner's Invite",
+    };
+
+    const createResponse = await fetch("http://localhost:3010/invites", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(createBody),
+    });
+
+    expect(createResponse.status).toBe(201);
+    const invite = (await createResponse.json()) as CreateInviteCodeResponse;
+
+    // Create second user who shouldn't be able to update
+    const secondUserApp = express();
+    secondUserApp.use(pinoMiddleware);
+    secondUserApp.use(jsonMiddleware);
+    secondUserApp.use((req, _res, next) => {
+      req.app.locals.xmtpId = "different-user-xmtp-id";
+      req.app.locals.xmtpInstallationId = "different-installation-id";
+      next();
+    });
+    secondUserApp.use("/invites", invitesRouter);
+    const secondServer = secondUserApp.listen(3013);
+
+    try {
+      // Create the second user in the database
+      await createTestUser("-unauthorized", "different-user-xmtp-id");
+
+      const updateBody = {
+        groupId: "test-group-auth",
+        name: "Hacked Name",
+      };
+
+      const response = await fetch(
+        `http://localhost:3013/invites/${invite.id}`,
+        {
+          method: "PUT",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(updateBody),
+        },
+      );
+
+      expect(response.status).toBe(403);
+      const error = (await response.json()) as {
+        success: boolean;
+        message: string;
+      };
+      expect(error.success).toBe(false);
+      expect(error.message).toBe("Not authorized to update this invite");
+    } finally {
+      secondServer.close();
+    }
   });
 });
