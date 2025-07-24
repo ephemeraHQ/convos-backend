@@ -126,6 +126,15 @@ export const getAuthenticatedInviteDetailsHandler = async (
       return;
     }
 
+    // Only allow the invite creator to see full details
+    if (inviteCode.createdById !== identity.id) {
+      res.status(403).json({
+        success: false,
+        message: "Forbidden: you don't have access to this invite",
+      });
+      return;
+    }
+
     const response: GetInviteDetailsResponse = {
       id: inviteCode.id,
       name: inviteCode.name,

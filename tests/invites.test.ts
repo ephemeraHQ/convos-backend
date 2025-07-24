@@ -589,4 +589,162 @@ describe("/invites API", () => {
       secondServer.close();
     }
   });
+
+  test("GET /invites/:inviteId returns full details for invite creator", async () => {
+    // Create test user first
+    await createTestUser("-get-details-owner");
+
+    // Create an invite
+    const createBody = {
+      groupId: "test-group-get-details",
+      name: "Test Get Details",
+      description: "Test description",
+      maxUses: 10,
+      autoApprove: true,
+    };
+
+    const createResponse = await fetch("http://localhost:3010/invites", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(createBody),
+    });
+
+    expect(createResponse.status).toBe(201);
+    const invite = (await createResponse.json()) as CreateInviteCodeResponse;
+
+    // Get invite details as the creator
+    const getResponse = await fetch(
+      `http://localhost:3010/invites/${invite.id}`,
+      {
+        method: "GET",
+        headers: {
+          "Content-Type": "application/json",
+        },
+      },
+    );
+
+    expect(getResponse.status).toBe(200);
+    const details = await getResponse.json();
+
+    // Should return full details since this is the creator
+    expect(details.id).toBe(invite.id);
+    expect(details.name).toBe("Test Get Details");
+    expect(details.description).toBe("Test description");
+    expect(details.maxUses).toBe(10);
+    expect(details.usesCount).toBe(0);
+    expect(details.status).toBe(InviteCodeStatus.ACTIVE);
+    expect(details.autoApprove).toBe(true);
+    expect(details.groupId).toBe("test-group-get-details");
+    expect(details.createdAt).toBeDefined();
+    expect(details.inviteLinkURL).toBeDefined();
+  });
+
+  test("GET /invites/:inviteId returns 403 for non-creator", async () => {
+    // Create first user and invite
+    await createTestUser("-get-details-creator");
+    const createBody = {
+      groupId: "test-group-get-auth",
+      name: "Creator's Invite",
+      description: "Only creator should see this",
+    };
+
+    const createResponse = await fetch("http://localhost:3010/invites", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(createBody),
+    });
+
+    expect(createResponse.status).toBe(201);
+    const invite = (await createResponse.json()) as CreateInviteCodeResponse;
+
+    // Create second user who shouldn't be able to view details
+    const secondUserApp = express();
+    secondUserApp.use(pinoMiddleware);
+    secondUserApp.use(jsonMiddleware);
+    secondUserApp.use((req, _res, next) => {
+      req.app.locals.xmtpId = "different-user-get-details-xmtp-id";
+      req.app.locals.xmtpInstallationId = "different-installation-id";
+      next();
+    });
+    secondUserApp.use("/invites", invitesRouter);
+    const secondServer = secondUserApp.listen(3014);
+
+    try {
+      // Create the second user in the database
+      await createTestUser(
+        "-unauthorized-get",
+        "different-user-get-details-xmtp-id",
+      );
+
+      const getResponse = await fetch(
+        `http://localhost:3014/invites/${invite.id}`,
+        {
+          method: "GET",
+          headers: {
+            "Content-Type": "application/json",
+          },
+        },
+      );
+
+      expect(getResponse.status).toBe(403);
+      const error = (await getResponse.json()) as {
+        success: boolean;
+        message: string;
+      };
+      expect(error.success).toBe(false);
+      expect(error.message).toBe(
+        "Forbidden: you don't have access to this invite",
+      );
+    } finally {
+      secondServer.close();
+    }
+  });
+
+  test("GET /invites/:inviteId returns 404 for non-existent invite", async () => {
+    // Create test user first
+    await createTestUser("-get-404-test");
+
+    const response = await fetch(
+      "http://localhost:3010/invites/non-existent-invite-id",
+      {
+        method: "GET",
+        headers: {
+          "Content-Type": "application/json",
+        },
+      },
+    );
+
+    expect(response.status).toBe(404);
+    const error = (await response.json()) as {
+      success: boolean;
+      message: string;
+    };
+    expect(error.success).toBe(false);
+    expect(error.message).toBe("Invite not found");
+  });
+
+  test("GET /invites/:inviteId returns 404 when user identity not found", async () => {
+    // Don't create a user, so identity won't be found
+    const response = await fetch(
+      "http://localhost:3010/invites/some-invite-id",
+      {
+        method: "GET",
+        headers: {
+          "Content-Type": "application/json",
+        },
+      },
+    );
+
+    expect(response.status).toBe(404);
+    const error = (await response.json()) as {
+      success: boolean;
+      message: string;
+    };
+    expect(error.success).toBe(false);
+    expect(error.message).toBe("Identity not found");
+  });
 });
