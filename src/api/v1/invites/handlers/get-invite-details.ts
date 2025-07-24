@@ -91,3 +91,80 @@ export const getInviteDetailsHandler = async (req: Request, res: Response) => {
     });
   }
 };
+
+export const getAuthenticatedInviteDetailsHandler = async (
+  req: Request,
+  res: Response,
+) => {
+  try {
+    const { inviteId } = await paramsSchema.parseAsync(req.params);
+
+    // Get the authenticated user's identity from the JWT
+    const { xmtpId } = req.app.locals;
+
+    const identity = await prisma.deviceIdentity.findFirst({
+      where: { xmtpId },
+    });
+
+    if (!identity) {
+      res.status(404).json({
+        success: false,
+        message: "Identity not found",
+      });
+      return;
+    }
+
+    const inviteCode = await prisma.inviteCode.findUnique({
+      where: { id: inviteId },
+    });
+
+    if (!inviteCode) {
+      res.status(404).json({
+        success: false,
+        message: "Invite not found",
+      });
+      return;
+    }
+
+    // Only allow the invite creator to see full details
+    if (inviteCode.createdById !== identity.id) {
+      res.status(403).json({
+        success: false,
+        message: "Forbidden: you don't have access to this invite",
+      });
+      return;
+    }
+
+    const response: GetInviteDetailsResponse = {
+      id: inviteCode.id,
+      name: inviteCode.name,
+      description: inviteCode.description,
+      imageUrl: inviteCode.imageUrl,
+      maxUses: inviteCode.maxUses,
+      usesCount: inviteCode.usesCount,
+      status: inviteCode.status,
+      expiresAt: inviteCode.expiresAt?.toISOString() || null,
+      autoApprove: inviteCode.autoApprove,
+      groupId: inviteCode.groupId,
+      createdAt: inviteCode.createdAt.toISOString(),
+      inviteLinkURL: getInviteLink(inviteCode.id),
+    };
+
+    res.status(200).json(response);
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      res.status(400).json({
+        success: false,
+        message: "Invalid invite ID",
+        errors: error.errors,
+      });
+      return;
+    }
+
+    req.log.error({ error }, "Error fetching invite details");
+    res.status(500).json({
+      success: false,
+      message: "Failed to fetch invite details",
+    });
+  }
+};
