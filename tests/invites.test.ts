@@ -13,6 +13,7 @@ import type {
   CreateInviteCodeRequestBody,
   CreateInviteCodeResponse,
 } from "@/api/v1/invites/handlers/create-invite-code";
+import type { GetInviteDetailsResponse } from "@/api/v1/invites/handlers/get-invite-details";
 import invitesRouter from "@/api/v1/invites/invites.router";
 import type { CreatedReturnedUser } from "@/api/v1/users/handlers/create-user";
 import { jsonMiddleware } from "@/middleware/json";
@@ -626,7 +627,7 @@ describe("/invites API", () => {
     );
 
     expect(getResponse.status).toBe(200);
-    const details = await getResponse.json();
+    const details = (await getResponse.json()) as GetInviteDetailsResponse;
 
     // Should return full details since this is the creator
     expect(details.id).toBe(invite.id);
