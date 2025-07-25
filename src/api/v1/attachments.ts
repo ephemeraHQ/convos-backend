@@ -4,6 +4,7 @@ import { Router, type Request, type Response } from "express";
 import mime from "mime-types";
 import { v4 as uuidv4 } from "uuid";
 import { z } from "zod";
+import { AppError } from "@/utils/errors";
 
 const envSchema = z.object({
   PUBLIC_ASSETS_BUCKET: z.string().min(1).optional(),
@@ -21,7 +22,7 @@ const s3Client = env.PUBLIC_ASSETS_BUCKET ? new S3Client({}) : null;
 
 const getPresignedURL = async (contentType?: string) => {
   if (!env.PUBLIC_ASSETS_BUCKET || !s3Client) {
-    throw new Error("File uploads not available - S3 not configured");
+    throw new AppError(503, "File uploads not available - S3 not configured");
   }
 
   const objectKey = uuidv4();
