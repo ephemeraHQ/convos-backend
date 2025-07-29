@@ -4,10 +4,11 @@ import { Router, type Request, type Response } from "express";
 import mime from "mime-types";
 import { v4 as uuidv4 } from "uuid";
 import { z } from "zod";
+import { AppError } from "@/utils/errors";
 
 const envSchema = z.object({
-  PUBLIC_ASSETS_BUCKET: z.string().min(1),
-  AWS_REGION: z.string().optional(), // Optional - can be inferred from AWS environment
+  PUBLIC_ASSETS_BUCKET: z.string().min(1).optional(),
+  AWS_REGION: z.string().optional(), // Inferred from AWS environment
 });
 
 // Validate environment variables at startup
@@ -15,11 +16,15 @@ const env = envSchema.parse({
   PUBLIC_ASSETS_BUCKET: process.env.PUBLIC_ASSETS_BUCKET,
 });
 
-// Create S3 client once at startup
+// Create S3 client only if bucket is configured
 // No credentials needed - will use IAM role automatically
-const s3Client = new S3Client({});
+const s3Client = env.PUBLIC_ASSETS_BUCKET ? new S3Client({}) : null;
 
 const getPresignedURL = async (contentType?: string) => {
+  if (!env.PUBLIC_ASSETS_BUCKET || !s3Client) {
+    throw new AppError(503, "File uploads not available - S3 not configured");
+  }
+
   const objectKey = uuidv4();
   let extension: string | undefined;
   if (contentType && mime.extension(contentType)) {
