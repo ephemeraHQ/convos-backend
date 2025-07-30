@@ -6,6 +6,7 @@ import {
 import { createWalletClient, http, toBytes } from "viem";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import { mainnet } from "viem/chains";
+import logger from "./logger";
 
 if (!process.env.XMTP_DB_ENCRYPTION_BASE_64_KEY) {
   throw new Error("Missing XMTP_DB_ENCRYPTION_BASE_64_KEY");
@@ -36,10 +37,24 @@ export async function getXmtpClient(): Promise<XmtpClient> {
   }
 
   const signer = createSigner();
-  cachedXmtpClientCreationPromise = XmtpClient.create(signer, {
+
+  // Build client configuration
+  const clientConfig: {
+    dbEncryptionKey: Uint8Array;
+    env: "local" | "dev" | "production";
+    apiUrl?: string;
+  } = {
     dbEncryptionKey: encryptionKey,
     env: currentXmtpEnv,
-  });
+  };
+
+  // Add custom API URL if provided
+  if (process.env.XMTP_CUSTOM_HOST) {
+    clientConfig.apiUrl = process.env.XMTP_CUSTOM_HOST;
+    logger.info(`Using custom XMTP host: ${process.env.XMTP_CUSTOM_HOST}`);
+  }
+
+  cachedXmtpClientCreationPromise = XmtpClient.create(signer, clientConfig);
 
   return cachedXmtpClientCreationPromise;
 }
@@ -63,6 +78,56 @@ export async function getAddressesForInboxId(
   } catch (error) {
     console.error("Error getting addresses for inbox:", error);
     return [];
+  }
+}
+
+/**
+ * Test XMTP connection health without heavy operations
+ * This is used primarily for health checks
+ */
+export async function testXmtpConnection(): Promise<{
+  healthy: boolean;
+  error?: string;
+  inboxId?: string;
+  environment?: string;
+  customHost?: string;
+}> {
+  try {
+    // Try to get the existing client first to avoid recreating
+    let client: XmtpClient;
+
+    if (cachedXmtpClientCreationPromise) {
+      client = await cachedXmtpClientCreationPromise;
+    } else {
+      client = await getXmtpClient();
+    }
+
+    // Verify we have a valid client with an inbox ID
+    if (!client.inboxId) {
+      return {
+        healthy: false,
+        error: "XMTP client has no inbox ID",
+        environment: currentXmtpEnv,
+        customHost: process.env.XMTP_CUSTOM_HOST,
+      };
+    }
+
+    return {
+      healthy: true,
+      inboxId: client.inboxId,
+      environment: currentXmtpEnv,
+      customHost: process.env.XMTP_CUSTOM_HOST,
+    };
+  } catch (error) {
+    return {
+      healthy: false,
+      error:
+        error instanceof Error
+          ? error.message
+          : "Unknown XMTP connection error",
+      environment: currentXmtpEnv,
+      customHost: process.env.XMTP_CUSTOM_HOST,
+    };
   }
 }
 

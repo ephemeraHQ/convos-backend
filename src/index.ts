@@ -1,5 +1,5 @@
 import cors from "cors";
-import express, { type Request, type Response } from "express";
+import express from "express";
 import helmet from "helmet";
 import apiRouter from "./api";
 import { errorHandlerMiddleware } from "./middleware/errorHandler";
@@ -7,6 +7,7 @@ import { jsonMiddleware } from "./middleware/json";
 import { noRouteMiddleware } from "./middleware/noRoute";
 import { pinoMiddleware } from "./middleware/pino";
 import { rateLimitMiddleware } from "./middleware/rateLimit";
+import healthcheckRouter from "./routes/healthcheck";
 import logger from "./utils/logger";
 
 const app = express();
@@ -23,10 +24,8 @@ app.use(pinoMiddleware);
 // Rate limiting should be before routes but after logging
 app.use(rateLimitMiddleware);
 
-// GET /healthcheck - Healthcheck endpoint
-app.get("/healthcheck", (_req: Request, res: Response): void => {
-  res.status(200).send("OK");
-});
+// add healthcheck routes
+app.use("/healthcheck", healthcheckRouter);
 
 // add api routes
 app.use("/api", apiRouter);
