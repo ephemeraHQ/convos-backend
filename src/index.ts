@@ -1,5 +1,5 @@
 import cors from "cors";
-import express, { type Request, type Response } from "express";
+import express from "express";
 import helmet from "helmet";
 import apiRouter from "./api";
 import { errorHandlerMiddleware } from "./middleware/errorHandler";
