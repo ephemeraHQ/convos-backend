@@ -32,7 +32,9 @@ PORT=4000
 If your backend can't reach the XMTP node via `localhost` (common in Docker setups), you can specify a custom server address:
 
 ### Option 1: Host Network (Recommended)
+
 Run your backend on the host machine:
+
 ```bash
 # In your .env file
 XMTP_ENV=local
@@ -46,7 +48,9 @@ bun run dev
 ```
 
 ### Option 2: Custom Host
+
 If you need to specify a different XMTP server address:
+
 ```bash
 # In your .env file
 XMTP_ENV=local
@@ -56,16 +60,19 @@ XMTP_CUSTOM_HOST=your-xmtp-node # it will be called in http and in port 5556
 ## Docker Network Setup
 
 The XMTP node runs in Docker and exposes these ports to your host:
+
 - Port 5555: XMTP gRPC API
 - Port 5556: XMTP Node API
 
 Your backend connects to the XMTP node using:
+
 - Default: `localhost` (when `XMTP_ENV=local`)
 - Custom: Whatever you set in `XMTP_CUSTOM_HOST`
 
 ## Starting the Services
 
 1. **Start Docker services:**
+
    ```bash
    cd dev && ./up
    ```
@@ -108,6 +115,7 @@ The enhanced health check at `/healthcheck` now validates:
 **Problem**: Health check shows XMTP as unhealthy
 
 **Solutions**:
+
 - Ensure Docker services are running: `docker ps`
 - Check XMTP node logs: `docker logs dev-node-1`
 - Verify ports are accessible: `nc -zv localhost 5555`
@@ -115,6 +123,7 @@ The enhanced health check at `/healthcheck` now validates:
 
 **Docker Network Issues**:
 If your backend runs in Docker and can't reach `localhost:5555`:
+
 ```bash
 # Set custom host to use Docker service name
 XMTP_CUSTOM_HOST=10.0.0.1
@@ -123,6 +132,7 @@ XMTP_CUSTOM_HOST=10.0.0.1
 ### 2. Environment Variables
 
 **Generate missing keys**:
+
 ```bash
 # Generate XMTP DB encryption key
 cd dev/scripts && bun generateDbKey.ts
