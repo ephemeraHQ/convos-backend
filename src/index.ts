@@ -1,3 +1,4 @@
+import os from "node:os";
 import cors from "cors";
 import express from "express";
 import helmet from "helmet";
@@ -9,6 +10,21 @@ import { pinoMiddleware } from "./middleware/pino";
 import { rateLimitMiddleware } from "./middleware/rateLimit";
 import healthcheckRouter from "./routes/healthcheck";
 import logger from "./utils/logger";
+
+const getLocalIpAddresses = () => {
+  const interfaces = os.networkInterfaces();
+  const addresses: string[] = [];
+
+  Object.values(interfaces).forEach((networkInterface) => {
+    networkInterface?.forEach((details) => {
+      if (details.family === "IPv4" && !details.internal) {
+        addresses.push(details.address);
+      }
+    });
+  });
+
+  return addresses;
+};
 
 const app = express();
 
@@ -39,6 +55,14 @@ app.use(errorHandlerMiddleware);
 const port = process.env.PORT || 4000;
 const server = app.listen(port, () => {
   logger.info(`Convos API service is running on port ${port}`);
+
+  if (process.env.NODE_ENV == "development") {
+    const localIps = getLocalIpAddresses();
+    logger.info(`Available at: http://localhost:${port}`);
+    localIps.forEach((ip) => {
+      logger.info(`Available at: http://${ip}:${port}`);
+    });
+  }
 });
 
 process.on("SIGTERM", () => {
