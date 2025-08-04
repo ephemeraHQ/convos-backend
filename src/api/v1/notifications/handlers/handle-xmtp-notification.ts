@@ -85,7 +85,7 @@ export async function handleXmtpNotification(req: Request, res: Response) {
     const { device, identity } = identityOnDevice;
     const pushTokenType = device.pushTokenType;
 
-    // For APNS (new architecture), use xmtpId - no turnkeyAddress needed
+    // For APNS (new Convos architecture for OTR), use xmtpId - no turnkeyAddress needed
     if (pushTokenType === "apns") {
       // Skip test tokens
       if (device.expoToken === TEST_TOKEN) {
@@ -119,7 +119,7 @@ export async function handleXmtpNotification(req: Request, res: Response) {
       return;
     }
 
-    // For Expo (legacy + old way), require turnkeyAddress
+    // For Expo (legacy), require turnkeyAddress
     const turnkeyAddress = identity.turnkeyAddress;
 
     if (!turnkeyAddress) {

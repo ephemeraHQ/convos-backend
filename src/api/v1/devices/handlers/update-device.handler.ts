@@ -58,7 +58,9 @@ export async function updateDeviceHandler(
       data: {
         ...validatedData,
         updatedAt: new Date(),
-        ...((validatedData.pushToken || validatedData.pushTokenType || validatedData.apnsEnv) && { pushFailures: 0 }),
+        ...((validatedData.pushToken ||
+          validatedData.pushTokenType ||
+          validatedData.apnsEnv) && { pushFailures: 0 }),
       },
     });
 
