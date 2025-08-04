@@ -1,22 +1,22 @@
 #!/usr/bin/env bun
 
 // Load environment variables from .env file
-process.loadEnvFile?.(".env");
-
 import { createApnsService } from "@/api/v1/notifications/services/apns-push.service";
-import { prisma } from "@/utils/prisma";
 import type { NotificationResponse } from "@/notifications/client";
+import { prisma } from "@/utils/prisma";
+
+process.loadEnvFile?.(".env");
 
 // Mock logger to replace req.log
 const mockLogger = {
   info: (data: any, message?: string) => {
-    console.log(`[INFO] ${message || ''}`, data);
+    console.log(`[INFO] ${message || ""}`, data);
   },
   error: (data: any, message?: string) => {
-    console.error(`[ERROR] ${message || ''}`, data);
+    console.error(`[ERROR] ${message || ""}`, data);
   },
   warn: (data: any, message?: string) => {
-    console.warn(`[WARN] ${message || ''}`, data);
+    console.warn(`[WARN] ${message || ""}`, data);
   },
 };
 
@@ -34,7 +34,13 @@ interface TestPushArgs {
 }
 
 async function sendTestPushNotification(args: TestPushArgs) {
-  const { userId, title = "Test Notification", body = "This is a test push notification", isSilent = false, forceApnsEnv = null } = args;
+  const {
+    userId,
+    title = "Test Notification",
+    body = "This is a test push notification",
+    isSilent = false,
+    forceApnsEnv = null,
+  } = args;
 
   console.log(`🔍 Looking for devices for user: ${userId}`);
 
@@ -59,7 +65,9 @@ async function sendTestPushNotification(args: TestPushArgs) {
   // Create APNS service
   const apnsService = createApnsService();
   if (!apnsService) {
-    console.error("❌ APNS service not configured. Please check your environment variables:");
+    console.error(
+      "❌ APNS service not configured. Please check your environment variables:",
+    );
     console.error("- APNS_TEAM_ID");
     console.error("- APNS_KEY_ID");
     console.error("- APNS_PRIVATE_KEY");
@@ -94,13 +102,17 @@ async function sendTestPushNotification(args: TestPushArgs) {
   // Send push notification to each device
   for (const device of devices) {
     // Override APNS environment if specified
-    const effectiveDevice = forceApnsEnv ? { ...device, apnsEnv: forceApnsEnv } : device;
+    const effectiveDevice = forceApnsEnv
+      ? { ...device, apnsEnv: forceApnsEnv }
+      : device;
 
     console.log(`\n📤 Sending test push notification to device:`);
     console.log(`   - Device ID: ${device.id}`);
-    console.log(`   - Device Name: ${device.name || 'Unnamed'}`);
+    console.log(`   - Device Name: ${device.name || "Unnamed"}`);
     console.log(`   - OS: ${device.os}`);
-    console.log(`   - APNS Environment: ${effectiveDevice.apnsEnv || 'production'}${forceApnsEnv ? ' (forced)' : ''}`);
+    console.log(
+      `   - APNS Environment: ${effectiveDevice.apnsEnv || "production"}${forceApnsEnv ? " (forced)" : ""}`,
+    );
     console.log(`   - Push Token: ${device.pushToken?.substring(0, 20)}...`);
     console.log(`   - Silent: ${isSilent}`);
 
@@ -113,12 +125,19 @@ async function sendTestPushNotification(args: TestPushArgs) {
       });
 
       if (result.success) {
-        console.log(`✅ Successfully sent push notification to device ${device.id}`);
+        console.log(
+          `✅ Successfully sent push notification to device ${device.id}`,
+        );
       } else {
-        console.log(`❌ Failed to send push notification to device ${device.id}: ${result.error}`);
+        console.log(
+          `❌ Failed to send push notification to device ${device.id}: ${result.error}`,
+        );
       }
     } catch (error) {
-      console.error(`💥 Error sending push notification to device ${device.id}:`, error);
+      console.error(
+        `💥 Error sending push notification to device ${device.id}:`,
+        error,
+      );
     }
   }
 }
@@ -126,7 +145,7 @@ async function sendTestPushNotification(args: TestPushArgs) {
 async function main() {
   const args = process.argv.slice(2);
 
-  if (args.length === 0 || args.includes('--help') || args.includes('-h')) {
+  if (args.length === 0 || args.includes("--help") || args.includes("-h")) {
     console.log(`
 🚀 Test Push Notification CLI
 
@@ -167,7 +186,7 @@ Environment Variables Required:
   // Parse additional arguments
   for (let i = 1; i < args.length; i++) {
     switch (args[i]) {
-      case '--title':
+      case "--title":
         if (i + 1 >= args.length) {
           console.error("❌ Error: --title requires a value");
           process.exit(1);
@@ -178,7 +197,7 @@ Environment Variables Required:
           process.exit(1);
         }
         break;
-      case '--body':
+      case "--body":
         if (i + 1 >= args.length) {
           console.error("❌ Error: --body requires a value");
           process.exit(1);
@@ -189,14 +208,14 @@ Environment Variables Required:
           process.exit(1);
         }
         break;
-      case '--silent':
+      case "--silent":
         isSilent = true;
         break;
-      case '--sandbox':
-        forceApnsEnv = 'sandbox';
+      case "--sandbox":
+        forceApnsEnv = "sandbox";
         break;
-      case '--production':
-        forceApnsEnv = 'production';
+      case "--production":
+        forceApnsEnv = "production";
         break;
     }
   }

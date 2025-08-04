@@ -1,10 +1,10 @@
 #!/usr/bin/env bun
 
 // Load environment variables from .env file
-process.loadEnvFile?.(".env");
-
 import { createApnsService } from "@/api/v1/notifications/services/apns-push.service";
 import { prisma } from "@/utils/prisma";
+
+process.loadEnvFile?.(".env");
 
 // Simple version - just provide a userId and it will send a basic test notification
 async function quickPushTest(userId: string) {
@@ -24,7 +24,7 @@ async function quickPushTest(userId: string) {
     return;
   }
 
-  console.log(`📱 Found device: ${device.name || 'Unnamed'} (${device.os})`);
+  console.log(`📱 Found device: ${device.name || "Unnamed"} (${device.os})`);
 
   const apnsService = createApnsService();
   if (!apnsService) {

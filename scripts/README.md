@@ -17,16 +17,19 @@ DATABASE_URL=your-database-url
 ## Usage
 
 ### Quick Test
+
 ```bash
 bun run scripts/simple-push-test.ts <userId>
 ```
 
 ### Advanced Test with Options
+
 ```bash
 bun run scripts/test-push-notification.ts <userId> [options]
 ```
 
 **Options:**
+
 - `--title <title>` - Custom notification title
 - `--body <body>` - Custom notification body
 - `--silent` - Send silent notification
@@ -34,6 +37,7 @@ bun run scripts/test-push-notification.ts <userId> [options]
 - `--production` - Force production environment
 
 **Examples:**
+
 ```bash
 # Basic test
 bun run scripts/test-push-notification.ts 6bb0bd17-4dae-4749-adaf-cb4d7806a9dc
