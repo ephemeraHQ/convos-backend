@@ -188,14 +188,37 @@ async function handleLegacyNotification(
     device &&
     device.expoToken &&
     device.identities.length > 0 &&
-    device.identities[0].identity.turnkeyAddress
+    device.identities[0]?.identity?.turnkeyAddress
   ) {
-    await sendLegacyExpoPushNotification({
-      notification,
-      ethAddress: device.identities[0].identity.turnkeyAddress,
-      expoPushToken: device.expoToken,
-      req,
-    });
+    try {
+      await sendLegacyExpoPushNotification({
+        notification,
+        ethAddress: device.identities[0].identity.turnkeyAddress,
+        expoPushToken: device.expoToken,
+        req,
+      });
+      req.log.info(
+        { deviceId: device.id },
+        "Legacy push notification sent successfully",
+      );
+    } catch (error) {
+      req.log.error(
+        { error, deviceId: device.id },
+        "Failed to send legacy push notification",
+      );
+      // Increment failure count for consistency with main cleanup function
+      try {
+        await prisma.device.update({
+          where: { id: device.id },
+          data: { pushFailures: { increment: 1 } },
+        });
+      } catch (updateError) {
+        req.log.error(
+          { error: updateError, deviceId: device.id },
+          "Failed to increment push failure count",
+        );
+      }
+    }
     res.status(200).end();
     return;
   }
