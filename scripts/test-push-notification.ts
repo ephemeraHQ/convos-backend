@@ -168,10 +168,26 @@ Environment Variables Required:
   for (let i = 1; i < args.length; i++) {
     switch (args[i]) {
       case '--title':
+        if (i + 1 >= args.length) {
+          console.error("❌ Error: --title requires a value");
+          process.exit(1);
+        }
         title = args[++i];
+        if (!title.trim()) {
+          console.error("❌ Error: --title value cannot be empty");
+          process.exit(1);
+        }
         break;
       case '--body':
+        if (i + 1 >= args.length) {
+          console.error("❌ Error: --body requires a value");
+          process.exit(1);
+        }
         body = args[++i];
+        if (!body.trim()) {
+          console.error("❌ Error: --body value cannot be empty");
+          process.exit(1);
+        }
         break;
       case '--silent':
         isSilent = true;
