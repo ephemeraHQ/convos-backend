@@ -7,10 +7,18 @@ export const DeviceInputSchema = DeviceSchema.pick({
   name: true,
   os: true,
   pushToken: true,
+  pushTokenType: true,
+  apnsEnv: true,
   expoToken: true,
+  appVersion: true,
+  appBuildNumber: true,
 }).partial({
   pushToken: true,
+  pushTokenType: true,
+  apnsEnv: true,
   expoToken: true,
+  appVersion: true,
+  appBuildNumber: true,
 });
 
 export type CreateDeviceRequestBody = z.infer<typeof DeviceInputSchema>;
@@ -51,6 +59,7 @@ export async function createDeviceHandler(
     const device = await prisma.device.create({
       data: {
         ...validatedData,
+        pushFailures: 0,
         user: {
           connect: {
             id: userId,

@@ -127,6 +127,8 @@ export async function handleXmtpNotification(req: Request, res: Response) {
 
     const { device, identity } = identityOnDevice;
     const expoPushToken = device.expoToken;
+    const pushToken = device.pushToken;
+    const pushTokenType = device.pushTokenType as string | null;
     const turnkeyAddress = identity.turnkeyAddress;
 
     if (!turnkeyAddress) {
@@ -143,9 +145,41 @@ export async function handleXmtpNotification(req: Request, res: Response) {
       return;
     }
 
-    if (!expoPushToken || !Expo.isExpoPushToken(expoPushToken)) {
+    // Check if device has too many push failures
+    if (device.pushFailures > 10) {
       req.log.warn(
-        `Expo push token for Device ${device.id} (xmtpInstallationId ${notification.installation.id}) is invalid or missing: ${expoPushToken}. Cleaning up.`,
+        `Device ${device.id} has too many push failures (${device.pushFailures}). Skipping notification.`,
+      );
+      res.status(200).end();
+      return;
+    }
+
+    // Prefer new push token over legacy expo token
+    const effectivePushToken = pushToken || expoPushToken;
+    const effectiveTokenType = pushTokenType || "expo";
+
+    if (!effectivePushToken) {
+      req.log.warn(
+        `No push token available for Device ${device.id} (xmtpInstallationId ${notification.installation.id}). Cleaning up.`,
+      );
+      if (identityOnDeviceToCleanup.xmtpInstallationId) {
+        await cleanupFailedInstallation({
+          xmtpInstallationId: identityOnDeviceToCleanup.xmtpInstallationId,
+          deviceId: identityOnDeviceToCleanup.deviceId,
+          req,
+        });
+      }
+      res.status(200).end();
+      return;
+    }
+
+    // For Expo tokens, validate format
+    if (
+      effectiveTokenType === "expo" &&
+      !Expo.isExpoPushToken(effectivePushToken)
+    ) {
+      req.log.warn(
+        `Expo push token for Device ${device.id} (xmtpInstallationId ${notification.installation.id}) is invalid. Cleaning up.`,
       );
       if (identityOnDeviceToCleanup.xmtpInstallationId) {
         await cleanupFailedInstallation({
@@ -166,16 +200,25 @@ export async function handleXmtpNotification(req: Request, res: Response) {
       ethAddress: turnkeyAddress,
     };
 
+    // Only handle Expo tokens for now (APNS support can be added later)
+    if (effectiveTokenType !== "expo") {
+      req.log.warn(
+        `Push token type ${effectiveTokenType} not yet supported for Device ${device.id}. Skipping notification.`,
+      );
+      res.status(200).end();
+      return;
+    }
+
     const message: ExpoPushMessage = notification.subscription.is_silent
       ? {
-          to: expoPushToken,
+          to: effectivePushToken,
           data: baseMessageData,
           _contentAvailable: true,
           priority: "normal",
           sound: undefined,
         }
       : {
-          to: expoPushToken,
+          to: effectivePushToken,
           sound: "default",
           body: "New message",
           data: baseMessageData,
@@ -201,12 +244,15 @@ export async function handleXmtpNotification(req: Request, res: Response) {
               `Error sending push notification: ${expoPushReceipt.message}`,
             );
 
+            // Increment push failures for this device
+            await incrementPushFailures(device.id, req);
+
             if (
               expoPushReceipt.details &&
               expoPushReceipt.details.error === "DeviceNotRegistered"
             ) {
               req.log.info(
-                `DeviceNotRegistered error for token ${expoPushToken} (xmtpInstallationId ${notification.installation.id}). Initiating cleanup.`,
+                `DeviceNotRegistered error for token ${effectivePushToken} (xmtpInstallationId ${notification.installation.id}). Initiating cleanup.`,
               );
 
               if (identityOnDeviceToCleanup.xmtpInstallationId) {
@@ -218,6 +264,9 @@ export async function handleXmtpNotification(req: Request, res: Response) {
                 });
               }
             }
+          } else {
+            // Success - update last push success timestamp
+            await updateLastPushSuccess(device.id, req);
           }
         }
       } catch (error) {
@@ -253,7 +302,11 @@ async function cleanupFailedInstallation(args: {
       }),
       prisma.device.update({
         where: { id: deviceId },
-        data: { expoToken: null },
+        data: {
+          expoToken: null,
+          pushToken: null,
+          pushFailures: { increment: 1 },
+        },
       }),
     ]);
     req.log.info(
@@ -328,4 +381,31 @@ async function trySendingNotificationWithOldway(args: {
   });
 
   await Promise.all(sendPromises);
+}
+
+async function incrementPushFailures(deviceId: string, req: Request) {
+  try {
+    await prisma.device.update({
+      where: { id: deviceId },
+      data: { pushFailures: { increment: 1 } },
+    });
+    req.log.info(`Incremented push failures for device ${deviceId}`);
+  } catch (error) {
+    req.log.error({ error, deviceId }, "Failed to increment push failures");
+  }
+}
+
+async function updateLastPushSuccess(deviceId: string, req: Request) {
+  try {
+    await prisma.device.update({
+      where: { id: deviceId },
+      data: {
+        lastPushSuccessAt: new Date(),
+        pushFailures: 0, // Reset failures on successful push
+      },
+    });
+    req.log.info(`Updated last push success for device ${deviceId}`);
+  } catch (error) {
+    req.log.error({ error, deviceId }, "Failed to update last push success");
+  }
 }
