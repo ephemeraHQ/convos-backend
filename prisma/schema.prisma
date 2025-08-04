@@ -50,7 +50,7 @@ model Device {
   name              String?
   os                DeviceOS
   pushToken         String?              @db.Text
-  pushTokenType     PushTokenType?       @default(apns)
+  pushTokenType     PushTokenType        @default(apns)
   apnsEnv           ApnsEnvironment?
   expoToken         String? // Legacy, to be deprecated
   appVersion        String?

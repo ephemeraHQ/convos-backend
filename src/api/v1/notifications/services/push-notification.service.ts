@@ -40,7 +40,7 @@ export class PushNotificationService {
     };
 
     // Determine which push service to use
-    const pushTokenType: string = device.pushTokenType ?? "expo";
+    const pushTokenType = device.pushTokenType;
 
     let result: { success: boolean; error?: string };
 
