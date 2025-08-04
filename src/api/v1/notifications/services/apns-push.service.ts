@@ -1,3 +1,4 @@
+import http2 from "node:http2";
 import type { Device } from "@prisma/client";
 import type { Request } from "express";
 import jwt from "jsonwebtoken";
@@ -117,81 +118,166 @@ export class ApnsPushService {
         };
 
     const token = this.getJwtToken();
-    const url = this.getApnsUrl(device);
 
-    try {
-      const response = await fetch(url, {
-        method: "POST",
-        headers: {
-          authorization: `bearer ${token}`,
-          "apns-topic": this.config.bundleId,
-          "apns-push-type": notification.subscription.is_silent
-            ? "background"
-            : "alert",
-          "apns-priority": notification.subscription.is_silent ? "5" : "10",
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(payload),
+    return new Promise((resolve) => {
+      const hostname =
+        device.apnsEnv === "sandbox"
+          ? "api.sandbox.push.apple.com"
+          : "api.push.apple.com";
+
+      const client = http2.connect(`https://${hostname}`, {
+        settings: { enablePush: false },
       });
 
-      if (response.ok) {
+      client.on("error", (error: Error) => {
+        req.log.error(
+          { error: error.message, stack: error.stack, deviceId: device.id },
+          "HTTP/2 connection error",
+        );
+        client.close();
+        resolve({ success: false, error: error.message });
+      });
+
+      const headers = {
+        ":method": "POST",
+        ":path": `/3/device/${device.pushToken}`,
+        authorization: `bearer ${token}`,
+        "apns-topic": this.config.bundleId,
+        "apns-push-type": notification.subscription.is_silent
+          ? "background"
+          : "alert",
+        "apns-priority": notification.subscription.is_silent ? "5" : "10",
+        "content-type": "application/json",
+      };
+
+      req.log.info(
+        {
+          url: `https://${hostname}/3/device/${device.pushToken}`,
+          headers,
+          payload,
+          deviceId: device.id,
+          verbose: true,
+        },
+        "[VERBOSE] Sending APNS HTTP/2 request",
+      );
+
+      const request = client.request(headers);
+
+      let responseData = "";
+      let statusCode = 0;
+      let responseHeaders: Record<string, string | number> = {};
+
+      request.on("response", (headers: Record<string, string | number>) => {
+        statusCode = headers[":status"] as number;
+        responseHeaders = headers;
         req.log.info(
           {
+            status: statusCode,
+            headers: responseHeaders,
+            deviceId: device.id,
+            verbose: true,
+          },
+          "[VERBOSE] APNS HTTP/2 response received",
+        );
+      });
+
+      request.on("data", (chunk: Buffer) => {
+        const chunkStr = chunk.toString("utf8");
+        responseData += chunkStr;
+        req.log.info(
+          { chunk: chunkStr, deviceId: device.id, verbose: true },
+          "[VERBOSE] APNS response data chunk",
+        );
+      });
+
+      request.on("end", () => {
+        client.close();
+
+        if (statusCode === 200) {
+          req.log.info(
+            {
+              deviceId: device.id,
+              apnsEnv: device.apnsEnv,
+              apnsId: responseHeaders["apns-id"] as string,
+              verbose: true,
+            },
+            "[VERBOSE] APNS push notification sent successfully",
+          );
+          resolve({ success: true });
+          return;
+        }
+
+        // Handle error response
+        let errorData: { reason?: string } = { reason: "Unknown error" };
+        try {
+          if (responseData) {
+            errorData = JSON.parse(responseData) as { reason?: string };
+          }
+        } catch {
+          // Ignore JSON parse errors
+        }
+
+        req.log.error(
+          {
+            status: statusCode,
+            error: errorData,
+            responseData,
             deviceId: device.id,
             apnsEnv: device.apnsEnv,
+            verbose: true,
           },
-          "APNS push notification sent successfully",
+          "[VERBOSE] APNS push notification failed",
         );
-        return { success: true };
-      }
 
-      // Handle error response
-      let errorData: { reason?: string } = { reason: "Unknown error" };
-      try {
-        const text = await response.text();
-        if (text) {
-          errorData = JSON.parse(text) as { reason?: string };
+        // Handle specific APNS errors
+        if (
+          statusCode === 410 ||
+          errorData.reason === "BadDeviceToken" ||
+          errorData.reason === "Unregistered"
+        ) {
+          resolve({ success: false, error: "BadDeviceToken" });
+          return;
         }
-      } catch {
-        // Ignore JSON parse errors
-      }
 
-      req.log.error(
+        resolve({
+          success: false,
+          error: errorData.reason || `HTTP ${statusCode}`,
+        });
+      });
+
+      request.on("error", (error: Error) => {
+        req.log.error(
+          {
+            error: error.message,
+            stack: error.stack,
+            deviceId: device.id,
+            verbose: true,
+          },
+          "[VERBOSE] APNS HTTP/2 request error",
+        );
+        client.close();
+        resolve({ success: false, error: error.message });
+      });
+
+      // Send the payload
+      const payloadStr = JSON.stringify(payload);
+      req.log.info(
         {
-          status: response.status,
-          error: errorData,
+          payloadLength: payloadStr.length,
           deviceId: device.id,
-          apnsEnv: device.apnsEnv,
+          verbose: true,
         },
-        "APNS push notification failed",
+        "[VERBOSE] Writing APNS payload to HTTP/2 stream",
       );
 
-      // Handle specific APNS errors
-      if (
-        response.status === 410 ||
-        errorData.reason === "BadDeviceToken" ||
-        errorData.reason === "Unregistered"
-      ) {
-        return { success: false, error: "BadDeviceToken" };
-      }
+      request.write(payloadStr);
+      request.end();
 
-      return {
-        success: false,
-        error: errorData.reason || `HTTP ${response.status}`,
-      };
-    } catch (error) {
-      req.log.error(
-        {
-          error,
-          deviceId: device.id,
-        },
-        "Network error sending APNS push notification",
+      req.log.info(
+        { deviceId: device.id, verbose: true },
+        "[VERBOSE] APNS HTTP/2 request stream ended",
       );
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : "Network error",
-      };
-    }
+    });
   }
 }
 
@@ -209,10 +295,13 @@ export function createApnsService(): ApnsPushService | null {
     return null;
   }
 
+  // Convert \n escape sequences to actual newlines
+  const formattedPrivateKey = privateKey.replace(/\\n/g, "\n");
+
   return new ApnsPushService({
     teamId,
     keyId,
-    privateKey,
+    privateKey: formattedPrivateKey,
     bundleId,
   });
 }
