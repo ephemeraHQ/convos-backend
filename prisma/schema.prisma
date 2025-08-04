@@ -62,9 +62,6 @@ model Device {
   user              User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
   identities        IdentitiesOnDevice[]
 
-  @@index([pushToken])
-  @@index([pushFailures])
-  @@index([apnsEnv])
 }
 
 model DeviceIdentity {

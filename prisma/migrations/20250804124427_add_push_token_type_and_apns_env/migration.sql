@@ -22,11 +22,3 @@ UPDATE "Device" SET "pushTokenType" =
 ALTER TABLE "Device" ALTER COLUMN "pushTokenType" SET NOT NULL,
 ALTER COLUMN "pushTokenType" SET DEFAULT 'apns';
 
--- CreateIndex
-CREATE INDEX "Device_pushToken_idx" ON "Device"("pushToken");
-
--- CreateIndex
-CREATE INDEX "Device_pushFailures_idx" ON "Device"("pushFailures");
-
--- CreateIndex
-CREATE INDEX "Device_apnsEnv_idx" ON "Device"("apnsEnv");
