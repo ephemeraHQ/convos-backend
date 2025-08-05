@@ -17,13 +17,21 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+enum UserType {
+  onDevice
+  turnkey
+}
+
 model User {
   id             String           @id @default(uuid())
-  turnkeyUserId  String           @unique
+  userType       UserType         @default(onDevice)
+  userId         String
   createdAt      DateTime         @default(now())
   updatedAt      DateTime         @updatedAt
   devices        Device[]
   DeviceIdentity DeviceIdentity[]
+
+  @@unique([userType, userId])
 }
 
 enum DeviceOS {
