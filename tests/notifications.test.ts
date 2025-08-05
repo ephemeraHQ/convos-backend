@@ -1,5 +1,5 @@
 import type { Server } from "http";
-import { DeviceOS } from "@prisma/client";
+import { DeviceOS, UserType } from "@prisma/client";
 import {
   afterAll,
   afterEach,
@@ -68,7 +68,7 @@ describe("/notifications API - Register/Unregister (Auth Required)", () => {
     await prisma.user.deleteMany();
 
     const user = await prisma.user.create({
-      data: { turnkeyUserId: testUserTurnkeyId },
+      data: { userId: testUserTurnkeyId, userType: UserType.turnkey },
     });
     testUserId = user.id;
 

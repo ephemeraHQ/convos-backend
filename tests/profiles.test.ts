@@ -1,5 +1,5 @@
 import type { Server } from "http";
-import { DeviceOS, type Profile } from "@prisma/client";
+import { DeviceOS, UserType, type Profile } from "@prisma/client";
 import {
   afterAll,
   beforeAll,
@@ -50,7 +50,8 @@ beforeEach(async () => {
 });
 
 const createUserBody: CreateUserRequestBody = {
-  turnkeyUserId: "test-profiles-turnkey-user-id",
+  userId: "test-profiles-turnkey-user-id",
+  userType: UserType.turnkey,
   device: {
     os: DeviceOS.ios,
     name: "iPhone 14",
@@ -67,7 +68,8 @@ const createUserBody: CreateUserRequestBody = {
 };
 
 const firstUserBody: CreateUserRequestBody = {
-  turnkeyUserId: "test-profiles-turnkey-user-id-6",
+  userId: "test-profiles-turnkey-user-id-6",
+  userType: UserType.turnkey,
   device: {
     os: DeviceOS.ios,
     name: "iPhone 14 Pro",
@@ -84,7 +86,8 @@ const firstUserBody: CreateUserRequestBody = {
 };
 
 const secondUserBody: CreateUserRequestBody = {
-  turnkeyUserId: "test-profiles-turnkey-user-id-7",
+  userId: "test-profiles-turnkey-user-id-7",
+  userType: UserType.turnkey,
   device: {
     os: DeviceOS.ios,
     name: "iPhone 14",

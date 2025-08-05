@@ -1,5 +1,9 @@
 import type { Server } from "http";
-import { type DeviceIdentity, type IdentitiesOnDevice } from "@prisma/client";
+import {
+  UserType,
+  type DeviceIdentity,
+  type IdentitiesOnDevice,
+} from "@prisma/client";
 import {
   afterAll,
   beforeAll,
@@ -64,7 +68,8 @@ describe("/identities API", () => {
         user: {
           create: {
             id: testUserId,
-            turnkeyUserId: testTurnkeyUserId,
+            userId: testTurnkeyUserId,
+            userType: UserType.turnkey,
           },
         },
       },

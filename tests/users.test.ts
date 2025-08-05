@@ -1,5 +1,5 @@
 import type { Server } from "http";
-import { DeviceOS } from "@prisma/client";
+import { DeviceOS, UserType } from "@prisma/client";
 import {
   afterAll,
   beforeAll,
@@ -49,7 +49,8 @@ beforeEach(async () => {
 describe("/users API", () => {
   test("POST /users creates a new user", async () => {
     const createUserBody: CreateUserRequestBody = {
-      turnkeyUserId: "test-users-turnkey-user-id",
+      userId: "test-users-turnkey-user-id",
+      userType: UserType.turnkey,
       device: {
         os: DeviceOS.ios,
         name: "iPhone 14",
@@ -76,7 +77,8 @@ describe("/users API", () => {
     expect(response.status).toBe(201);
 
     const user = (await response.json()) as CreatedReturnedUser;
-    expect(user.turnkeyUserId).toBe(createUserBody.turnkeyUserId);
+    expect(user.userId).toBe(createUserBody.userId);
+    expect(user.userType).toBe(createUserBody.userType);
     expect(user.id).toBeDefined();
     expect(user.device.id).toBeDefined();
     expect(user.device.os).toBe(createUserBody.device.os);
@@ -99,7 +101,8 @@ describe("/users API", () => {
   test("GET /users/me returns current user", async () => {
     // First create a user
     const createUserBody: CreateUserRequestBody = {
-      turnkeyUserId: "test-turnkey-user-id",
+      userId: "test-turnkey-user-id",
+      userType: UserType.turnkey,
       device: {
         os: DeviceOS.ios,
         name: "iPhone 14",

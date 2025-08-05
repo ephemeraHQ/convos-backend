@@ -1,5 +1,5 @@
 import type { Server } from "http";
-import { DeviceOS, type Device } from "@prisma/client";
+import { DeviceOS, UserType, type Device } from "@prisma/client";
 import {
   afterAll,
   beforeAll,
@@ -62,7 +62,8 @@ describe("/devices API", () => {
   test("POST /devices/:userId creates a new device", async () => {
     // Create test user first via API
     const createUserBody: CreateUserRequestBody = {
-      turnkeyUserId: "test-devices-turnkey-user-id",
+      userId: "test-devices-turnkey-user-id",
+      userType: UserType.turnkey,
       device: {
         os: DeviceOS.ios,
         name: "Test Initial Device",
@@ -114,7 +115,8 @@ describe("/devices API", () => {
   test("GET /devices/:userId/:deviceId returns 404 for non-existent device", async () => {
     // Create test user first via API
     const createUserBody: CreateUserRequestBody = {
-      turnkeyUserId: "test-devices-turnkey-user-id-2",
+      userId: "test-devices-turnkey-user-id-2",
+      userType: UserType.turnkey,
       device: {
         os: DeviceOS.ios,
         name: "Test Initial Device",
@@ -153,7 +155,8 @@ describe("/devices API", () => {
   test("GET /devices/:userId/:deviceId returns device when exists", async () => {
     // Create test user first via API
     const createUserBody: CreateUserRequestBody = {
-      turnkeyUserId: "test-devices-turnkey-user-id-3",
+      userId: "test-devices-turnkey-user-id-3",
+      userType: UserType.turnkey,
       device: {
         os: DeviceOS.ios,
         name: "Test Initial Device",
@@ -213,7 +216,8 @@ describe("/devices API", () => {
   test("GET /devices/:userId returns all devices for a user", async () => {
     // Create test user first via API
     const createUserBody: CreateUserRequestBody = {
-      turnkeyUserId: "test-devices-turnkey-user-id-4",
+      userId: "test-devices-turnkey-user-id-4",
+      userType: UserType.turnkey,
       device: {
         os: DeviceOS.ios,
         name: "Test Initial Device",
@@ -276,7 +280,8 @@ describe("/devices API", () => {
   test("PUT /devices/:userId/:deviceId updates device", async () => {
     // Create test user first via API
     const createUserBody: CreateUserRequestBody = {
-      turnkeyUserId: "test-devices-turnkey-user-id-5",
+      userId: "test-devices-turnkey-user-id-5",
+      userType: UserType.turnkey,
       device: {
         os: DeviceOS.ios,
         name: "Test Initial Device",
@@ -347,7 +352,8 @@ describe("/devices API", () => {
   test("POST /devices/:userId validates request body", async () => {
     // Create test user first via API
     const createUserBody: CreateUserRequestBody = {
-      turnkeyUserId: "test-devices-turnkey-user-id-6",
+      userId: "test-devices-turnkey-user-id-6",
+      userType: UserType.turnkey,
       device: {
         os: DeviceOS.ios,
         name: "Test Initial Device",

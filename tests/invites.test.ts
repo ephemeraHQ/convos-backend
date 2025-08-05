@@ -1,5 +1,5 @@
 import type { Server } from "http";
-import { DeviceOS, InviteCodeStatus } from "@prisma/client";
+import { DeviceOS, InviteCodeStatus, UserType } from "@prisma/client";
 import {
   afterAll,
   beforeAll,
@@ -67,7 +67,8 @@ async function createTestUser(suffix = "", xmtpId = AUTH_USER_XMTP_ID) {
   // Create user first
   const user = await prisma.user.create({
     data: {
-      turnkeyUserId: `test-invites-turnkey-user-id${suffix}`,
+      userId: `test-invites-turnkey-user-id${suffix}`,
+      userType: UserType.turnkey,
     },
   });
 
@@ -110,7 +111,8 @@ async function createTestUser(suffix = "", xmtpId = AUTH_USER_XMTP_ID) {
 
   return {
     id: user.id,
-    turnkeyUserId: user.turnkeyUserId,
+    userId: user.userId,
+    userType: user.userType,
     device: {
       id: device.id,
       os: device.os,

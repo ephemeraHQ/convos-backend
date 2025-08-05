@@ -1,7 +1,8 @@
-import { DeviceOS } from "@prisma/client";
+import { DeviceOS, type UserType } from "@prisma/client";
 import type { Request, Response } from "express";
 import { z } from "zod";
 import { prisma } from "@/utils/prisma";
+import { UserTypeSchema } from "../../../../../prisma/generated/zod";
 import { namestoneService } from "../../../../utils/namestone";
 import {
   validateOnChainName,
@@ -9,7 +10,8 @@ import {
 } from "../../profiles/handlers/validate-profile";
 
 export const createUserRequestBodySchema = z.object({
-  turnkeyUserId: z.string(),
+  userId: z.string(),
+  userType: UserTypeSchema,
   device: z.object({
     os: z.enum(Object.keys(DeviceOS) as [DeviceOS, ...DeviceOS[]]),
     name: z.string().nullable().optional(),
@@ -31,7 +33,8 @@ export type CreateUserRequestBody = z.infer<typeof createUserRequestBodySchema>;
 
 export type CreatedReturnedUser = {
   id: string;
-  turnkeyUserId: string;
+  userId: string;
+  userType: UserType;
   device: {
     id: string;
     os: DeviceOS;
@@ -98,7 +101,8 @@ export async function createUser(
     // Create user
     const createdUser = await prisma.user.create({
       data: {
-        turnkeyUserId: body.turnkeyUserId,
+        userId: body.userId,
+        userType: body.userType,
         devices: {
           create: {
             os: body.device.os,
@@ -112,7 +116,10 @@ export async function createUser(
                     xmtpId: body.identity.xmtpId,
                     user: {
                       connect: {
-                        turnkeyUserId: body.turnkeyUserId,
+                        userType_userId: {
+                          userId: body.userId,
+                          userType: body.userType,
+                        },
                       },
                     },
                     profile: {
@@ -132,7 +139,8 @@ export async function createUser(
       },
       select: {
         id: true,
-        turnkeyUserId: true,
+        userId: true,
+        userType: true,
         devices: {
           select: {
             id: true,
@@ -182,7 +190,8 @@ export async function createUser(
 
     const returnedUser: CreatedReturnedUser = {
       id: createdUser.id,
-      turnkeyUserId: createdUser.turnkeyUserId,
+      userId: createdUser.userId,
+      userType: createdUser.userType,
       device: {
         id: createdDevice.id,
         os: createdDevice.os,

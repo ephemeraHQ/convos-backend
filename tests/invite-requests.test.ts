@@ -1,5 +1,5 @@
 import type { Server } from "http";
-import { DeviceOS, InviteCodeRequestStatus } from "@prisma/client";
+import { DeviceOS, InviteCodeRequestStatus, UserType } from "@prisma/client";
 import {
   afterAll,
   beforeAll,
@@ -59,7 +59,8 @@ async function createTestUsers() {
   // Create invite creator user
   const creatorUser = await prisma.user.create({
     data: {
-      turnkeyUserId: "test-creator-user",
+      userId: "test-creator-user",
+      userType: UserType.turnkey,
       devices: {
         create: {
           os: DeviceOS.ios,
@@ -86,7 +87,8 @@ async function createTestUsers() {
   // Create requester user
   const requesterUser = await prisma.user.create({
     data: {
-      turnkeyUserId: "test-requester-user",
+      userId: "test-requester-user",
+      userType: UserType.turnkey,
       devices: {
         create: {
           os: DeviceOS.android,

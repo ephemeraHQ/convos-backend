@@ -1,5 +1,5 @@
 import type { Server } from "http";
-import { DeviceOS, type ConversationMetadata } from "@prisma/client";
+import { DeviceOS, UserType, type ConversationMetadata } from "@prisma/client";
 import {
   afterAll,
   beforeAll,
@@ -69,7 +69,8 @@ describe("/metadata API", () => {
   test("POST /metadata/conversation creates new metadata", async () => {
     // Create a user first with profile
     const createUserBody: CreateUserRequestBody = {
-      turnkeyUserId: "test-metadata-turnkey-user-id",
+      userId: "test-metadata-turnkey-user-id",
+      userType: UserType.turnkey,
       device: {
         os: DeviceOS.ios,
         name: "iPhone 14",
@@ -150,7 +151,8 @@ describe("/metadata API", () => {
   test("GET /metadata/conversation/:deviceIdentityId/:conversationId returns metadata when exists", async () => {
     // Create a user first
     const createUserBody: CreateUserRequestBody = {
-      turnkeyUserId: "test-metadata-turnkey-user-id",
+      userId: "test-metadata-turnkey-user-id",
+      userType: UserType.turnkey,
       device: {
         os: DeviceOS.ios,
         name: "iPhone 14",
@@ -218,7 +220,8 @@ describe("/metadata API", () => {
   test("POST /metadata/conversation updates existing metadata", async () => {
     // Create a user first
     const createUserBody: CreateUserRequestBody = {
-      turnkeyUserId: "test-metadata-turnkey-user-id",
+      userId: "test-metadata-turnkey-user-id",
+      userType: UserType.turnkey,
       device: {
         os: DeviceOS.ios,
         name: "iPhone 14",
