@@ -14,7 +14,6 @@ const DeviceUpdateInputSchema = DeviceSchema.pick({
   pushToken: true,
   pushTokenType: true,
   apnsEnv: true,
-  expoToken: true,
   appVersion: true,
   appBuildNumber: true,
 }).partial();

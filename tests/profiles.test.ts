@@ -53,6 +53,7 @@ const createUserBody: CreateUserRequestBody = {
   userId: "test-profiles-turnkey-user-id",
   userType: UserType.turnkey,
   device: {
+    deviceId: "test-device-id",
     os: DeviceOS.ios,
     name: "iPhone 14",
   },
@@ -71,6 +72,7 @@ const firstUserBody: CreateUserRequestBody = {
   userId: "test-profiles-turnkey-user-id-6",
   userType: UserType.turnkey,
   device: {
+    deviceId: "test-device-id-6",
     os: DeviceOS.ios,
     name: "iPhone 14 Pro",
   },
@@ -89,6 +91,7 @@ const secondUserBody: CreateUserRequestBody = {
   userId: "test-profiles-turnkey-user-id-7",
   userType: UserType.turnkey,
   device: {
+    deviceId: "test-device-id-7",
     os: DeviceOS.ios,
     name: "iPhone 14",
   },

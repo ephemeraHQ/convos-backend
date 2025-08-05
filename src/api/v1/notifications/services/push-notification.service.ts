@@ -3,10 +3,14 @@ import type { Request } from "express";
 import type { NotificationResponse } from "@/notifications/client";
 import { prisma } from "@/utils/prisma";
 import { createApnsService, type ApnsPushService } from "./apns-push.service";
-import {
-  sendExpoPushNotification,
-  type PushMessageData,
-} from "./expo-push.service";
+
+export interface PushMessageData extends Record<string, unknown> {
+  contentTopic: string;
+  messageType: string;
+  encryptedMessage: string;
+  timestamp: string;
+  ethAddress?: string;
+}
 
 export class PushNotificationService {
   private apnsService: ApnsPushService | null;
@@ -45,15 +49,6 @@ export class PushNotificationService {
     let result: { success: boolean; error?: string };
 
     switch (pushTokenType) {
-      case "expo":
-        result = await sendExpoPushNotification({
-          device,
-          notification,
-          messageData,
-          req,
-        });
-        break;
-
       case "apns":
         if (!this.apnsService) {
           req.log.error("APNS service not configured");

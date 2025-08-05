@@ -43,7 +43,6 @@ enum DeviceOS {
 
 enum PushTokenType {
   apns
-  expo
   fcm
 }
 
@@ -54,13 +53,13 @@ enum ApnsEnvironment {
 
 model Device {
   id                String               @id @default(uuid())
+  deviceId          String               @unique
   userId            String
   name              String?
   os                DeviceOS
   pushToken         String?              @db.Text
   pushTokenType     PushTokenType        @default(apns)
   apnsEnv           ApnsEnvironment?
-  expoToken         String? // Legacy, to be deprecated
   appVersion        String?
   appBuildNumber    String?
   createdAt         DateTime             @default(now())
@@ -69,7 +68,6 @@ model Device {
   pushFailures      Int                  @default(0)
   user              User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
   identities        IdentitiesOnDevice[]
-
 }
 
 model DeviceIdentity {

@@ -63,9 +63,9 @@ async function createTestUsers() {
       userType: UserType.turnkey,
       devices: {
         create: {
+          deviceId: "test-device-id-creator",
           os: DeviceOS.ios,
           name: "Test Creator Device",
-          expoToken: "ExponentPushToken[test-creator-token]",
         },
       },
       DeviceIdentity: {
@@ -91,9 +91,9 @@ async function createTestUsers() {
       userType: UserType.turnkey,
       devices: {
         create: {
+          deviceId: "test-device-id-requester",
           os: DeviceOS.android,
           name: "Test Requester Device",
-          expoToken: "ExponentPushToken[test-requester-token]",
         },
       },
       DeviceIdentity: {

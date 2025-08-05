@@ -53,6 +53,7 @@ beforeEach(async () => {
 
 describe("/identities API", () => {
   const testDeviceId = "test-device-id";
+  const testDeviceUniqueId = "test-device-unique-id";
   const testUserId = "test-user-id";
   const testDeviceName = "Test Device";
   const testDeviceOs = "ios";
@@ -63,6 +64,7 @@ describe("/identities API", () => {
     await prisma.device.create({
       data: {
         id: testDeviceId,
+        deviceId: testDeviceUniqueId,
         name: testDeviceName,
         os: testDeviceOs,
         user: {

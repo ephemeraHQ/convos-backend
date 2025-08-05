@@ -65,6 +65,7 @@ describe("/devices API", () => {
       userId: "test-devices-turnkey-user-id",
       userType: UserType.turnkey,
       device: {
+        deviceId: "test-initial-device-id",
         os: DeviceOS.ios,
         name: "Test Initial Device",
       },
@@ -96,6 +97,7 @@ describe("/devices API", () => {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
+        deviceId: "test-new-device-id",
         name: "Test Device",
         os: DeviceOS.ios,
         pushToken: "test-push-token",
@@ -106,6 +108,7 @@ describe("/devices API", () => {
 
     expect(response.status).toBe(201);
     expect(device.name).toBe("Test Device");
+    expect(device.deviceId).toBe("test-new-device-id");
     expect(device.os).toBe(DeviceOS.ios);
     expect(device.pushToken).toBe("test-push-token");
     expect(device.userId).toBe(userId);
@@ -118,6 +121,7 @@ describe("/devices API", () => {
       userId: "test-devices-turnkey-user-id-2",
       userType: UserType.turnkey,
       device: {
+        deviceId: "test-device-id-2",
         os: DeviceOS.ios,
         name: "Test Initial Device",
       },
@@ -158,6 +162,7 @@ describe("/devices API", () => {
       userId: "test-devices-turnkey-user-id-3",
       userType: UserType.turnkey,
       device: {
+        deviceId: "test-device-id-3",
         os: DeviceOS.ios,
         name: "Test Initial Device",
       },
@@ -192,6 +197,7 @@ describe("/devices API", () => {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
+          deviceId: "test-new-device-id-3",
           name: "Test Device",
           os: DeviceOS.android,
           pushToken: "test-push-token",
@@ -209,6 +215,7 @@ describe("/devices API", () => {
     expect(response.status).toBe(200);
     expect(device.id).toBe(createdDevice.id);
     expect(device.name).toBe("Test Device");
+    expect(device.deviceId).toBe("test-new-device-id-3");
     expect(device.os).toBe(DeviceOS.android);
     expect(device.pushToken).toBe("test-push-token");
   });
@@ -219,6 +226,7 @@ describe("/devices API", () => {
       userId: "test-devices-turnkey-user-id-4",
       userType: UserType.turnkey,
       device: {
+        deviceId: "test-device-id-4",
         os: DeviceOS.ios,
         name: "Test Initial Device",
       },
@@ -251,6 +259,7 @@ describe("/devices API", () => {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
+        deviceId: "test-device-id-4-1",
         name: "Device 1",
         os: DeviceOS.ios,
       }),
@@ -261,6 +270,7 @@ describe("/devices API", () => {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
+        deviceId: "test-device-id-4-2",
         name: "Device 2",
         os: DeviceOS.android,
       }),
@@ -283,6 +293,7 @@ describe("/devices API", () => {
       userId: "test-devices-turnkey-user-id-5",
       userType: UserType.turnkey,
       device: {
+        deviceId: "test-device-id-5",
         os: DeviceOS.ios,
         name: "Test Initial Device",
       },
@@ -317,6 +328,7 @@ describe("/devices API", () => {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
+          deviceId: "test-device-id-5-1",
           name: "Old Name",
           os: DeviceOS.ios,
           pushToken: "old-token",
@@ -345,6 +357,7 @@ describe("/devices API", () => {
     expect(updateResponse.status).toBe(200);
     expect(updatedDevice.id).toBe(createdDevice.id);
     expect(updatedDevice.name).toBe("New Name");
+    expect(updatedDevice.deviceId).toBe(createdDevice.deviceId);
     expect(updatedDevice.os).toBe(DeviceOS.android);
     expect(updatedDevice.pushToken).toBe("new-token");
   });
@@ -355,6 +368,7 @@ describe("/devices API", () => {
       userId: "test-devices-turnkey-user-id-6",
       userType: UserType.turnkey,
       device: {
+        deviceId: "test-device-id-6",
         os: DeviceOS.ios,
         name: "Test Initial Device",
       },

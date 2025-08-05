@@ -4,19 +4,18 @@ import { prisma } from "@/utils/prisma";
 import { DeviceSchema } from "../../../../../prisma/generated/zod";
 
 export const DeviceInputSchema = DeviceSchema.pick({
+  deviceId: true,
   name: true,
   os: true,
   pushToken: true,
   pushTokenType: true,
   apnsEnv: true,
-  expoToken: true,
   appVersion: true,
   appBuildNumber: true,
 }).partial({
   pushToken: true,
   pushTokenType: true,
   apnsEnv: true,
-  expoToken: true,
   appVersion: true,
   appBuildNumber: true,
 });

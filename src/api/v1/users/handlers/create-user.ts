@@ -13,6 +13,7 @@ export const createUserRequestBodySchema = z.object({
   userId: z.string(),
   userType: UserTypeSchema,
   device: z.object({
+    deviceId: z.string(),
     os: z.enum(Object.keys(DeviceOS) as [DeviceOS, ...DeviceOS[]]),
     name: z.string().nullable().optional(),
   }),
@@ -37,6 +38,7 @@ export type CreatedReturnedUser = {
   userType: UserType;
   device: {
     id: string;
+    deviceId: string;
     os: DeviceOS;
     name: string | null;
   };
@@ -105,6 +107,7 @@ export async function createUser(
         userType: body.userType,
         devices: {
           create: {
+            deviceId: body.device.deviceId,
             os: body.device.os,
             name: body.device.name,
             identities: {
@@ -144,6 +147,7 @@ export async function createUser(
         devices: {
           select: {
             id: true,
+            deviceId: true,
             os: true,
             name: true,
             identities: {
@@ -194,6 +198,7 @@ export async function createUser(
       userType: createdUser.userType,
       device: {
         id: createdDevice.id,
+        deviceId: createdDevice.deviceId,
         os: createdDevice.os,
         name: createdDevice.name,
       },

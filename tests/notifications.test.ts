@@ -82,7 +82,12 @@ describe("/notifications API - Register/Unregister (Auth Required)", () => {
     testIdentityId = identity.id;
 
     const device = await prisma.device.create({
-      data: { userId: testUserId, name: testDeviceName, os: DeviceOS.ios },
+      data: {
+        userId: testUserId,
+        deviceId: "test-device-id",
+        name: testDeviceName,
+        os: DeviceOS.ios,
+      },
     });
     testDeviceId = device.id;
 
@@ -116,9 +121,8 @@ describe("/notifications API - Register/Unregister (Auth Required)", () => {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           deviceId: testDeviceId,
-          expoToken: "test-expo-token-register",
           pushToken: "test-push-token-register",
-          pushTokenType: "expo" as const,
+          pushTokenType: "apns" as const,
           installations: [
             {
               identityId: testIdentityId,
@@ -145,7 +149,7 @@ describe("/notifications API - Register/Unregister (Auth Required)", () => {
     const device = await prisma.device.findUnique({
       where: { id: testDeviceId },
     });
-    expect(device?.expoToken).toBe("test-expo-token-register");
+    expect(device?.pushToken).toBe("test-push-token-register");
   });
 
   test("POST /notifications/register validates request body (missing fields)", async () => {
@@ -156,7 +160,6 @@ describe("/notifications API - Register/Unregister (Auth Required)", () => {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           deviceId: testDeviceId,
-          expoToken: "test-expo-token-register",
           pushToken: "test-push-token-register",
         }),
       },
@@ -174,9 +177,8 @@ describe("/notifications API - Register/Unregister (Auth Required)", () => {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           deviceId: "wrong-device-id",
-          expoToken: "test-expo-token-forbidden",
           pushToken: "test-push-token-forbidden",
-          pushTokenType: "expo" as const,
+          pushTokenType: "apns" as const,
           installations: [
             {
               identityId: testIdentityId,
@@ -198,9 +200,8 @@ describe("/notifications API - Register/Unregister (Auth Required)", () => {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           deviceId: testDeviceId,
-          expoToken: "token-for-unregister",
           pushToken: "token-for-unregister-push",
-          pushTokenType: "expo" as const,
+          pushTokenType: "apns" as const,
           installations: [
             {
               identityId: testIdentityId,

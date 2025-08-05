@@ -52,6 +52,7 @@ describe("/users API", () => {
       userId: "test-users-turnkey-user-id",
       userType: UserType.turnkey,
       device: {
+        deviceId: "test-device-id",
         os: DeviceOS.ios,
         name: "iPhone 14",
       },
@@ -83,6 +84,7 @@ describe("/users API", () => {
     expect(user.device.id).toBeDefined();
     expect(user.device.os).toBe(createUserBody.device.os);
     expect(user.device.name!).toBe(createUserBody.device.name!);
+    expect(user.device.deviceId).toBe(createUserBody.device.deviceId);
     expect(user.identity.id).toBeDefined();
     expect(user.identity.identityAddress).toBe(
       createUserBody.identity.identityAddress || null,
@@ -104,6 +106,7 @@ describe("/users API", () => {
       userId: "test-turnkey-user-id",
       userType: UserType.turnkey,
       device: {
+        deviceId: "test-device-id",
         os: DeviceOS.ios,
         name: "iPhone 14",
       },
