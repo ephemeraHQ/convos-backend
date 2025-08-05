@@ -1,3 +1,4 @@
+import { PushTokenType } from "@prisma/client";
 import type { Request, Response } from "express";
 import { z } from "zod";
 import { createNotificationClient } from "@/notifications/client";
@@ -12,6 +13,11 @@ const currentRegistrationSchema = z.object({
   deviceId: z.string(),
   pushToken: z.string(),
   expoToken: z.string(),
+  // Default to expo for backward compatibility with existing apps that don't specify pushTokenType
+  pushTokenType: z
+    .nativeEnum(PushTokenType)
+    .optional()
+    .default(PushTokenType.expo),
   // List of installations to register
   // We will also check for any other identities on device that don't have any of those installations and delete them
   installations: z.array(installationItemSchema),
@@ -155,6 +161,7 @@ async function handleCurrentRegistration(args: {
           data: {
             expoToken: body.expoToken,
             pushToken: body.pushToken,
+            pushTokenType: body.pushTokenType,
           },
         });
 

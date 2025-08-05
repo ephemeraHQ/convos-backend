@@ -118,6 +118,7 @@ describe("/notifications API - Register/Unregister (Auth Required)", () => {
           deviceId: testDeviceId,
           expoToken: "test-expo-token-register",
           pushToken: "test-push-token-register",
+          pushTokenType: "expo" as const,
           installations: [
             {
               identityId: testIdentityId,
@@ -175,6 +176,7 @@ describe("/notifications API - Register/Unregister (Auth Required)", () => {
           deviceId: "wrong-device-id",
           expoToken: "test-expo-token-forbidden",
           pushToken: "test-push-token-forbidden",
+          pushTokenType: "expo" as const,
           installations: [
             {
               identityId: testIdentityId,
@@ -198,6 +200,7 @@ describe("/notifications API - Register/Unregister (Auth Required)", () => {
           deviceId: testDeviceId,
           expoToken: "token-for-unregister",
           pushToken: "token-for-unregister-push",
+          pushTokenType: "expo" as const,
           installations: [
             {
               identityId: testIdentityId,

@@ -13,5 +13,11 @@
       "@/*": ["./src/*"]
     }
   },
-  "include": ["src/**/*", "prisma/**/*", "tests/**/*", "dev/scripts/**/*"]
+  "include": [
+    "src/**/*",
+    "prisma/**/*",
+    "tests/**/*",
+    "dev/scripts/**/*",
+    "scripts/**/*"
+  ]
 }

@@ -12,6 +12,8 @@ const DeviceUpdateInputSchema = DeviceSchema.pick({
   name: true,
   os: true,
   pushToken: true,
+  pushTokenType: true,
+  apnsEnv: true,
   expoToken: true,
   appVersion: true,
   appBuildNumber: true,
@@ -53,7 +55,13 @@ export async function updateDeviceHandler(
         id: deviceId,
         userId,
       },
-      data: validatedData,
+      data: {
+        ...validatedData,
+        updatedAt: new Date(),
+        ...((validatedData.pushToken ||
+          validatedData.pushTokenType ||
+          validatedData.apnsEnv) && { pushFailures: 0 }),
+      },
     });
 
     res.json(device);
