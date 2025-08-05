@@ -1,21 +1,18 @@
 #!/usr/bin/env bun
-
-// Load environment variables from .env file
+import type { Request } from "express";
 import { createApnsService } from "@/api/v1/notifications/services/apns-push.service";
 import type { NotificationResponse } from "@/notifications/client";
 import { prisma } from "@/utils/prisma";
 
-process.loadEnvFile?.(".env");
-
 // Mock logger to replace req.log
 const mockLogger = {
-  info: (data: any, message?: string) => {
+  info: (data: unknown, message?: string) => {
     console.log(`[INFO] ${message || ""}`, data);
   },
-  error: (data: any, message?: string) => {
+  error: (data: unknown, message?: string) => {
     console.error(`[ERROR] ${message || ""}`, data);
   },
-  warn: (data: any, message?: string) => {
+  warn: (data: unknown, message?: string) => {
     console.warn(`[WARN] ${message || ""}`, data);
   },
 };
@@ -23,7 +20,7 @@ const mockLogger = {
 // Mock request object for the APNS service
 const mockRequest = {
   log: mockLogger,
-} as any;
+} as Request;
 
 interface TestPushArgs {
   userId: string;
@@ -36,8 +33,8 @@ interface TestPushArgs {
 async function sendTestPushNotification(args: TestPushArgs) {
   const {
     userId,
-    title = "Test Notification",
-    body = "This is a test push notification",
+    title: _title = "Test Notification",
+    body: _body = "This is a test push notification",
     isSilent = false,
     forceApnsEnv = null,
   } = args;
@@ -246,7 +243,7 @@ Environment Variables Required:
 
 // Run if this file is executed directly
 if (import.meta.main) {
-  main().catch((error) => {
+  main().catch((error: unknown) => {
     console.error("💥 Unhandled error:", error);
     process.exit(1);
   });

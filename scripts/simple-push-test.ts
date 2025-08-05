@@ -1,10 +1,8 @@
 #!/usr/bin/env bun
-
-// Load environment variables from .env file
+import type { Request } from "express";
 import { createApnsService } from "@/api/v1/notifications/services/apns-push.service";
+import type { NotificationResponse } from "@/notifications/client";
 import { prisma } from "@/utils/prisma";
-
-process.loadEnvFile?.(".env");
 
 // Simple version - just provide a userId and it will send a basic test notification
 async function quickPushTest(userId: string) {
@@ -33,7 +31,7 @@ async function quickPushTest(userId: string) {
   }
 
   // Mock data
-  const mockNotification = {
+  const mockNotification: NotificationResponse = {
     subscription: { is_silent: false },
     message: {
       content_topic: "test-topic",
@@ -41,7 +39,7 @@ async function quickPushTest(userId: string) {
       timestamp_ns: Date.now().toString() + "000000",
     },
     message_context: { message_type: "test" },
-  } as any;
+  } as NotificationResponse;
 
   const messageData = {
     contentTopic: "test-topic",
@@ -56,7 +54,7 @@ async function quickPushTest(userId: string) {
       error: console.error,
       warn: console.warn,
     },
-  } as any;
+  } as Request;
 
   console.log("📤 Sending notification...");
 
@@ -82,4 +80,6 @@ if (!userId) {
 
 quickPushTest(userId)
   .then(() => prisma.$disconnect())
-  .catch(console.error);
+  .catch((error: unknown) => {
+    console.error(error);
+  });
