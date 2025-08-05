@@ -76,7 +76,7 @@ model DeviceIdentity {
   id                   String                         @id @default(uuid())
   userId               String
   xmtpId               String // This is the inboxID
-  turnkeyAddress       String? // Optional Turnkey address
+  identityAddress      String? // Optional Identity address (for instance Turnkey address)
   createdAt            DateTime                       @default(now())
   updatedAt            DateTime                       @updatedAt
   profile              Profile?
