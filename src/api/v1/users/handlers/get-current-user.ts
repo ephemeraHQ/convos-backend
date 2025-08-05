@@ -11,7 +11,7 @@ type QueryParams = z.infer<typeof querySchema>;
 
 export type ReturnedCurrentUser = {
   id: string;
-  identities: Array<Pick<DeviceIdentity, "id" | "turnkeyAddress" | "xmtpId">>;
+  identities: Array<Pick<DeviceIdentity, "id" | "identityAddress" | "xmtpId">>;
 };
 
 export async function getCurrentUser(
@@ -40,7 +40,7 @@ export async function getCurrentUser(
                 identity: {
                   select: {
                     id: true,
-                    turnkeyAddress: true,
+                    identityAddress: true,
                     xmtpId: true,
                   },
                 },
@@ -58,14 +58,14 @@ export async function getCurrentUser(
 
     const uniqueIdentities = new Map<
       string,
-      Pick<DeviceIdentity, "id" | "turnkeyAddress" | "xmtpId">
+      Pick<DeviceIdentity, "id" | "identityAddress" | "xmtpId">
     >();
 
     user.devices.forEach((device) => {
       device.identities.forEach(({ identity }) => {
         uniqueIdentities.set(identity.id, {
           id: identity.id,
-          turnkeyAddress: identity.turnkeyAddress,
+          identityAddress: identity.identityAddress,
           xmtpId: identity.xmtpId,
         });
       });

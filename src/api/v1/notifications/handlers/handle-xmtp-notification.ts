@@ -85,7 +85,7 @@ export async function handleXmtpNotification(req: Request, res: Response) {
     const { device, identity } = identityOnDevice;
     const pushTokenType = device.pushTokenType;
 
-    // For APNS (new Convos architecture for OTR), use xmtpId - no turnkeyAddress needed
+    // For APNS (new Convos architecture for OTR), use xmtpId - no identityAddress needed
     if (pushTokenType === "apns") {
       // Skip test tokens
       if (device.expoToken === TEST_TOKEN) {
@@ -98,7 +98,7 @@ export async function handleXmtpNotification(req: Request, res: Response) {
       const result = await pushNotificationService.sendPushNotification({
         device,
         notification,
-        turnkeyAddress: null,
+        identityAddress: null,
         req,
       });
 
@@ -119,12 +119,12 @@ export async function handleXmtpNotification(req: Request, res: Response) {
       return;
     }
 
-    // For Expo (legacy), require turnkeyAddress
-    const turnkeyAddress = identity.turnkeyAddress;
+    // For Expo (legacy), require identityAddress
+    const identityAddress = identity.identityAddress;
 
-    if (!turnkeyAddress) {
+    if (!identityAddress) {
       req.log.error(
-        `DeviceIdentity ${identity.id} for xmtpInstallationId ${notification.installation.id} has no turnkeyAddress (required for Expo notifications)`,
+        `DeviceIdentity ${identity.id} for xmtpInstallationId ${notification.installation.id} has no identityAddress (required for Expo notifications)`,
       );
       res.status(200).end();
       return;
@@ -137,11 +137,11 @@ export async function handleXmtpNotification(req: Request, res: Response) {
       return;
     }
 
-    // Use the unified push notification service with turnkeyAddress for Expo
+    // Use the unified push notification service with identityAddress for Expo
     const result = await pushNotificationService.sendPushNotification({
       device,
       notification,
-      turnkeyAddress,
+      identityAddress,
       req,
     });
 
@@ -188,12 +188,12 @@ async function handleLegacyNotification(
     device &&
     device.expoToken &&
     device.identities.length > 0 &&
-    device.identities[0]?.identity?.turnkeyAddress
+    device.identities[0]?.identity?.identityAddress
   ) {
     try {
       await sendLegacyExpoPushNotification({
         notification,
-        ethAddress: device.identities[0].identity.turnkeyAddress,
+        ethAddress: device.identities[0].identity.identityAddress,
         expoPushToken: device.expoToken,
         req,
       });

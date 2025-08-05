@@ -76,7 +76,7 @@ describe("/metadata API", () => {
         name: "iPhone 14",
       },
       identity: {
-        turnkeyAddress: "test-turnkey-address",
+        identityAddress: "test-turnkey-address",
         xmtpId: AUTH_XMTP_ID,
       },
       profile: {
@@ -158,7 +158,7 @@ describe("/metadata API", () => {
         name: "iPhone 14",
       },
       identity: {
-        turnkeyAddress: "test-turnkey-address",
+        identityAddress: "test-turnkey-address",
         xmtpId: AUTH_XMTP_ID,
       },
       profile: {
@@ -227,7 +227,7 @@ describe("/metadata API", () => {
         name: "iPhone 14",
       },
       identity: {
-        turnkeyAddress: "test-turnkey-address",
+        identityAddress: "test-turnkey-address",
         xmtpId: AUTH_XMTP_ID,
       },
       profile: {

@@ -45,7 +45,7 @@ export const getBatchProfiles: RequestHandler<
         deviceIdentity: {
           select: {
             xmtpId: true,
-            turnkeyAddress: true,
+            identityAddress: true,
           },
         },
       },
@@ -63,7 +63,7 @@ export const getBatchProfiles: RequestHandler<
           description: profile.description,
           avatar: profile.avatar,
           xmtpId: profile.deviceIdentity.xmtpId,
-          turnkeyAddress: profile.deviceIdentity.turnkeyAddress,
+          identityAddress: profile.deviceIdentity.identityAddress,
         };
       }
     });

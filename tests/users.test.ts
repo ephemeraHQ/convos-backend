@@ -56,7 +56,7 @@ describe("/users API", () => {
         name: "iPhone 14",
       },
       identity: {
-        turnkeyAddress: "test-turnkey-address",
+        identityAddress: "test-turnkey-address",
         xmtpId: "test-xmtp-id",
         xmtpInstallationId: "test-xmtp-installation-id",
       },
@@ -84,8 +84,8 @@ describe("/users API", () => {
     expect(user.device.os).toBe(createUserBody.device.os);
     expect(user.device.name!).toBe(createUserBody.device.name!);
     expect(user.identity.id).toBeDefined();
-    expect(user.identity.turnkeyAddress).toBe(
-      createUserBody.identity.turnkeyAddress || null,
+    expect(user.identity.identityAddress).toBe(
+      createUserBody.identity.identityAddress || null,
     );
     expect(user.identity.xmtpId).toBe(createUserBody.identity.xmtpId);
     expect(user.profile.name).toBe(createUserBody.profile.name ?? null);
@@ -108,7 +108,7 @@ describe("/users API", () => {
         name: "iPhone 14",
       },
       identity: {
-        turnkeyAddress: "test-turnkey-address",
+        identityAddress: "test-turnkey-address",
         xmtpId: "test-xmtp-id",
         xmtpInstallationId: "test-xmtp-installation-id",
       },
@@ -140,7 +140,7 @@ describe("/users API", () => {
     const user = (await response.json()) as ReturnedCurrentUser;
     expect(user.id).toBeDefined();
     expect(user.identities).toHaveLength(1);
-    expect(user.identities[0].turnkeyAddress).toBe("test-turnkey-address");
+    expect(user.identities[0].identityAddress).toBe("test-turnkey-address");
     expect(user.identities[0].xmtpId).toBe("test-xmtp-id");
   });
 });

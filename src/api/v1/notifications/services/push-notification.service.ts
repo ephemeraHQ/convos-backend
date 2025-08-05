@@ -18,10 +18,10 @@ export class PushNotificationService {
   async sendPushNotification(args: {
     device: Device;
     notification: NotificationResponse;
-    turnkeyAddress: string | null;
+    identityAddress: string | null;
     req: Request;
   }): Promise<{ success: boolean; shouldCleanup?: boolean }> {
-    const { device, notification, turnkeyAddress, req } = args;
+    const { device, notification, identityAddress, req } = args;
 
     // Check if device has too many push failures
     if (device.pushFailures > 10) {
@@ -36,7 +36,7 @@ export class PushNotificationService {
       messageType: notification.message_context.message_type,
       encryptedMessage: notification.message.message,
       timestamp: notification.message.timestamp_ns,
-      ...(turnkeyAddress && { ethAddress: turnkeyAddress }),
+      ...(identityAddress && { ethAddress: identityAddress }),
     };
 
     // Determine which push service to use

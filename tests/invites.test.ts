@@ -77,7 +77,7 @@ async function createTestUser(suffix = "", xmtpId = AUTH_USER_XMTP_ID) {
     data: {
       userId: user.id,
       xmtpId,
-      turnkeyAddress: `test-turnkey-address${suffix}`,
+      identityAddress: `test-turnkey-address${suffix}`,
       profile: {
         create: {
           name: `Test User${suffix}`,
@@ -120,7 +120,7 @@ async function createTestUser(suffix = "", xmtpId = AUTH_USER_XMTP_ID) {
     },
     identity: {
       id: deviceIdentity.id,
-      turnkeyAddress: deviceIdentity.turnkeyAddress,
+      identityAddress: deviceIdentity.identityAddress,
       xmtpId: deviceIdentity.xmtpId,
     },
     profile: {

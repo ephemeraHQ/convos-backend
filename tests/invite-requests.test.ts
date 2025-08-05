@@ -71,7 +71,7 @@ async function createTestUsers() {
       DeviceIdentity: {
         create: {
           xmtpId: "test-creator-xmtp-id",
-          turnkeyAddress: "0x1234creator",
+          identityAddress: "0x1234creator",
           profile: {
             create: {
               name: "Test Creator",
@@ -99,7 +99,7 @@ async function createTestUsers() {
       DeviceIdentity: {
         create: {
           xmtpId: "test-xmtp-id-requester",
-          turnkeyAddress: "0x1234requester",
+          identityAddress: "0x1234requester",
           profile: {
             create: {
               name: "Test Requester",

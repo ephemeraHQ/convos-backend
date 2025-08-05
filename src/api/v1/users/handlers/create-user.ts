@@ -17,7 +17,7 @@ export const createUserRequestBodySchema = z.object({
     name: z.string().nullable().optional(),
   }),
   identity: z.object({
-    turnkeyAddress: z.string().optional(),
+    identityAddress: z.string().optional(),
     xmtpId: z.string(),
     xmtpInstallationId: z.string().optional(), // TO DO remove optional once all users have fully migrated to newer version of app
   }),
@@ -42,7 +42,7 @@ export type CreatedReturnedUser = {
   };
   identity: {
     id: string;
-    turnkeyAddress: string | null;
+    identityAddress: string | null;
     xmtpId: string | null;
   };
   profile: {
@@ -112,7 +112,7 @@ export async function createUser(
                 xmtpInstallationId: body.identity.xmtpInstallationId,
                 identity: {
                   create: {
-                    turnkeyAddress: body.identity.turnkeyAddress,
+                    identityAddress: body.identity.identityAddress,
                     xmtpId: body.identity.xmtpId,
                     user: {
                       connect: {
@@ -151,7 +151,7 @@ export async function createUser(
                 identity: {
                   select: {
                     id: true,
-                    turnkeyAddress: true,
+                    identityAddress: true,
                     xmtpId: true,
                     profile: {
                       select: {
@@ -199,7 +199,7 @@ export async function createUser(
       },
       identity: {
         id: createdIdentity.id,
-        turnkeyAddress: createdIdentity.turnkeyAddress,
+        identityAddress: createdIdentity.identityAddress,
         xmtpId: createdIdentity.xmtpId,
       },
       profile: {
@@ -211,13 +211,13 @@ export async function createUser(
       },
     };
 
-    // Register the username with Namestone only if both username and turnkeyAddress are available
-    if (createdIdentity.turnkeyAddress && createdProfile.username) {
+    // Register the username with Namestone only if both username and identityAddress are available
+    if (createdIdentity.identityAddress && createdProfile.username) {
       // Don't await to avoid blocking the user creation response
       namestoneService
         .setName({
           username: createdProfile.username,
-          address: createdIdentity.turnkeyAddress,
+          address: createdIdentity.identityAddress,
           textRecords: {
             ...(createdProfile.name && { "display.name": createdProfile.name }),
             ...(createdProfile.description && {
@@ -232,7 +232,7 @@ export async function createUser(
             {
               error: namestoneError,
               username: createdProfile.username,
-              address: createdIdentity.turnkeyAddress,
+              address: createdIdentity.identityAddress,
             },
             "Failed to register username with Namestone during user creation",
           );

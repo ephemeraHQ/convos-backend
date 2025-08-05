@@ -77,7 +77,7 @@ describe("Batch Profile endpoints", () => {
         const deviceIdentity = await prisma.deviceIdentity.create({
           data: {
             xmtpId: xmtpIds[i],
-            turnkeyAddress: `0x${i}123456789`,
+            identityAddress: `0x${i}123456789`,
             userId: testUser.id,
           },
         });

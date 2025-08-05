@@ -69,7 +69,7 @@ describe("/devices API", () => {
         name: "Test Initial Device",
       },
       identity: {
-        turnkeyAddress: "test-turnkey-address",
+        identityAddress: "test-turnkey-address",
         xmtpId: AUTH_XMTP_ID,
       },
       profile: {
@@ -122,7 +122,7 @@ describe("/devices API", () => {
         name: "Test Initial Device",
       },
       identity: {
-        turnkeyAddress: "test-turnkey-address-2",
+        identityAddress: "test-turnkey-address-2",
         xmtpId: AUTH_XMTP_ID,
       },
       profile: {
@@ -162,7 +162,7 @@ describe("/devices API", () => {
         name: "Test Initial Device",
       },
       identity: {
-        turnkeyAddress: "test-turnkey-address-3",
+        identityAddress: "test-turnkey-address-3",
         xmtpId: AUTH_XMTP_ID,
       },
       profile: {
@@ -223,7 +223,7 @@ describe("/devices API", () => {
         name: "Test Initial Device",
       },
       identity: {
-        turnkeyAddress: "test-turnkey-address-4",
+        identityAddress: "test-turnkey-address-4",
         xmtpId: AUTH_XMTP_ID,
       },
       profile: {
@@ -287,7 +287,7 @@ describe("/devices API", () => {
         name: "Test Initial Device",
       },
       identity: {
-        turnkeyAddress: "test-turnkey-address-5",
+        identityAddress: "test-turnkey-address-5",
         xmtpId: AUTH_XMTP_ID,
       },
       profile: {
@@ -359,7 +359,7 @@ describe("/devices API", () => {
         name: "Test Initial Device",
       },
       identity: {
-        turnkeyAddress: "test-turnkey-address-6",
+        identityAddress: "test-turnkey-address-6",
         xmtpId: AUTH_XMTP_ID,
       },
       profile: {

@@ -57,7 +57,7 @@ const createUserBody: CreateUserRequestBody = {
     name: "iPhone 14",
   },
   identity: {
-    turnkeyAddress: "test-turnkey-address",
+    identityAddress: "test-turnkey-address",
     xmtpId: "test-xmtp-id",
   },
   profile: {
@@ -75,7 +75,7 @@ const firstUserBody: CreateUserRequestBody = {
     name: "iPhone 14 Pro",
   },
   identity: {
-    turnkeyAddress: "test-turnkey-address-6",
+    identityAddress: "test-turnkey-address-6",
     xmtpId: "test-xmtp-id-6",
   },
   profile: {
@@ -93,7 +93,7 @@ const secondUserBody: CreateUserRequestBody = {
     name: "iPhone 14",
   },
   identity: {
-    turnkeyAddress: "test-turnkey-address-7",
+    identityAddress: "test-turnkey-address-7",
     xmtpId: "test-xmtp-id-7",
   },
   profile: {
@@ -805,7 +805,7 @@ describe("/profiles API", () => {
     const vitalikUserBody = {
       ...createUserBody,
       identity: {
-        turnkeyAddress: "test-turnkey-address",
+        identityAddress: "test-turnkey-address",
         xmtpId: "vitalik-xmtp-id", // This will return vitalik's address in the mock
       },
     };

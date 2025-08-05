@@ -57,7 +57,7 @@ describe("/notifications API - Register/Unregister (Auth Required)", () => {
   let testIdentityId: string;
   const testUserTurnkeyId = "reg-unreg-turnkey-user-id";
   const testDeviceName = "RegUnreg Test Device";
-  const testIdentityTurnkeyAddress = "reg-unreg-turnkey-address";
+  const testIdentityidentityAddress = "reg-unreg-turnkey-address";
 
   beforeEach(async () => {
     await prisma.identitiesOnDevice.deleteMany();
@@ -76,7 +76,7 @@ describe("/notifications API - Register/Unregister (Auth Required)", () => {
       data: {
         userId: testUserId,
         xmtpId: AUTH_XMTP_ID,
-        turnkeyAddress: testIdentityTurnkeyAddress,
+        identityAddress: testIdentityidentityAddress,
       },
     });
     testIdentityId = identity.id;
