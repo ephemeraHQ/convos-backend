@@ -27,7 +27,6 @@ export async function listDevicesHandler(
         devices: {
           include: {
             device: true,
-            user: true,
           },
         },
       },

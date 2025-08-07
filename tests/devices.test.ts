@@ -356,7 +356,6 @@ describe("/devices API", () => {
     expect(updateResponse.status).toBe(200);
     expect(updatedDevice.id).toBe(createdDevice.id);
     expect(updatedDevice.name).toBe("New Name");
-    expect(updatedDevice.id).toBe(createdDevice.id);
     expect(updatedDevice.os).toBe(DeviceOS.android);
     expect(updatedDevice.pushToken).toBe("new-token");
   });

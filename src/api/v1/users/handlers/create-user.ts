@@ -99,70 +99,77 @@ export async function createUser(
       }
     }
 
-    // Create user first
-    const createdUser = await prisma.user.create({
-      data: {
-        userId: body.userId,
-        userType: body.userType,
-      },
-    });
-
-    // Connect or create device
-    const device = await prisma.device.upsert({
-      where: {
-        id: body.device.id,
-      },
-      update: {},
-      create: {
-        id: body.device.id,
-        os: body.device.os,
-        name: body.device.name,
-      },
-    });
-
-    // Connect user to device
-    await prisma.usersOnDevice.upsert({
-      where: {
-        userId_deviceId: {
-          userId: createdUser.id,
-          deviceId: device.id,
-        },
-      },
-      update: {},
-      create: {
-        userId: createdUser.id,
-        deviceId: device.id,
-      },
-    });
-
-    // Create device identity
-    const deviceIdentity = await prisma.deviceIdentity.create({
-      data: {
-        userId: createdUser.id,
-        xmtpId: body.identity.xmtpId,
-        identityAddress: body.identity.identityAddress,
-        profile: {
-          create: {
-            name: body.profile.name || null,
-            username: body.profile.username || null,
-            description: body.profile.description,
-            avatar: body.profile.avatar,
+    // Execute all database operations in a transaction to ensure atomicity
+    const { createdUser, device, deviceIdentity } = await prisma.$transaction(
+      async (tx) => {
+        // Create user first
+        const createdUser = await tx.user.create({
+          data: {
+            userId: body.userId,
+            userType: body.userType,
           },
-        },
-      },
-      include: {
-        profile: true,
-      },
-    });
+        });
 
-    // Link identity to device
-    await prisma.identitiesOnDevice.create({
-      data: {
-        deviceId: device.id,
-        identityId: deviceIdentity.id,
-        xmtpInstallationId: body.identity.xmtpInstallationId,
+        // Connect or create device
+        const device = await tx.device.upsert({
+          where: {
+            id: body.device.id,
+          },
+          update: {},
+          create: {
+            id: body.device.id,
+            os: body.device.os,
+            name: body.device.name,
+          },
+        });
+
+        // Connect user to device
+        await tx.usersOnDevice.upsert({
+          where: {
+            userId_deviceId: {
+              userId: createdUser.id,
+              deviceId: device.id,
+            },
+          },
+          update: {},
+          create: {
+            userId: createdUser.id,
+            deviceId: device.id,
+          },
+        });
+
+        // Create device identity
+        const deviceIdentity = await tx.deviceIdentity.create({
+          data: {
+            userId: createdUser.id,
+            xmtpId: body.identity.xmtpId,
+            identityAddress: body.identity.identityAddress,
+            profile: {
+              create: {
+                name: body.profile.name || null,
+                username: body.profile.username || null,
+                description: body.profile.description,
+                avatar: body.profile.avatar,
+              },
+            },
+          },
+          include: {
+            profile: true,
+          },
+        });
+
+        // Link identity to device
+        await tx.identitiesOnDevice.create({
+          data: {
+            deviceId: device.id,
+            identityId: deviceIdentity.id,
+            xmtpInstallationId: body.identity.xmtpInstallationId,
+          },
+        });
+
+        return { createdUser, device, deviceIdentity };
       },
-    });
+    );
 
     if (!deviceIdentity.profile) {
       throw new Error("Profile was not created successfully");
