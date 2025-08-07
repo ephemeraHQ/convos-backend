@@ -24,6 +24,13 @@ export async function getDeviceHandler(
           },
         },
       },
+      include: {
+        devices: {
+          include: {
+            device: true,
+          },
+        },
+      },
     });
 
     if (!user) {
@@ -33,20 +40,14 @@ export async function getDeviceHandler(
       return;
     }
 
-    // Now find the device
-    const device = await prisma.device.findFirst({
-      where: {
-        id: deviceId,
-        userId,
-      },
-    });
+    const device = user.devices.find((device) => device.device.id === deviceId);
 
     if (!device) {
       res.status(404).json({ error: "Device not found" });
       return;
     }
 
-    res.json(device);
+    res.json(device.device);
   } catch {
     res.status(500).json({ error: "Failed to fetch device" });
   }

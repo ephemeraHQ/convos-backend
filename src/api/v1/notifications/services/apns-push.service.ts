@@ -3,6 +3,7 @@ import type { Device } from "@prisma/client";
 import type { Request } from "express";
 import jwt from "jsonwebtoken";
 import type { NotificationResponse } from "@/notifications/client";
+import type { PushMessageData } from "./push-notification.service";
 
 export interface ApnsConfig {
   teamId: string;
@@ -80,13 +81,7 @@ export class ApnsPushService {
   async sendPushNotification(args: {
     device: Device;
     notification: NotificationResponse;
-    messageData: {
-      contentTopic: string;
-      messageType: string;
-      encryptedMessage: string;
-      timestamp: string;
-      ethAddress?: string;
-    };
+    messageData: PushMessageData;
     req: Request;
   }): Promise<{ success: boolean; error?: string }> {
     const { device, notification, messageData, req } = args;

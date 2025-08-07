@@ -23,6 +23,13 @@ export async function listDevicesHandler(
           },
         },
       },
+      include: {
+        devices: {
+          include: {
+            device: true,
+          },
+        },
+      },
     });
 
     if (!user) {
@@ -32,9 +39,7 @@ export async function listDevicesHandler(
       return;
     }
 
-    const devices = await prisma.device.findMany({
-      where: { userId },
-    });
+    const devices = user.devices.map((device) => device.device);
 
     res.json(devices);
   } catch (error) {

@@ -1,5 +1,5 @@
 import type { Server } from "http";
-import { DeviceOS, InviteCodeStatus } from "@prisma/client";
+import { DeviceOS, InviteCodeStatus, UserType } from "@prisma/client";
 import {
   afterAll,
   beforeAll,
@@ -67,7 +67,8 @@ async function createTestUser(suffix = "", xmtpId = AUTH_USER_XMTP_ID) {
   // Create user first
   const user = await prisma.user.create({
     data: {
-      turnkeyUserId: `test-invites-turnkey-user-id${suffix}`,
+      userId: `test-invites-turnkey-user-id${suffix}`,
+      userType: UserType.turnkey,
     },
   });
 
@@ -76,7 +77,7 @@ async function createTestUser(suffix = "", xmtpId = AUTH_USER_XMTP_ID) {
     data: {
       userId: user.id,
       xmtpId,
-      turnkeyAddress: `test-turnkey-address${suffix}`,
+      identityAddress: `test-turnkey-address${suffix}`,
       profile: {
         create: {
           name: `Test User${suffix}`,
@@ -93,9 +94,17 @@ async function createTestUser(suffix = "", xmtpId = AUTH_USER_XMTP_ID) {
   // Create device
   const device = await prisma.device.create({
     data: {
-      userId: user.id,
+      id: `test-device-id${suffix}`,
       os: DeviceOS.ios,
       name: "Test Initial Device",
+    },
+  });
+
+  // Link user and device
+  await prisma.usersOnDevice.create({
+    data: {
+      userId: user.id,
+      deviceId: device.id,
     },
   });
 
@@ -110,7 +119,8 @@ async function createTestUser(suffix = "", xmtpId = AUTH_USER_XMTP_ID) {
 
   return {
     id: user.id,
-    turnkeyUserId: user.turnkeyUserId,
+    userId: user.userId,
+    userType: user.userType,
     device: {
       id: device.id,
       os: device.os,
@@ -118,7 +128,7 @@ async function createTestUser(suffix = "", xmtpId = AUTH_USER_XMTP_ID) {
     },
     identity: {
       id: deviceIdentity.id,
-      turnkeyAddress: deviceIdentity.turnkeyAddress,
+      identityAddress: deviceIdentity.identityAddress,
       xmtpId: deviceIdentity.xmtpId,
     },
     profile: {

@@ -1,5 +1,5 @@
 import type { Server } from "http";
-import { DeviceOS, type ConversationMetadata } from "@prisma/client";
+import { DeviceOS, UserType, type ConversationMetadata } from "@prisma/client";
 import {
   afterAll,
   beforeAll,
@@ -69,13 +69,15 @@ describe("/metadata API", () => {
   test("POST /metadata/conversation creates new metadata", async () => {
     // Create a user first with profile
     const createUserBody: CreateUserRequestBody = {
-      turnkeyUserId: "test-metadata-turnkey-user-id",
+      userId: "test-metadata-turnkey-user-id",
+      userType: UserType.turnkey,
       device: {
+        id: "test-device-id",
         os: DeviceOS.ios,
         name: "iPhone 14",
       },
       identity: {
-        turnkeyAddress: "test-turnkey-address",
+        identityAddress: "test-turnkey-address",
         xmtpId: AUTH_XMTP_ID,
       },
       profile: {
@@ -150,13 +152,15 @@ describe("/metadata API", () => {
   test("GET /metadata/conversation/:deviceIdentityId/:conversationId returns metadata when exists", async () => {
     // Create a user first
     const createUserBody: CreateUserRequestBody = {
-      turnkeyUserId: "test-metadata-turnkey-user-id",
+      userId: "test-metadata-turnkey-user-id",
+      userType: UserType.turnkey,
       device: {
+        id: "test-device-id",
         os: DeviceOS.ios,
         name: "iPhone 14",
       },
       identity: {
-        turnkeyAddress: "test-turnkey-address",
+        identityAddress: "test-turnkey-address",
         xmtpId: AUTH_XMTP_ID,
       },
       profile: {
@@ -218,13 +222,15 @@ describe("/metadata API", () => {
   test("POST /metadata/conversation updates existing metadata", async () => {
     // Create a user first
     const createUserBody: CreateUserRequestBody = {
-      turnkeyUserId: "test-metadata-turnkey-user-id",
+      userId: "test-metadata-turnkey-user-id",
+      userType: UserType.turnkey,
       device: {
+        id: "test-device-id",
         os: DeviceOS.ios,
         name: "iPhone 14",
       },
       identity: {
-        turnkeyAddress: "test-turnkey-address",
+        identityAddress: "test-turnkey-address",
         xmtpId: AUTH_XMTP_ID,
       },
       profile: {

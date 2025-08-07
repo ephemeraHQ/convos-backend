@@ -3,10 +3,14 @@ import type { Request } from "express";
 import type { NotificationResponse } from "@/notifications/client";
 import { prisma } from "@/utils/prisma";
 import { createApnsService, type ApnsPushService } from "./apns-push.service";
-import {
-  sendExpoPushNotification,
-  type PushMessageData,
-} from "./expo-push.service";
+
+export interface PushMessageData extends Record<string, unknown> {
+  contentTopic: string;
+  messageType: string;
+  encryptedMessage: string;
+  timestamp: string;
+  inboxId: string;
+}
 
 export class PushNotificationService {
   private apnsService: ApnsPushService | null;
@@ -18,10 +22,10 @@ export class PushNotificationService {
   async sendPushNotification(args: {
     device: Device;
     notification: NotificationResponse;
-    turnkeyAddress: string | null;
+    inboxId: string;
     req: Request;
   }): Promise<{ success: boolean; shouldCleanup?: boolean }> {
-    const { device, notification, turnkeyAddress, req } = args;
+    const { device, notification, inboxId, req } = args;
 
     // Check if device has too many push failures
     if (device.pushFailures > 10) {
@@ -36,7 +40,7 @@ export class PushNotificationService {
       messageType: notification.message_context.message_type,
       encryptedMessage: notification.message.message,
       timestamp: notification.message.timestamp_ns,
-      ...(turnkeyAddress && { ethAddress: turnkeyAddress }),
+      inboxId,
     };
 
     // Determine which push service to use
@@ -45,15 +49,6 @@ export class PushNotificationService {
     let result: { success: boolean; error?: string };
 
     switch (pushTokenType) {
-      case "expo":
-        result = await sendExpoPushNotification({
-          device,
-          notification,
-          messageData,
-          req,
-        });
-        break;
-
       case "apns":
         if (!this.apnsService) {
           req.log.error("APNS service not configured");

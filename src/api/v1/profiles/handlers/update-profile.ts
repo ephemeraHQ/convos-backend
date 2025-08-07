@@ -118,7 +118,7 @@ export async function updateProfile(
       preprocessedData.username &&
       preprocessedData.username !== existingProfile.username;
 
-    if (isUsernameChanging && deviceIdentity.turnkeyAddress) {
+    if (isUsernameChanging && deviceIdentity.identityAddress) {
       Promise.all([
         // Delete old username
         ...(existingProfile.username
@@ -133,7 +133,7 @@ export async function updateProfile(
           ? [
               namestoneService.setName({
                 username: updatedProfile.username,
-                address: deviceIdentity.turnkeyAddress,
+                address: deviceIdentity.identityAddress,
                 textRecords: {
                   ...(updatedProfile.name && {
                     "display.name": updatedProfile.name,
@@ -155,7 +155,7 @@ export async function updateProfile(
             error,
             oldUsername: existingProfile.username,
             newUsername: updatedProfile.username,
-            address: deviceIdentity.turnkeyAddress,
+            address: deviceIdentity.identityAddress,
           },
           "Failed to update Namestone name during profile update",
         );
@@ -164,14 +164,14 @@ export async function updateProfile(
       (preprocessedData.name ||
         preprocessedData.description ||
         preprocessedData.avatar) &&
-      deviceIdentity.turnkeyAddress &&
+      deviceIdentity.identityAddress &&
       updatedProfile.username // Only update if username exists
     ) {
       // If other profile fields changed but not username, update the text records
       namestoneService
         .setName({
           username: updatedProfile.username,
-          address: deviceIdentity.turnkeyAddress,
+          address: deviceIdentity.identityAddress,
           textRecords: {
             ...(updatedProfile.name && { "display.name": updatedProfile.name }),
             ...(updatedProfile.description && {
@@ -186,7 +186,7 @@ export async function updateProfile(
             {
               error,
               username: updatedProfile.username,
-              address: deviceIdentity.turnkeyAddress,
+              address: deviceIdentity.identityAddress,
             },
             "Failed to update Namestone text records during profile update",
           );

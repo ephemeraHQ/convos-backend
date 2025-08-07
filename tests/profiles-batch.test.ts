@@ -1,5 +1,5 @@
 import type { Server } from "http";
-import type { DeviceIdentity, Profile } from "@prisma/client";
+import { UserType, type DeviceIdentity, type Profile } from "@prisma/client";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import express from "express";
 import profilesRouter from "@/api/v1/profiles/profiles.router";
@@ -50,7 +50,8 @@ describe("Batch Profile endpoints", () => {
       const testUser = await prisma.user.create({
         data: {
           id: testUserId,
-          turnkeyUserId: "test-turnkey-user-id-batch-profiles",
+          userId: "test-turnkey-user-id-batch-profiles",
+          userType: UserType.turnkey,
         },
       });
 
@@ -76,7 +77,7 @@ describe("Batch Profile endpoints", () => {
         const deviceIdentity = await prisma.deviceIdentity.create({
           data: {
             xmtpId: xmtpIds[i],
-            turnkeyAddress: `0x${i}123456789`,
+            identityAddress: `0x${i}123456789`,
             userId: testUser.id,
           },
         });

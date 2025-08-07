@@ -27,7 +27,7 @@ export async function getProfile(
         deviceIdentity: {
           select: {
             xmtpId: true,
-            turnkeyAddress: true,
+            identityAddress: true,
           },
         },
       },
@@ -45,7 +45,7 @@ export async function getProfile(
       description: profile.description,
       avatar: profile.avatar,
       xmtpId: profile.deviceIdentity.xmtpId,
-      turnkeyAddress: profile.deviceIdentity.turnkeyAddress,
+      identityAddress: profile.deviceIdentity.identityAddress,
     };
 
     res.json(profileResult);

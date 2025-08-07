@@ -27,7 +27,7 @@ export async function searchProfiles(
             ? [
                 {
                   deviceIdentity: {
-                    turnkeyAddress: trimmedQuery,
+                    identityAddress: trimmedQuery,
                   },
                 },
               ]
@@ -55,7 +55,7 @@ export async function searchProfiles(
         deviceIdentity: {
           select: {
             xmtpId: true,
-            turnkeyAddress: true,
+            identityAddress: true,
           },
         },
       },
@@ -72,7 +72,7 @@ export async function searchProfiles(
             avatar: profile.avatar,
             description: profile.description,
             xmtpId: profile.deviceIdentity.xmtpId,
-            turnkeyAddress: profile.deviceIdentity.turnkeyAddress,
+            identityAddress: profile.deviceIdentity.identityAddress,
           }) satisfies ProfileRequestResult,
       ),
     );

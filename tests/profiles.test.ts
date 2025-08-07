@@ -1,5 +1,5 @@
 import type { Server } from "http";
-import { DeviceOS, type Profile } from "@prisma/client";
+import { DeviceOS, UserType, type Profile } from "@prisma/client";
 import {
   afterAll,
   beforeAll,
@@ -50,13 +50,15 @@ beforeEach(async () => {
 });
 
 const createUserBody: CreateUserRequestBody = {
-  turnkeyUserId: "test-profiles-turnkey-user-id",
+  userId: "test-profiles-turnkey-user-id",
+  userType: UserType.turnkey,
   device: {
+    id: "test-device-id",
     os: DeviceOS.ios,
     name: "iPhone 14",
   },
   identity: {
-    turnkeyAddress: "test-turnkey-address",
+    identityAddress: "test-turnkey-address",
     xmtpId: "test-xmtp-id",
   },
   profile: {
@@ -67,13 +69,15 @@ const createUserBody: CreateUserRequestBody = {
 };
 
 const firstUserBody: CreateUserRequestBody = {
-  turnkeyUserId: "test-profiles-turnkey-user-id-6",
+  userId: "test-profiles-turnkey-user-id-6",
+  userType: UserType.turnkey,
   device: {
+    id: "test-device-id-6",
     os: DeviceOS.ios,
     name: "iPhone 14 Pro",
   },
   identity: {
-    turnkeyAddress: "test-turnkey-address-6",
+    identityAddress: "test-turnkey-address-6",
     xmtpId: "test-xmtp-id-6",
   },
   profile: {
@@ -84,13 +88,15 @@ const firstUserBody: CreateUserRequestBody = {
 };
 
 const secondUserBody: CreateUserRequestBody = {
-  turnkeyUserId: "test-profiles-turnkey-user-id-7",
+  userId: "test-profiles-turnkey-user-id-7",
+  userType: UserType.turnkey,
   device: {
+    id: "test-device-id-7",
     os: DeviceOS.ios,
     name: "iPhone 14",
   },
   identity: {
-    turnkeyAddress: "test-turnkey-address-7",
+    identityAddress: "test-turnkey-address-7",
     xmtpId: "test-xmtp-id-7",
   },
   profile: {
@@ -802,7 +808,7 @@ describe("/profiles API", () => {
     const vitalikUserBody = {
       ...createUserBody,
       identity: {
-        turnkeyAddress: "test-turnkey-address",
+        identityAddress: "test-turnkey-address",
         xmtpId: "vitalik-xmtp-id", // This will return vitalik's address in the mock
       },
     };

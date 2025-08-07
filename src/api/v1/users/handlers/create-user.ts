@@ -1,7 +1,8 @@
-import { DeviceOS } from "@prisma/client";
+import { DeviceOS, type UserType } from "@prisma/client";
 import type { Request, Response } from "express";
 import { z } from "zod";
 import { prisma } from "@/utils/prisma";
+import { UserTypeSchema } from "../../../../../prisma/generated/zod";
 import { namestoneService } from "../../../../utils/namestone";
 import {
   validateOnChainName,
@@ -9,13 +10,15 @@ import {
 } from "../../profiles/handlers/validate-profile";
 
 export const createUserRequestBodySchema = z.object({
-  turnkeyUserId: z.string(),
+  userId: z.string(),
+  userType: UserTypeSchema,
   device: z.object({
+    id: z.string(),
     os: z.enum(Object.keys(DeviceOS) as [DeviceOS, ...DeviceOS[]]),
     name: z.string().nullable().optional(),
   }),
   identity: z.object({
-    turnkeyAddress: z.string().optional(),
+    identityAddress: z.string().optional(),
     xmtpId: z.string(),
     xmtpInstallationId: z.string().optional(), // TO DO remove optional once all users have fully migrated to newer version of app
   }),
@@ -31,7 +34,8 @@ export type CreateUserRequestBody = z.infer<typeof createUserRequestBodySchema>;
 
 export type CreatedReturnedUser = {
   id: string;
-  turnkeyUserId: string;
+  userId: string;
+  userType: UserType;
   device: {
     id: string;
     os: DeviceOS;
@@ -39,7 +43,7 @@ export type CreatedReturnedUser = {
   };
   identity: {
     id: string;
-    turnkeyAddress: string | null;
+    identityAddress: string | null;
     xmtpId: string | null;
   };
   profile: {
@@ -95,126 +99,122 @@ export async function createUser(
       }
     }
 
-    // Create user
-    const createdUser = await prisma.user.create({
-      data: {
-        turnkeyUserId: body.turnkeyUserId,
-        devices: {
+    // Execute all database operations in a transaction to ensure atomicity
+    const { createdUser, device, deviceIdentity } = await prisma.$transaction(
+      async (tx) => {
+        // Create user first
+        const createdUser = await tx.user.create({
+          data: {
+            userId: body.userId,
+            userType: body.userType,
+          },
+        });
+
+        // Connect or create device
+        const device = await tx.device.upsert({
+          where: {
+            id: body.device.id,
+          },
+          update: {},
           create: {
+            id: body.device.id,
             os: body.device.os,
             name: body.device.name,
-            identities: {
+          },
+        });
+
+        // Connect user to device
+        await tx.usersOnDevice.upsert({
+          where: {
+            userId_deviceId: {
+              userId: createdUser.id,
+              deviceId: device.id,
+            },
+          },
+          update: {},
+          create: {
+            userId: createdUser.id,
+            deviceId: device.id,
+          },
+        });
+
+        // Create device identity
+        const deviceIdentity = await tx.deviceIdentity.create({
+          data: {
+            userId: createdUser.id,
+            xmtpId: body.identity.xmtpId,
+            identityAddress: body.identity.identityAddress,
+            profile: {
               create: {
-                xmtpInstallationId: body.identity.xmtpInstallationId,
-                identity: {
-                  create: {
-                    turnkeyAddress: body.identity.turnkeyAddress,
-                    xmtpId: body.identity.xmtpId,
-                    user: {
-                      connect: {
-                        turnkeyUserId: body.turnkeyUserId,
-                      },
-                    },
-                    profile: {
-                      create: {
-                        name: body.profile.name || null,
-                        username: body.profile.username || null,
-                        description: body.profile.description,
-                        avatar: body.profile.avatar,
-                      },
-                    },
-                  },
-                },
+                name: body.profile.name || null,
+                username: body.profile.username || null,
+                description: body.profile.description,
+                avatar: body.profile.avatar,
               },
             },
           },
-        },
-      },
-      select: {
-        id: true,
-        turnkeyUserId: true,
-        devices: {
-          select: {
-            id: true,
-            os: true,
-            name: true,
-            identities: {
-              select: {
-                identity: {
-                  select: {
-                    id: true,
-                    turnkeyAddress: true,
-                    xmtpId: true,
-                    profile: {
-                      select: {
-                        id: true,
-                        name: true,
-                        username: true,
-                        description: true,
-                        avatar: true,
-                      },
-                    },
-                  },
-                },
-              },
-            },
+          include: {
+            profile: true,
           },
-        },
+        });
+
+        // Link identity to device
+        await tx.identitiesOnDevice.create({
+          data: {
+            deviceId: device.id,
+            identityId: deviceIdentity.id,
+            xmtpInstallationId: body.identity.xmtpInstallationId,
+          },
+        });
+
+        return { createdUser, device, deviceIdentity };
       },
-    });
+    );
 
-    if (!createdUser.devices.length) {
-      throw new Error("Device was not created successfully");
-    }
-
-    const createdDevice = createdUser.devices[0];
-
-    if (!createdDevice.identities.length) {
-      throw new Error("Identity was not created successfully");
-    }
-
-    const createdIdentity = createdDevice.identities[0].identity;
-
-    const createdProfile = createdIdentity.profile;
-    if (!createdProfile) {
+    if (!deviceIdentity.profile) {
       throw new Error("Profile was not created successfully");
     }
 
     const returnedUser: CreatedReturnedUser = {
       id: createdUser.id,
-      turnkeyUserId: createdUser.turnkeyUserId,
+      userId: createdUser.userId,
+      userType: createdUser.userType,
       device: {
-        id: createdDevice.id,
-        os: createdDevice.os,
-        name: createdDevice.name,
+        id: device.id,
+        os: device.os,
+        name: device.name,
       },
       identity: {
-        id: createdIdentity.id,
-        turnkeyAddress: createdIdentity.turnkeyAddress,
-        xmtpId: createdIdentity.xmtpId,
+        id: deviceIdentity.id,
+        identityAddress: deviceIdentity.identityAddress,
+        xmtpId: deviceIdentity.xmtpId,
       },
       profile: {
-        id: createdProfile.id,
-        name: createdProfile.name,
-        username: createdProfile.username,
-        description: createdProfile.description,
-        avatar: createdProfile.avatar,
+        id: deviceIdentity.profile.id,
+        name: deviceIdentity.profile.name,
+        username: deviceIdentity.profile.username,
+        description: deviceIdentity.profile.description,
+        avatar: deviceIdentity.profile.avatar,
       },
     };
 
-    // Register the username with Namestone only if both username and turnkeyAddress are available
-    if (createdIdentity.turnkeyAddress && createdProfile.username) {
+    // Register the username with Namestone only if both username and identityAddress are available
+    if (deviceIdentity.identityAddress && deviceIdentity.profile.username) {
       // Don't await to avoid blocking the user creation response
       namestoneService
         .setName({
-          username: createdProfile.username,
-          address: createdIdentity.turnkeyAddress,
+          username: deviceIdentity.profile.username,
+          address: deviceIdentity.identityAddress,
           textRecords: {
-            ...(createdProfile.name && { "display.name": createdProfile.name }),
-            ...(createdProfile.description && {
-              description: createdProfile.description,
+            ...(deviceIdentity.profile.name && {
+              "display.name": deviceIdentity.profile.name,
             }),
-            ...(createdProfile.avatar && { avatar: createdProfile.avatar }),
+            ...(deviceIdentity.profile.description && {
+              description: deviceIdentity.profile.description,
+            }),
+            ...(deviceIdentity.profile.avatar && {
+              avatar: deviceIdentity.profile.avatar,
+            }),
           },
         })
         .catch((namestoneError: unknown) => {
@@ -222,8 +222,8 @@ export async function createUser(
           req.log.error(
             {
               error: namestoneError,
-              username: createdProfile.username,
-              address: createdIdentity.turnkeyAddress,
+              username: deviceIdentity.profile?.username,
+              address: deviceIdentity.identityAddress,
             },
             "Failed to register username with Namestone during user creation",
           );

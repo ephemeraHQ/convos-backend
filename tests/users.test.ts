@@ -1,5 +1,5 @@
 import type { Server } from "http";
-import { DeviceOS } from "@prisma/client";
+import { DeviceOS, UserType } from "@prisma/client";
 import {
   afterAll,
   beforeAll,
@@ -49,13 +49,15 @@ beforeEach(async () => {
 describe("/users API", () => {
   test("POST /users creates a new user", async () => {
     const createUserBody: CreateUserRequestBody = {
-      turnkeyUserId: "test-users-turnkey-user-id",
+      userId: "test-users-turnkey-user-id",
+      userType: UserType.turnkey,
       device: {
+        id: "test-device-id",
         os: DeviceOS.ios,
         name: "iPhone 14",
       },
       identity: {
-        turnkeyAddress: "test-turnkey-address",
+        identityAddress: "test-turnkey-address",
         xmtpId: "test-xmtp-id",
         xmtpInstallationId: "test-xmtp-installation-id",
       },
@@ -76,14 +78,16 @@ describe("/users API", () => {
     expect(response.status).toBe(201);
 
     const user = (await response.json()) as CreatedReturnedUser;
-    expect(user.turnkeyUserId).toBe(createUserBody.turnkeyUserId);
+    expect(user.userId).toBe(createUserBody.userId);
+    expect(user.userType).toBe(createUserBody.userType);
     expect(user.id).toBeDefined();
     expect(user.device.id).toBeDefined();
     expect(user.device.os).toBe(createUserBody.device.os);
     expect(user.device.name!).toBe(createUserBody.device.name!);
+    expect(user.device.id).toBe(createUserBody.device.id);
     expect(user.identity.id).toBeDefined();
-    expect(user.identity.turnkeyAddress).toBe(
-      createUserBody.identity.turnkeyAddress || null,
+    expect(user.identity.identityAddress).toBe(
+      createUserBody.identity.identityAddress || null,
     );
     expect(user.identity.xmtpId).toBe(createUserBody.identity.xmtpId);
     expect(user.profile.name).toBe(createUserBody.profile.name ?? null);
@@ -99,13 +103,15 @@ describe("/users API", () => {
   test("GET /users/me returns current user", async () => {
     // First create a user
     const createUserBody: CreateUserRequestBody = {
-      turnkeyUserId: "test-turnkey-user-id",
+      userId: "test-turnkey-user-id",
+      userType: UserType.turnkey,
       device: {
+        id: "test-device-id",
         os: DeviceOS.ios,
         name: "iPhone 14",
       },
       identity: {
-        turnkeyAddress: "test-turnkey-address",
+        identityAddress: "test-turnkey-address",
         xmtpId: "test-xmtp-id",
         xmtpInstallationId: "test-xmtp-installation-id",
       },
@@ -137,7 +143,128 @@ describe("/users API", () => {
     const user = (await response.json()) as ReturnedCurrentUser;
     expect(user.id).toBeDefined();
     expect(user.identities).toHaveLength(1);
-    expect(user.identities[0].turnkeyAddress).toBe("test-turnkey-address");
+    expect(user.identities[0].identityAddress).toBe("test-turnkey-address");
     expect(user.identities[0].xmtpId).toBe("test-xmtp-id");
+  });
+
+  test("POST /users can create two users with different devices", async () => {
+    const createUser1Body: CreateUserRequestBody = {
+      userId: "test-users-turnkey-user-id",
+      userType: UserType.turnkey,
+      device: {
+        id: "test-device-id",
+        os: DeviceOS.ios,
+        name: "iPhone 14",
+      },
+      identity: {
+        identityAddress: "test-turnkey-address",
+        xmtpId: "test-xmtp-id",
+        xmtpInstallationId: "test-xmtp-installation-id",
+      },
+      profile: {
+        name: "Test User",
+        username: "test-user",
+      },
+    };
+
+    const response1 = await fetch("http://localhost:3001/users", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(createUser1Body),
+    });
+
+    expect(response1.status).toBe(201);
+
+    const createUser2Body: CreateUserRequestBody = {
+      userId: "test-users-turnkey-user-id-2",
+      userType: UserType.turnkey,
+      device: {
+        id: "test-device-id-2",
+        os: DeviceOS.ios,
+        name: "iPhone 14",
+      },
+      identity: {
+        identityAddress: "test-turnkey-address-2",
+        xmtpId: "test-xmtp-id-2",
+        xmtpInstallationId: "test-xmtp-installation-id-2",
+      },
+      profile: {
+        name: "Test User 2",
+        username: "test-user-2",
+      },
+    };
+
+    const response2 = await fetch("http://localhost:3001/users", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(createUser2Body),
+    });
+
+    expect(response2.status).toBe(201);
+  });
+
+  test("POST /users can create two users with same device", async () => {
+    const sameDeviceId = "test-device-id";
+    const createUser1Body: CreateUserRequestBody = {
+      userId: "test-users-turnkey-user-id",
+      userType: UserType.turnkey,
+      device: {
+        id: sameDeviceId,
+        os: DeviceOS.ios,
+        name: "iPhone 14",
+      },
+      identity: {
+        identityAddress: "test-turnkey-address",
+        xmtpId: "test-xmtp-id",
+        xmtpInstallationId: "test-xmtp-installation-id",
+      },
+      profile: {
+        name: "Test User",
+        username: "test-user",
+      },
+    };
+
+    const response1 = await fetch("http://localhost:3001/users", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(createUser1Body),
+    });
+
+    expect(response1.status).toBe(201);
+
+    const createUser2Body: CreateUserRequestBody = {
+      userId: "test-users-turnkey-user-id-2",
+      userType: UserType.turnkey,
+      device: {
+        id: sameDeviceId,
+        os: DeviceOS.ios,
+        name: "iPhone 14",
+      },
+      identity: {
+        identityAddress: "test-turnkey-address-2",
+        xmtpId: "test-xmtp-id-2",
+        xmtpInstallationId: "test-xmtp-installation-id-2",
+      },
+      profile: {
+        name: "Test User 2",
+        username: "test-user-2",
+      },
+    };
+
+    const response2 = await fetch("http://localhost:3001/users", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(createUser2Body),
+    });
+
+    expect(response2.status).toBe(201);
   });
 });

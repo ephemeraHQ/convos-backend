@@ -1,5 +1,5 @@
 import type { Server } from "http";
-import { DeviceOS, InviteCodeRequestStatus } from "@prisma/client";
+import { DeviceOS, InviteCodeRequestStatus, UserType } from "@prisma/client";
 import {
   afterAll,
   beforeAll,
@@ -59,18 +59,23 @@ async function createTestUsers() {
   // Create invite creator user
   const creatorUser = await prisma.user.create({
     data: {
-      turnkeyUserId: "test-creator-user",
+      userId: "test-creator-user",
+      userType: UserType.turnkey,
       devices: {
         create: {
-          os: DeviceOS.ios,
-          name: "Test Creator Device",
-          expoToken: "ExponentPushToken[test-creator-token]",
+          device: {
+            create: {
+              id: "test-device-id-creator",
+              os: DeviceOS.ios,
+              name: "Test Creator Device",
+            },
+          },
         },
       },
       DeviceIdentity: {
         create: {
           xmtpId: "test-creator-xmtp-id",
-          turnkeyAddress: "0x1234creator",
+          identityAddress: "0x1234creator",
           profile: {
             create: {
               name: "Test Creator",
@@ -86,18 +91,23 @@ async function createTestUsers() {
   // Create requester user
   const requesterUser = await prisma.user.create({
     data: {
-      turnkeyUserId: "test-requester-user",
+      userId: "test-requester-user",
+      userType: UserType.turnkey,
       devices: {
         create: {
-          os: DeviceOS.android,
-          name: "Test Requester Device",
-          expoToken: "ExponentPushToken[test-requester-token]",
+          device: {
+            create: {
+              id: "test-device-id-requester",
+              os: DeviceOS.android,
+              name: "Test Requester Device",
+            },
+          },
         },
       },
       DeviceIdentity: {
         create: {
           xmtpId: "test-xmtp-id-requester",
-          turnkeyAddress: "0x1234requester",
+          identityAddress: "0x1234requester",
           profile: {
             create: {
               name: "Test Requester",

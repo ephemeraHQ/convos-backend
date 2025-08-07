@@ -36,7 +36,7 @@ export async function getPublicProfile(
         deviceIdentity: {
           select: {
             xmtpId: true,
-            turnkeyAddress: true,
+            identityAddress: true,
           },
         },
       },
@@ -54,7 +54,7 @@ export async function getPublicProfile(
       description: profile.description,
       avatar: profile.avatar,
       xmtpId: profile.deviceIdentity.xmtpId,
-      turnkeyAddress: profile.deviceIdentity.turnkeyAddress,
+      identityAddress: profile.deviceIdentity.identityAddress,
     };
 
     res.json(publicProfile);

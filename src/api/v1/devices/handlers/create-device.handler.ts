@@ -4,19 +4,18 @@ import { prisma } from "@/utils/prisma";
 import { DeviceSchema } from "../../../../../prisma/generated/zod";
 
 export const DeviceInputSchema = DeviceSchema.pick({
+  id: true,
   name: true,
   os: true,
   pushToken: true,
   pushTokenType: true,
   apnsEnv: true,
-  expoToken: true,
   appVersion: true,
   appBuildNumber: true,
 }).partial({
   pushToken: true,
   pushTokenType: true,
   apnsEnv: true,
-  expoToken: true,
   appVersion: true,
   appBuildNumber: true,
 });
@@ -60,9 +59,9 @@ export async function createDeviceHandler(
       data: {
         ...validatedData,
         pushFailures: 0,
-        user: {
-          connect: {
-            id: userId,
+        users: {
+          create: {
+            userId,
           },
         },
       },

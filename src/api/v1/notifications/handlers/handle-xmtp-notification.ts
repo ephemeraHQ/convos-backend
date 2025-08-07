@@ -5,14 +5,10 @@ import {
 } from "@/notifications/client";
 import { getHttpDeliveryNotificationAuthHeader } from "@/notifications/utils";
 import { prisma } from "@/utils/prisma";
-import { sendLegacyExpoPushNotification } from "../services/expo-push.service";
 import { getPushNotificationService } from "../services/push-notification.service";
 
 const notificationClient = createNotificationClient();
 const pushNotificationService = getPushNotificationService();
-
-// Name of the token we send from the simulator
-const TEST_TOKEN = "TEST_EXPO_TOKEN";
 
 if (!process.env.XMTP_NOTIFICATION_SECRET) {
   throw new Error("XMTP_NOTIFICATION_SECRET is not set");
@@ -72,8 +68,12 @@ export async function handleXmtpNotification(req: Request, res: Response) {
     });
 
     if (!identityOnDevice || !identityOnDevice.xmtpInstallationId) {
-      // Try legacy method for backward compatibility
-      await handleLegacyNotification(notification, req, res);
+      req.log.error(
+        `IdentityOnDevice not found for xmtpInstallationId ${notification.installation.id}`,
+      );
+      res.status(400).json({
+        error: `IdentityOnDevice not found for xmtpInstallationId ${notification.installation.id}`,
+      });
       return;
     }
 
@@ -85,20 +85,13 @@ export async function handleXmtpNotification(req: Request, res: Response) {
     const { device, identity } = identityOnDevice;
     const pushTokenType = device.pushTokenType;
 
-    // For APNS (new Convos architecture for OTR), use xmtpId - no turnkeyAddress needed
+    // For APNS (new Convos architecture for OTR), use xmtpId - no identityAddress needed
     if (pushTokenType === "apns") {
-      // Skip test tokens
-      if (device.expoToken === TEST_TOKEN) {
-        req.log.info("Skipping notification for test token");
-        res.status(200).end();
-        return;
-      }
-
       // Use the unified push notification service - xmtpId used internally
       const result = await pushNotificationService.sendPushNotification({
         device,
         notification,
-        turnkeyAddress: null,
+        inboxId: identity.xmtpId,
         req,
       });
 
@@ -119,129 +112,11 @@ export async function handleXmtpNotification(req: Request, res: Response) {
       return;
     }
 
-    // For Expo (legacy), require turnkeyAddress
-    const turnkeyAddress = identity.turnkeyAddress;
-
-    if (!turnkeyAddress) {
-      req.log.error(
-        `DeviceIdentity ${identity.id} for xmtpInstallationId ${notification.installation.id} has no turnkeyAddress (required for Expo notifications)`,
-      );
-      res.status(200).end();
-      return;
-    }
-
-    // Skip test tokens
-    if (device.expoToken === TEST_TOKEN) {
-      req.log.info("Skipping notification for test token");
-      res.status(200).end();
-      return;
-    }
-
-    // Use the unified push notification service with turnkeyAddress for Expo
-    const result = await pushNotificationService.sendPushNotification({
-      device,
-      notification,
-      turnkeyAddress,
-      req,
-    });
-
-    if (!result.success && result.shouldCleanup) {
-      req.log.info(
-        `Push notification failed with unrecoverable error for device ${device.id}. Initiating cleanup.`,
-      );
-      if (identityOnDeviceToCleanup.xmtpInstallationId) {
-        await cleanupFailedInstallation({
-          xmtpInstallationId: identityOnDeviceToCleanup.xmtpInstallationId,
-          deviceId: identityOnDeviceToCleanup.deviceId,
-          req,
-        });
-      }
-    }
-
-    res.status(200).end();
+    res.status(400).json({ error: "Only APNS notifications supported" });
   } catch (error) {
     req.log.error({ error }, "Outer error processing notification");
     res.status(500).json({ error: "Internal server error" });
   }
-}
-
-async function handleLegacyNotification(
-  notification: NotificationResponse,
-  req: Request,
-  res: Response,
-) {
-  // Trying old way of sending notifications
-  const device = await prisma.device.findFirst({
-    where: {
-      pushToken: notification.installation.delivery_mechanism.token,
-    },
-    include: {
-      identities: {
-        include: {
-          identity: true,
-        },
-      },
-    },
-  });
-
-  if (
-    device &&
-    device.expoToken &&
-    device.identities.length > 0 &&
-    device.identities[0]?.identity?.turnkeyAddress
-  ) {
-    try {
-      await sendLegacyExpoPushNotification({
-        notification,
-        ethAddress: device.identities[0].identity.turnkeyAddress,
-        expoPushToken: device.expoToken,
-        req,
-      });
-      req.log.info(
-        { deviceId: device.id },
-        "Legacy push notification sent successfully",
-      );
-    } catch (error) {
-      req.log.error(
-        { error, deviceId: device.id },
-        "Failed to send legacy push notification",
-      );
-      // Increment failure count for consistency with main cleanup function
-      try {
-        await prisma.device.update({
-          where: { id: device.id },
-          data: { pushFailures: { increment: 1 } },
-        });
-      } catch (updateError) {
-        req.log.error(
-          { error: updateError, deviceId: device.id },
-          "Failed to increment push failure count",
-        );
-      }
-    }
-    res.status(200).end();
-    return;
-  }
-
-  req.log.warn(
-    `No active device/identity found for xmtpInstallationId ${notification.installation.id}. This installation might have been cleaned up already.`,
-  );
-
-  try {
-    await notificationClient.deleteInstallation({
-      installationId: notification.installation.id,
-    });
-    req.log.info(
-      `Requested deletion of orphaned xmtpInstallationId ${notification.installation.id} from XMTP server.`,
-    );
-  } catch (deleteError) {
-    req.log.error(
-      { error: deleteError },
-      `Failed to request deletion of orphaned xmtpInstallationId ${notification.installation.id}`,
-    );
-  }
-
-  res.status(200).end();
 }
 
 async function cleanupFailedInstallation(args: {
@@ -263,7 +138,6 @@ async function cleanupFailedInstallation(args: {
       prisma.device.update({
         where: { id: deviceId },
         data: {
-          expoToken: null,
           pushToken: null,
           pushFailures: { increment: 1 },
         },

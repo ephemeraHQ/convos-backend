@@ -1,5 +1,5 @@
 import type { Server } from "http";
-import { DeviceOS } from "@prisma/client";
+import { DeviceOS, UserType } from "@prisma/client";
 import {
   afterAll,
   afterEach,
@@ -57,7 +57,7 @@ describe("/notifications API - Register/Unregister (Auth Required)", () => {
   let testIdentityId: string;
   const testUserTurnkeyId = "reg-unreg-turnkey-user-id";
   const testDeviceName = "RegUnreg Test Device";
-  const testIdentityTurnkeyAddress = "reg-unreg-turnkey-address";
+  const testIdentityAddress = "reg-unreg-turnkey-address";
 
   beforeEach(async () => {
     await prisma.identitiesOnDevice.deleteMany();
@@ -68,7 +68,7 @@ describe("/notifications API - Register/Unregister (Auth Required)", () => {
     await prisma.user.deleteMany();
 
     const user = await prisma.user.create({
-      data: { turnkeyUserId: testUserTurnkeyId },
+      data: { userId: testUserTurnkeyId, userType: UserType.turnkey },
     });
     testUserId = user.id;
 
@@ -76,13 +76,24 @@ describe("/notifications API - Register/Unregister (Auth Required)", () => {
       data: {
         userId: testUserId,
         xmtpId: AUTH_XMTP_ID,
-        turnkeyAddress: testIdentityTurnkeyAddress,
+        identityAddress: testIdentityAddress,
       },
     });
     testIdentityId = identity.id;
 
     const device = await prisma.device.create({
-      data: { userId: testUserId, name: testDeviceName, os: DeviceOS.ios },
+      data: {
+        id: "test-device-id",
+        name: testDeviceName,
+        os: DeviceOS.ios,
+      },
+    });
+    // Link user and device
+    await prisma.usersOnDevice.create({
+      data: {
+        userId: testUserId,
+        deviceId: device.id,
+      },
     });
     testDeviceId = device.id;
 
@@ -116,9 +127,8 @@ describe("/notifications API - Register/Unregister (Auth Required)", () => {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           deviceId: testDeviceId,
-          expoToken: "test-expo-token-register",
           pushToken: "test-push-token-register",
-          pushTokenType: "expo" as const,
+          pushTokenType: "apns" as const,
           installations: [
             {
               identityId: testIdentityId,
@@ -145,7 +155,7 @@ describe("/notifications API - Register/Unregister (Auth Required)", () => {
     const device = await prisma.device.findUnique({
       where: { id: testDeviceId },
     });
-    expect(device?.expoToken).toBe("test-expo-token-register");
+    expect(device?.pushToken).toBe("test-push-token-register");
   });
 
   test("POST /notifications/register validates request body (missing fields)", async () => {
@@ -156,7 +166,6 @@ describe("/notifications API - Register/Unregister (Auth Required)", () => {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           deviceId: testDeviceId,
-          expoToken: "test-expo-token-register",
           pushToken: "test-push-token-register",
         }),
       },
@@ -174,9 +183,8 @@ describe("/notifications API - Register/Unregister (Auth Required)", () => {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           deviceId: "wrong-device-id",
-          expoToken: "test-expo-token-forbidden",
           pushToken: "test-push-token-forbidden",
-          pushTokenType: "expo" as const,
+          pushTokenType: "apns" as const,
           installations: [
             {
               identityId: testIdentityId,
@@ -198,9 +206,8 @@ describe("/notifications API - Register/Unregister (Auth Required)", () => {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           deviceId: testDeviceId,
-          expoToken: "token-for-unregister",
           pushToken: "token-for-unregister-push",
-          pushTokenType: "expo" as const,
+          pushTokenType: "apns" as const,
           installations: [
             {
               identityId: testIdentityId,

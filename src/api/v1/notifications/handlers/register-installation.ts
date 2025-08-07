@@ -12,12 +12,7 @@ const installationItemSchema = z.object({
 const currentRegistrationSchema = z.object({
   deviceId: z.string(),
   pushToken: z.string(),
-  expoToken: z.string(),
-  // Default to expo for backward compatibility with existing apps that don't specify pushTokenType
-  pushTokenType: z
-    .nativeEnum(PushTokenType)
-    .optional()
-    .default(PushTokenType.expo),
+  pushTokenType: z.nativeEnum(PushTokenType).optional(),
   // List of installations to register
   // We will also check for any other identities on device that don't have any of those installations and delete them
   installations: z.array(installationItemSchema),
@@ -113,12 +108,14 @@ async function handleCurrentRegistration(args: {
     // Make sure the device belongs to the authenticated user
     const deviceOwnerCheck = await prisma.device.findUnique({
       where: { id: body.deviceId },
-      select: { userId: true },
+      select: { users: true },
     });
 
     if (
       !deviceOwnerCheck ||
-      deviceOwnerCheck.userId !== deviceIdentityForAuthenticatedUser.userId
+      !deviceOwnerCheck.users.some(
+        (user) => user.userId === deviceIdentityForAuthenticatedUser.userId,
+      )
     ) {
       req.log.warn(
         `User ${deviceIdentityForAuthenticatedUser.userId} attempt to register for unowned/unknown device ${body.deviceId}`,
@@ -153,13 +150,12 @@ async function handleCurrentRegistration(args: {
 
     const identitiesOnDeviceToRemoveFromDb = await prisma.$transaction(
       async (tx) => {
-        // Update the device with the new push token and expo token
+        // Update the device with the new push token
         await tx.device.update({
           where: {
             id: body.deviceId,
           },
           data: {
-            expoToken: body.expoToken,
             pushToken: body.pushToken,
             pushTokenType: body.pushTokenType,
           },
@@ -265,8 +261,8 @@ async function handleCurrentRegistration(args: {
             installationId: installation.xmtpInstallationId,
             deliveryMechanism: {
               deliveryMechanismType: {
-                case: "customToken",
-                value: body.expoToken,
+                case: "apnsDeviceToken",
+                value: body.pushToken,
               },
             },
           });

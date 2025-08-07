@@ -17,13 +17,21 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+enum UserType {
+  onDevice
+  turnkey
+}
+
 model User {
   id             String           @id @default(uuid())
-  turnkeyUserId  String           @unique
+  userType       UserType         @default(onDevice)
+  userId         String
   createdAt      DateTime         @default(now())
   updatedAt      DateTime         @updatedAt
-  devices        Device[]
+  devices        UsersOnDevice[]
   DeviceIdentity DeviceIdentity[]
+
+  @@unique([userType, userId])
 }
 
 enum DeviceOS {
@@ -35,7 +43,6 @@ enum DeviceOS {
 
 enum PushTokenType {
   apns
-  expo
   fcm
 }
 
@@ -45,30 +52,38 @@ enum ApnsEnvironment {
 }
 
 model Device {
-  id                String               @id @default(uuid())
-  userId            String
+  id                String               @id // This is a unique device id sent by the client
   name              String?
   os                DeviceOS
   pushToken         String?              @db.Text
   pushTokenType     PushTokenType        @default(apns)
   apnsEnv           ApnsEnvironment?
-  expoToken         String? // Legacy, to be deprecated
   appVersion        String?
   appBuildNumber    String?
   createdAt         DateTime             @default(now())
   updatedAt         DateTime             @updatedAt
   lastPushSuccessAt DateTime?
   pushFailures      Int                  @default(0)
-  user              User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  users             UsersOnDevice[]
   identities        IdentitiesOnDevice[]
+}
 
+model UsersOnDevice {
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  deviceId  String
+  device    Device   @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@id([userId, deviceId])
 }
 
 model DeviceIdentity {
   id                   String                         @id @default(uuid())
   userId               String
   xmtpId               String // This is the inboxID
-  turnkeyAddress       String? // Optional Turnkey address
+  identityAddress      String? // Optional Identity address (for instance Turnkey address)
   createdAt            DateTime                       @default(now())
   updatedAt            DateTime                       @updatedAt
   profile              Profile?
