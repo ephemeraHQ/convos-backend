@@ -63,9 +63,13 @@ async function createTestUsers() {
       userType: UserType.turnkey,
       devices: {
         create: {
-          deviceId: "test-device-id-creator",
-          os: DeviceOS.ios,
-          name: "Test Creator Device",
+          device: {
+            create: {
+              deviceId: "test-device-id-creator",
+              os: DeviceOS.ios,
+              name: "Test Creator Device",
+            },
+          },
         },
       },
       DeviceIdentity: {
@@ -91,9 +95,13 @@ async function createTestUsers() {
       userType: UserType.turnkey,
       devices: {
         create: {
-          deviceId: "test-device-id-requester",
-          os: DeviceOS.android,
-          name: "Test Requester Device",
+          device: {
+            create: {
+              deviceId: "test-device-id-requester",
+              os: DeviceOS.android,
+              name: "Test Requester Device",
+            },
+          },
         },
       },
       DeviceIdentity: {

@@ -34,7 +34,7 @@ export async function unregisterInstallation(
             xmtpInstallationId: xmtpInstallationId,
           },
           include: {
-            device: { select: { userId: true } },
+            device: { select: { users: true } },
           },
         }),
       ]);
@@ -49,8 +49,9 @@ export async function unregisterInstallation(
 
     // Verify that the installation belongs to the authenticated user
     if (
-      identityOnDeviceForInstallation.device.userId !==
-      deviceIdentityForUser.userId
+      !identityOnDeviceForInstallation.device.users.some(
+        (user) => user.userId === deviceIdentityForUser.userId,
+      )
     ) {
       req.log.warn(
         `User ${deviceIdentityForUser.userId} attempt to unregister unowned installation ${xmtpInstallationId}`,

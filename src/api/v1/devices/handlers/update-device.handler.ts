@@ -52,7 +52,11 @@ export async function updateDeviceHandler(
     const device = await prisma.device.update({
       where: {
         id: deviceId,
-        userId,
+        users: {
+          some: {
+            userId,
+          },
+        },
       },
       data: {
         ...validatedData,

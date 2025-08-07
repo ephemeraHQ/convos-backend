@@ -100,95 +100,72 @@ export async function createUser(
       }
     }
 
-    // Create user
+    // Create user first
     const createdUser = await prisma.user.create({
       data: {
         userId: body.userId,
         userType: body.userType,
-        devices: {
-          create: {
-            deviceId: body.device.deviceId,
-            os: body.device.os,
-            name: body.device.name,
-            identities: {
-              create: {
-                xmtpInstallationId: body.identity.xmtpInstallationId,
-                identity: {
-                  create: {
-                    identityAddress: body.identity.identityAddress,
-                    xmtpId: body.identity.xmtpId,
-                    user: {
-                      connect: {
-                        userType_userId: {
-                          userId: body.userId,
-                          userType: body.userType,
-                        },
-                      },
-                    },
-                    profile: {
-                      create: {
-                        name: body.profile.name || null,
-                        username: body.profile.username || null,
-                        description: body.profile.description,
-                        avatar: body.profile.avatar,
-                      },
-                    },
-                  },
-                },
-              },
-            },
-          },
-        },
-      },
-      select: {
-        id: true,
-        userId: true,
-        userType: true,
-        devices: {
-          select: {
-            id: true,
-            deviceId: true,
-            os: true,
-            name: true,
-            identities: {
-              select: {
-                identity: {
-                  select: {
-                    id: true,
-                    identityAddress: true,
-                    xmtpId: true,
-                    profile: {
-                      select: {
-                        id: true,
-                        name: true,
-                        username: true,
-                        description: true,
-                        avatar: true,
-                      },
-                    },
-                  },
-                },
-              },
-            },
-          },
-        },
       },
     });
 
-    if (!createdUser.devices.length) {
-      throw new Error("Device was not created successfully");
-    }
+    // Connect or create device
+    const device = await prisma.device.upsert({
+      where: {
+        deviceId: body.device.deviceId,
+      },
+      update: {},
+      create: {
+        deviceId: body.device.deviceId,
+        os: body.device.os,
+        name: body.device.name,
+      },
+    });
 
-    const createdDevice = createdUser.devices[0];
+    // Connect user to device
+    await prisma.usersOnDevice.upsert({
+      where: {
+        userId_deviceId: {
+          userId: createdUser.id,
+          deviceId: device.id,
+        },
+      },
+      update: {},
+      create: {
+        userId: createdUser.id,
+        deviceId: device.id,
+      },
+    });
 
-    if (!createdDevice.identities.length) {
-      throw new Error("Identity was not created successfully");
-    }
+    // Create device identity
+    const deviceIdentity = await prisma.deviceIdentity.create({
+      data: {
+        userId: createdUser.id,
+        xmtpId: body.identity.xmtpId,
+        identityAddress: body.identity.identityAddress,
+        profile: {
+          create: {
+            name: body.profile.name || null,
+            username: body.profile.username || null,
+            description: body.profile.description,
+            avatar: body.profile.avatar,
+          },
+        },
+      },
+      include: {
+        profile: true,
+      },
+    });
 
-    const createdIdentity = createdDevice.identities[0].identity;
+    // Link identity to device
+    await prisma.identitiesOnDevice.create({
+      data: {
+        deviceId: device.id,
+        identityId: deviceIdentity.id,
+        xmtpInstallationId: body.identity.xmtpInstallationId,
+      },
+    });
 
-    const createdProfile = createdIdentity.profile;
-    if (!createdProfile) {
+    if (!deviceIdentity.profile) {
       throw new Error("Profile was not created successfully");
     }
 
@@ -197,38 +174,42 @@ export async function createUser(
       userId: createdUser.userId,
       userType: createdUser.userType,
       device: {
-        id: createdDevice.id,
-        deviceId: createdDevice.deviceId,
-        os: createdDevice.os,
-        name: createdDevice.name,
+        id: device.id,
+        deviceId: device.deviceId,
+        os: device.os,
+        name: device.name,
       },
       identity: {
-        id: createdIdentity.id,
-        identityAddress: createdIdentity.identityAddress,
-        xmtpId: createdIdentity.xmtpId,
+        id: deviceIdentity.id,
+        identityAddress: deviceIdentity.identityAddress,
+        xmtpId: deviceIdentity.xmtpId,
       },
       profile: {
-        id: createdProfile.id,
-        name: createdProfile.name,
-        username: createdProfile.username,
-        description: createdProfile.description,
-        avatar: createdProfile.avatar,
+        id: deviceIdentity.profile.id,
+        name: deviceIdentity.profile.name,
+        username: deviceIdentity.profile.username,
+        description: deviceIdentity.profile.description,
+        avatar: deviceIdentity.profile.avatar,
       },
     };
 
     // Register the username with Namestone only if both username and identityAddress are available
-    if (createdIdentity.identityAddress && createdProfile.username) {
+    if (deviceIdentity.identityAddress && deviceIdentity.profile.username) {
       // Don't await to avoid blocking the user creation response
       namestoneService
         .setName({
-          username: createdProfile.username,
-          address: createdIdentity.identityAddress,
+          username: deviceIdentity.profile.username,
+          address: deviceIdentity.identityAddress,
           textRecords: {
-            ...(createdProfile.name && { "display.name": createdProfile.name }),
-            ...(createdProfile.description && {
-              description: createdProfile.description,
+            ...(deviceIdentity.profile.name && {
+              "display.name": deviceIdentity.profile.name,
             }),
-            ...(createdProfile.avatar && { avatar: createdProfile.avatar }),
+            ...(deviceIdentity.profile.description && {
+              description: deviceIdentity.profile.description,
+            }),
+            ...(deviceIdentity.profile.avatar && {
+              avatar: deviceIdentity.profile.avatar,
+            }),
           },
         })
         .catch((namestoneError: unknown) => {
@@ -236,8 +217,8 @@ export async function createUser(
           req.log.error(
             {
               error: namestoneError,
-              username: createdProfile.username,
-              address: createdIdentity.identityAddress,
+              username: deviceIdentity.profile?.username,
+              address: deviceIdentity.identityAddress,
             },
             "Failed to register username with Namestone during user creation",
           );

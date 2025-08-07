@@ -83,10 +83,16 @@ describe("/notifications API - Register/Unregister (Auth Required)", () => {
 
     const device = await prisma.device.create({
       data: {
-        userId: testUserId,
         deviceId: "test-device-id",
         name: testDeviceName,
         os: DeviceOS.ios,
+      },
+    });
+    // Link user and device
+    await prisma.usersOnDevice.create({
+      data: {
+        userId: testUserId,
+        deviceId: device.id,
       },
     });
     testDeviceId = device.id;

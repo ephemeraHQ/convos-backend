@@ -59,9 +59,9 @@ export async function createDeviceHandler(
       data: {
         ...validatedData,
         pushFailures: 0,
-        user: {
-          connect: {
-            id: userId,
+        users: {
+          create: {
+            userId,
           },
         },
       },
@@ -69,6 +69,7 @@ export async function createDeviceHandler(
 
     res.status(201).json(device);
   } catch (error) {
+    console.log(error);
     if (error instanceof z.ZodError) {
       res
         .status(400)

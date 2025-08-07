@@ -42,17 +42,30 @@ async function sendTestPushNotification(args: TestPushArgs) {
   console.log(`🔍 Looking for devices for user: ${userId}`);
 
   // Find all APNS devices for the given user
-  const devices = await prisma.device.findMany({
+  const user = await prisma.user.findFirst({
     where: {
       userId,
-      pushTokenType: "apns",
-      pushToken: {
-        not: null,
+      devices: {
+        some: {
+          device: {
+            pushTokenType: "apns",
+            pushToken: { not: null },
+          },
+        },
+      },
+    },
+    include: {
+      devices: {
+        include: {
+          device: true,
+        },
       },
     },
   });
 
-  if (devices.length === 0) {
+  const devices = user?.devices.map((device) => device.device);
+
+  if (!devices || devices.length === 0) {
     console.log(`❌ No APNS devices found for user ${userId}`);
     return;
   }

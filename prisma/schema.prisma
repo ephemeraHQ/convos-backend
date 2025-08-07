@@ -28,7 +28,7 @@ model User {
   userId         String
   createdAt      DateTime         @default(now())
   updatedAt      DateTime         @updatedAt
-  devices        Device[]
+  devices        UsersOnDevice[]
   DeviceIdentity DeviceIdentity[]
 
   @@unique([userType, userId])
@@ -54,7 +54,6 @@ enum ApnsEnvironment {
 model Device {
   id                String               @id @default(uuid())
   deviceId          String               @unique
-  userId            String
   name              String?
   os                DeviceOS
   pushToken         String?              @db.Text
@@ -66,8 +65,19 @@ model Device {
   updatedAt         DateTime             @updatedAt
   lastPushSuccessAt DateTime?
   pushFailures      Int                  @default(0)
-  user              User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  users             UsersOnDevice[]
   identities        IdentitiesOnDevice[]
+}
+
+model UsersOnDevice {
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  deviceId  String
+  device    Device   @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@id([userId, deviceId])
 }
 
 model DeviceIdentity {

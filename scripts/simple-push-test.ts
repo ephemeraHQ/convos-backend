@@ -9,20 +9,37 @@ async function quickPushTest(userId: string) {
   console.log(`🔥 Quick Push Test for user: ${userId}\n`);
 
   // Find any APNS device for this user
-  const device = await prisma.device.findFirst({
+  const user = await prisma.user.findFirst({
     where: {
       userId,
-      pushTokenType: "apns",
-      pushToken: { not: null },
+      devices: {
+        some: {
+          device: {
+            pushTokenType: "apns",
+            pushToken: { not: null },
+          },
+        },
+      },
+    },
+    select: {
+      devices: {
+        select: {
+          device: true,
+        },
+      },
     },
   });
 
-  if (!device) {
+  if (!user) {
     console.log("❌ No APNS device found for this user");
     return;
   }
 
-  console.log(`📱 Found device: ${device.name || "Unnamed"} (${device.os})`);
+  const firstDevice = user.devices[0].device;
+
+  console.log(
+    `📱 Found device: ${firstDevice.name || "Unnamed"} (${firstDevice.os})`,
+  );
 
   const apnsService = createApnsService();
   if (!apnsService) {
@@ -59,7 +76,7 @@ async function quickPushTest(userId: string) {
   console.log("📤 Sending notification...");
 
   const result = await apnsService.sendPushNotification({
-    device,
+    device: firstDevice,
     notification: mockNotification,
     messageData,
     req: mockReq,

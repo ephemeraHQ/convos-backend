@@ -1,7 +1,6 @@
 import { Router } from "express";
 import appConfigRouter from "@/api/v1/appConfig";
 import authenticateRouter from "@/api/v1/authenticate";
-import identitiesRouter from "@/api/v1/identities/identities.router";
 import metadataRouter from "@/api/v1/metadata/metadata.router";
 import {
   notificationsRouter,
@@ -14,7 +13,6 @@ import attachmentsRouter from "./attachments";
 import devicesRouter from "./devices/devices.router";
 import publicInvitesRouter from "./invites/invites-public.router";
 import invitesRouter from "./invites/invites.router";
-import lookupRouter from "./lookup";
 import usersRouter from "./users/users.router";
 import walletsRouter from "./wallets/wallets.router";
 
@@ -41,14 +39,8 @@ v1Router.use("/users", authMiddleware, usersRouter);
 // mount device routes under /devices
 v1Router.use("/devices", authMiddleware, devicesRouter);
 
-// mount identity routes under /identities
-v1Router.use("/identities", authMiddleware, identitiesRouter);
-
 // mount metadata routes under /metadata
 v1Router.use("/metadata", authMiddleware, metadataRouter);
-
-// mount lookup routes under /lookup
-v1Router.use("/lookup", authMiddleware, lookupRouter);
 
 // mount public profile routes under /profiles/public
 v1Router.use("/profiles/public", publicProfilesRouter);

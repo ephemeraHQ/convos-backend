@@ -146,4 +146,125 @@ describe("/users API", () => {
     expect(user.identities[0].identityAddress).toBe("test-turnkey-address");
     expect(user.identities[0].xmtpId).toBe("test-xmtp-id");
   });
+
+  test("POST /users can create two users with different devices", async () => {
+    const createUser1Body: CreateUserRequestBody = {
+      userId: "test-users-turnkey-user-id",
+      userType: UserType.turnkey,
+      device: {
+        deviceId: "test-device-id",
+        os: DeviceOS.ios,
+        name: "iPhone 14",
+      },
+      identity: {
+        identityAddress: "test-turnkey-address",
+        xmtpId: "test-xmtp-id",
+        xmtpInstallationId: "test-xmtp-installation-id",
+      },
+      profile: {
+        name: "Test User",
+        username: "test-user",
+      },
+    };
+
+    const response1 = await fetch("http://localhost:3001/users", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(createUser1Body),
+    });
+
+    expect(response1.status).toBe(201);
+
+    const createUser2Body: CreateUserRequestBody = {
+      userId: "test-users-turnkey-user-id-2",
+      userType: UserType.turnkey,
+      device: {
+        deviceId: "test-device-id-2",
+        os: DeviceOS.ios,
+        name: "iPhone 14",
+      },
+      identity: {
+        identityAddress: "test-turnkey-address-2",
+        xmtpId: "test-xmtp-id-2",
+        xmtpInstallationId: "test-xmtp-installation-id-2",
+      },
+      profile: {
+        name: "Test User 2",
+        username: "test-user-2",
+      },
+    };
+
+    const response2 = await fetch("http://localhost:3001/users", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(createUser2Body),
+    });
+
+    expect(response2.status).toBe(201);
+  });
+
+  test("POST /users can create two users with same device", async () => {
+    const sameDeviceId = "test-device-id";
+    const createUser1Body: CreateUserRequestBody = {
+      userId: "test-users-turnkey-user-id",
+      userType: UserType.turnkey,
+      device: {
+        deviceId: sameDeviceId,
+        os: DeviceOS.ios,
+        name: "iPhone 14",
+      },
+      identity: {
+        identityAddress: "test-turnkey-address",
+        xmtpId: "test-xmtp-id",
+        xmtpInstallationId: "test-xmtp-installation-id",
+      },
+      profile: {
+        name: "Test User",
+        username: "test-user",
+      },
+    };
+
+    const response1 = await fetch("http://localhost:3001/users", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(createUser1Body),
+    });
+
+    expect(response1.status).toBe(201);
+
+    const createUser2Body: CreateUserRequestBody = {
+      userId: "test-users-turnkey-user-id-2",
+      userType: UserType.turnkey,
+      device: {
+        deviceId: sameDeviceId,
+        os: DeviceOS.ios,
+        name: "iPhone 14",
+      },
+      identity: {
+        identityAddress: "test-turnkey-address-2",
+        xmtpId: "test-xmtp-id-2",
+        xmtpInstallationId: "test-xmtp-installation-id-2",
+      },
+      profile: {
+        name: "Test User 2",
+        username: "test-user-2",
+      },
+    };
+
+    const response2 = await fetch("http://localhost:3001/users", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(createUser2Body),
+    });
+
+    expect(response2.status).toBe(201);
+  });
 });

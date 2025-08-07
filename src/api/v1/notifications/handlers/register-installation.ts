@@ -108,12 +108,14 @@ async function handleCurrentRegistration(args: {
     // Make sure the device belongs to the authenticated user
     const deviceOwnerCheck = await prisma.device.findUnique({
       where: { id: body.deviceId },
-      select: { userId: true },
+      select: { users: true },
     });
 
     if (
       !deviceOwnerCheck ||
-      deviceOwnerCheck.userId !== deviceIdentityForAuthenticatedUser.userId
+      !deviceOwnerCheck.users.some(
+        (user) => user.userId === deviceIdentityForAuthenticatedUser.userId,
+      )
     ) {
       req.log.warn(
         `User ${deviceIdentityForAuthenticatedUser.userId} attempt to register for unowned/unknown device ${body.deviceId}`,

@@ -111,7 +111,6 @@ describe("/devices API", () => {
     expect(device.deviceId).toBe("test-new-device-id");
     expect(device.os).toBe(DeviceOS.ios);
     expect(device.pushToken).toBe("test-push-token");
-    expect(device.userId).toBe(userId);
     expect(device.id).toBeDefined();
   });
 

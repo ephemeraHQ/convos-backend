@@ -33,15 +33,19 @@ export async function getCurrentUser(
       select: {
         id: true,
         devices: {
-          ...(deviceId && { where: { id: deviceId } }),
+          ...(deviceId && { where: { deviceId: deviceId } }),
           select: {
-            identities: {
-              select: {
-                identity: {
+            device: {
+              include: {
+                identities: {
                   select: {
-                    id: true,
-                    identityAddress: true,
-                    xmtpId: true,
+                    identity: {
+                      select: {
+                        id: true,
+                        identityAddress: true,
+                        xmtpId: true,
+                      },
+                    },
                   },
                 },
               },
@@ -62,7 +66,7 @@ export async function getCurrentUser(
     >();
 
     user.devices.forEach((device) => {
-      device.identities.forEach(({ identity }) => {
+      device.device.identities.forEach(({ identity }) => {
         uniqueIdentities.set(identity.id, {
           id: identity.id,
           identityAddress: identity.identityAddress,
