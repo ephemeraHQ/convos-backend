@@ -106,7 +106,7 @@ async function sendTestPushNotification(args: TestPushArgs) {
     messageType: "test",
     encryptedMessage: "encrypted-test-message-data",
     timestamp: Date.now().toString() + "000000",
-    ethAddress: "0x1234567890123456789012345678901234567890", // Mock address
+    inboxId: "1234567890123456789012345678901234567890", // Mock inbox id
   };
 
   // Send push notification to each device

@@ -91,7 +91,7 @@ export async function handleXmtpNotification(req: Request, res: Response) {
       const result = await pushNotificationService.sendPushNotification({
         device,
         notification,
-        identityAddress: null,
+        inboxId: identity.xmtpId,
         req,
       });
 
@@ -112,39 +112,7 @@ export async function handleXmtpNotification(req: Request, res: Response) {
       return;
     }
 
-    // For Expo (legacy), require identityAddress
-    const identityAddress = identity.identityAddress;
-
-    if (!identityAddress) {
-      req.log.error(
-        `DeviceIdentity ${identity.id} for xmtpInstallationId ${notification.installation.id} has no identityAddress (required for Expo notifications)`,
-      );
-      res.status(200).end();
-      return;
-    }
-
-    // Use the unified push notification service with identityAddress for Expo
-    const result = await pushNotificationService.sendPushNotification({
-      device,
-      notification,
-      identityAddress,
-      req,
-    });
-
-    if (!result.success && result.shouldCleanup) {
-      req.log.info(
-        `Push notification failed with unrecoverable error for device ${device.id}. Initiating cleanup.`,
-      );
-      if (identityOnDeviceToCleanup.xmtpInstallationId) {
-        await cleanupFailedInstallation({
-          xmtpInstallationId: identityOnDeviceToCleanup.xmtpInstallationId,
-          deviceId: identityOnDeviceToCleanup.deviceId,
-          req,
-        });
-      }
-    }
-
-    res.status(200).end();
+    res.status(400).json({ error: "Only APNS notifications supported" });
   } catch (error) {
     req.log.error({ error }, "Outer error processing notification");
     res.status(500).json({ error: "Internal server error" });

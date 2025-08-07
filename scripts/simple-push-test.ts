@@ -21,10 +21,18 @@ async function quickPushTest(userId: string) {
         },
       },
     },
-    select: {
+    include: {
       devices: {
-        select: {
-          device: true,
+        include: {
+          device: {
+            include: {
+              identities: {
+                include: {
+                  identity: true,
+                },
+              },
+            },
+          },
         },
       },
     },
@@ -38,7 +46,7 @@ async function quickPushTest(userId: string) {
   const firstDevice = user.devices[0].device;
 
   console.log(
-    `📱 Found device: ${firstDevice.name || "Unnamed"} (${firstDevice.os})`,
+    `📱 Found device: ${firstDevice.id || "Unnamed"} (${firstDevice.os})`,
   );
 
   const apnsService = createApnsService();
@@ -63,6 +71,7 @@ async function quickPushTest(userId: string) {
     messageType: "test",
     encryptedMessage: "Hello from the backend! 👋",
     timestamp: Date.now().toString() + "000000",
+    inboxId: firstDevice.identities[0].identity.xmtpId,
   };
 
   const mockReq = {
