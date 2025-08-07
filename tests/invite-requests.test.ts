@@ -65,7 +65,7 @@ async function createTestUsers() {
         create: {
           device: {
             create: {
-              deviceId: "test-device-id-creator",
+              id: "test-device-id-creator",
               os: DeviceOS.ios,
               name: "Test Creator Device",
             },
@@ -97,7 +97,7 @@ async function createTestUsers() {
         create: {
           device: {
             create: {
-              deviceId: "test-device-id-requester",
+              id: "test-device-id-requester",
               os: DeviceOS.android,
               name: "Test Requester Device",
             },

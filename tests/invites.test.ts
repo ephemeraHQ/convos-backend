@@ -94,7 +94,7 @@ async function createTestUser(suffix = "", xmtpId = AUTH_USER_XMTP_ID) {
   // Create device
   const device = await prisma.device.create({
     data: {
-      deviceId: `test-device-id${suffix}`,
+      id: `test-device-id${suffix}`,
       os: DeviceOS.ios,
       name: "Test Initial Device",
     },

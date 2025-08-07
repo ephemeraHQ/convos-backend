@@ -72,7 +72,7 @@ describe("/metadata API", () => {
       userId: "test-metadata-turnkey-user-id",
       userType: UserType.turnkey,
       device: {
-        deviceId: "test-device-id",
+        id: "test-device-id",
         os: DeviceOS.ios,
         name: "iPhone 14",
       },
@@ -155,7 +155,7 @@ describe("/metadata API", () => {
       userId: "test-metadata-turnkey-user-id",
       userType: UserType.turnkey,
       device: {
-        deviceId: "test-device-id",
+        id: "test-device-id",
         os: DeviceOS.ios,
         name: "iPhone 14",
       },
@@ -225,7 +225,7 @@ describe("/metadata API", () => {
       userId: "test-metadata-turnkey-user-id",
       userType: UserType.turnkey,
       device: {
-        deviceId: "test-device-id",
+        id: "test-device-id",
         os: DeviceOS.ios,
         name: "iPhone 14",
       },

@@ -52,8 +52,7 @@ enum ApnsEnvironment {
 }
 
 model Device {
-  id                String               @id @default(uuid())
-  deviceId          String               @unique
+  id                String               @id // This is a unique device id sent by the client
   name              String?
   os                DeviceOS
   pushToken         String?              @db.Text

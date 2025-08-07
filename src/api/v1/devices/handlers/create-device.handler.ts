@@ -4,7 +4,7 @@ import { prisma } from "@/utils/prisma";
 import { DeviceSchema } from "../../../../../prisma/generated/zod";
 
 export const DeviceInputSchema = DeviceSchema.pick({
-  deviceId: true,
+  id: true,
   name: true,
   os: true,
   pushToken: true,

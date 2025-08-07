@@ -13,7 +13,7 @@ export const createUserRequestBodySchema = z.object({
   userId: z.string(),
   userType: UserTypeSchema,
   device: z.object({
-    deviceId: z.string(),
+    id: z.string(),
     os: z.enum(Object.keys(DeviceOS) as [DeviceOS, ...DeviceOS[]]),
     name: z.string().nullable().optional(),
   }),
@@ -38,7 +38,6 @@ export type CreatedReturnedUser = {
   userType: UserType;
   device: {
     id: string;
-    deviceId: string;
     os: DeviceOS;
     name: string | null;
   };
@@ -111,11 +110,11 @@ export async function createUser(
     // Connect or create device
     const device = await prisma.device.upsert({
       where: {
-        deviceId: body.device.deviceId,
+        id: body.device.id,
       },
       update: {},
       create: {
-        deviceId: body.device.deviceId,
+        id: body.device.id,
         os: body.device.os,
         name: body.device.name,
       },
@@ -175,7 +174,6 @@ export async function createUser(
       userType: createdUser.userType,
       device: {
         id: device.id,
-        deviceId: device.deviceId,
         os: device.os,
         name: device.name,
       },

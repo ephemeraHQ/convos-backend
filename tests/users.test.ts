@@ -52,7 +52,7 @@ describe("/users API", () => {
       userId: "test-users-turnkey-user-id",
       userType: UserType.turnkey,
       device: {
-        deviceId: "test-device-id",
+        id: "test-device-id",
         os: DeviceOS.ios,
         name: "iPhone 14",
       },
@@ -84,7 +84,7 @@ describe("/users API", () => {
     expect(user.device.id).toBeDefined();
     expect(user.device.os).toBe(createUserBody.device.os);
     expect(user.device.name!).toBe(createUserBody.device.name!);
-    expect(user.device.deviceId).toBe(createUserBody.device.deviceId);
+    expect(user.device.id).toBe(createUserBody.device.id);
     expect(user.identity.id).toBeDefined();
     expect(user.identity.identityAddress).toBe(
       createUserBody.identity.identityAddress || null,
@@ -106,7 +106,7 @@ describe("/users API", () => {
       userId: "test-turnkey-user-id",
       userType: UserType.turnkey,
       device: {
-        deviceId: "test-device-id",
+        id: "test-device-id",
         os: DeviceOS.ios,
         name: "iPhone 14",
       },
@@ -152,7 +152,7 @@ describe("/users API", () => {
       userId: "test-users-turnkey-user-id",
       userType: UserType.turnkey,
       device: {
-        deviceId: "test-device-id",
+        id: "test-device-id",
         os: DeviceOS.ios,
         name: "iPhone 14",
       },
@@ -181,7 +181,7 @@ describe("/users API", () => {
       userId: "test-users-turnkey-user-id-2",
       userType: UserType.turnkey,
       device: {
-        deviceId: "test-device-id-2",
+        id: "test-device-id-2",
         os: DeviceOS.ios,
         name: "iPhone 14",
       },
@@ -213,7 +213,7 @@ describe("/users API", () => {
       userId: "test-users-turnkey-user-id",
       userType: UserType.turnkey,
       device: {
-        deviceId: sameDeviceId,
+        id: sameDeviceId,
         os: DeviceOS.ios,
         name: "iPhone 14",
       },
@@ -242,7 +242,7 @@ describe("/users API", () => {
       userId: "test-users-turnkey-user-id-2",
       userType: UserType.turnkey,
       device: {
-        deviceId: sameDeviceId,
+        id: sameDeviceId,
         os: DeviceOS.ios,
         name: "iPhone 14",
       },
