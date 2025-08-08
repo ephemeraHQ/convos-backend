@@ -3,7 +3,6 @@ import { z } from "zod";
 import { prisma } from "@/utils/prisma";
 
 const querySchema = z.object({
-  status: z.enum(["PENDING", "ACCEPTED", "REJECTED"]).optional(),
   groupId: z.string().optional(),
 });
 
@@ -11,7 +10,6 @@ export type GetInviteRequestsQuery = z.infer<typeof querySchema>;
 
 export interface InviteRequestItem {
   id: string;
-  status: string;
   createdAt: string;
   updatedAt: string;
   requester: {
@@ -64,7 +62,6 @@ export async function getInviteRequests(
         createdById: identity.id,
         ...(query.groupId && { groupId: query.groupId }),
       },
-      ...(query.status && { status: query.status }),
     };
 
     // Get the requests for invite codes created by this user
@@ -93,7 +90,6 @@ export async function getInviteRequests(
     const response: GetInviteRequestsResponse = {
       requests: requests.map((request) => ({
         id: request.id,
-        status: request.status,
         createdAt: request.createdAt.toISOString(),
         updatedAt: request.updatedAt.toISOString(),
         requester: {

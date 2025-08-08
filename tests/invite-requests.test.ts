@@ -1,5 +1,5 @@
 import type { Server } from "http";
-import { DeviceOS, InviteCodeRequestStatus, UserType } from "@prisma/client";
+import { DeviceOS, UserType } from "@prisma/client";
 import {
   afterAll,
   beforeAll,
@@ -176,7 +176,6 @@ describe("/invites/request API", () => {
 
     const joinRequest = (await response.json()) as RequestToJoinResponse;
     expect(joinRequest.id).toBeDefined();
-    expect(joinRequest.status).toBe("PENDING");
     expect(joinRequest.inviteId).toBe(inviteCode.id);
     expect(joinRequest.createdAt).toBeDefined();
 
@@ -185,7 +184,6 @@ describe("/invites/request API", () => {
       where: { id: joinRequest.id },
     });
     expect(dbRequest).toBeTruthy();
-    expect(dbRequest?.status).toBe(InviteCodeRequestStatus.PENDING);
   });
 
   test("POST /invites/request rejects duplicate request", async () => {
@@ -199,7 +197,6 @@ describe("/invites/request API", () => {
       data: {
         inviteCodeId: inviteCode.id,
         requesterId: requesterIdentity!.id,
-        status: "PENDING",
       },
     });
 
@@ -219,7 +216,7 @@ describe("/invites/request API", () => {
 
     const error = (await response.json()) as ErrorResponse;
     expect(error.success).toBe(false);
-    expect(error.message).toContain("already have a pending request");
+    expect(error.message).toContain("already have a request");
   });
 
   test("POST /invites/request returns 404 for non-existent invite", async () => {

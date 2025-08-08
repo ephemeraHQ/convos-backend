@@ -10,14 +10,12 @@ export type RequestToJoinRequestBody = z.infer<typeof requestToJoinSchema>;
 
 export type RequestToJoinResponse = {
   id: string;
-  status: string;
   inviteId: string;
   createdAt: string;
 };
 
 export type InviteRequestNotificationPayload = {
   id: string;
-  status: string;
   createdAt: string;
   updatedAt: string;
   requester: {
@@ -112,7 +110,7 @@ export async function requestToJoin(
     if (existingRequest) {
       res.status(409).json({
         success: false,
-        message: `You already have a ${existingRequest.status.toLowerCase()} request for this group`,
+        message: `You already have a request for this group`,
       });
       return;
     }
@@ -122,7 +120,6 @@ export async function requestToJoin(
       data: {
         inviteCodeId: body.inviteId,
         requesterId: requesterIdentity.id,
-        status: "PENDING",
       },
       include: {
         requester: {
@@ -142,7 +139,6 @@ export async function requestToJoin(
 
     const payload: InviteRequestNotificationPayload = {
       id: requestToJoin.id,
-      status: requestToJoin.status,
       createdAt: requestToJoin.createdAt.toISOString(),
       updatedAt: requestToJoin.updatedAt.toISOString(),
       requester: {
@@ -170,7 +166,6 @@ export async function requestToJoin(
 
     const response: RequestToJoinResponse = {
       id: requestToJoin.id,
-      status: requestToJoin.status,
       inviteId: requestToJoin.inviteCodeId,
       createdAt: requestToJoin.createdAt.toISOString(),
     };
