@@ -483,6 +483,7 @@ describe("/invites API", () => {
       name: "Updated Name",
       description: "Updated Description",
       autoApprove: true,
+      status: InviteCodeStatus.DISABLED,
     };
 
     const updateResponse = await fetch(
@@ -506,6 +507,7 @@ describe("/invites API", () => {
     expect(updatedInvite.description).toBe("Updated Description");
     expect(updatedInvite.autoApprove).toBe(true);
     expect(updatedInvite.inviteLinkURL).toBe(originalInvite.inviteLinkURL); // Same URL
+    expect(updatedInvite.status).toBe(InviteCodeStatus.DISABLED);
   });
 
   test("POST /invites/:inviteId returns 404 for non-existent invite", async () => {
