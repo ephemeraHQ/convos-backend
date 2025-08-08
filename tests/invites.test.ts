@@ -13,10 +13,7 @@ import type {
   CreateInviteCodeRequestBody,
   CreateInviteCodeResponse,
 } from "@/api/v1/invites/handlers/create-invite-code";
-import type { DeleteRequestToJoinResponse } from "@/api/v1/invites/handlers/delete-request-to-join";
 import type { GetInviteDetailsResponse } from "@/api/v1/invites/handlers/get-invite-details";
-import type { GetInviteRequestsResponse } from "@/api/v1/invites/handlers/get-invite-requests";
-import type { RequestToJoinResponse } from "@/api/v1/invites/handlers/request-to-join";
 import invitesRouter from "@/api/v1/invites/invites.router";
 import type { CreatedReturnedUser } from "@/api/v1/users/handlers/create-user";
 import { jsonMiddleware } from "@/middleware/json";
@@ -31,10 +28,7 @@ const AUTH_USER_XMTP_ID = "test-invite-xmtp-id";
 
 // Add middleware to simulate authentication for tests
 app.use((req, res, next) => {
-  // Allow per-request override via header for multi-user scenarios
-  const overrideXmtpId = req.headers["x-test-xmtp-id"];
-  req.app.locals.xmtpId =
-    typeof overrideXmtpId === "string" ? overrideXmtpId : AUTH_USER_XMTP_ID;
+  req.app.locals.xmtpId = AUTH_USER_XMTP_ID;
   next();
 });
 
@@ -762,143 +756,5 @@ describe("/invites API", () => {
     };
     expect(error.success).toBe(false);
     expect(error.message).toBe("Identity not found");
-  });
-
-  test("DELETE /invites/requests/:requestId allows requester to delete and creator sees it removed", async () => {
-    // user1 (creator) setup and create invite
-    await createTestUser("-delete-request-owner");
-
-    const createInviteRes = await fetch("http://localhost:3010/invites", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        groupId: "group-delete-request",
-        name: "Delete Request Group",
-        autoApprove: false,
-      }),
-    });
-    expect(createInviteRes.status).toBe(201);
-    const createdInvite =
-      (await createInviteRes.json()) as CreateInviteCodeResponse;
-
-    // user2 (requester) using header override
-    const USER2_XMTP_ID = "delete-request-user2-xmtp-id";
-    await createTestUser("-delete-request-user2", USER2_XMTP_ID);
-
-    // user2 creates a join request
-    const reqJoinRes = await fetch("http://localhost:3010/invites/request", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-test-xmtp-id": USER2_XMTP_ID,
-      },
-      body: JSON.stringify({ inviteId: createdInvite.id }),
-    });
-    expect(reqJoinRes.status).toBe(201);
-    const joinRequest = (await reqJoinRes.json()) as RequestToJoinResponse;
-
-    // user1 lists requests (should be 1)
-    const listBeforeRes = await fetch(
-      "http://localhost:3010/invites/requests",
-      {
-        method: "GET",
-        headers: { "Content-Type": "application/json" },
-      },
-    );
-    expect(listBeforeRes.status).toBe(200);
-    const listBefore =
-      (await listBeforeRes.json()) as GetInviteRequestsResponse;
-    expect(listBefore.total).toBe(1);
-    expect(listBefore.requests[0].id).toBe(joinRequest.id);
-
-    // user2 deletes their request
-    const deleteRes = await fetch(
-      `http://localhost:3010/invites/requests/${joinRequest.id}`,
-      {
-        method: "DELETE",
-        headers: {
-          "Content-Type": "application/json",
-          "x-test-xmtp-id": USER2_XMTP_ID,
-        },
-      },
-    );
-    expect(deleteRes.status).toBe(200);
-    const deleted = (await deleteRes.json()) as DeleteRequestToJoinResponse;
-    expect(deleted.id).toBe(joinRequest.id);
-    expect(deleted.deleted).toBe(true);
-
-    // user1 lists again (should be 0)
-    const listAfterRes = await fetch("http://localhost:3010/invites/requests", {
-      method: "GET",
-      headers: { "Content-Type": "application/json" },
-    });
-    expect(listAfterRes.status).toBe(200);
-    const listAfter = (await listAfterRes.json()) as GetInviteRequestsResponse;
-    expect(listAfter.total).toBe(0);
-  });
-
-  test("DELETE /invites/requests/:requestId by non-requester fails", async () => {
-    // user1 (creator) setup and create invite
-    await createTestUser("-delete-request-nonrequester-owner");
-
-    const createInviteRes = await fetch("http://localhost:3010/invites", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        groupId: "group-delete-request-nonrequester",
-        name: "Delete NonRequester Group",
-        autoApprove: false,
-      }),
-    });
-    expect(createInviteRes.status).toBe(201);
-    const createdInvite =
-      (await createInviteRes.json()) as CreateInviteCodeResponse;
-
-    // user2 (requester) and user3 (non-requester) via header override
-    const USER2_XMTP_ID = "delete-request-user2-xmtp-id-nonrequester";
-    const USER3_XMTP_ID = "delete-request-user3-xmtp-id";
-    await createTestUser("-delete-request-user2-nonrequester", USER2_XMTP_ID);
-    await createTestUser("-delete-request-user3-nonrequester", USER3_XMTP_ID);
-
-    // user2 creates a join request
-    const reqJoinRes = await fetch("http://localhost:3010/invites/request", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-test-xmtp-id": USER2_XMTP_ID,
-      },
-      body: JSON.stringify({ inviteId: createdInvite.id }),
-    });
-    expect(reqJoinRes.status).toBe(201);
-    const joinRequest = (await reqJoinRes.json()) as RequestToJoinResponse;
-
-    // user3 tries to delete user2's request
-    const deleteRes = await fetch(
-      `http://localhost:3010/invites/requests/${joinRequest.id}`,
-      {
-        method: "DELETE",
-        headers: {
-          "Content-Type": "application/json",
-          "x-test-xmtp-id": USER3_XMTP_ID,
-        },
-      },
-    );
-    expect(deleteRes.status).toBe(404);
-    const error = (await deleteRes.json()) as {
-      success: boolean;
-      message: string;
-    };
-    expect(error.success).toBe(false);
-    expect(error.message).toBe("Request to join not found");
-
-    // user1 lists requests (should be still 1)
-    const listAfterRes = await fetch("http://localhost:3010/invites/requests", {
-      method: "GET",
-      headers: { "Content-Type": "application/json" },
-    });
-    expect(listAfterRes.status).toBe(200);
-    const listBefore = (await listAfterRes.json()) as GetInviteRequestsResponse;
-    expect(listBefore.total).toBe(1);
-    expect(listBefore.requests[0].id).toBe(joinRequest.id);
   });
 });

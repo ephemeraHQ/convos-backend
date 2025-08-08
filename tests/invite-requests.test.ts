@@ -9,6 +9,8 @@ import {
   test,
 } from "bun:test";
 import express from "express";
+import type { DeleteRequestToJoinResponse } from "@/api/v1/invites/handlers/delete-request-to-join";
+import type { GetInviteRequestsResponse } from "@/api/v1/invites/handlers/get-invite-requests";
 import type {
   RequestToJoinRequestBody,
   RequestToJoinResponse,
@@ -22,9 +24,13 @@ const app = express();
 app.use(pinoMiddleware);
 app.use(jsonMiddleware);
 
-// Mock authentication by setting the request locals
+// Mock authentication by setting the request locals with optional override
 app.use((req, _res, next) => {
-  req.app.locals.xmtpId = "test-xmtp-id-requester";
+  const overrideXmtpId = req.headers["x-test-xmtp-id"];
+  req.app.locals.xmtpId =
+    typeof overrideXmtpId === "string"
+      ? overrideXmtpId
+      : "test-xmtp-id-requester";
   req.app.locals.xmtpInstallationId = "test-installation-id";
   next();
 });
@@ -297,5 +303,148 @@ describe("/invites/request API", () => {
     } finally {
       testServer.close();
     }
+  });
+
+  test("DELETE /invites/requests/:requestId allows requester to delete and creator sees it removed", async () => {
+    // Arrange: create creator/requester and invite code
+    const inviteCode = await createTestInviteCode();
+
+    // Act: requester creates a join request
+    const createReqRes = await fetch("http://localhost:3011/invites/request", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-test-xmtp-id": "test-xmtp-id-requester",
+      },
+      body: JSON.stringify({ inviteId: inviteCode.id }),
+    });
+    expect(createReqRes.status).toBe(201);
+    const joinRequest = (await createReqRes.json()) as RequestToJoinResponse;
+
+    // Assert: creator sees 1 request
+    const listBeforeRes = await fetch(
+      "http://localhost:3011/invites/requests",
+      {
+        method: "GET",
+        headers: {
+          "Content-Type": "application/json",
+          "x-test-xmtp-id": "test-creator-xmtp-id",
+        },
+      },
+    );
+    expect(listBeforeRes.status).toBe(200);
+    const listBefore =
+      (await listBeforeRes.json()) as GetInviteRequestsResponse;
+    expect(listBefore.total).toBe(1);
+    expect(listBefore.requests[0].id).toBe(joinRequest.id);
+
+    // Act: requester deletes their request
+    const deleteRes = await fetch(
+      `http://localhost:3011/invites/requests/${joinRequest.id}`,
+      {
+        method: "DELETE",
+        headers: {
+          "Content-Type": "application/json",
+          "x-test-xmtp-id": "test-xmtp-id-requester",
+        },
+      },
+    );
+    expect(deleteRes.status).toBe(200);
+    const deleted = (await deleteRes.json()) as DeleteRequestToJoinResponse;
+    expect(deleted.id).toBe(joinRequest.id);
+    expect(deleted.deleted).toBe(true);
+
+    // Assert: creator sees 0 requests now
+    const listAfterRes = await fetch("http://localhost:3011/invites/requests", {
+      method: "GET",
+      headers: {
+        "Content-Type": "application/json",
+        "x-test-xmtp-id": "test-creator-xmtp-id",
+      },
+    });
+    expect(listAfterRes.status).toBe(200);
+    const listAfter = (await listAfterRes.json()) as GetInviteRequestsResponse;
+    expect(listAfter.total).toBe(0);
+  });
+
+  test("DELETE /invites/requests/:requestId by non-requester fails", async () => {
+    // Arrange: create creator/requester and invite code
+    const inviteCode = await createTestInviteCode();
+
+    // Ensure we also have a third user (user3) in DB
+    await prisma.user.create({
+      data: {
+        userId: "test-user3",
+        userType: UserType.turnkey,
+        devices: {
+          create: {
+            device: {
+              create: {
+                id: "test-device-id-user3",
+                os: DeviceOS.ios,
+                name: "Test User3 Device",
+              },
+            },
+          },
+        },
+        DeviceIdentity: {
+          create: {
+            xmtpId: "test-user3-xmtp-id",
+            identityAddress: "0x1234user3",
+            profile: {
+              create: {
+                name: "Test User3",
+                username: "testuser3",
+                description: "Test user3",
+              },
+            },
+          },
+        },
+      },
+    });
+
+    // Act: requester creates a join request
+    const createReqRes = await fetch("http://localhost:3011/invites/request", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-test-xmtp-id": "test-xmtp-id-requester",
+      },
+      body: JSON.stringify({ inviteId: inviteCode.id }),
+    });
+    expect(createReqRes.status).toBe(201);
+    const joinRequest = (await createReqRes.json()) as RequestToJoinResponse;
+
+    // Act: user3 attempts to delete the request
+    const deleteRes = await fetch(
+      `http://localhost:3011/invites/requests/${joinRequest.id}`,
+      {
+        method: "DELETE",
+        headers: {
+          "Content-Type": "application/json",
+          "x-test-xmtp-id": "test-user3-xmtp-id",
+        },
+      },
+    );
+    expect(deleteRes.status).toBe(404);
+    const error = (await deleteRes.json()) as {
+      success: boolean;
+      message: string;
+    };
+    expect(error.success).toBe(false);
+    expect(error.message).toBe("Request to join not found");
+
+    // Assert: creator still sees 1 request
+    const listRes = await fetch("http://localhost:3011/invites/requests", {
+      method: "GET",
+      headers: {
+        "Content-Type": "application/json",
+        "x-test-xmtp-id": "test-creator-xmtp-id",
+      },
+    });
+    expect(listRes.status).toBe(200);
+    const list = (await listRes.json()) as GetInviteRequestsResponse;
+    expect(list.total).toBe(1);
+    expect(list.requests[0].id).toBe(joinRequest.id);
   });
 });
