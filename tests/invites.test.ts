@@ -28,7 +28,9 @@ const AUTH_USER_XMTP_ID = "test-invite-xmtp-id";
 
 // Add middleware to simulate authentication for tests
 app.use((req, res, next) => {
-  req.app.locals.xmtpId = AUTH_USER_XMTP_ID;
+  const overrideXmtpId = req.headers["x-test-xmtp-id"];
+  req.app.locals.xmtpId =
+    typeof overrideXmtpId === "string" ? overrideXmtpId : AUTH_USER_XMTP_ID;
   next();
 });
 
@@ -537,6 +539,85 @@ describe("/invites API", () => {
     };
     expect(error.success).toBe(false);
     expect(error.message).toBe("Invite not found");
+  });
+
+  test("DELETE /invites/:inviteId deletes the invite (creator only)", async () => {
+    // Create creator user and invite
+    await createTestUser("-delete-invite-owner");
+
+    const createRes = await fetch("http://localhost:3010/invites", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ groupId: "group-to-delete", name: "To Delete" }),
+    });
+    expect(createRes.status).toBe(201);
+    const invite = (await createRes.json()) as CreateInviteCodeResponse;
+
+    // Fetch details (200)
+    const getBefore = await fetch(
+      `http://localhost:3010/invites/${invite.id}`,
+      {
+        method: "GET",
+        headers: { "Content-Type": "application/json" },
+      },
+    );
+    expect(getBefore.status).toBe(200);
+
+    // Delete as creator
+    const delRes = await fetch(`http://localhost:3010/invites/${invite.id}`, {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+    });
+    expect(delRes.status).toBe(200);
+    const del = (await delRes.json()) as { id: string; deleted: boolean };
+    expect(del.id).toBe(invite.id);
+    expect(del.deleted).toBe(true);
+
+    // Fetch again (404)
+    const getAfter = await fetch(`http://localhost:3010/invites/${invite.id}`, {
+      method: "GET",
+      headers: { "Content-Type": "application/json" },
+    });
+    expect(getAfter.status).toBe(404);
+  });
+
+  test("DELETE /invites/:inviteId by non-creator is forbidden", async () => {
+    // Create creator and invite
+    await createTestUser("-delete-invite-owner2");
+    const createRes = await fetch("http://localhost:3010/invites", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        groupId: "group-to-delete2",
+        name: "To Delete 2",
+      }),
+    });
+    expect(createRes.status).toBe(201);
+    const invite = (await createRes.json()) as CreateInviteCodeResponse;
+
+    // Create another user
+    const OTHER_XMTP_ID = "delete-invite-other-user";
+    await createTestUser("-delete-invite-other", OTHER_XMTP_ID);
+
+    // Attempt delete as non-creator
+    const delRes = await fetch(`http://localhost:3010/invites/${invite.id}`, {
+      method: "DELETE",
+      headers: {
+        "Content-Type": "application/json",
+        "x-test-xmtp-id": OTHER_XMTP_ID,
+      },
+    });
+    expect(delRes.status).toBe(403);
+    const err = (await delRes.json()) as { success: boolean; message: string };
+    expect(err.success).toBe(false);
+    expect(err.message).toBe("Not authorized to delete this invite");
+
+    // Ensure invite still exists (creator can fetch)
+    const getRes = await fetch(`http://localhost:3010/invites/${invite.id}`, {
+      method: "GET",
+      headers: { "Content-Type": "application/json" },
+    });
+    expect(getRes.status).toBe(200);
   });
 
   test("POST /invites/:inviteId returns 403 for unauthorized update", async () => {
