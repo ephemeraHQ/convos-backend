@@ -1,3 +1,7 @@
+import { execFile } from "node:child_process";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { Request, Response } from "express";
 import { z } from "zod";
 import { prisma } from "@/utils/prisma";
@@ -36,6 +40,87 @@ export type InviteRequestNotificationPayload = {
   };
   autoApprove: boolean;
 };
+
+type Logger = {
+  info: (data: unknown, message?: string) => void;
+  warn: (data: unknown, message?: string) => void;
+  error: (data: unknown, message?: string) => void;
+};
+
+async function sendInviteRequestNotification(args: {
+  payload: InviteRequestNotificationPayload;
+  logger: Logger;
+}) {
+  const { payload, logger } = args;
+
+  // Only attempt local simulator push when on macOS and required env vars are set
+  const simId = process.env.IOS_SIMULATOR_ID;
+  const bundleId = process.env.IOS_BUNDLE_ID;
+
+  if (process.platform !== "darwin" || !simId || !bundleId) {
+    logger.info(
+      { configured: Boolean(simId && bundleId), platform: process.platform },
+      "Skipping simulator push (not configured or not macOS)",
+    );
+    return;
+  }
+
+  // Construct a simple APNS payload expected by simctl
+  const title = `${payload.requester.profile?.name || payload.requester.xmtpId} requested to join`;
+  const body = payload.inviteCode.name
+    ? `Group: ${payload.inviteCode.name}`
+    : `Group ID: ${payload.inviteCode.groupId}`;
+
+  const apnsPayload = {
+    aps: {
+      alert: {
+        title,
+        body,
+      },
+      sound: "default",
+      "mutable-content": 1,
+    },
+    type: "invite_request",
+    invite: payload,
+  };
+
+  // Write payload to a temporary file
+  const tmpBase = await mkdtemp(join(tmpdir(), "convos-invite-"));
+  const payloadPath = join(tmpBase, `invite-${payload.id}.apns.json`);
+  console.log({ payloadPath });
+  await writeFile(payloadPath, JSON.stringify(apnsPayload, null, 2), "utf8");
+
+  try {
+    const { stdout, stderr, exitCode } = await new Promise<{
+      stdout: string;
+      stderr: string;
+      exitCode: number;
+    }>((resolve) => {
+      execFile(
+        "xcrun",
+        ["simctl", "push", simId, bundleId, payloadPath],
+        (error, stdout, stderr) => {
+          resolve({
+            stdout: String(stdout),
+            stderr: String(stderr),
+            exitCode: error ? 1 : 0,
+          });
+        },
+      );
+    });
+
+    if (exitCode === 0) {
+      logger.info({ stdout }, "Simulator push succeeded");
+    } else {
+      logger.warn({ stderr }, "Simulator push failed");
+    }
+  } catch (error) {
+    logger.error({ error }, "Error running simctl push");
+  } finally {
+    // Best-effort cleanup
+    await rm(tmpBase, { recursive: true, force: true }).catch(() => {});
+  }
+}
 
 export async function requestToJoin(
   req: Request<unknown, unknown, RequestToJoinRequestBody>,
@@ -162,7 +247,7 @@ export async function requestToJoin(
       autoApprove: requestToJoin.inviteCode.autoApprove,
     };
 
-    logRequestNotification({ payload });
+    sendInviteRequestNotification({ payload, logger: req.log });
 
     const response: RequestToJoinResponse = {
       id: requestToJoin.id,
@@ -189,10 +274,3 @@ export async function requestToJoin(
   }
 }
 
-function logRequestNotification(args: {
-  payload: InviteRequestNotificationPayload;
-}) {
-  const { payload } = args;
-  // Structured log for future integration with notifications pipeline
-  console.log("invite.request.created", JSON.stringify(payload));
-}
