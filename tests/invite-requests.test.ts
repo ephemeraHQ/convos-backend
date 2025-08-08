@@ -342,6 +342,130 @@ describe("/invites/request API", () => {
     expect(listAfter.total).toBe(0);
   });
 
+  test("DELETE /invites/requests/:requestId allows invite creator to delete", async () => {
+    const inviteCode = await createTestInviteCode();
+
+    const createReqRes = await fetch("http://localhost:3011/invites/request", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-test-xmtp-id": "test-xmtp-id-requester",
+      },
+      body: JSON.stringify({ inviteId: inviteCode.id }),
+    });
+    expect(createReqRes.status).toBe(201);
+    const joinRequest = (await createReqRes.json()) as RequestToJoinResponse;
+
+    const deleteRes = await fetch(
+      `http://localhost:3011/invites/requests/${joinRequest.id}`,
+      {
+        method: "DELETE",
+        headers: {
+          "Content-Type": "application/json",
+          "x-test-xmtp-id": "test-creator-xmtp-id",
+        },
+      },
+    );
+    expect(deleteRes.status).toBe(200);
+    const deleted = (await deleteRes.json()) as DeleteRequestToJoinResponse;
+    expect(deleted.id).toBe(joinRequest.id);
+    expect(deleted.deleted).toBe(true);
+
+    // creator sees 0 requests now
+    const listAfterRes = await fetch("http://localhost:3011/invites/requests", {
+      method: "GET",
+      headers: {
+        "Content-Type": "application/json",
+        "x-test-xmtp-id": "test-creator-xmtp-id",
+      },
+    });
+    expect(listAfterRes.status).toBe(200);
+    const listAfter = (await listAfterRes.json()) as GetInviteRequestsResponse;
+    expect(listAfter.total).toBe(0);
+  });
+
+  test("DELETE /invites/requests/:requestId allows notification target to delete", async () => {
+    const inviteCode = await createTestInviteCode();
+
+    // Create a notification target identity and link it to the invite
+    await prisma.user.create({
+      data: {
+        userId: "test-notifier-user",
+        userType: UserType.turnkey,
+        devices: {
+          create: {
+            device: {
+              create: {
+                id: "test-device-id-notifier",
+                os: DeviceOS.ios,
+                name: "Test Notifier Device",
+              },
+            },
+          },
+        },
+        DeviceIdentity: {
+          create: {
+            xmtpId: "test-notifier-xmtp-id",
+            identityAddress: "0x1234notifier",
+            profile: {
+              create: {
+                name: "Test Notifier",
+                username: "testnotifier",
+                description: "Test notifier user",
+              },
+            },
+          },
+        },
+      },
+    });
+    const notifierIdentity = await prisma.deviceIdentity.findFirst({
+      where: { xmtpId: "test-notifier-xmtp-id" },
+    });
+    await prisma.inviteCodeNotificationTarget.create({
+      data: {
+        inviteCodeId: inviteCode.id,
+        deviceIdentityId: notifierIdentity!.id,
+      },
+    });
+
+    const createReqRes = await fetch("http://localhost:3011/invites/request", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-test-xmtp-id": "test-xmtp-id-requester",
+      },
+      body: JSON.stringify({ inviteId: inviteCode.id }),
+    });
+    expect(createReqRes.status).toBe(201);
+    const joinRequest = (await createReqRes.json()) as RequestToJoinResponse;
+
+    const deleteRes = await fetch(
+      `http://localhost:3011/invites/requests/${joinRequest.id}`,
+      {
+        method: "DELETE",
+        headers: {
+          "Content-Type": "application/json",
+          "x-test-xmtp-id": "test-notifier-xmtp-id",
+        },
+      },
+    );
+    expect(deleteRes.status).toBe(200);
+    const deleted = (await deleteRes.json()) as DeleteRequestToJoinResponse;
+    expect(deleted.id).toBe(joinRequest.id);
+    expect(deleted.deleted).toBe(true);
+
+    const listAfterRes = await fetch("http://localhost:3011/invites/requests", {
+      method: "GET",
+      headers: {
+        "Content-Type": "application/json",
+        "x-test-xmtp-id": "test-creator-xmtp-id",
+      },
+    });
+    expect(listAfterRes.status).toBe(200);
+    const listAfter = (await listAfterRes.json()) as GetInviteRequestsResponse;
+    expect(listAfter.total).toBe(0);
+  });
+
   test("DELETE /invites/requests/:requestId by non-requester fails", async () => {
     // Arrange: create creator/requester and invite code
     const inviteCode = await createTestInviteCode();

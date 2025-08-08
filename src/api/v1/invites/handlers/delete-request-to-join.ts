@@ -20,13 +20,12 @@ export async function deleteRequestToJoin(req: Request, res: Response) {
     const params = await deleteRequestToJoinParams.parseAsync(req.params);
     const { xmtpId } = req.app.locals;
 
-    // Find the requester's identity
-    const requesterIdentity = await prisma.deviceIdentity.findFirst({
+    // Find the authenticated user's identity (by xmtpId)
+    const authenticatedIdentity = await prisma.deviceIdentity.findFirst({
       where: { xmtpId },
-      include: { profile: true },
     });
 
-    if (!requesterIdentity) {
+    if (!authenticatedIdentity) {
       res.status(404).json({
         success: false,
         message: "Identity not found",
@@ -34,14 +33,41 @@ export async function deleteRequestToJoin(req: Request, res: Response) {
       return;
     }
 
-    // Find the request to join with this request id / xmtp id
+    // Load the join request with related entities to check authorization
     const requestToJoin = await prisma.inviteCodeRequest.findUnique({
-      where: { id: params.requestId, requester: { xmtpId } },
+      where: { id: params.requestId },
       include: {
         requester: true,
+        inviteCode: {
+          include: {
+            createdBy: true,
+            notificationTargets: {
+              include: {
+                deviceIdentity: true,
+              },
+            },
+          },
+        },
       },
     });
     if (!requestToJoin) {
+      res.status(404).json({
+        success: false,
+        message: "Request to join not found",
+      });
+      return;
+    }
+
+    // Authorization: requester OR invite creator OR any notification target can delete
+    const isRequester = requestToJoin.requester.xmtpId === xmtpId;
+    const isCreator = requestToJoin.inviteCode.createdBy.xmtpId === xmtpId;
+    const isNotificationTarget =
+      requestToJoin.inviteCode.notificationTargets.some(
+        (target) => target.deviceIdentity.xmtpId === xmtpId,
+      );
+
+    if (!isRequester && !isCreator && !isNotificationTarget) {
+      // Conceal existence if unauthorized
       res.status(404).json({
         success: false,
         message: "Request to join not found",
@@ -61,7 +87,7 @@ export async function deleteRequestToJoin(req: Request, res: Response) {
     if (error instanceof z.ZodError) {
       res.status(400).json({
         success: false,
-        message: "Invalid request body",
+        message: "Invalid request params",
         errors: error.errors,
       });
       return;
