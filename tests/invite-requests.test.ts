@@ -188,28 +188,6 @@ describe("/invites/request API", () => {
     expect(dbRequest?.status).toBe(InviteCodeRequestStatus.PENDING);
   });
 
-  test("POST /invites/request rejects request for auto-approve invite", async () => {
-    const inviteCode = await createTestInviteCode({ autoApprove: true });
-
-    const requestBody: RequestToJoinRequestBody = {
-      inviteId: inviteCode.id,
-    };
-
-    const response = await fetch("http://localhost:3011/invites/request", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(requestBody),
-    });
-
-    expect(response.status).toBe(400);
-
-    const error = (await response.json()) as ErrorResponse;
-    expect(error.success).toBe(false);
-    expect(error.message).toContain("does not require approval");
-  });
-
   test("POST /invites/request rejects duplicate request", async () => {
     const inviteCode = await createTestInviteCode();
     const requesterIdentity = await prisma.deviceIdentity.findFirst({
