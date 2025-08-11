@@ -79,6 +79,13 @@ export async function updateDeviceHandler(
           validatedData.pushTokenType ||
           validatedData.apnsEnv) && { pushFailures: 0 }),
       },
+      select: {
+        id: true,
+        pushToken: true,
+        pushTokenType: true,
+        apnsEnv: true,
+        updatedAt: true,
+      },
     });
 
     res.json(device);
