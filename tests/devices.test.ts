@@ -152,7 +152,7 @@ describe("/devices API", () => {
     const data = (await response.json()) as { error: string };
 
     expect(response.status).toBe(404);
-    expect(data.error).toBe("Device not found");
+    expect(data.error).toBe("Device not found or not associated with this user");
   });
 
   test("GET /devices/:userId/:deviceId returns device when exists", async () => {
@@ -316,7 +316,7 @@ describe("/devices API", () => {
     });
     const createdUser =
       (await createUserResponse.json()) as CreatedReturnedUser;
-    const userId = createdUser.id;
+    const userId = createUserBody.userId; // Use the userId field, not the id
 
     // create a device
     const createResponse = await fetch(
