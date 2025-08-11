@@ -2,6 +2,7 @@ import { type Request, type Response } from "express";
 import { z } from "zod";
 import { prisma } from "@/utils/prisma";
 import { DeviceSchema } from "../../../../../prisma/generated/zod";
+import { logError } from "@/utils/errors";
 
 export type UpdateDeviceRequestParams = {
   userId: string;
@@ -62,6 +63,15 @@ export async function updateDeviceHandler(
     });
 
     if (!existingDevice) {
+      logError(
+        new Error("Device access attempt failed"),
+        {
+          userId,
+          deviceId,
+          xmtpId,
+          reason: "Device not found or not associated with user",
+        },
+      );
       res
         .status(404)
         .json({ error: "Device not found or not associated with this user" });
@@ -81,10 +91,17 @@ export async function updateDeviceHandler(
       },
       select: {
         id: true,
+        name: true,
+        os: true,
         pushToken: true,
         pushTokenType: true,
         apnsEnv: true,
+        appVersion: true,
+        appBuildNumber: true,
+        createdAt: true,
         updatedAt: true,
+        lastPushSuccessAt: true,
+        pushFailures: true,
       },
     });
 

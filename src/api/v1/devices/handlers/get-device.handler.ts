@@ -17,17 +17,10 @@ export async function getDeviceHandler(
     // First find the user to verify they exist and are the authenticated user
     const user = await prisma.user.findFirst({
       where: {
-        id: userId,
+        userId: userId,
         DeviceIdentity: {
           some: {
             xmtpId,
-          },
-        },
-      },
-      include: {
-        devices: {
-          include: {
-            device: true,
           },
         },
       },
@@ -40,14 +33,40 @@ export async function getDeviceHandler(
       return;
     }
 
-    const device = user.devices.find((device) => device.device.id === deviceId);
+    // Check if device exists and is associated with the user
+    const device = await prisma.device.findFirst({
+      where: {
+        id: deviceId,
+        users: {
+          some: {
+            userId: user.id,
+          },
+        },
+      },
+      select: {
+        id: true,
+        name: true,
+        os: true,
+        pushToken: true,
+        pushTokenType: true,
+        apnsEnv: true,
+        appVersion: true,
+        appBuildNumber: true,
+        createdAt: true,
+        updatedAt: true,
+        lastPushSuccessAt: true,
+        pushFailures: true,
+      },
+    });
 
     if (!device) {
-      res.status(404).json({ error: "Device not found" });
+      res
+        .status(404)
+        .json({ error: "Device not found or not associated with this user" });
       return;
     }
 
-    res.json(device.device);
+    res.json(device);
   } catch {
     res.status(500).json({ error: "Failed to fetch device" });
   }
