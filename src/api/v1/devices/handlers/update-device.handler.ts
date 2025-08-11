@@ -105,13 +105,20 @@ export async function updateDeviceHandler(
 
     res.json(device);
   } catch (error) {
-    console.error("Error in updateDeviceHandler:", {
-      error: error instanceof Error ? error.message : String(error),
-      stack: error instanceof Error ? error.stack : undefined,
+    logError(error, {
       userId: req.params.userId,
       deviceId: req.params.deviceId,
-      requestBody: req.body,
       xmtpId: req.app.locals.xmtpId,
+      requestBodyMetadata: {
+        hasPushToken: Boolean(req.body.pushToken),
+        pushTokenType: typeof req.body.pushToken,
+        hasPushTokenType: Boolean(req.body.pushTokenType),
+        hasApnsEnv: Boolean(req.body.apnsEnv),
+        hasName: Boolean(req.body.name),
+        hasOs: Boolean(req.body.os),
+        hasAppVersion: Boolean(req.body.appVersion),
+        hasAppBuildNumber: Boolean(req.body.appBuildNumber),
+      },
     });
 
     if (error instanceof z.ZodError) {
