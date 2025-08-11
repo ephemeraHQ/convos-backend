@@ -152,7 +152,9 @@ describe("/devices API", () => {
     const data = (await response.json()) as { error: string };
 
     expect(response.status).toBe(404);
-    expect(data.error).toBe("Device not found or not associated with this user");
+    expect(data.error).toBe(
+      "Device not found or not associated with this user",
+    );
   });
 
   test("GET /devices/:userId/:deviceId returns device when exists", async () => {
@@ -314,8 +316,7 @@ describe("/devices API", () => {
       },
       body: JSON.stringify(createUserBody),
     });
-    const createdUser =
-      (await createUserResponse.json()) as CreatedReturnedUser;
+    await createUserResponse.json(); // Consume response but don't need the result
     const userId = createUserBody.userId; // Use the userId field, not the id
 
     // create a device

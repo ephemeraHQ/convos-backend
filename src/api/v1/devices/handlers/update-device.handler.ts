@@ -1,8 +1,8 @@
 import { type Request, type Response } from "express";
 import { z } from "zod";
+import { AppError, logError } from "@/utils/errors";
 import { prisma } from "@/utils/prisma";
 import { DeviceSchema } from "../../../../../prisma/generated/zod";
-import { logError } from "@/utils/errors";
 
 export type UpdateDeviceRequestParams = {
   userId: string;
@@ -111,7 +111,7 @@ export async function updateDeviceHandler(
       xmtpId: req.app.locals.xmtpId,
       requestBodyMetadata: {
         hasPushToken: Boolean(req.body.pushToken),
-        pushTokenType: typeof req.body.pushToken,
+        pushTokenType: typeof req.body.pushTokenType,
         hasPushTokenType: Boolean(req.body.pushTokenType),
         hasApnsEnv: Boolean(req.body.apnsEnv),
         hasName: Boolean(req.body.name),
@@ -128,9 +128,17 @@ export async function updateDeviceHandler(
       return;
     }
 
+    if (error instanceof AppError) {
+      res.status(error.statusCode).json({
+        error: error.message,
+        details: error.details,
+      });
+      return;
+    }
+
+    // Fallback for unexpected errors - no internal details exposed
     res.status(500).json({
       error: "Failed to update device",
-      details: error instanceof Error ? error.message : "Unknown error",
     });
   }
 }
