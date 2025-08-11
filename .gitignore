@@ -63,3 +63,7 @@ logs
 
 # Prisma generated files
 /prisma/generated/
+
+# Claude
+.claude
+

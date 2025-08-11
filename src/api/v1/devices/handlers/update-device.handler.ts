@@ -1,5 +1,6 @@
 import { type Request, type Response } from "express";
 import { z } from "zod";
+import { AppError, logError } from "@/utils/errors";
 import { prisma } from "@/utils/prisma";
 import { DeviceSchema } from "../../../../../prisma/generated/zod";
 
@@ -31,7 +32,7 @@ export async function updateDeviceHandler(
     // First find the user to verify they exist and are the authenticated user
     const user = await prisma.user.findFirst({
       where: {
-        id: userId,
+        userId: userId,
         DeviceIdentity: {
           some: {
             xmtpId,
@@ -49,12 +50,13 @@ export async function updateDeviceHandler(
 
     const validatedData = DeviceUpdateInputSchema.parse(req.body);
 
-    const device = await prisma.device.update({
+    // Atomic update with ownership check to prevent race conditions
+    const updateResult = await prisma.device.updateMany({
       where: {
         id: deviceId,
         users: {
           some: {
-            userId,
+            userId: user.id,
           },
         },
       },
@@ -67,14 +69,96 @@ export async function updateDeviceHandler(
       },
     });
 
+    if (updateResult.count === 0) {
+      logError(new Error("Device access attempt failed"), {
+        userId,
+        deviceId,
+        xmtpId,
+        reason: "Device not found or not associated with user",
+      });
+      res
+        .status(404)
+        .json({ error: "Device not found or not associated with this user" });
+      return;
+    }
+
+    // Re-fetch the updated device with ownership check to return to client
+    const device = await prisma.device.findFirst({
+      where: {
+        id: deviceId,
+        users: {
+          some: {
+            userId: user.id,
+          },
+        },
+      },
+      select: {
+        id: true,
+        name: true,
+        os: true,
+        pushToken: true,
+        pushTokenType: true,
+        apnsEnv: true,
+        appVersion: true,
+        appBuildNumber: true,
+        createdAt: true,
+        updatedAt: true,
+        lastPushSuccessAt: true,
+        pushFailures: true,
+      },
+    });
+
+    if (!device) {
+      logError(new Error("Device ownership lost after update"), {
+        userId,
+        deviceId,
+        xmtpId,
+        reason: "Device not found or ownership changed after update",
+      });
+      res
+        .status(404)
+        .json({ error: "Device not found or not associated with this user" });
+      return;
+    }
+
     res.json(device);
+    return;
   } catch (error) {
+    logError(error, {
+      userId: req.params.userId,
+      deviceId: req.params.deviceId,
+      xmtpId: req.app.locals.xmtpId,
+      requestBodyMetadata: {
+        hasPushToken: Boolean(req.body.pushToken),
+        pushTokenType: typeof req.body.pushTokenType,
+        hasPushTokenType: Boolean(req.body.pushTokenType),
+        hasApnsEnv: Boolean(req.body.apnsEnv),
+        hasName: Boolean(req.body.name),
+        hasOs: Boolean(req.body.os),
+        hasAppVersion: Boolean(req.body.appVersion),
+        hasAppBuildNumber: Boolean(req.body.appBuildNumber),
+      },
+    });
+
     if (error instanceof z.ZodError) {
       res
         .status(400)
         .json({ error: "Invalid request body", details: error.errors });
       return;
     }
-    res.status(500).json({ error: "Failed to update device" });
+
+    if (error instanceof AppError) {
+      res.status(error.statusCode).json({
+        error: error.message,
+        details: error.details,
+      });
+      return;
+    }
+
+    // Fallback for unexpected errors - no internal details exposed
+    res.status(500).json({
+      error: "Failed to update device",
+    });
+    return;
   }
 }

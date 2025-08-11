@@ -16,17 +16,10 @@ export async function listDevicesHandler(
     // First find the user to verify they exist and are the authenticated user
     const user = await prisma.user.findFirst({
       where: {
-        id: userId,
+        userId: userId,
         DeviceIdentity: {
           some: {
             xmtpId,
-          },
-        },
-      },
-      include: {
-        devices: {
-          include: {
-            device: true,
           },
         },
       },
@@ -39,7 +32,30 @@ export async function listDevicesHandler(
       return;
     }
 
-    const devices = user.devices.map((device) => device.device);
+    // Get all devices associated with this user
+    const devices = await prisma.device.findMany({
+      where: {
+        users: {
+          some: {
+            userId: user.id,
+          },
+        },
+      },
+      select: {
+        id: true,
+        name: true,
+        os: true,
+        pushToken: true,
+        pushTokenType: true,
+        apnsEnv: true,
+        appVersion: true,
+        appBuildNumber: true,
+        createdAt: true,
+        updatedAt: true,
+        lastPushSuccessAt: true,
+        pushFailures: true,
+      },
+    });
 
     res.json(devices);
   } catch (error) {

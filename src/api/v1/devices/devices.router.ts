@@ -15,7 +15,7 @@ devicesRouter.get("/:userId", listDevicesHandler);
 // POST /devices/:userId - Create a new device
 devicesRouter.post("/:userId", createDeviceHandler);
 
-// PUT /devices/:userId/:deviceId - Update a device
-devicesRouter.put("/:userId/:deviceId", updateDeviceHandler);
+// PATCH /devices/:userId/:deviceId - Update a device
+devicesRouter.patch("/:userId/:deviceId", updateDeviceHandler);
 
 export default devicesRouter;

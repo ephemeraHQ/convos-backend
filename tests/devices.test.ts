@@ -87,9 +87,9 @@ describe("/devices API", () => {
       },
       body: JSON.stringify(createUserBody),
     });
-    const createdUser =
+    const _createdUser =
       (await createUserResponse.json()) as CreatedReturnedUser;
-    const userId = createdUser.id;
+    const userId = createUserBody.userId;
 
     const response = await fetch(`http://localhost:3002/devices/${userId}`, {
       method: "POST",
@@ -142,9 +142,9 @@ describe("/devices API", () => {
       },
       body: JSON.stringify(createUserBody),
     });
-    const createdUser =
+    const _createdUser =
       (await createUserResponse.json()) as CreatedReturnedUser;
-    const userId = createdUser.id;
+    const userId = createUserBody.userId;
 
     const response = await fetch(
       `http://localhost:3002/devices/${userId}/nonexistent-id`,
@@ -152,7 +152,9 @@ describe("/devices API", () => {
     const data = (await response.json()) as { error: string };
 
     expect(response.status).toBe(404);
-    expect(data.error).toBe("Device not found");
+    expect(data.error).toBe(
+      "Device not found or not associated with this user",
+    );
   });
 
   test("GET /devices/:userId/:deviceId returns device when exists", async () => {
@@ -183,9 +185,9 @@ describe("/devices API", () => {
       },
       body: JSON.stringify(createUserBody),
     });
-    const createdUser =
+    const _createdUser =
       (await createUserResponse.json()) as CreatedReturnedUser;
-    const userId = createdUser.id;
+    const userId = createUserBody.userId;
 
     // create a device
     const createResponse = await fetch(
@@ -247,9 +249,9 @@ describe("/devices API", () => {
       },
       body: JSON.stringify(createUserBody),
     });
-    const createdUser =
+    const _createdUser =
       (await createUserResponse.json()) as CreatedReturnedUser;
-    const userId = createdUser.id;
+    const userId = createUserBody.userId;
 
     // create two devices
     await fetch(`http://localhost:3002/devices/${userId}`, {
@@ -286,7 +288,7 @@ describe("/devices API", () => {
     expect(devices.map((d) => d.name)).toContain("Test Initial Device");
   });
 
-  test("PUT /devices/:userId/:deviceId updates device", async () => {
+  test("PATCH /devices/:userId/:deviceId updates device", async () => {
     // Create test user first via API
     const createUserBody: CreateUserRequestBody = {
       userId: "test-devices-turnkey-user-id-5",
@@ -314,9 +316,9 @@ describe("/devices API", () => {
       },
       body: JSON.stringify(createUserBody),
     });
-    const createdUser =
+    const _createdUser =
       (await createUserResponse.json()) as CreatedReturnedUser;
-    const userId = createdUser.id;
+    const userId = createUserBody.userId;
 
     // create a device
     const createResponse = await fetch(
@@ -340,7 +342,7 @@ describe("/devices API", () => {
     const updateResponse = await fetch(
       `http://localhost:3002/devices/${userId}/${createdDevice.id}`,
       {
-        method: "PUT",
+        method: "PATCH",
         headers: {
           "Content-Type": "application/json",
         },
@@ -351,9 +353,10 @@ describe("/devices API", () => {
         }),
       },
     );
-    const updatedDevice = (await updateResponse.json()) as Device;
-
+    // Check status first before parsing JSON
     expect(updateResponse.status).toBe(200);
+
+    const updatedDevice = (await updateResponse.json()) as Device;
     expect(updatedDevice.id).toBe(createdDevice.id);
     expect(updatedDevice.name).toBe("New Name");
     expect(updatedDevice.os).toBe(DeviceOS.android);
@@ -388,9 +391,9 @@ describe("/devices API", () => {
       },
       body: JSON.stringify(createUserBody),
     });
-    const createdUser =
+    const _createdUser =
       (await createUserResponse.json()) as CreatedReturnedUser;
-    const userId = createdUser.id;
+    const userId = createUserBody.userId;
 
     const response = await fetch(`http://localhost:3002/devices/${userId}`, {
       method: "POST",

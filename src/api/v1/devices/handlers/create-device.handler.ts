@@ -37,7 +37,7 @@ export async function createDeviceHandler(
     // First find the user to verify they exist and are the authenticated user
     const user = await prisma.user.findFirst({
       where: {
-        id: userId,
+        userId: userId,
         DeviceIdentity: {
           some: {
             xmtpId,
@@ -61,7 +61,7 @@ export async function createDeviceHandler(
         pushFailures: 0,
         users: {
           create: {
-            userId,
+            userId: user.id,
           },
         },
       },
