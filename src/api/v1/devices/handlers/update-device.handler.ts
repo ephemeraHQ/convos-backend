@@ -82,10 +82,15 @@ export async function updateDeviceHandler(
       return;
     }
 
-    // Re-fetch the updated device to return to client
-    const device = await prisma.device.findUnique({
+    // Re-fetch the updated device with ownership check to return to client
+    const device = await prisma.device.findFirst({
       where: {
         id: deviceId,
+        users: {
+          some: {
+            userId: user.id,
+          },
+        },
       },
       select: {
         id: true,
@@ -103,7 +108,21 @@ export async function updateDeviceHandler(
       },
     });
 
+    if (!device) {
+      logError(new Error("Device ownership lost after update"), {
+        userId,
+        deviceId,
+        xmtpId,
+        reason: "Device not found or ownership changed after update",
+      });
+      res
+        .status(404)
+        .json({ error: "Device not found or not associated with this user" });
+      return;
+    }
+
     res.json(device);
+    return;
   } catch (error) {
     logError(error, {
       userId: req.params.userId,
@@ -140,5 +159,6 @@ export async function updateDeviceHandler(
     res.status(500).json({
       error: "Failed to update device",
     });
+    return;
   }
 }
