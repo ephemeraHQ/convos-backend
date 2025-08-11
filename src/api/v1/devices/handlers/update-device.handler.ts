@@ -50,8 +50,8 @@ export async function updateDeviceHandler(
 
     const validatedData = DeviceUpdateInputSchema.parse(req.body);
 
-    // Check if device exists and is associated with the user
-    const existingDevice = await prisma.device.findFirst({
+    // Atomic update with ownership check to prevent race conditions
+    const updateResult = await prisma.device.updateMany({
       where: {
         id: deviceId,
         users: {
@@ -60,34 +60,32 @@ export async function updateDeviceHandler(
           },
         },
       },
-    });
-
-    if (!existingDevice) {
-      logError(
-        new Error("Device access attempt failed"),
-        {
-          userId,
-          deviceId,
-          xmtpId,
-          reason: "Device not found or not associated with user",
-        },
-      );
-      res
-        .status(404)
-        .json({ error: "Device not found or not associated with this user" });
-      return;
-    }
-
-    const device = await prisma.device.update({
-      where: {
-        id: deviceId,
-      },
       data: {
         ...validatedData,
         updatedAt: new Date(),
         ...((validatedData.pushToken ||
           validatedData.pushTokenType ||
           validatedData.apnsEnv) && { pushFailures: 0 }),
+      },
+    });
+
+    if (updateResult.count === 0) {
+      logError(new Error("Device access attempt failed"), {
+        userId,
+        deviceId,
+        xmtpId,
+        reason: "Device not found or not associated with user",
+      });
+      res
+        .status(404)
+        .json({ error: "Device not found or not associated with this user" });
+      return;
+    }
+
+    // Re-fetch the updated device to return to client
+    const device = await prisma.device.findUnique({
+      where: {
+        id: deviceId,
       },
       select: {
         id: true,
