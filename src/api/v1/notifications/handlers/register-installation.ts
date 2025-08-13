@@ -3,6 +3,7 @@ import type { Request, Response } from "express";
 import { z } from "zod";
 import { createNotificationClient } from "@/notifications/client";
 import { prisma } from "@/utils/prisma";
+import { ApnsEnvironmentSchema } from "../../../../../prisma/generated/zod";
 
 const installationItemSchema = z.object({
   identityId: z.string(),
@@ -13,6 +14,7 @@ const currentRegistrationSchema = z.object({
   deviceId: z.string(),
   pushToken: z.string(),
   pushTokenType: z.nativeEnum(PushTokenType).optional(),
+  apnsEnv: ApnsEnvironmentSchema.nullable(),
   // List of installations to register
   // We will also check for any other identities on device that don't have any of those installations and delete them
   installations: z.array(installationItemSchema),
@@ -161,6 +163,7 @@ async function handleCurrentRegistration(args: {
           data: {
             pushToken: body.pushToken,
             pushTokenType: body.pushTokenType,
+            apnsEnv: body.apnsEnv,
           },
         });
 
