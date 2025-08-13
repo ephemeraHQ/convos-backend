@@ -1,4 +1,9 @@
 #!/bin/bash
 set -eou pipefail
 
-docker compose -f dev/compose.yml -p "convos" "$@"
+# Pass the .env file if it exists locally - useful to run tests locally
+if [ -f .env ]; then
+  docker compose --env-file .env -f dev/compose.yml -p "convos" "$@"
+else
+  docker compose -f dev/compose.yml -p "convos" "$@"
+fi
