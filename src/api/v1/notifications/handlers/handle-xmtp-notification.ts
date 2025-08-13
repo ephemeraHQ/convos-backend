@@ -1,7 +1,7 @@
 import type { Request, Response } from "express";
 import {
   createNotificationClient,
-  type NotificationResponse,
+  type WebhookNotificationBody,
 } from "@/notifications/client";
 import { getHttpDeliveryNotificationAuthHeader } from "@/notifications/utils";
 import { prisma } from "@/utils/prisma";
@@ -28,7 +28,7 @@ export async function handleXmtpNotification(req: Request, res: Response) {
   } | null = null;
 
   try {
-    const notification = req.body as NotificationResponse;
+    const notification = req.body as WebhookNotificationBody;
 
     // Log the notification for debugging
     req.log.info(
@@ -83,36 +83,36 @@ export async function handleXmtpNotification(req: Request, res: Response) {
     };
 
     const { device, identity } = identityOnDevice;
-    const pushTokenType = device.pushTokenType;
 
-    // For APNS (new Convos architecture for OTR), use xmtpId - no identityAddress needed
-    if (pushTokenType === "apns") {
-      // Use the unified push notification service - xmtpId used internally
-      const result = await pushNotificationService.sendPushNotification({
-        device,
-        notification,
+    const result = await pushNotificationService.sendPushNotification({
+      device,
+      notification: {
         inboxId: identity.xmtpId,
-        req,
-      });
+        notificationType: "Protocol",
+        notificationData: {
+          contentTopic: notification.message.content_topic,
+          messageType: notification.message_context.message_type,
+          encryptedMessage: notification.message.message,
+          timestamp: notification.message.timestamp_ns,
+        },
+      },
+    });
 
-      if (!result.success && result.shouldCleanup) {
-        req.log.info(
-          `Push notification failed with unrecoverable error for device ${device.id}. Initiating cleanup.`,
-        );
-        if (identityOnDeviceToCleanup.xmtpInstallationId) {
-          await cleanupFailedInstallation({
-            xmtpInstallationId: identityOnDeviceToCleanup.xmtpInstallationId,
-            deviceId: identityOnDeviceToCleanup.deviceId,
-            req,
-          });
-        }
+    if (!result.success && result.shouldCleanup) {
+      req.log.info(
+        `Push notification failed with unrecoverable error for device ${device.id}. Initiating cleanup.`,
+      );
+      if (identityOnDeviceToCleanup.xmtpInstallationId) {
+        await cleanupFailedInstallation({
+          xmtpInstallationId: identityOnDeviceToCleanup.xmtpInstallationId,
+          deviceId: identityOnDeviceToCleanup.deviceId,
+          req,
+        });
       }
-
-      res.status(200).end();
-      return;
     }
 
-    res.status(400).json({ error: "Only APNS notifications supported" });
+    res.status(200).end();
+    return;
   } catch (error) {
     req.log.error({ error }, "Outer error processing notification");
     res.status(500).json({ error: "Internal server error" });

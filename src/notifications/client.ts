@@ -25,7 +25,7 @@ export type Topic = {
   hmacKeys: HmacKey[];
 };
 
-export type NotificationResponse = {
+export type WebhookNotificationBody = {
   idempotency_key: string;
   message: {
     content_topic: string;

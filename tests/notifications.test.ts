@@ -129,6 +129,7 @@ describe("/notifications API - Register/Unregister (Auth Required)", () => {
           deviceId: testDeviceId,
           pushToken: "test-push-token-register",
           pushTokenType: "apns" as const,
+          apnsEnv: "sandbox",
           installations: [
             {
               identityId: AUTH_XMTP_ID,
@@ -156,6 +157,7 @@ describe("/notifications API - Register/Unregister (Auth Required)", () => {
       where: { id: testDeviceId },
     });
     expect(device?.pushToken).toBe("test-push-token-register");
+    expect(device?.apnsEnv).toBe("sandbox");
   });
 
   test("POST /notifications/register validates request body (missing fields)", async () => {
@@ -185,6 +187,7 @@ describe("/notifications API - Register/Unregister (Auth Required)", () => {
           deviceId: "wrong-device-id",
           pushToken: "test-push-token-forbidden",
           pushTokenType: "apns" as const,
+          apnsEnv: "sandbox",
           installations: [
             {
               identityId: AUTH_XMTP_ID,
@@ -208,6 +211,7 @@ describe("/notifications API - Register/Unregister (Auth Required)", () => {
           deviceId: testDeviceId,
           pushToken: "token-for-unregister-push",
           pushTokenType: "apns" as const,
+          apnsEnv: "sandbox",
           installations: [
             {
               identityId: AUTH_XMTP_ID,

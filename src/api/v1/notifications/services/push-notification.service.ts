@@ -1,16 +1,13 @@
 import type { Device } from "@prisma/client";
-import type { Request } from "express";
-import type { NotificationResponse } from "@/notifications/client";
+import logger from "@/utils/logger";
 import { prisma } from "@/utils/prisma";
 import { createApnsService, type ApnsPushService } from "./apns-push.service";
+import type { NotificationPayload } from "./notifications-types";
 
-export interface PushMessageData extends Record<string, unknown> {
-  contentTopic: string;
-  messageType: string;
-  encryptedMessage: string;
-  timestamp: string;
-  inboxId: string;
-}
+type SendNotificationResult = {
+  success: boolean;
+  shouldCleanup?: boolean;
+};
 
 export class PushNotificationService {
   private apnsService: ApnsPushService | null;
@@ -21,27 +18,17 @@ export class PushNotificationService {
 
   async sendPushNotification(args: {
     device: Device;
-    notification: NotificationResponse;
-    inboxId: string;
-    req: Request;
-  }): Promise<{ success: boolean; shouldCleanup?: boolean }> {
-    const { device, notification, inboxId, req } = args;
+    notification: NotificationPayload;
+  }): Promise<SendNotificationResult> {
+    const { device, notification } = args;
 
     // Check if device has too many push failures
     if (device.pushFailures > 10) {
-      req.log.warn(
+      logger.warn(
         `Device ${device.id} has too many push failures (${device.pushFailures}). Skipping notification.`,
       );
       return { success: false };
     }
-
-    const messageData: PushMessageData = {
-      contentTopic: notification.message.content_topic,
-      messageType: notification.message_context.message_type,
-      encryptedMessage: notification.message.message,
-      timestamp: notification.message.timestamp_ns,
-      inboxId,
-    };
 
     // Determine which push service to use
     const pushTokenType = device.pushTokenType;
@@ -51,34 +38,32 @@ export class PushNotificationService {
     switch (pushTokenType) {
       case "apns":
         if (!this.apnsService) {
-          req.log.error("APNS service not configured");
+          logger.error("APNS service not configured");
           return { success: false };
         }
         result = await this.apnsService.sendPushNotification({
           device,
           notification,
-          messageData,
-          req,
         });
         break;
 
       case "fcm":
-        req.log.warn(
+        logger.warn(
           `FCM push notifications not yet implemented for device ${device.id}`,
         );
         return { success: false };
 
       default:
-        req.log.warn(`No valid push token type for device ${device.id}`);
+        logger.warn(`No valid push token type for device ${device.id}`);
         return { success: false };
     }
 
     // Handle the result
     if (result.success) {
-      await this.updateLastPushSuccess(device.id, req);
+      await this.updateLastPushSuccess(device.id);
       return { success: true };
     } else {
-      await this.incrementPushFailures(device.id, req);
+      await this.incrementPushFailures(device.id);
 
       // Check if we should cleanup the device
       const shouldCleanup =
@@ -89,19 +74,19 @@ export class PushNotificationService {
     }
   }
 
-  private async incrementPushFailures(deviceId: string, req: Request) {
+  private async incrementPushFailures(deviceId: string) {
     try {
       await prisma.device.update({
         where: { id: deviceId },
         data: { pushFailures: { increment: 1 } },
       });
-      req.log.info(`Incremented push failures for device ${deviceId}`);
+      logger.info(`Incremented push failures for device ${deviceId}`);
     } catch (error) {
-      req.log.error({ error, deviceId }, "Failed to increment push failures");
+      logger.error({ error, deviceId }, "Failed to increment push failures");
     }
   }
 
-  private async updateLastPushSuccess(deviceId: string, req: Request) {
+  private async updateLastPushSuccess(deviceId: string) {
     try {
       await prisma.device.update({
         where: { id: deviceId },
@@ -110,9 +95,9 @@ export class PushNotificationService {
           pushFailures: 0, // Reset failures on successful push
         },
       });
-      req.log.info(`Updated last push success for device ${deviceId}`);
+      logger.info(`Updated last push success for device ${deviceId}`);
     } catch (error) {
-      req.log.error({ error, deviceId }, "Failed to update last push success");
+      logger.error({ error, deviceId }, "Failed to update last push success");
     }
   }
 }
