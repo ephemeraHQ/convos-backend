@@ -1,9 +1,8 @@
 import http2 from "node:http2";
 import type { Device } from "@prisma/client";
-import type { Request } from "express";
 import jwt from "jsonwebtoken";
-import type { WebhookNotificationBody } from "@/notifications/client";
-import type { PushMessageData } from "./push-notification.service";
+import logger from "@/utils/logger";
+import type { NotificationPayload } from "./notifications-types";
 
 export interface ApnsConfig {
   teamId: string;
@@ -12,7 +11,7 @@ export interface ApnsConfig {
   bundleId: string;
 }
 
-export interface ApnsNotificationPayload {
+export type ApnsNotificationPayload = NotificationPayload & {
   aps: {
     alert?: {
       title?: string;
@@ -23,14 +22,7 @@ export interface ApnsNotificationPayload {
     "content-available"?: number;
     "mutable-content"?: number;
   };
-  data: {
-    contentTopic: string;
-    messageType: string;
-    encryptedMessage: string;
-    timestamp: string;
-    ethAddress?: string;
-  };
-}
+};
 
 export class ApnsPushService {
   private config: ApnsConfig;
@@ -80,11 +72,10 @@ export class ApnsPushService {
 
   async sendPushNotification(args: {
     device: Device;
-    notification: WebhookNotificationBody;
-    messageData: PushMessageData;
-    req: Request;
+    notification: NotificationPayload;
+    isSilent?: boolean;
   }): Promise<{ success: boolean; error?: string }> {
-    const { device, notification, messageData, req } = args;
+    const { device, notification, isSilent } = args;
 
     if (!device.pushToken) {
       return { success: false, error: "No APNS push token available" };
@@ -94,12 +85,12 @@ export class ApnsPushService {
       return { success: false, error: "Device is not configured for APNS" };
     }
 
-    const payload: ApnsNotificationPayload = notification.subscription.is_silent
+    const payload: ApnsNotificationPayload = isSilent
       ? {
           aps: {
             "content-available": 1,
           },
-          data: messageData,
+          ...notification,
         }
       : {
           aps: {
@@ -109,7 +100,7 @@ export class ApnsPushService {
             sound: "default",
             "mutable-content": 1,
           },
-          data: messageData,
+          ...notification,
         };
 
     const token = this.getJwtToken();
@@ -125,7 +116,7 @@ export class ApnsPushService {
       });
 
       client.on("error", (error: Error) => {
-        req.log.error(
+        logger.error(
           { error: error.message, stack: error.stack, deviceId: device.id },
           "HTTP/2 connection error",
         );
@@ -138,14 +129,12 @@ export class ApnsPushService {
         ":path": `/3/device/${device.pushToken}`,
         authorization: `bearer ${token}`,
         "apns-topic": this.config.bundleId,
-        "apns-push-type": notification.subscription.is_silent
-          ? "background"
-          : "alert",
-        "apns-priority": notification.subscription.is_silent ? "5" : "10",
+        "apns-push-type": isSilent ? "background" : "alert",
+        "apns-priority": isSilent ? "5" : "10",
         "content-type": "application/json",
       };
 
-      req.log.info(
+      logger.info(
         {
           url: `https://${hostname}/3/device/${device.pushToken}`,
           headers,
@@ -165,7 +154,7 @@ export class ApnsPushService {
       request.on("response", (headers: Record<string, string | number>) => {
         statusCode = headers[":status"] as number;
         responseHeaders = headers;
-        req.log.info(
+        logger.info(
           {
             status: statusCode,
             headers: responseHeaders,
@@ -179,7 +168,7 @@ export class ApnsPushService {
       request.on("data", (chunk: Buffer) => {
         const chunkStr = chunk.toString("utf8");
         responseData += chunkStr;
-        req.log.info(
+        logger.info(
           { chunk: chunkStr, deviceId: device.id, verbose: true },
           "[VERBOSE] APNS response data chunk",
         );
@@ -189,7 +178,7 @@ export class ApnsPushService {
         client.close();
 
         if (statusCode === 200) {
-          req.log.info(
+          logger.info(
             {
               deviceId: device.id,
               apnsEnv: device.apnsEnv,
@@ -212,7 +201,7 @@ export class ApnsPushService {
           // Ignore JSON parse errors
         }
 
-        req.log.error(
+        logger.error(
           {
             status: statusCode,
             error: errorData,
@@ -241,7 +230,7 @@ export class ApnsPushService {
       });
 
       request.on("error", (error: Error) => {
-        req.log.error(
+        logger.error(
           {
             error: error.message,
             stack: error.stack,
@@ -256,7 +245,7 @@ export class ApnsPushService {
 
       // Send the payload
       const payloadStr = JSON.stringify(payload);
-      req.log.info(
+      logger.info(
         {
           payloadLength: payloadStr.length,
           deviceId: device.id,
@@ -268,7 +257,7 @@ export class ApnsPushService {
       request.write(payloadStr);
       request.end();
 
-      req.log.info(
+      logger.info(
         { deviceId: device.id, verbose: true },
         "[VERBOSE] APNS HTTP/2 request stream ended",
       );
