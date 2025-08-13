@@ -131,7 +131,7 @@ describe("/notifications API - Register/Unregister (Auth Required)", () => {
           pushTokenType: "apns" as const,
           installations: [
             {
-              identityId: testIdentityId,
+              identityId: AUTH_XMTP_ID,
               xmtpInstallationId: testXmtpInstallationId,
             },
           ],
@@ -187,7 +187,7 @@ describe("/notifications API - Register/Unregister (Auth Required)", () => {
           pushTokenType: "apns" as const,
           installations: [
             {
-              identityId: testIdentityId,
+              identityId: AUTH_XMTP_ID,
               xmtpInstallationId: "test-installation-id-register",
             },
           ],
@@ -210,7 +210,7 @@ describe("/notifications API - Register/Unregister (Auth Required)", () => {
           pushTokenType: "apns" as const,
           installations: [
             {
-              identityId: testIdentityId,
+              identityId: AUTH_XMTP_ID,
               xmtpInstallationId: xmtpInstallationIdToTest,
             },
           ],
