@@ -125,27 +125,30 @@ async function handleCurrentRegistration(args: {
     }
 
     // Make sure all the identities being registered belong to the authenticated user
+    let xmtpIdToIdentityIdMap = new Map<string, string>();
     if (body.installations.length > 0) {
-      const identityIdsToVerify = body.installations.map(
-        (inst) => inst.identityId,
-      );
+      const xmtpIdsToVerify = body.installations.map((inst) => inst.identityId);
       const ownedIdentities = await prisma.deviceIdentity.findMany({
         where: {
-          id: { in: identityIdsToVerify },
+          xmtpId: { in: xmtpIdsToVerify },
           userId: deviceIdentityForAuthenticatedUser.userId,
         },
-        select: { id: true },
+        select: { id: true, xmtpId: true },
       });
 
-      if (ownedIdentities.length !== identityIdsToVerify.length) {
+      if (ownedIdentities.length !== xmtpIdsToVerify.length) {
         req.log.warn(
-          `User ${deviceIdentityForAuthenticatedUser.userId} attempt to register with one or more unowned/unknown identities.`,
+          `User ${deviceIdentityForAuthenticatedUser.userId} attempt to register with one or more unowned/unknown identities (by xmtpId).`,
         );
         res.status(403).json({
           error: "Forbidden: Identity access denied for one or more identities",
         });
         return;
       }
+
+      xmtpIdToIdentityIdMap = new Map(
+        ownedIdentities.map((di) => [di.xmtpId, di.id]),
+      );
     }
 
     const identitiesOnDeviceToRemoveFromDb = await prisma.$transaction(
@@ -200,16 +203,31 @@ async function handleCurrentRegistration(args: {
 
         // Upsert the new installations
         for (const installation of body.installations) {
+          const resolvedIdentityId = xmtpIdToIdentityIdMap.get(
+            installation.identityId,
+          );
+          if (!resolvedIdentityId) {
+            // This should not happen due to pre-verification; skip defensively
+            req.log.warn(
+              {
+                xmtpId: installation.identityId,
+                deviceId: body.deviceId,
+              },
+              "Skipping upsert for installation due to unresolved identityId from xmtpId",
+            );
+            continue;
+          }
+
           await tx.identitiesOnDevice.upsert({
             where: {
               deviceId_identityId: {
                 deviceId: body.deviceId,
-                identityId: installation.identityId,
+                identityId: resolvedIdentityId,
               },
             },
             create: {
               deviceId: body.deviceId,
-              identityId: installation.identityId,
+              identityId: resolvedIdentityId,
               xmtpInstallationId: installation.xmtpInstallationId,
             },
             update: {
