@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 import type { Request } from "express";
 import { createApnsService } from "@/api/v1/notifications/services/apns-push.service";
-import type { NotificationResponse } from "@/notifications/client";
+import type { WebhookNotificationBody } from "@/notifications/client";
 import { prisma } from "@/utils/prisma";
 
 // Mock logger to replace req.log
@@ -86,7 +86,7 @@ async function sendTestPushNotification(args: TestPushArgs) {
   }
 
   // Create mock notification response
-  const mockNotification: NotificationResponse = {
+  const mockNotification: WebhookNotificationBody = {
     subscription: {
       is_silent: isSilent,
     },
@@ -98,7 +98,7 @@ async function sendTestPushNotification(args: TestPushArgs) {
     message_context: {
       message_type: "test",
     },
-  } as NotificationResponse;
+  } as WebhookNotificationBody;
 
   // Create mock message data
   const messageData = {

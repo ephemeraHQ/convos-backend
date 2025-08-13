@@ -2,7 +2,7 @@ import http2 from "node:http2";
 import type { Device } from "@prisma/client";
 import type { Request } from "express";
 import jwt from "jsonwebtoken";
-import type { NotificationResponse } from "@/notifications/client";
+import type { WebhookNotificationBody } from "@/notifications/client";
 import type { PushMessageData } from "./push-notification.service";
 
 export interface ApnsConfig {
@@ -80,7 +80,7 @@ export class ApnsPushService {
 
   async sendPushNotification(args: {
     device: Device;
-    notification: NotificationResponse;
+    notification: WebhookNotificationBody;
     messageData: PushMessageData;
     req: Request;
   }): Promise<{ success: boolean; error?: string }> {

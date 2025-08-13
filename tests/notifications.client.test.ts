@@ -5,7 +5,7 @@ import { rimrafSync } from "rimraf";
 import { jsonMiddleware } from "@/middleware/json";
 import {
   createNotificationClient,
-  type NotificationResponse,
+  type WebhookNotificationBody,
 } from "@/notifications/client";
 import {
   buildConversationTopic,
@@ -35,12 +35,12 @@ describe("Notifications", () => {
   describe("subscriptions", () => {
     let app: express.Application;
     let server: Server;
-    let stream: AsyncStream<NotificationResponse>;
+    let stream: AsyncStream<WebhookNotificationBody>;
 
     beforeEach(() => {
       app = express();
       app.use(jsonMiddleware);
-      stream = new AsyncStream<NotificationResponse>();
+      stream = new AsyncStream<WebhookNotificationBody>();
       app.post("/", (req: Request, res: Response) => {
         const authHeader = req.headers.authorization;
         const expectedAuthHeader = getHttpDeliveryNotificationAuthHeader();
@@ -51,7 +51,7 @@ describe("Notifications", () => {
           return;
         }
 
-        void stream.callback(null, req.body as NotificationResponse);
+        void stream.callback(null, req.body as WebhookNotificationBody);
         res.status(200).send("OK");
       });
       server = app.listen(8081);
@@ -565,7 +565,7 @@ describe("Notifications", () => {
       });
 
       // Create a new stream for the second phase
-      stream = new AsyncStream<NotificationResponse>();
+      stream = new AsyncStream<WebhookNotificationBody>();
 
       // Send another message - we should NOT receive a notification
       await dm.send("second message after unsubscribe");

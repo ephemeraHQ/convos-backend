@@ -1,7 +1,7 @@
 import type { Request, Response } from "express";
 import {
   createNotificationClient,
-  type NotificationResponse,
+  type WebhookNotificationBody,
 } from "@/notifications/client";
 import { getHttpDeliveryNotificationAuthHeader } from "@/notifications/utils";
 import { prisma } from "@/utils/prisma";
@@ -28,7 +28,7 @@ export async function handleXmtpNotification(req: Request, res: Response) {
   } | null = null;
 
   try {
-    const notification = req.body as NotificationResponse;
+    const notification = req.body as WebhookNotificationBody;
 
     // Log the notification for debugging
     req.log.info(

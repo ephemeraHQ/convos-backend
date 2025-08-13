@@ -1,6 +1,6 @@
 import type { Device } from "@prisma/client";
 import type { Request } from "express";
-import type { NotificationResponse } from "@/notifications/client";
+import type { WebhookNotificationBody } from "@/notifications/client";
 import { prisma } from "@/utils/prisma";
 import { createApnsService, type ApnsPushService } from "./apns-push.service";
 
@@ -21,7 +21,7 @@ export class PushNotificationService {
 
   async sendPushNotification(args: {
     device: Device;
-    notification: NotificationResponse;
+    notification: WebhookNotificationBody;
     inboxId: string;
     req: Request;
   }): Promise<{ success: boolean; shouldCleanup?: boolean }> {
