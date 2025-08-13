@@ -137,30 +137,30 @@ export async function requestToJoin(
       },
     });
 
-    const payload: InviteRequestNotificationPayload = {
-      id: requestToJoin.id,
-      createdAt: requestToJoin.createdAt.toISOString(),
-      updatedAt: requestToJoin.updatedAt.toISOString(),
-      requester: {
-        id: requestToJoin.requester.id,
-        xmtpId: requestToJoin.requester.xmtpId,
-        profile: requestToJoin.requester.profile
-          ? {
-              name: requestToJoin.requester.profile.name,
-              username: requestToJoin.requester.profile.username,
-              description: requestToJoin.requester.profile.description,
-              avatar: requestToJoin.requester.profile.avatar,
-            }
-          : null,
-      },
-      inviteCode: {
-        id: requestToJoin.inviteCode.id,
-        name: requestToJoin.inviteCode.name,
-        description: requestToJoin.inviteCode.description,
-        groupId: requestToJoin.inviteCode.groupId,
-      },
-      autoApprove: requestToJoin.inviteCode.autoApprove,
-    };
+    // const payload: InviteRequestNotificationPayload = {
+    //   id: requestToJoin.id,
+    //   createdAt: requestToJoin.createdAt.toISOString(),
+    //   updatedAt: requestToJoin.updatedAt.toISOString(),
+    //   requester: {
+    //     id: requestToJoin.requester.id,
+    //     xmtpId: requestToJoin.requester.xmtpId,
+    //     profile: requestToJoin.requester.profile
+    //       ? {
+    //           name: requestToJoin.requester.profile.name,
+    //           username: requestToJoin.requester.profile.username,
+    //           description: requestToJoin.requester.profile.description,
+    //           avatar: requestToJoin.requester.profile.avatar,
+    //         }
+    //       : null,
+    //   },
+    //   inviteCode: {
+    //     id: requestToJoin.inviteCode.id,
+    //     name: requestToJoin.inviteCode.name,
+    //     description: requestToJoin.inviteCode.description,
+    //     groupId: requestToJoin.inviteCode.groupId,
+    //   },
+    //   autoApprove: requestToJoin.inviteCode.autoApprove,
+    // };
 
     // @todo We will send the actual notification here using APNS
 
