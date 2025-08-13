@@ -1,5 +1,4 @@
 import type { Device } from "@prisma/client";
-import type { WebhookNotificationBody } from "@/notifications/client";
 import logger from "@/utils/logger";
 import { prisma } from "@/utils/prisma";
 import { createApnsService, type ApnsPushService } from "./apns-push.service";

@@ -87,9 +87,9 @@ export async function handleXmtpNotification(req: Request, res: Response) {
     const result = await pushNotificationService.sendPushNotification({
       device,
       notification: {
-        notificationType: "Protocol",
         inboxId: identity.xmtpId,
-        data: {
+        notificationType: "Protocol",
+        notificationData: {
           contentTopic: notification.message.content_topic,
           messageType: notification.message_context.message_type,
           encryptedMessage: notification.message.message,

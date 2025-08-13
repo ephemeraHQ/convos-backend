@@ -1,7 +1,5 @@
 #!/usr/bin/env bun
-import type { Request } from "express";
 import { createApnsService } from "@/api/v1/notifications/services/apns-push.service";
-import type { WebhookNotificationBody } from "@/notifications/client";
 import { prisma } from "@/utils/prisma";
 
 // Simple version - just provide a userId and it will send a basic test notification
@@ -55,40 +53,22 @@ async function quickPushTest(userId: string) {
     return;
   }
 
-  // Mock data
-  const mockNotification: WebhookNotificationBody = {
-    subscription: { is_silent: false },
-    message: {
-      content_topic: "test-topic",
-      message: "test-message",
-      timestamp_ns: Date.now().toString() + "000000",
-    },
-    message_context: { message_type: "test" },
-  } as WebhookNotificationBody;
-
   const messageData = {
     contentTopic: "test-topic",
     messageType: "test",
     encryptedMessage: "Hello from the backend! 👋",
     timestamp: Date.now().toString() + "000000",
-    inboxId: firstDevice.identities[0].identity.xmtpId,
   };
-
-  const mockReq = {
-    log: {
-      info: console.log,
-      error: console.error,
-      warn: console.warn,
-    },
-  } as Request;
 
   console.log("📤 Sending notification...");
 
   const result = await apnsService.sendPushNotification({
     device: firstDevice,
-    notification: mockNotification,
-    messageData,
-    req: mockReq,
+    notification: {
+      inboxId: firstDevice.identities[0].identity.xmtpId,
+      notificationType: "Protocol",
+      notificationData: messageData,
+    },
   });
 
   if (result.success) {

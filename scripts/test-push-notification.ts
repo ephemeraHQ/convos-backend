@@ -1,26 +1,7 @@
 #!/usr/bin/env bun
-import type { Request } from "express";
 import { createApnsService } from "@/api/v1/notifications/services/apns-push.service";
-import type { WebhookNotificationBody } from "@/notifications/client";
+import type {} from "@/notifications/client";
 import { prisma } from "@/utils/prisma";
-
-// Mock logger to replace req.log
-const mockLogger = {
-  info: (data: unknown, message?: string) => {
-    console.log(`[INFO] ${message || ""}`, data);
-  },
-  error: (data: unknown, message?: string) => {
-    console.error(`[ERROR] ${message || ""}`, data);
-  },
-  warn: (data: unknown, message?: string) => {
-    console.warn(`[WARN] ${message || ""}`, data);
-  },
-};
-
-// Mock request object for the APNS service
-const mockRequest = {
-  log: mockLogger,
-} as Request;
 
 interface TestPushArgs {
   userId: string;
@@ -85,28 +66,12 @@ async function sendTestPushNotification(args: TestPushArgs) {
     return;
   }
 
-  // Create mock notification response
-  const mockNotification: WebhookNotificationBody = {
-    subscription: {
-      is_silent: isSilent,
-    },
-    message: {
-      content_topic: "test-topic",
-      message: "encrypted-test-message-data",
-      timestamp_ns: Date.now().toString() + "000000", // Convert to nanoseconds
-    },
-    message_context: {
-      message_type: "test",
-    },
-  } as WebhookNotificationBody;
-
   // Create mock message data
   const messageData = {
     contentTopic: "test-topic",
     messageType: "test",
     encryptedMessage: "encrypted-test-message-data",
     timestamp: Date.now().toString() + "000000",
-    inboxId: "1234567890123456789012345678901234567890", // Mock inbox id
   };
 
   // Send push notification to each device
@@ -129,9 +94,11 @@ async function sendTestPushNotification(args: TestPushArgs) {
     try {
       const result = await apnsService.sendPushNotification({
         device: effectiveDevice,
-        notification: mockNotification,
-        messageData,
-        req: mockRequest,
+        notification: {
+          inboxId: "1234567890123456789012345678901234567890", // Mock inbox id
+          notificationType: "Protocol",
+          notificationData: messageData,
+        },
       });
 
       if (result.success) {

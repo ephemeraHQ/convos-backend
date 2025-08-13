@@ -18,9 +18,9 @@ export type NotificationTypeToData = {
 };
 
 type NotificationPayloadBase<T extends NotificationType> = {
-  notificationType: T;
   inboxId: string;
-  data: NotificationTypeToData[T];
+  notificationType: T;
+  notificationData: NotificationTypeToData[T];
 };
 
 // Discriminated union over notificationType
