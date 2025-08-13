@@ -3,6 +3,7 @@ import type { Request, Response } from "express";
 import { z } from "zod";
 import { getInviteLink } from "@/utils/invites";
 import { prisma } from "@/utils/prisma";
+import { InviteCodeStatusSchema } from "../../../../../prisma/generated/zod";
 
 const paramsSchema = z.object({
   inviteId: z.string().min(1, "Invite ID is required"),
@@ -17,6 +18,7 @@ export const updateInviteCodeRequestBodySchema = z.object({
   expiresAt: z.string().datetime().optional(),
   autoApprove: z.boolean().default(false),
   notificationTargets: z.array(z.string()).default([]),
+  status: InviteCodeStatusSchema.optional(),
 });
 
 export type UpdateInviteCodeRequestBody = z.infer<
@@ -147,6 +149,7 @@ export async function updateInviteCode(
           expiresAt: body.expiresAt ? new Date(body.expiresAt) : null,
           autoApprove: body.autoApprove,
           groupId: body.groupId,
+          ...(body.status ? { status: body.status } : {}),
           notificationTargets: {
             create: notificationTargetIds.map((deviceIdentityId) => ({
               deviceIdentityId,

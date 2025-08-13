@@ -212,17 +212,15 @@ model InviteCodeNotificationTarget {
 }
 
 model InviteCodeRequest {
-  id           String                  @id @default(cuid())
+  id           String         @id @default(cuid())
   inviteCodeId String
-  inviteCode   InviteCode              @relation(fields: [inviteCodeId], references: [id], onDelete: Cascade)
+  inviteCode   InviteCode     @relation(fields: [inviteCodeId], references: [id], onDelete: Cascade)
   requesterId  String
-  requester    DeviceIdentity          @relation(fields: [requesterId], references: [id], onDelete: Cascade)
-  status       InviteCodeRequestStatus @default(PENDING)
-  createdAt    DateTime                @default(now())
-  updatedAt    DateTime                @updatedAt
+  requester    DeviceIdentity @relation(fields: [requesterId], references: [id], onDelete: Cascade)
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
 
   @@unique([inviteCodeId, requesterId])
   @@index([inviteCodeId])
   @@index([requesterId])
-  @@index([status])
 }

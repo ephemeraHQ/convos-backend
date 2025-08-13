@@ -10,9 +10,31 @@ export type RequestToJoinRequestBody = z.infer<typeof requestToJoinSchema>;
 
 export type RequestToJoinResponse = {
   id: string;
-  status: string;
   inviteId: string;
   createdAt: string;
+};
+
+export type InviteRequestNotificationPayload = {
+  id: string;
+  createdAt: string;
+  updatedAt: string;
+  requester: {
+    id: string;
+    xmtpId: string;
+    profile: {
+      name: string | null;
+      username: string | null;
+      description: string | null;
+      avatar: string | null;
+    } | null;
+  };
+  inviteCode: {
+    id: string;
+    name: string | null;
+    description: string | null;
+    groupId: string;
+  };
+  autoApprove: boolean;
 };
 
 export async function requestToJoin(
@@ -75,16 +97,6 @@ export async function requestToJoin(
       return;
     }
 
-    // Check if invite requires approval (if autoApprove is true, they should use a different endpoint)
-    if (inviteCode.autoApprove) {
-      res.status(400).json({
-        success: false,
-        message:
-          "This invite does not require approval. You can join directly.",
-      });
-      return;
-    }
-
     // Check if user already has a pending/accepted request
     const existingRequest = await prisma.inviteCodeRequest.findUnique({
       where: {
@@ -98,33 +110,64 @@ export async function requestToJoin(
     if (existingRequest) {
       res.status(409).json({
         success: false,
-        message: `You already have a ${existingRequest.status.toLowerCase()} request for this group`,
+        message: `You already have a request for this group`,
       });
       return;
     }
 
-    // Create the request
-    const request = await prisma.inviteCodeRequest.create({
+    // Create the request and return populated relations
+    const requestToJoin = await prisma.inviteCodeRequest.create({
       data: {
         inviteCodeId: body.inviteId,
         requesterId: requesterIdentity.id,
-        status: "PENDING",
+      },
+      include: {
+        requester: {
+          include: { profile: true },
+        },
+        inviteCode: {
+          select: {
+            id: true,
+            name: true,
+            description: true,
+            groupId: true,
+            autoApprove: true,
+          },
+        },
       },
     });
 
-    // Log notification info (no actual notifications sent)
-    logRequestNotification({
-      requesterName: requesterIdentity.profile?.name ?? undefined,
-      requesterXmtpId: requesterIdentity.xmtpId,
-      inviteCreatorName: inviteCode.createdBy.profile?.name ?? undefined,
-      groupId: inviteCode.groupId,
-    });
+    // const payload: InviteRequestNotificationPayload = {
+    //   id: requestToJoin.id,
+    //   createdAt: requestToJoin.createdAt.toISOString(),
+    //   updatedAt: requestToJoin.updatedAt.toISOString(),
+    //   requester: {
+    //     id: requestToJoin.requester.id,
+    //     xmtpId: requestToJoin.requester.xmtpId,
+    //     profile: requestToJoin.requester.profile
+    //       ? {
+    //           name: requestToJoin.requester.profile.name,
+    //           username: requestToJoin.requester.profile.username,
+    //           description: requestToJoin.requester.profile.description,
+    //           avatar: requestToJoin.requester.profile.avatar,
+    //         }
+    //       : null,
+    //   },
+    //   inviteCode: {
+    //     id: requestToJoin.inviteCode.id,
+    //     name: requestToJoin.inviteCode.name,
+    //     description: requestToJoin.inviteCode.description,
+    //     groupId: requestToJoin.inviteCode.groupId,
+    //   },
+    //   autoApprove: requestToJoin.inviteCode.autoApprove,
+    // };
+
+    // @todo We will send the actual notification here using APNS
 
     const response: RequestToJoinResponse = {
-      id: request.id,
-      status: request.status,
-      inviteId: request.inviteCodeId,
-      createdAt: request.createdAt.toISOString(),
+      id: requestToJoin.id,
+      inviteId: requestToJoin.inviteCodeId,
+      createdAt: requestToJoin.createdAt.toISOString(),
     };
 
     res.status(201).json(response);
@@ -144,22 +187,4 @@ export async function requestToJoin(
       message: "Failed to create join request",
     });
   }
-}
-
-function logRequestNotification(args: {
-  requesterName?: string;
-  requesterXmtpId: string;
-  inviteCreatorName?: string;
-  groupId: string;
-}) {
-  const { requesterName, requesterXmtpId, inviteCreatorName, groupId } = args;
-
-  console.log("🔔 Join Request Created:");
-  console.log(
-    `   📧 Would notify invite creator (${inviteCreatorName || "Unknown"})`,
-  );
-  console.log(
-    `   👤 Request from: ${requesterName || "Unknown"} (${requesterXmtpId})`,
-  );
-  console.log(`   🎫 For group: ${groupId}`);
 }
