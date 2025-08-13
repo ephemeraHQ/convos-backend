@@ -546,7 +546,6 @@ describe("Notifications", () => {
 
       let firstPhaseCount = 0;
       for await (const notification of stream) {
-        console.log("notification1:", notification);
         if (notification === undefined) {
           break;
         }
