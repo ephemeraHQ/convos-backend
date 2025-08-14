@@ -85,11 +85,11 @@ describe("/users API", () => {
     expect(user.profile.name).toBe(createUserBody.profile.name ?? null);
   });
 
-  test("GET /users/me returns 401 without auth header", async () => {
+  test("GET /users/me returns 404 without auth header", async () => {
     const response = await fetch("http://localhost:3001/users/me");
     const data = (await response.json()) as { error: string };
     expect(response.status).toBe(404);
-    expect(data.error).toBe("User not found");
+    expect(data.error).toBe("Identity not found");
   });
 
   test("GET /users/me returns current user", async () => {

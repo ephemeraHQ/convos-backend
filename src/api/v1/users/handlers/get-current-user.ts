@@ -22,13 +22,13 @@ export async function getCurrentUser(
     const { device_id: deviceId } = querySchema.parse(req.query);
 
     // Find the authenticated identity
-    const identity = await prisma.deviceIdentity.findFirst({
+    const authIdentity = await prisma.deviceIdentity.findFirst({
       where: { xmtpId },
       select: { id: true },
     });
 
-    if (!identity) {
-      res.status(404).json({ error: "User not found" });
+    if (!authIdentity) {
+      res.status(404).json({ error: "Identity not found" });
       return;
     }
 
@@ -42,7 +42,7 @@ export async function getCurrentUser(
       where: {
         identities: {
           some: {
-            identityId: identity.id,
+            identityId: authIdentity.id,
           },
         },
         ...(deviceId && { id: deviceId }),
