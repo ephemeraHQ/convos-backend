@@ -20,20 +20,12 @@ import {
 } from "@/api/v1/notifications/services/push-notification.service";
 import { prisma } from "@/utils/prisma";
 
+// Mock only for this test file
 const mockApnsService = {
   sendPushNotification: mock<
     () => Promise<{ success: boolean; error?: string }>
   >(() => Promise.resolve({ success: true })),
 };
-
-void mock.module("@/api/v1/notifications/services/apns-push.service", () => ({
-  createApnsService: mock(() => mockApnsService),
-  ApnsPushService: class MockApnsPushService {
-    async sendPushNotification() {
-      return mockApnsService.sendPushNotification();
-    }
-  },
-}));
 
 describe("PushNotificationService", () => {
   let testDevice: Device;
@@ -60,6 +52,10 @@ describe("PushNotificationService", () => {
 
     // Create a fresh service instance
     pushService = new PushNotificationService();
+
+    // Replace the apnsService with our mock
+    // @ts-expect-error - Accessing private property for testing
+    pushService.apnsService = mockApnsService;
 
     // Create test device
     testDevice = await prisma.device.create({
@@ -91,6 +87,8 @@ describe("PushNotificationService", () => {
   });
 
   afterEach(async () => {
+    // Clean up mocks
+    mockApnsService.sendPushNotification.mockRestore();
     await cleanup();
   });
 
@@ -317,21 +315,11 @@ describe("PushNotificationService", () => {
 
   describe("APNS service not configured", () => {
     test("handles APNS service not configured", async () => {
-      // Create a mock that returns null to simulate APNS not configured
-      const mockCreateApnsService = mock(() => null);
+      // Set the apnsService to null to simulate APNS not configured
+      // @ts-expect-error - Accessing private property for testing
+      pushService.apnsService = null;
 
-      // Re-mock the module to return null
-      void mock.module(
-        "@/api/v1/notifications/services/apns-push.service",
-        () => ({
-          createApnsService: mockCreateApnsService,
-        }),
-      );
-
-      // Create a new service instance that will get null from createApnsService
-      const serviceWithoutApns = new PushNotificationService();
-
-      const result = await serviceWithoutApns.sendPushNotification({
+      const result = await pushService.sendPushNotification({
         device: testDevice,
         notification: protocolNotification,
       });

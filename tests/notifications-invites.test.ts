@@ -18,35 +18,18 @@ import type {
   InviteJoinRequestNotificationData,
   NotificationPayload,
 } from "@/api/v1/notifications/services/notifications-types";
+import { getPushNotificationService } from "@/api/v1/notifications/services/push-notification.service";
 import { jsonMiddleware } from "@/middleware/json";
 import { pinoMiddleware } from "@/middleware/pino";
 import { prisma } from "@/utils/prisma";
 
-// Mock the push notification service
-const mockPushNotificationService = {
-  sendPushNotificationToXmtpId: mock<
-    (args: {
-      xmtpId: string;
-      notification: NotificationPayload;
-    }) => Promise<{ success: boolean }>
-  >(() => Promise.resolve({ success: true })),
-};
-
-// Mock the getPushNotificationService function
-void mock.module(
-  "@/api/v1/notifications/services/push-notification.service",
-  () => ({
-    getPushNotificationService: () => mockPushNotificationService,
-    PushNotificationService: class MockPushNotificationService {
-      async sendPushNotificationToXmtpId(args: {
-        xmtpId: string;
-        notification: NotificationPayload;
-      }) {
-        return mockPushNotificationService.sendPushNotificationToXmtpId(args);
-      }
-    },
-  }),
-);
+// Mock only for this test file
+const mockSendPushNotificationToXmtpId = mock<
+  (args: {
+    xmtpId: string;
+    notification: NotificationPayload;
+  }) => Promise<{ success: boolean }>
+>(() => Promise.resolve({ success: true }));
 
 describe("Invite Notifications Integration", () => {
   let app: express.Application;
@@ -85,17 +68,21 @@ describe("Invite Notifications Integration", () => {
   });
 
   beforeEach(async () => {
-    // Reset mocks
-    mockPushNotificationService.sendPushNotificationToXmtpId.mockClear();
-    mockPushNotificationService.sendPushNotificationToXmtpId.mockResolvedValue({
-      success: true,
-    });
+    // Set up spy on the push notification service method
+    const pushService = getPushNotificationService();
+    mockSendPushNotificationToXmtpId.mockClear();
+    mockSendPushNotificationToXmtpId.mockResolvedValue({ success: true });
+
+    // Replace the method with our mock
+    pushService.sendPushNotificationToXmtpId = mockSendPushNotificationToXmtpId;
 
     // Create test data
     inviteCode = await setupTestData();
   });
 
   afterEach(async () => {
+    // Clean up mocks
+    mockSendPushNotificationToXmtpId.mockRestore();
     await cleanup();
   });
 
@@ -268,12 +255,9 @@ describe("Invite Notifications Integration", () => {
     expect(response.status).toBe(201);
 
     // Verify push notifications were sent to both creator and notification target
-    expect(
-      mockPushNotificationService.sendPushNotificationToXmtpId,
-    ).toHaveBeenCalledTimes(2);
+    expect(mockSendPushNotificationToXmtpId).toHaveBeenCalledTimes(2);
 
-    const calls =
-      mockPushNotificationService.sendPushNotificationToXmtpId.mock.calls;
+    const calls = mockSendPushNotificationToXmtpId.mock.calls;
     const sentToXmtpIds = calls.map((call) => call[0].xmtpId);
 
     // Verify notifications were sent to both creator and notification target
