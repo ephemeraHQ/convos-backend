@@ -43,8 +43,9 @@ beforeAll(() => {
   server = app.listen(3011);
 });
 
-afterAll(() => {
+afterAll(async () => {
   server.close();
+  await prisma.$disconnect();
 });
 
 beforeEach(async () => {

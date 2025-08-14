@@ -80,7 +80,7 @@ export async function getCurrentUser(
         .json({ error: "Invalid query parameters", details: err.errors });
       return;
     }
-    console.error("Error fetching current user:", err);
+    req.log.error({ error: err }, "Error fetching current user");
     res.status(500).json({ error: "Failed to fetch user" });
   }
 }

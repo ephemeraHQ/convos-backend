@@ -68,13 +68,13 @@ async function quickPushTest(xmtpId: string) {
   }
 }
 
-const userId = process.argv[2];
-if (!userId) {
-  console.log("Usage: bun run scripts/simple-push-test.ts <userId>");
+const xmtpId = process.argv[2];
+if (!xmtpId) {
+  console.log("Usage: bun run scripts/simple-push-test.ts <xmtpId>");
   process.exit(1);
 }
 
-quickPushTest(userId)
+quickPushTest(xmtpId)
   .then(() => prisma.$disconnect())
   .catch((error: unknown) => {
     console.error(error);

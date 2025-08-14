@@ -197,7 +197,7 @@ export async function createUser(
 
     res.status(201).json(returnedUser);
   } catch (error) {
-    console.error("Error creating user:", error);
+    req.log.error({ error }, "Error creating user");
     res.status(500).json({ error: "Failed to create user" });
   }
 }
