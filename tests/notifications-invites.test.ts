@@ -8,6 +8,7 @@ import {
   describe,
   expect,
   mock,
+  spyOn,
   test,
 } from "bun:test";
 import express from "express";
@@ -18,12 +19,12 @@ import type {
   InviteJoinRequestNotificationData,
   NotificationPayload,
 } from "@/api/v1/notifications/services/notifications-types";
-import { getPushNotificationService } from "@/api/v1/notifications/services/push-notification.service";
+import * as PushService from "@/api/v1/notifications/services/push-notification.service";
 import { jsonMiddleware } from "@/middleware/json";
 import { pinoMiddleware } from "@/middleware/pino";
 import { prisma } from "@/utils/prisma";
 
-// Mock only for this test file
+// Mock functions for push notification service
 const mockSendPushNotificationToXmtpId = mock<
   (args: {
     xmtpId: string;
@@ -62,19 +63,23 @@ describe("Invite Notifications Integration", () => {
     await prisma.$disconnect();
     server.close();
     rimrafSync("tests/**/*.db3*", { glob: true });
-
-    // Restore all mocks to prevent affecting other tests
+    // Restore all mocks
     mock.restore();
   });
 
   beforeEach(async () => {
-    // Set up spy on the push notification service method
-    const pushService = getPushNotificationService();
+    // Clear and reset mocks
     mockSendPushNotificationToXmtpId.mockClear();
     mockSendPushNotificationToXmtpId.mockResolvedValue({ success: true });
 
-    // Replace the method with our mock
-    pushService.sendPushNotificationToXmtpId = mockSendPushNotificationToXmtpId;
+    // Spy on the specific methods we care about on the actual service
+    const pushService = PushService.getPushNotificationService();
+    spyOn(pushService, "sendPushNotificationToXmtpId").mockImplementation(
+      mockSendPushNotificationToXmtpId,
+    );
+    spyOn(pushService, "sendPushNotification").mockResolvedValue({
+      success: true,
+    });
 
     // Create test data
     inviteCode = await setupTestData();
@@ -82,7 +87,8 @@ describe("Invite Notifications Integration", () => {
 
   afterEach(async () => {
     // Clean up mocks
-    mockSendPushNotificationToXmtpId.mockRestore();
+    mockSendPushNotificationToXmtpId.mockClear();
+    mock.restore();
     await cleanup();
   });
 

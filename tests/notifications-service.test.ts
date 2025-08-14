@@ -20,12 +20,14 @@ import {
 } from "@/api/v1/notifications/services/push-notification.service";
 import { prisma } from "@/utils/prisma";
 
-// Mock only for this test file
-const mockApnsService = {
-  sendPushNotification: mock<
-    () => Promise<{ success: boolean; error?: string }>
-  >(() => Promise.resolve({ success: true })),
-};
+// Mock functions for APNS service
+const mockSendPushNotification = mock<
+  (args: {
+    device: Device;
+    notification: NotificationPayload;
+    isSilent?: boolean;
+  }) => Promise<{ success: boolean; error?: string }>
+>(() => Promise.resolve({ success: true }));
 
 describe("PushNotificationService", () => {
   let testDevice: Device;
@@ -47,13 +49,16 @@ describe("PushNotificationService", () => {
 
   beforeEach(async () => {
     // Reset mocks before each test
-    mockApnsService.sendPushNotification.mockClear();
-    mockApnsService.sendPushNotification.mockResolvedValue({ success: true });
+    mockSendPushNotification.mockClear();
+    mockSendPushNotification.mockResolvedValue({ success: true });
 
-    // Create a fresh service instance
+    // Create a fresh service instance => not breaking the singleton
     pushService = new PushNotificationService();
 
-    // Replace the apnsService with our mock
+    // Mock the APNS service on the instance by replacing the private property
+    const mockApnsService = {
+      sendPushNotification: mockSendPushNotification,
+    };
     // @ts-expect-error - Accessing private property for testing
     pushService.apnsService = mockApnsService;
 
@@ -88,7 +93,7 @@ describe("PushNotificationService", () => {
 
   afterEach(async () => {
     // Clean up mocks
-    mockApnsService.sendPushNotification.mockRestore();
+    mockSendPushNotification.mockClear();
     await cleanup();
   });
 
@@ -109,8 +114,8 @@ describe("PushNotificationService", () => {
       expect(result.shouldCleanup).toBeUndefined();
 
       // Verify APNS service was called
-      expect(mockApnsService.sendPushNotification).toHaveBeenCalledTimes(1);
-      expect(mockApnsService.sendPushNotification).toHaveBeenCalledWith({
+      expect(mockSendPushNotification).toHaveBeenCalledTimes(1);
+      expect(mockSendPushNotification).toHaveBeenCalledWith({
         device: testDevice,
         notification: protocolNotification,
       });
@@ -139,7 +144,7 @@ describe("PushNotificationService", () => {
       expect(result.shouldCleanup).toBeUndefined();
 
       // Verify APNS service was NOT called
-      expect(mockApnsService.sendPushNotification).not.toHaveBeenCalled();
+      expect(mockSendPushNotification).not.toHaveBeenCalled();
     });
 
     test("handles FCM push token type (not implemented)", async () => {
@@ -154,12 +159,12 @@ describe("PushNotificationService", () => {
       });
 
       expect(result.success).toBe(false);
-      expect(mockApnsService.sendPushNotification).not.toHaveBeenCalled();
+      expect(mockSendPushNotification).not.toHaveBeenCalled();
     });
 
     test("handles APNS failure and increments push failures", async () => {
       // Mock APNS service to return failure
-      mockApnsService.sendPushNotification.mockResolvedValue({
+      mockSendPushNotification.mockResolvedValue({
         success: false,
         error: "InvalidPayload",
       });
@@ -182,7 +187,7 @@ describe("PushNotificationService", () => {
 
     test("marks device for cleanup on bad device token", async () => {
       // Mock APNS service to return bad device token error
-      mockApnsService.sendPushNotification.mockResolvedValue({
+      mockSendPushNotification.mockResolvedValue({
         success: false,
         error: "BadDeviceToken",
       });
@@ -204,7 +209,7 @@ describe("PushNotificationService", () => {
 
     test("marks device for cleanup on device not registered", async () => {
       // Mock APNS service to return device not registered error
-      mockApnsService.sendPushNotification.mockResolvedValue({
+      mockSendPushNotification.mockResolvedValue({
         success: false,
         error: "DeviceNotRegistered",
       });
@@ -232,7 +237,7 @@ describe("PushNotificationService", () => {
 
       // Should still return success from APNS perspective
       expect(result.success).toBe(true);
-      expect(mockApnsService.sendPushNotification).toHaveBeenCalled();
+      expect(mockSendPushNotification).toHaveBeenCalled();
     });
   });
 
@@ -289,7 +294,7 @@ describe("PushNotificationService", () => {
       });
 
       expect(result.success).toBe(true);
-      expect(mockApnsService.sendPushNotification).toHaveBeenCalledTimes(1);
+      expect(mockSendPushNotification).toHaveBeenCalledTimes(1);
     });
 
     test("returns failure when no device found for xmtpId", async () => {
@@ -300,7 +305,7 @@ describe("PushNotificationService", () => {
 
       expect(result.success).toBe(false);
       expect(result.shouldCleanup).toBe(false);
-      expect(mockApnsService.sendPushNotification).not.toHaveBeenCalled();
+      expect(mockSendPushNotification).not.toHaveBeenCalled();
     });
   });
 
@@ -315,17 +320,19 @@ describe("PushNotificationService", () => {
 
   describe("APNS service not configured", () => {
     test("handles APNS service not configured", async () => {
-      // Set the apnsService to null to simulate APNS not configured
-      // @ts-expect-error - Accessing private property for testing
-      pushService.apnsService = null;
+      // Create a new service instance and set apnsService to null
+      const pushServiceWithoutApns = new PushNotificationService();
 
-      const result = await pushService.sendPushNotification({
+      // @ts-expect-error - Accessing private property for testing
+      pushServiceWithoutApns.apnsService = null;
+
+      const result = await pushServiceWithoutApns.sendPushNotification({
         device: testDevice,
         notification: protocolNotification,
       });
 
       expect(result.success).toBe(false);
-      expect(mockApnsService.sendPushNotification).not.toHaveBeenCalled();
+      expect(mockSendPushNotification).not.toHaveBeenCalled();
     });
   });
 });
