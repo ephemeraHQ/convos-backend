@@ -8,8 +8,6 @@ const requestToJoinSchema = z.object({
   inviteId: z.string().min(1, "Invite ID is required"),
 });
 
-const pushNotificationService = getPushNotificationService();
-
 export type RequestToJoinRequestBody = z.infer<typeof requestToJoinSchema>;
 
 export type RequestToJoinResponse = {
@@ -25,6 +23,8 @@ export async function requestToJoin(
   try {
     const body = await requestToJoinSchema.parseAsync(req.body);
     const { xmtpId } = req.app.locals;
+
+    const pushNotificationService = getPushNotificationService();
 
     // Find the requester's identity
     const requesterIdentity = await prisma.deviceIdentity.findFirst({
@@ -47,6 +47,11 @@ export async function requestToJoin(
         createdBy: {
           include: {
             profile: true,
+          },
+        },
+        notificationTargets: {
+          include: {
+            deviceIdentity: true,
           },
         },
       },
@@ -148,14 +153,27 @@ export async function requestToJoin(
       autoApprove: requestToJoin.inviteCode.autoApprove,
     };
 
-    await pushNotificationService.sendPushNotificationToXmtpId({
-      xmtpId: requestToJoin.inviteCode.createdBy.xmtpId,
-      notification: {
-        inboxId: requestToJoin.inviteCode.createdBy.xmtpId,
-        notificationType: "InviteJoinRequest",
-        notificationData: payload,
-      },
-    });
+    // Collect all recipients (creator + notification targets)
+    const allRecipients = [
+      requestToJoin.inviteCode.createdBy.xmtpId,
+      ...inviteCode.notificationTargets.map(
+        (target) => target.deviceIdentity.xmtpId,
+      ),
+    ];
+
+    // Send notifications to all recipients
+    const notificationPromises = allRecipients.map((xmtpId) =>
+      pushNotificationService.sendPushNotificationToXmtpId({
+        xmtpId,
+        notification: {
+          inboxId: xmtpId,
+          notificationType: "InviteJoinRequest",
+          notificationData: payload,
+        },
+      }),
+    );
+
+    await Promise.all(notificationPromises);
 
     const response: RequestToJoinResponse = {
       id: requestToJoin.id,

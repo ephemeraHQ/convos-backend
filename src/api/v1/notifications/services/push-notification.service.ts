@@ -23,7 +23,13 @@ export class PushNotificationService {
     const { xmtpId, notification } = args;
     // Right now one xmtp id = one device, we can adapt in the future
     const device = await prisma.device.findFirst({
-      where: { identities: { some: { identityId: xmtpId } } },
+      where: {
+        identities: {
+          some: {
+            identity: { xmtpId: xmtpId },
+          },
+        },
+      },
     });
     if (!device) {
       return { success: false, shouldCleanup: false };
