@@ -1,10 +1,14 @@
 import type { Request, Response } from "express";
 import { z } from "zod";
 import { prisma } from "@/utils/prisma";
+import type { InviteJoinRequestNotificationData } from "../../notifications/services/notifications-types";
+import { getPushNotificationService } from "../../notifications/services/push-notification.service";
 
 const requestToJoinSchema = z.object({
   inviteId: z.string().min(1, "Invite ID is required"),
 });
+
+const pushNotificationService = getPushNotificationService();
 
 export type RequestToJoinRequestBody = z.infer<typeof requestToJoinSchema>;
 
@@ -12,29 +16,6 @@ export type RequestToJoinResponse = {
   id: string;
   inviteId: string;
   createdAt: string;
-};
-
-export type InviteRequestNotificationPayload = {
-  id: string;
-  createdAt: string;
-  updatedAt: string;
-  requester: {
-    id: string;
-    xmtpId: string;
-    profile: {
-      name: string | null;
-      username: string | null;
-      description: string | null;
-      avatar: string | null;
-    } | null;
-  };
-  inviteCode: {
-    id: string;
-    name: string | null;
-    description: string | null;
-    groupId: string;
-  };
-  autoApprove: boolean;
 };
 
 export async function requestToJoin(
@@ -132,37 +113,45 @@ export async function requestToJoin(
             description: true,
             groupId: true,
             autoApprove: true,
+            createdById: true,
           },
         },
       },
     });
 
-    // const payload: InviteRequestNotificationPayload = {
-    //   id: requestToJoin.id,
-    //   createdAt: requestToJoin.createdAt.toISOString(),
-    //   updatedAt: requestToJoin.updatedAt.toISOString(),
-    //   requester: {
-    //     id: requestToJoin.requester.id,
-    //     xmtpId: requestToJoin.requester.xmtpId,
-    //     profile: requestToJoin.requester.profile
-    //       ? {
-    //           name: requestToJoin.requester.profile.name,
-    //           username: requestToJoin.requester.profile.username,
-    //           description: requestToJoin.requester.profile.description,
-    //           avatar: requestToJoin.requester.profile.avatar,
-    //         }
-    //       : null,
-    //   },
-    //   inviteCode: {
-    //     id: requestToJoin.inviteCode.id,
-    //     name: requestToJoin.inviteCode.name,
-    //     description: requestToJoin.inviteCode.description,
-    //     groupId: requestToJoin.inviteCode.groupId,
-    //   },
-    //   autoApprove: requestToJoin.inviteCode.autoApprove,
-    // };
+    const payload: InviteJoinRequestNotificationData = {
+      id: requestToJoin.id,
+      createdAt: requestToJoin.createdAt.toISOString(),
+      updatedAt: requestToJoin.updatedAt.toISOString(),
+      requester: {
+        id: requestToJoin.requester.id,
+        xmtpId: requestToJoin.requester.xmtpId,
+        profile: requestToJoin.requester.profile
+          ? {
+              name: requestToJoin.requester.profile.name,
+              username: requestToJoin.requester.profile.username,
+              description: requestToJoin.requester.profile.description,
+              avatar: requestToJoin.requester.profile.avatar,
+            }
+          : null,
+      },
+      inviteCode: {
+        id: requestToJoin.inviteCode.id,
+        name: requestToJoin.inviteCode.name,
+        description: requestToJoin.inviteCode.description,
+        groupId: requestToJoin.inviteCode.groupId,
+      },
+      autoApprove: requestToJoin.inviteCode.autoApprove,
+    };
 
-    // @todo We will send the actual notification here using APNS
+    await pushNotificationService.sendPushNotificationToXmtpId({
+      xmtpId: requestToJoin.inviteCode.createdById,
+      notification: {
+        inboxId: requestToJoin.inviteCode.createdById,
+        notificationType: "InviteJoinRequest",
+        notificationData: payload,
+      },
+    });
 
     const response: RequestToJoinResponse = {
       id: requestToJoin.id,

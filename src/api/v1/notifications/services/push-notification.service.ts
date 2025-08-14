@@ -16,6 +16,21 @@ export class PushNotificationService {
     this.apnsService = createApnsService();
   }
 
+  async sendPushNotificationToXmtpId(args: {
+    xmtpId: string;
+    notification: NotificationPayload;
+  }): Promise<SendNotificationResult> {
+    const { xmtpId, notification } = args;
+    // Right now one xmtp id = one device, we can adapt in the future
+    const device = await prisma.device.findFirst({
+      where: { identities: { some: { identityId: xmtpId } } },
+    });
+    if (!device) {
+      return { success: false, shouldCleanup: false };
+    }
+    return this.sendPushNotification({ device, notification });
+  }
+
   async sendPushNotification(args: {
     device: Device;
     notification: NotificationPayload;

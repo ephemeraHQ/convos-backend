@@ -51,12 +51,6 @@ export async function handleXmtpNotification(req: Request, res: Response) {
       return;
     }
 
-    // Check if this notification should trigger a push
-    if (!notification.message_context.should_push) {
-      res.status(200).end();
-      return;
-    }
-
     const identityOnDevice = await prisma.identitiesOnDevice.findUnique({
       where: {
         xmtpInstallationId: notification.installation.id,
