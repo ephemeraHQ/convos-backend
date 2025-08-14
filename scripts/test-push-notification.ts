@@ -3,7 +3,7 @@ import { createApnsService } from "@/api/v1/notifications/services/apns-push.ser
 import { prisma } from "@/utils/prisma";
 
 interface TestPushArgs {
-  xmtpId: string; // XMTP ID
+  xmtpId: string;
   title?: string;
   body?: string;
   isSilent?: boolean;
@@ -87,7 +87,7 @@ async function sendTestPushNotification(args: TestPushArgs) {
       const result = await apnsService.sendPushNotification({
         device: effectiveDevice,
         notification: {
-          inboxId: xmtpId, // Using provided XMTP ID for testing
+          inboxId: "1234567890123456789012345678901234567890",
           notificationType: "Protocol",
           notificationData: messageData,
         },

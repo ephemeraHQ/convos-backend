@@ -17,8 +17,6 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-// User model removed. DeviceIdentity is now the primary user unit.
-
 enum DeviceOS {
   ios
   android
