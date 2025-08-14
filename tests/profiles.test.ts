@@ -25,6 +25,14 @@ import { prisma } from "@/utils/prisma";
 const app = express();
 app.use(jsonMiddleware);
 app.use(pinoMiddleware);
+// Mock authentication by allowing tests to override the authenticated XMTP ID via header
+app.use((req, _res, next) => {
+  const overrideXmtpId = req.headers["x-test-xmtp-id"];
+  if (typeof overrideXmtpId === "string") {
+    req.app.locals.xmtpId = overrideXmtpId;
+  }
+  next();
+});
 app.use("/users", usersRouter);
 app.use("/profiles", profilesRouter);
 
@@ -147,6 +155,7 @@ describe("/profiles API", () => {
         method: "PUT",
         headers: {
           "Content-Type": "application/json",
+          "x-test-xmtp-id": createUserBody.identity.xmtpId,
         },
         body: JSON.stringify({
           name: "UpdatedName123",
@@ -181,6 +190,7 @@ describe("/profiles API", () => {
         method: "PUT",
         headers: {
           "Content-Type": "application/json",
+          "x-test-xmtp-id": createUserBody.identity.xmtpId,
         },
         body: JSON.stringify({
           name: "Test@Profile", // Contains special characters
@@ -214,6 +224,7 @@ describe("/profiles API", () => {
         method: "PUT",
         headers: {
           "Content-Type": "application/json",
+          "x-test-xmtp-id": createUserBody.identity.xmtpId,
         },
         body: JSON.stringify({
           username: "test_user!", // Contains underscore and special characters
@@ -247,6 +258,7 @@ describe("/profiles API", () => {
         method: "PUT",
         headers: {
           "Content-Type": "application/json",
+          "x-test-xmtp-id": createUserBody.identity.xmtpId,
         },
         body: JSON.stringify({
           name: 123, // Invalid type for name (should be string)
@@ -280,6 +292,7 @@ describe("/profiles API", () => {
         method: "PUT",
         headers: {
           "Content-Type": "application/json",
+          "x-test-xmtp-id": createUserBody.identity.xmtpId,
         },
         body: JSON.stringify({
           name: "ab", // Too short (minimum 3 characters)
@@ -313,6 +326,7 @@ describe("/profiles API", () => {
         method: "PUT",
         headers: {
           "Content-Type": "application/json",
+          "x-test-xmtp-id": createUserBody.identity.xmtpId,
         },
         body: JSON.stringify({
           name: "a".repeat(51), // Too long (maximum 50 characters)
@@ -346,6 +360,7 @@ describe("/profiles API", () => {
         method: "PUT",
         headers: {
           "Content-Type": "application/json",
+          "x-test-xmtp-id": createUserBody.identity.xmtpId,
         },
         body: JSON.stringify({
           description: "a".repeat(501), // Too long (maximum 500 characters)
@@ -379,6 +394,7 @@ describe("/profiles API", () => {
         method: "PUT",
         headers: {
           "Content-Type": "application/json",
+          "x-test-xmtp-id": createUserBody.identity.xmtpId,
         },
         body: JSON.stringify({
           avatar: "not-a-valid-url", // Invalid URL format
@@ -424,6 +440,7 @@ describe("/profiles API", () => {
         method: "PUT",
         headers: {
           "Content-Type": "application/json",
+          "x-test-xmtp-id": secondUserBody.identity.xmtpId,
         },
         body: JSON.stringify({
           username: "existinguser123", // Already taken by first user
@@ -526,6 +543,7 @@ describe("/profiles API", () => {
         method: "PUT",
         headers: {
           "Content-Type": "application/json",
+          "x-test-xmtp-id": createUserBody.identity.xmtpId,
         },
         body: JSON.stringify({
           avatar: "https://example.com/new-avatar.jpg",
@@ -610,6 +628,7 @@ describe("/profiles API", () => {
         method: "PUT",
         headers: {
           "Content-Type": "application/json",
+          "x-test-xmtp-id": createUserBody.identity.xmtpId,
         },
         body: JSON.stringify({
           name: "UpdatedName123",
@@ -642,6 +661,7 @@ describe("/profiles API", () => {
         method: "PUT",
         headers: {
           "Content-Type": "application/json",
+          "x-test-xmtp-id": createUserBody.identity.xmtpId,
         },
         body: JSON.stringify({
           name: "Test@Profile", // Contains special characters
@@ -700,6 +720,7 @@ describe("/profiles API", () => {
         method: "PUT",
         headers: {
           "Content-Type": "application/json",
+          "x-test-xmtp-id": createUserBody.identity.xmtpId,
         },
         body: JSON.stringify({
           username: "newuser123",
@@ -731,6 +752,7 @@ describe("/profiles API", () => {
         method: "PUT",
         headers: {
           "Content-Type": "application/json",
+          "x-test-xmtp-id": createUserBody.identity.xmtpId,
         },
         body: JSON.stringify({
           name: "ab", // Too short
@@ -779,6 +801,7 @@ describe("/profiles API", () => {
         method: "PUT",
         headers: {
           "Content-Type": "application/json",
+          "x-test-xmtp-id": createUserBody.identity.xmtpId,
         },
         body: JSON.stringify({
           name: "vitalik.eth", // On-chain name that the user doesn't own
@@ -822,6 +845,7 @@ describe("/profiles API", () => {
         method: "PUT",
         headers: {
           "Content-Type": "application/json",
+          "x-test-xmtp-id": vitalikUserBody.identity.xmtpId,
         },
         body: JSON.stringify({
           name: "vitalik.eth",
@@ -851,6 +875,7 @@ describe("/profiles API", () => {
         method: "PUT",
         headers: {
           "Content-Type": "application/json",
+          "x-test-xmtp-id": createUserBody.identity.xmtpId,
         },
         body: JSON.stringify({
           name: "vitalik.eth", // Try to claim vitalik.eth with a different address
@@ -865,5 +890,68 @@ describe("/profiles API", () => {
       type: ProfileValidationErrorType.ONCHAIN_NAME_NOT_OWNED,
       message: "You don't own this on-chain name",
     });
+  });
+
+  test("PUT /profiles/:id forbids updating another user's profile", async () => {
+    // Create victim user
+    const victimBody: CreateUserRequestBody = {
+      device: {
+        id: "victim-device-id",
+        os: DeviceOS.ios,
+        name: "Victim iPhone",
+      },
+      identity: { identityAddress: "victim-address", xmtpId: "victim-xmtp-id" },
+      profile: {
+        name: "Victim",
+        username: "victimuser",
+        description: "Victim bio",
+      },
+    };
+    const victimRes = await fetch("http://localhost:3004/users", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(victimBody),
+    });
+    expect(victimRes.status).toBe(201);
+
+    // Create attacker user
+    const attackerBody: CreateUserRequestBody = {
+      device: {
+        id: "attacker-device-id",
+        os: DeviceOS.ios,
+        name: "Attacker iPhone",
+      },
+      identity: {
+        identityAddress: "attacker-address",
+        xmtpId: "attacker-xmtp-id",
+      },
+      profile: {
+        name: "Attacker",
+        username: "attackeruser",
+        description: "Attacker bio",
+      },
+    };
+    const attackerRes = await fetch("http://localhost:3004/users", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(attackerBody),
+    });
+    expect(attackerRes.status).toBe(201);
+
+    // Attempt to update victim profile while authenticated as attacker
+    const updateRes = await fetch(
+      `http://localhost:3004/profiles/${victimBody.identity.xmtpId}`,
+      {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          "x-test-xmtp-id": "attacker-xmtp-id",
+        },
+        body: JSON.stringify({ name: "Hacked Name" }),
+      },
+    );
+
+    // Expectation: should be forbidden (403). If this fails, it indicates a vulnerability.
+    expect(updateRes.status).toBe(403);
   });
 });

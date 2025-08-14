@@ -41,14 +41,8 @@ export async function updateProfile(
       return;
     }
 
-    // Check if the authenticated identity is the same as the target identity
-    const hasAccess = await prisma.deviceIdentity.findFirst({
-      where: {
-        xmtpId: authenticatedXmtpId,
-      },
-    });
-
-    if (!hasAccess) {
+    // Enforce that the authenticated identity matches the target identity
+    if (!authenticatedXmtpId || authenticatedXmtpId !== targetXmtpId) {
       res.status(403).json({ error: "Not authorized to update this profile" });
       return;
     }
