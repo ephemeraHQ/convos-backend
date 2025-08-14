@@ -8,7 +8,26 @@ export type ProtocolNotificationData = {
 };
 
 export type InviteJoinRequestNotificationData = {
-  inviteId: string;
+  id: string;
+  createdAt: string;
+  updatedAt: string;
+  requester: {
+    id: string;
+    xmtpId: string;
+    profile: {
+      name: string | null;
+      username: string | null;
+      description: string | null;
+      avatar: string | null;
+    } | null;
+  };
+  inviteCode: {
+    id: string;
+    name: string | null;
+    description: string | null;
+    groupId: string;
+  };
+  autoApprove: boolean;
 };
 
 // Mapping from NotificationType to its payload shape

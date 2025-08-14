@@ -1,6 +1,8 @@
 import type { Request, Response } from "express";
 import { z } from "zod";
 import { prisma } from "@/utils/prisma";
+import type { InviteJoinRequestNotificationData } from "../../notifications/services/notifications-types";
+import { getPushNotificationService } from "../../notifications/services/push-notification.service";
 
 const requestToJoinSchema = z.object({
   inviteId: z.string().min(1, "Invite ID is required"),
@@ -14,29 +16,6 @@ export type RequestToJoinResponse = {
   createdAt: string;
 };
 
-export type InviteRequestNotificationPayload = {
-  id: string;
-  createdAt: string;
-  updatedAt: string;
-  requester: {
-    id: string;
-    xmtpId: string;
-    profile: {
-      name: string | null;
-      username: string | null;
-      description: string | null;
-      avatar: string | null;
-    } | null;
-  };
-  inviteCode: {
-    id: string;
-    name: string | null;
-    description: string | null;
-    groupId: string;
-  };
-  autoApprove: boolean;
-};
-
 export async function requestToJoin(
   req: Request<unknown, unknown, RequestToJoinRequestBody>,
   res: Response,
@@ -44,6 +23,8 @@ export async function requestToJoin(
   try {
     const body = await requestToJoinSchema.parseAsync(req.body);
     const { xmtpId } = req.app.locals;
+
+    const pushNotificationService = getPushNotificationService();
 
     // Find the requester's identity
     const requesterIdentity = await prisma.deviceIdentity.findFirst({
@@ -66,6 +47,11 @@ export async function requestToJoin(
         createdBy: {
           include: {
             profile: true,
+          },
+        },
+        notificationTargets: {
+          include: {
+            deviceIdentity: true,
           },
         },
       },
@@ -132,37 +118,69 @@ export async function requestToJoin(
             description: true,
             groupId: true,
             autoApprove: true,
+            createdBy: {
+              select: {
+                xmtpId: true,
+              },
+            },
           },
         },
       },
     });
 
-    // const payload: InviteRequestNotificationPayload = {
-    //   id: requestToJoin.id,
-    //   createdAt: requestToJoin.createdAt.toISOString(),
-    //   updatedAt: requestToJoin.updatedAt.toISOString(),
-    //   requester: {
-    //     id: requestToJoin.requester.id,
-    //     xmtpId: requestToJoin.requester.xmtpId,
-    //     profile: requestToJoin.requester.profile
-    //       ? {
-    //           name: requestToJoin.requester.profile.name,
-    //           username: requestToJoin.requester.profile.username,
-    //           description: requestToJoin.requester.profile.description,
-    //           avatar: requestToJoin.requester.profile.avatar,
-    //         }
-    //       : null,
-    //   },
-    //   inviteCode: {
-    //     id: requestToJoin.inviteCode.id,
-    //     name: requestToJoin.inviteCode.name,
-    //     description: requestToJoin.inviteCode.description,
-    //     groupId: requestToJoin.inviteCode.groupId,
-    //   },
-    //   autoApprove: requestToJoin.inviteCode.autoApprove,
-    // };
+    const payload: InviteJoinRequestNotificationData = {
+      id: requestToJoin.id,
+      createdAt: requestToJoin.createdAt.toISOString(),
+      updatedAt: requestToJoin.updatedAt.toISOString(),
+      requester: {
+        id: requestToJoin.requester.id,
+        xmtpId: requestToJoin.requester.xmtpId,
+        profile: requestToJoin.requester.profile
+          ? {
+              name: requestToJoin.requester.profile.name,
+              username: requestToJoin.requester.profile.username,
+              description: requestToJoin.requester.profile.description,
+              avatar: requestToJoin.requester.profile.avatar,
+            }
+          : null,
+      },
+      inviteCode: {
+        id: requestToJoin.inviteCode.id,
+        name: requestToJoin.inviteCode.name,
+        description: requestToJoin.inviteCode.description,
+        groupId: requestToJoin.inviteCode.groupId,
+      },
+      autoApprove: requestToJoin.inviteCode.autoApprove,
+    };
 
-    // @todo We will send the actual notification here using APNS
+    // Collect all recipients (creator + notification targets)
+    const allRecipientIds = [
+      requestToJoin.inviteCode.createdBy.xmtpId,
+      ...inviteCode.notificationTargets.map(
+        (target) => target.deviceIdentity.xmtpId,
+      ),
+    ];
+
+    // Filter out falsy values and deduplicate while preserving order
+    const uniqueRecipients = Array.from(
+      new Set(allRecipientIds.filter((xmtpId) => xmtpId)),
+    );
+
+    // Send notifications to all recipients
+    uniqueRecipients.forEach((xmtpId) => {
+      pushNotificationService
+        .sendPushNotificationToXmtpId({
+          xmtpId,
+          notification: {
+            inboxId: xmtpId,
+            notificationType: "InviteJoinRequest",
+            notificationData: payload,
+          },
+        })
+        .catch((e: unknown) => {
+          req.log.error({ error: e }, "Error sending push notification");
+        });
+    });
 
     const response: RequestToJoinResponse = {
       id: requestToJoin.id,
@@ -180,6 +198,7 @@ export async function requestToJoin(
       });
       return;
     }
+    req.log.warn(`ERROR DEBUGGING : ${error as string}`);
 
     req.log.error({ error }, "Error creating join request");
     res.status(500).json({

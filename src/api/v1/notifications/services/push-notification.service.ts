@@ -16,7 +16,28 @@ export class PushNotificationService {
     this.apnsService = createApnsService();
   }
 
-  async sendPushNotification(args: {
+  async sendPushNotificationToXmtpId(args: {
+    xmtpId: string;
+    notification: NotificationPayload;
+  }): Promise<SendNotificationResult> {
+    const { xmtpId, notification } = args;
+    // Right now one xmtp id = one device, we can adapt in the future
+    const device = await prisma.device.findFirst({
+      where: {
+        identities: {
+          some: {
+            identity: { xmtpId: xmtpId },
+          },
+        },
+      },
+    });
+    if (!device) {
+      return { success: false, shouldCleanup: false };
+    }
+    return this.sendPushNotification({ device, notification });
+  }
+
+  async _sendPushNotification(args: {
     device: Device;
     notification: NotificationPayload;
   }): Promise<SendNotificationResult> {
@@ -71,6 +92,23 @@ export class PushNotificationService {
         result.error === "BadDeviceToken";
 
       return { success: false, shouldCleanup };
+    }
+  }
+
+  async sendPushNotification(args: {
+    device: Device;
+    notification: NotificationPayload;
+  }): Promise<SendNotificationResult> {
+    try {
+      const notificationResult = await this._sendPushNotification(args);
+      return notificationResult;
+    } catch (error) {
+      logger.error(
+        { error, deviceId: args.device.id },
+        "Unexpected error sending push",
+      );
+      await this.incrementPushFailures(args.device.id);
+      return { success: false };
     }
   }
 
