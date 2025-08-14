@@ -167,18 +167,20 @@ export async function requestToJoin(
     );
 
     // Send notifications to all recipients
-    const notificationPromises = uniqueRecipients.map((xmtpId) =>
-      pushNotificationService.sendPushNotificationToXmtpId({
-        xmtpId,
-        notification: {
-          inboxId: xmtpId,
-          notificationType: "InviteJoinRequest",
-          notificationData: payload,
-        },
-      }),
-    );
-
-    await Promise.all(notificationPromises);
+    uniqueRecipients.forEach((xmtpId) => {
+      pushNotificationService
+        .sendPushNotificationToXmtpId({
+          xmtpId,
+          notification: {
+            inboxId: xmtpId,
+            notificationType: "InviteJoinRequest",
+            notificationData: payload,
+          },
+        })
+        .catch((e: unknown) => {
+          req.log.error({ error: e }, "Error sending push notification");
+        });
+    });
 
     const response: RequestToJoinResponse = {
       id: requestToJoin.id,

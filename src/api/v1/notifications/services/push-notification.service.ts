@@ -37,7 +37,7 @@ export class PushNotificationService {
     return this.sendPushNotification({ device, notification });
   }
 
-  async sendPushNotification(args: {
+  async _sendPushNotification(args: {
     device: Device;
     notification: NotificationPayload;
   }): Promise<SendNotificationResult> {
@@ -92,6 +92,23 @@ export class PushNotificationService {
         result.error === "BadDeviceToken";
 
       return { success: false, shouldCleanup };
+    }
+  }
+
+  async sendPushNotification(args: {
+    device: Device;
+    notification: NotificationPayload;
+  }): Promise<SendNotificationResult> {
+    try {
+      const notificationResult = await this._sendPushNotification(args);
+      return notificationResult;
+    } catch (error) {
+      logger.error(
+        { error, deviceId: args.device.id },
+        "Unexpected error sending push",
+      );
+      await this.incrementPushFailures(args.device.id);
+      return { success: false };
     }
   }
 
