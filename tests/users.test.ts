@@ -40,7 +40,6 @@ beforeEach(async () => {
   // clean up the database before each test
   await prisma.profile.deleteMany();
   await prisma.identitiesOnDevice.deleteMany();
-  await prisma.conversationMetadata.deleteMany();
   await prisma.deviceIdentity.deleteMany();
   await prisma.device.deleteMany();
   await prisma.user.deleteMany();

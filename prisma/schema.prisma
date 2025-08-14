@@ -80,20 +80,19 @@ model UsersOnDevice {
 }
 
 model DeviceIdentity {
-  id                   String                         @id @default(uuid())
-  userId               String
-  xmtpId               String // This is the inboxID
-  identityAddress      String? // Optional Identity address (for instance Turnkey address)
-  createdAt            DateTime                       @default(now())
-  updatedAt            DateTime                       @updatedAt
-  profile              Profile?
-  conversationMetadata ConversationMetadata[]
-  devices              IdentitiesOnDevice[]
-  user                 User                           @relation(fields: [userId], references: [id], onDelete: Cascade) // If a User is deleted, their DeviceIdentities are also deleted as they are user-specific.
-  createdInviteCodes   InviteCode[]
-  usedInviteCodes      InviteCodeUse[]
-  inviteRequests       InviteCodeRequest[]
-  notificationTargets  InviteCodeNotificationTarget[]
+  id                  String                         @id @default(uuid())
+  userId              String
+  xmtpId              String // This is the inboxID
+  identityAddress     String? // Optional Identity address (for instance Turnkey address)
+  createdAt           DateTime                       @default(now())
+  updatedAt           DateTime                       @updatedAt
+  profile             Profile?
+  devices             IdentitiesOnDevice[]
+  user                User                           @relation(fields: [userId], references: [id], onDelete: Cascade) // If a User is deleted, their DeviceIdentities are also deleted as they are user-specific.
+  createdInviteCodes  InviteCode[]
+  usedInviteCodes     InviteCodeUse[]
+  inviteRequests      InviteCodeRequest[]
+  notificationTargets InviteCodeNotificationTarget[]
 
   @@unique([xmtpId])
 }
@@ -118,22 +117,6 @@ model Profile {
   createdAt        DateTime       @default(now())
   updatedAt        DateTime       @updatedAt
   deviceIdentity   DeviceIdentity @relation(fields: [deviceIdentityId], references: [id], onDelete: Cascade) // A Profile is intrinsically linked to a DeviceIdentity; if the identity is gone, the profile is meaningless.
-}
-
-model ConversationMetadata {
-  id               String         @id @default(uuid())
-  deviceIdentityId String
-  conversationId   String
-  pinned           Boolean        @default(false)
-  unread           Boolean        @default(false)
-  deleted          Boolean        @default(false)
-  muted            Boolean        @default(false)
-  readUntil        DateTime?
-  createdAt        DateTime       @default(now())
-  updatedAt        DateTime       @updatedAt
-  deviceIdentity   DeviceIdentity @relation(fields: [deviceIdentityId], references: [id], onDelete: Cascade) // Conversation metadata is specific to a DeviceIdentity; if the identity is deleted, its metadata should also be removed.
-
-  @@unique([deviceIdentityId, conversationId])
 }
 
 model SubOrg {

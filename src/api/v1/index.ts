@@ -1,7 +1,6 @@
 import { Router } from "express";
 import appConfigRouter from "@/api/v1/appConfig";
 import authenticateRouter from "@/api/v1/authenticate";
-import metadataRouter from "@/api/v1/metadata/metadata.router";
 import {
   notificationsRouter,
   xmtpNotificationsRouter,
@@ -38,9 +37,6 @@ v1Router.use("/users", authMiddleware, usersRouter);
 
 // mount device routes under /devices
 v1Router.use("/devices", authMiddleware, devicesRouter);
-
-// mount metadata routes under /metadata
-v1Router.use("/metadata", authMiddleware, metadataRouter);
 
 // mount public profile routes under /profiles/public
 v1Router.use("/profiles/public", publicProfilesRouter);
