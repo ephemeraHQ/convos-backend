@@ -50,6 +50,7 @@ describe("PushNotificationService", () => {
     await prisma.$disconnect();
     // Clean up test databases
     rimrafSync("tests/**/*.db3*", { glob: true });
+    mock.restore();
   });
 
   beforeEach(async () => {

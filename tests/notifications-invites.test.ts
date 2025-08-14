@@ -79,6 +79,9 @@ describe("Invite Notifications Integration", () => {
     await prisma.$disconnect();
     server.close();
     rimrafSync("tests/**/*.db3*", { glob: true });
+
+    // Restore all mocks to prevent affecting other tests
+    mock.restore();
   });
 
   beforeEach(async () => {
