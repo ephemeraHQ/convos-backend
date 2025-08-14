@@ -55,7 +55,6 @@ beforeEach(async () => {
   await prisma.inviteCode.deleteMany();
   await prisma.profile.deleteMany();
   await prisma.identitiesOnDevice.deleteMany();
-  await prisma.conversationMetadata.deleteMany();
   await prisma.deviceIdentity.deleteMany();
   await prisma.device.deleteMany();
   await prisma.user.deleteMany();
