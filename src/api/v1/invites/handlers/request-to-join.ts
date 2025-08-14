@@ -113,7 +113,11 @@ export async function requestToJoin(
             description: true,
             groupId: true,
             autoApprove: true,
-            createdById: true,
+            createdBy: {
+              select: {
+                xmtpId: true,
+              },
+            },
           },
         },
       },
@@ -145,9 +149,9 @@ export async function requestToJoin(
     };
 
     await pushNotificationService.sendPushNotificationToXmtpId({
-      xmtpId: requestToJoin.inviteCode.createdById,
+      xmtpId: requestToJoin.inviteCode.createdBy.xmtpId,
       notification: {
-        inboxId: requestToJoin.inviteCode.createdById,
+        inboxId: requestToJoin.inviteCode.createdBy.xmtpId,
         notificationType: "InviteJoinRequest",
         notificationData: payload,
       },
