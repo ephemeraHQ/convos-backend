@@ -1,5 +1,5 @@
 import type { Server } from "http";
-import { DeviceOS, UserType, type Device } from "@prisma/client";
+import { DeviceOS, type Device } from "@prisma/client";
 import {
   afterAll,
   beforeAll,
@@ -54,15 +54,12 @@ beforeEach(async () => {
   await prisma.identitiesOnDevice.deleteMany();
   await prisma.deviceIdentity.deleteMany();
   await prisma.device.deleteMany();
-  await prisma.user.deleteMany();
 });
 
 describe("/devices API", () => {
-  test("POST /devices/:userId creates a new device", async () => {
+  test("POST /devices creates a new device", async () => {
     // Create test user first via API
     const createUserBody: CreateUserRequestBody = {
-      userId: "test-devices-turnkey-user-id",
-      userType: UserType.turnkey,
       device: {
         id: "test-initial-device-id",
         os: DeviceOS.ios,
@@ -88,9 +85,8 @@ describe("/devices API", () => {
     });
     const _createdUser =
       (await createUserResponse.json()) as CreatedReturnedUser;
-    const userId = createUserBody.userId;
 
-    const response = await fetch(`http://localhost:3002/devices/${userId}`, {
+    const response = await fetch(`http://localhost:3002/devices`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -113,11 +109,9 @@ describe("/devices API", () => {
     expect(device.id).toBeDefined();
   });
 
-  test("GET /devices/:userId/:deviceId returns 404 for non-existent device", async () => {
+  test("GET /devices/:deviceId returns 404 for non-existent device", async () => {
     // Create test user first via API
     const createUserBody: CreateUserRequestBody = {
-      userId: "test-devices-turnkey-user-id-2",
-      userType: UserType.turnkey,
       device: {
         id: "test-device-id-2",
         os: DeviceOS.ios,
@@ -143,10 +137,9 @@ describe("/devices API", () => {
     });
     const _createdUser =
       (await createUserResponse.json()) as CreatedReturnedUser;
-    const userId = createUserBody.userId;
 
     const response = await fetch(
-      `http://localhost:3002/devices/${userId}/nonexistent-id`,
+      `http://localhost:3002/devices/nonexistent-id`,
     );
     const data = (await response.json()) as { error: string };
 
@@ -156,11 +149,9 @@ describe("/devices API", () => {
     );
   });
 
-  test("GET /devices/:userId/:deviceId returns device when exists", async () => {
+  test("GET /devices/:deviceId returns device when exists", async () => {
     // Create test user first via API
     const createUserBody: CreateUserRequestBody = {
-      userId: "test-devices-turnkey-user-id-3",
-      userType: UserType.turnkey,
       device: {
         id: "test-device-id-3",
         os: DeviceOS.ios,
@@ -186,29 +177,24 @@ describe("/devices API", () => {
     });
     const _createdUser =
       (await createUserResponse.json()) as CreatedReturnedUser;
-    const userId = createUserBody.userId;
-
     // create a device
-    const createResponse = await fetch(
-      `http://localhost:3002/devices/${userId}`,
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          id: "test-new-device-id-3",
-          name: "Test Device",
-          os: DeviceOS.android,
-          pushToken: "test-push-token",
-        }),
+    const createResponse = await fetch(`http://localhost:3002/devices`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
       },
-    );
+      body: JSON.stringify({
+        id: "test-new-device-id-3",
+        name: "Test Device",
+        os: DeviceOS.android,
+        pushToken: "test-push-token",
+      }),
+    });
     const createdDevice = (await createResponse.json()) as Device;
 
     // fetch the device
     const response = await fetch(
-      `http://localhost:3002/devices/${userId}/${createdDevice.id}`,
+      `http://localhost:3002/devices/${createdDevice.id}`,
     );
     const device = (await response.json()) as Device;
 
@@ -220,11 +206,9 @@ describe("/devices API", () => {
     expect(device.pushToken).toBe("test-push-token");
   });
 
-  test("GET /devices/:userId returns all devices for a user", async () => {
+  test("GET /devices returns all devices for the authenticated identity", async () => {
     // Create test user first via API
     const createUserBody: CreateUserRequestBody = {
-      userId: "test-devices-turnkey-user-id-4",
-      userType: UserType.turnkey,
       device: {
         id: "test-device-id-4",
         os: DeviceOS.ios,
@@ -250,10 +234,8 @@ describe("/devices API", () => {
     });
     const _createdUser =
       (await createUserResponse.json()) as CreatedReturnedUser;
-    const userId = createUserBody.userId;
-
     // create two devices
-    await fetch(`http://localhost:3002/devices/${userId}`, {
+    await fetch(`http://localhost:3002/devices`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -264,7 +246,7 @@ describe("/devices API", () => {
         os: DeviceOS.ios,
       }),
     });
-    await fetch(`http://localhost:3002/devices/${userId}`, {
+    await fetch(`http://localhost:3002/devices`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -277,7 +259,7 @@ describe("/devices API", () => {
     });
 
     // fetch all devices
-    const response = await fetch(`http://localhost:3002/devices/${userId}`);
+    const response = await fetch(`http://localhost:3002/devices`);
     const devices = (await response.json()) as Device[];
 
     expect(response.status).toBe(200);
@@ -287,11 +269,9 @@ describe("/devices API", () => {
     expect(devices.map((d) => d.name)).toContain("Test Initial Device");
   });
 
-  test("PATCH /devices/:userId/:deviceId updates device", async () => {
+  test("PATCH /devices/:deviceId updates device", async () => {
     // Create test user first via API
     const createUserBody: CreateUserRequestBody = {
-      userId: "test-devices-turnkey-user-id-5",
-      userType: UserType.turnkey,
       device: {
         id: "test-device-id-5",
         os: DeviceOS.ios,
@@ -317,29 +297,24 @@ describe("/devices API", () => {
     });
     const _createdUser =
       (await createUserResponse.json()) as CreatedReturnedUser;
-    const userId = createUserBody.userId;
-
     // create a device
-    const createResponse = await fetch(
-      `http://localhost:3002/devices/${userId}`,
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          id: "test-device-id-5-1",
-          name: "Old Name",
-          os: DeviceOS.ios,
-          pushToken: "old-token",
-        }),
+    const createResponse = await fetch(`http://localhost:3002/devices`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
       },
-    );
+      body: JSON.stringify({
+        id: "test-device-id-5-1",
+        name: "Old Name",
+        os: DeviceOS.ios,
+        pushToken: "old-token",
+      }),
+    });
     const createdDevice = (await createResponse.json()) as Device;
 
     // update the device
     const updateResponse = await fetch(
-      `http://localhost:3002/devices/${userId}/${createdDevice.id}`,
+      `http://localhost:3002/devices/${createdDevice.id}`,
       {
         method: "PATCH",
         headers: {
@@ -362,11 +337,9 @@ describe("/devices API", () => {
     expect(updatedDevice.pushToken).toBe("new-token");
   });
 
-  test("POST /devices/:userId validates request body", async () => {
+  test("POST /devices validates request body", async () => {
     // Create test user first via API
     const createUserBody: CreateUserRequestBody = {
-      userId: "test-devices-turnkey-user-id-6",
-      userType: UserType.turnkey,
       device: {
         id: "test-device-id-6",
         os: DeviceOS.ios,
@@ -392,9 +365,7 @@ describe("/devices API", () => {
     });
     const _createdUser =
       (await createUserResponse.json()) as CreatedReturnedUser;
-    const userId = createUserBody.userId;
-
-    const response = await fetch(`http://localhost:3002/devices/${userId}`, {
+    const response = await fetch(`http://localhost:3002/devices`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",

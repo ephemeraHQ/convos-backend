@@ -41,11 +41,10 @@ export async function updateProfile(
       return;
     }
 
-    // Check if the authenticated user has access to this profile
+    // Check if the authenticated identity is the same as the target identity
     const hasAccess = await prisma.deviceIdentity.findFirst({
       where: {
         xmtpId: authenticatedXmtpId,
-        userId: deviceIdentity.userId,
       },
     });
 

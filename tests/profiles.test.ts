@@ -1,5 +1,5 @@
 import type { Server } from "http";
-import { DeviceOS, UserType, type Profile } from "@prisma/client";
+import { DeviceOS, type Profile } from "@prisma/client";
 import {
   afterAll,
   beforeAll,
@@ -45,12 +45,9 @@ beforeEach(async () => {
   await prisma.identitiesOnDevice.deleteMany();
   await prisma.deviceIdentity.deleteMany();
   await prisma.device.deleteMany();
-  await prisma.user.deleteMany();
 });
 
 const createUserBody: CreateUserRequestBody = {
-  userId: "test-profiles-turnkey-user-id",
-  userType: UserType.turnkey,
   device: {
     id: "test-device-id",
     os: DeviceOS.ios,
@@ -68,8 +65,6 @@ const createUserBody: CreateUserRequestBody = {
 };
 
 const firstUserBody: CreateUserRequestBody = {
-  userId: "test-profiles-turnkey-user-id-6",
-  userType: UserType.turnkey,
   device: {
     id: "test-device-id-6",
     os: DeviceOS.ios,
@@ -87,8 +82,6 @@ const firstUserBody: CreateUserRequestBody = {
 };
 
 const secondUserBody: CreateUserRequestBody = {
-  userId: "test-profiles-turnkey-user-id-7",
-  userType: UserType.turnkey,
   device: {
     id: "test-device-id-7",
     os: DeviceOS.ios,

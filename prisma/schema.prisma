@@ -17,22 +17,7 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-enum UserType {
-  onDevice
-  turnkey
-}
-
-model User {
-  id             String           @id @default(uuid())
-  userType       UserType         @default(onDevice)
-  userId         String
-  createdAt      DateTime         @default(now())
-  updatedAt      DateTime         @updatedAt
-  devices        UsersOnDevice[]
-  DeviceIdentity DeviceIdentity[]
-
-  @@unique([userType, userId])
-}
+// User model removed. DeviceIdentity is now the primary user unit.
 
 enum DeviceOS {
   ios
@@ -64,31 +49,17 @@ model Device {
   updatedAt         DateTime             @updatedAt
   lastPushSuccessAt DateTime?
   pushFailures      Int                  @default(0)
-  users             UsersOnDevice[]
   identities        IdentitiesOnDevice[]
-}
-
-model UsersOnDevice {
-  userId    String
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  deviceId  String
-  device    Device   @relation(fields: [deviceId], references: [id], onDelete: Cascade)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  @@id([userId, deviceId])
 }
 
 model DeviceIdentity {
   id                  String                         @id @default(uuid())
-  userId              String
   xmtpId              String // This is the inboxID
   identityAddress     String? // Optional Identity address (for instance Turnkey address)
   createdAt           DateTime                       @default(now())
   updatedAt           DateTime                       @updatedAt
   profile             Profile?
   devices             IdentitiesOnDevice[]
-  user                User                           @relation(fields: [userId], references: [id], onDelete: Cascade) // If a User is deleted, their DeviceIdentities are also deleted as they are user-specific.
   createdInviteCodes  InviteCode[]
   usedInviteCodes     InviteCodeUse[]
   inviteRequests      InviteCodeRequest[]

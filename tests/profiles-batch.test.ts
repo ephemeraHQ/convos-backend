@@ -1,5 +1,5 @@
 import type { Server } from "http";
-import { UserType, type DeviceIdentity, type Profile } from "@prisma/client";
+import { type DeviceIdentity, type Profile } from "@prisma/client";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import express from "express";
 import profilesRouter from "@/api/v1/profiles/profiles.router";
@@ -36,7 +36,7 @@ let baseUrl: string;
 describe("Batch Profile endpoints", () => {
   const testProfiles: (Profile & { deviceIdentity: DeviceIdentity })[] = [];
   const xmtpIds = ["test-xmtp-id-1", "test-xmtp-id-2", "test-xmtp-id-3"];
-  const testUserId = "test-user-id-batch-profiles";
+  const testIdentityId = "test-user-id-batch-profiles";
 
   beforeAll(async () => {
     // Wait a bit in CI environments
@@ -46,12 +46,11 @@ describe("Batch Profile endpoints", () => {
 
     // Your existing setup but with better error handling
     try {
-      // Create test user
-      const testUser = await prisma.user.create({
+      // Create test identity
+      await prisma.deviceIdentity.create({
         data: {
-          id: testUserId,
-          userId: "test-turnkey-user-id-batch-profiles",
-          userType: UserType.turnkey,
+          id: testIdentityId,
+          xmtpId: "test-turnkey-user-id-batch-profiles",
         },
       });
 
@@ -78,7 +77,6 @@ describe("Batch Profile endpoints", () => {
           data: {
             xmtpId: xmtpIds[i],
             identityAddress: `0x${i}123456789`,
-            userId: testUser.id,
           },
         });
 
@@ -115,9 +113,9 @@ describe("Batch Profile endpoints", () => {
       });
     }
 
-    // Delete test user
-    await prisma.user.delete({
-      where: { id: testUserId },
+    // Delete test identity
+    await prisma.deviceIdentity.delete({
+      where: { id: testIdentityId },
     });
 
     server.close();

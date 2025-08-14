@@ -3,7 +3,6 @@ import { AppError, logError } from "@/utils/errors";
 import { prisma } from "@/utils/prisma";
 
 export type GetDeviceRequestParams = {
-  userId: string;
   deviceId: string;
 };
 
@@ -12,22 +11,16 @@ export async function getDeviceHandler(
   res: Response,
 ) {
   try {
-    const { userId, deviceId } = req.params;
+    const { deviceId } = req.params;
     const { xmtpId } = req.app.locals;
 
-    // First find the user to verify they exist and are the authenticated user
-    const user = await prisma.user.findFirst({
-      where: {
-        userId: userId,
-        DeviceIdentity: {
-          some: {
-            xmtpId,
-          },
-        },
-      },
+    // Verify authenticated identity exists
+    const identity = await prisma.deviceIdentity.findFirst({
+      where: { xmtpId },
+      select: { id: true },
     });
 
-    if (!user) {
+    if (!identity) {
       res
         .status(403)
         .json({ error: "Not authorized to access this user's devices" });
@@ -38,11 +31,7 @@ export async function getDeviceHandler(
     const device = await prisma.device.findFirst({
       where: {
         id: deviceId,
-        users: {
-          some: {
-            userId: user.id,
-          },
-        },
+        identities: { some: { identityId: identity.id } },
       },
       select: {
         id: true,
@@ -64,7 +53,6 @@ export async function getDeviceHandler(
       // Security-relevant event: ownership check miss (sanitized)
       // Note: don't log pushToken or other sensitive values
       logError(new Error("device-get-ownership-miss"), {
-        userId,
         deviceId,
         xmtpId,
         reason: "Device not found or not associated with user",
@@ -78,7 +66,6 @@ export async function getDeviceHandler(
     res.json(device);
   } catch (error) {
     logError(error, {
-      userId: req.params.userId,
       deviceId: req.params.deviceId,
       xmtpId: req.app.locals.xmtpId,
     });

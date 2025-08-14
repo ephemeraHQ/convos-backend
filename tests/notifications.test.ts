@@ -1,5 +1,5 @@
 import type { Server } from "http";
-import { DeviceOS, UserType } from "@prisma/client";
+import { DeviceOS } from "@prisma/client";
 import {
   afterAll,
   afterEach,
@@ -52,10 +52,8 @@ afterAll(async () => {
 });
 
 describe("/notifications API - Register/Unregister (Auth Required)", () => {
-  let testUserId: string;
   let testDeviceId: string;
   let testIdentityId: string;
-  const testUserTurnkeyId = "reg-unreg-turnkey-user-id";
   const testDeviceName = "RegUnreg Test Device";
   const testIdentityAddress = "reg-unreg-turnkey-address";
 
@@ -64,16 +62,9 @@ describe("/notifications API - Register/Unregister (Auth Required)", () => {
     await prisma.profile.deleteMany();
     await prisma.deviceIdentity.deleteMany();
     await prisma.device.deleteMany();
-    await prisma.user.deleteMany();
-
-    const user = await prisma.user.create({
-      data: { userId: testUserTurnkeyId, userType: UserType.turnkey },
-    });
-    testUserId = user.id;
 
     const identity = await prisma.deviceIdentity.create({
       data: {
-        userId: testUserId,
         xmtpId: AUTH_XMTP_ID,
         identityAddress: testIdentityAddress,
       },
@@ -85,13 +76,6 @@ describe("/notifications API - Register/Unregister (Auth Required)", () => {
         id: "test-device-id",
         name: testDeviceName,
         os: DeviceOS.ios,
-      },
-    });
-    // Link user and device
-    await prisma.usersOnDevice.create({
-      data: {
-        userId: testUserId,
-        deviceId: device.id,
       },
     });
     testDeviceId = device.id;

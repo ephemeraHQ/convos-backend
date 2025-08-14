@@ -1,5 +1,5 @@
 import type { Server } from "http";
-import { DeviceOS, UserType } from "@prisma/client";
+import { DeviceOS } from "@prisma/client";
 import {
   afterAll,
   beforeAll,
@@ -42,14 +42,11 @@ beforeEach(async () => {
   await prisma.identitiesOnDevice.deleteMany();
   await prisma.deviceIdentity.deleteMany();
   await prisma.device.deleteMany();
-  await prisma.user.deleteMany();
 });
 
 describe("/users API", () => {
   test("POST /users creates a new user", async () => {
     const createUserBody: CreateUserRequestBody = {
-      userId: "test-users-turnkey-user-id",
-      userType: UserType.turnkey,
       device: {
         id: "test-device-id",
         os: DeviceOS.ios,
@@ -77,13 +74,9 @@ describe("/users API", () => {
     expect(response.status).toBe(201);
 
     const user = (await response.json()) as CreatedReturnedUser;
-    expect(user.userId).toBe(createUserBody.userId);
-    expect(user.userType).toBe(createUserBody.userType);
-    expect(user.id).toBeDefined();
     expect(user.device.id).toBeDefined();
     expect(user.device.os).toBe(createUserBody.device.os);
     expect(user.device.name!).toBe(createUserBody.device.name!);
-    expect(user.device.id).toBe(createUserBody.device.id);
     expect(user.identity.id).toBeDefined();
     expect(user.identity.identityAddress).toBe(
       createUserBody.identity.identityAddress || null,
@@ -102,8 +95,6 @@ describe("/users API", () => {
   test("GET /users/me returns current user", async () => {
     // First create a user
     const createUserBody: CreateUserRequestBody = {
-      userId: "test-turnkey-user-id",
-      userType: UserType.turnkey,
       device: {
         id: "test-device-id",
         os: DeviceOS.ios,
@@ -140,7 +131,6 @@ describe("/users API", () => {
     expect(response.status).toBe(200);
 
     const user = (await response.json()) as ReturnedCurrentUser;
-    expect(user.id).toBeDefined();
     expect(user.identities).toHaveLength(1);
     expect(user.identities[0].identityAddress).toBe("test-turnkey-address");
     expect(user.identities[0].xmtpId).toBe("test-xmtp-id");
@@ -148,8 +138,6 @@ describe("/users API", () => {
 
   test("POST /users can create two users with different devices", async () => {
     const createUser1Body: CreateUserRequestBody = {
-      userId: "test-users-turnkey-user-id",
-      userType: UserType.turnkey,
       device: {
         id: "test-device-id",
         os: DeviceOS.ios,
@@ -177,8 +165,6 @@ describe("/users API", () => {
     expect(response1.status).toBe(201);
 
     const createUser2Body: CreateUserRequestBody = {
-      userId: "test-users-turnkey-user-id-2",
-      userType: UserType.turnkey,
       device: {
         id: "test-device-id-2",
         os: DeviceOS.ios,
@@ -209,8 +195,6 @@ describe("/users API", () => {
   test("POST /users can create two users with same device", async () => {
     const sameDeviceId = "test-device-id";
     const createUser1Body: CreateUserRequestBody = {
-      userId: "test-users-turnkey-user-id",
-      userType: UserType.turnkey,
       device: {
         id: sameDeviceId,
         os: DeviceOS.ios,
@@ -238,8 +222,6 @@ describe("/users API", () => {
     expect(response1.status).toBe(201);
 
     const createUser2Body: CreateUserRequestBody = {
-      userId: "test-users-turnkey-user-id-2",
-      userType: UserType.turnkey,
       device: {
         id: sameDeviceId,
         os: DeviceOS.ios,

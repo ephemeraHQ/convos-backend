@@ -10,7 +10,6 @@ const querySchema = z.object({
 type QueryParams = z.infer<typeof querySchema>;
 
 export type ReturnedCurrentUser = {
-  id: string;
   identities: Array<Pick<DeviceIdentity, "id" | "identityAddress" | "xmtpId">>;
 };
 
@@ -22,40 +21,13 @@ export async function getCurrentUser(
     const { xmtpId } = req.app.locals;
     const { device_id: deviceId } = querySchema.parse(req.query);
 
-    const user = await prisma.user.findFirst({
-      where: {
-        DeviceIdentity: {
-          some: {
-            xmtpId,
-          },
-        },
-      },
-      select: {
-        id: true,
-        devices: {
-          ...(deviceId && { where: { deviceId: deviceId } }),
-          select: {
-            device: {
-              include: {
-                identities: {
-                  select: {
-                    identity: {
-                      select: {
-                        id: true,
-                        identityAddress: true,
-                        xmtpId: true,
-                      },
-                    },
-                  },
-                },
-              },
-            },
-          },
-        },
-      },
+    // Find the authenticated identity
+    const identity = await prisma.deviceIdentity.findFirst({
+      where: { xmtpId },
+      select: { id: true },
     });
 
-    if (!user) {
+    if (!identity) {
       res.status(404).json({ error: "User not found" });
       return;
     }
@@ -65,8 +37,29 @@ export async function getCurrentUser(
       Pick<DeviceIdentity, "id" | "identityAddress" | "xmtpId">
     >();
 
-    user.devices.forEach((device) => {
-      device.device.identities.forEach(({ identity }) => {
+    // List identities across devices for this identity's devices
+    const devices = await prisma.device.findMany({
+      where: {
+        identities: {
+          some: {
+            identityId: identity.id,
+          },
+        },
+        ...(deviceId && { id: deviceId }),
+      },
+      select: {
+        identities: {
+          select: {
+            identity: {
+              select: { id: true, identityAddress: true, xmtpId: true },
+            },
+          },
+        },
+      },
+    });
+
+    devices.forEach((d) => {
+      d.identities.forEach(({ identity }) => {
         uniqueIdentities.set(identity.id, {
           id: identity.id,
           identityAddress: identity.identityAddress,
@@ -76,7 +69,6 @@ export async function getCurrentUser(
     });
 
     const returnedUser: ReturnedCurrentUser = {
-      id: user.id,
       identities: Array.from(uniqueIdentities.values()),
     };
 
