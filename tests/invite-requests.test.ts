@@ -6,8 +6,6 @@ import {
   beforeEach,
   describe,
   expect,
-  mock,
-  spyOn,
   test,
 } from "bun:test";
 import express from "express";
@@ -18,19 +16,9 @@ import type {
   RequestToJoinResponse,
 } from "@/api/v1/invites/handlers/request-to-join";
 import invitesRouter from "@/api/v1/invites/invites.router";
-import type { NotificationPayload } from "@/api/v1/notifications/services/notifications-types";
-import * as PushService from "@/api/v1/notifications/services/push-notification.service";
 import { jsonMiddleware } from "@/middleware/json";
 import { pinoMiddleware } from "@/middleware/pino";
 import { prisma } from "@/utils/prisma";
-
-// Mock functions for push notification service
-const mockSendPushNotificationToXmtpId = mock<
-  (args: {
-    xmtpId: string;
-    notification: NotificationPayload;
-  }) => Promise<{ success: boolean }>
->(() => Promise.resolve({ success: true }));
 
 const app = express();
 app.use(pinoMiddleware);
@@ -57,20 +45,9 @@ beforeAll(() => {
 
 afterAll(() => {
   server.close();
-  // Restore all mocks
-  mock.restore();
 });
 
 beforeEach(async () => {
-  // Spy on the specific methods we care about on the actual service
-  const pushService = PushService.getPushNotificationService();
-  spyOn(pushService, "sendPushNotificationToXmtpId").mockImplementation(
-    mockSendPushNotificationToXmtpId,
-  );
-  spyOn(pushService, "sendPushNotification").mockResolvedValue({
-    success: true,
-  });
-
   // Clean up the database before each test
   await prisma.inviteCodeNotificationTarget.deleteMany();
   await prisma.inviteCodeRequest.deleteMany();
