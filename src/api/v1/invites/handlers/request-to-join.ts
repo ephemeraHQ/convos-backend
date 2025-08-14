@@ -154,15 +154,20 @@ export async function requestToJoin(
     };
 
     // Collect all recipients (creator + notification targets)
-    const allRecipients = [
+    const allRecipientIds = [
       requestToJoin.inviteCode.createdBy.xmtpId,
       ...inviteCode.notificationTargets.map(
         (target) => target.deviceIdentity.xmtpId,
       ),
     ];
 
+    // Filter out falsy values and deduplicate while preserving order
+    const uniqueRecipients = Array.from(
+      new Set(allRecipientIds.filter((xmtpId) => xmtpId)),
+    );
+
     // Send notifications to all recipients
-    const notificationPromises = allRecipients.map((xmtpId) =>
+    const notificationPromises = uniqueRecipients.map((xmtpId) =>
       pushNotificationService.sendPushNotificationToXmtpId({
         xmtpId,
         notification: {
