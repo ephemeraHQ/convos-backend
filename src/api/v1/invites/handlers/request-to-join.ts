@@ -1,3 +1,4 @@
+import type { InviteCode } from "@prisma/client";
 import type { Request, Response } from "express";
 import { z } from "zod";
 import { prisma } from "@/utils/prisma";
@@ -12,7 +13,7 @@ export type RequestToJoinRequestBody = z.infer<typeof requestToJoinSchema>;
 
 export type RequestToJoinResponse = {
   id: string;
-  inviteId: string;
+  invite: InviteCode;
   createdAt: string;
 };
 
@@ -112,16 +113,9 @@ export async function requestToJoin(
           include: { profile: true },
         },
         inviteCode: {
-          select: {
-            id: true,
-            name: true,
-            description: true,
-            groupId: true,
-            autoApprove: true,
+          include: {
             createdBy: {
-              select: {
-                xmtpId: true,
-              },
+              select: { xmtpId: true },
             },
           },
         },
@@ -184,7 +178,7 @@ export async function requestToJoin(
 
     const response: RequestToJoinResponse = {
       id: requestToJoin.id,
-      inviteId: requestToJoin.inviteCodeId,
+      invite: requestToJoin.inviteCode,
       createdAt: requestToJoin.createdAt.toISOString(),
     };
 
