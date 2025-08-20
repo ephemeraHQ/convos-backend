@@ -1,6 +1,7 @@
 import type { InviteCode } from "@prisma/client";
 import type { Request, Response } from "express";
 import { z } from "zod";
+import { getInviteLink } from "@/utils/invites";
 import { prisma } from "@/utils/prisma";
 import type { InviteJoinRequestNotificationData } from "../../notifications/services/notifications-types";
 import { getPushNotificationService } from "../../notifications/services/push-notification.service";
@@ -13,7 +14,9 @@ export type RequestToJoinRequestBody = z.infer<typeof requestToJoinSchema>;
 
 export type RequestToJoinResponse = {
   id: string;
-  invite: InviteCode;
+  invite: InviteCode & {
+    inviteLinkURL: string;
+  };
   createdAt: string;
 };
 
@@ -178,7 +181,10 @@ export async function requestToJoin(
 
     const response: RequestToJoinResponse = {
       id: requestToJoin.id,
-      invite: inviteCode,
+      invite: {
+        ...inviteCode,
+        inviteLinkURL: getInviteLink(inviteCode.id),
+      },
       createdAt: requestToJoin.createdAt.toISOString(),
     };
 
