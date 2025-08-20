@@ -41,21 +41,9 @@ export async function requestToJoin(
       return;
     }
 
-    // Find the invite code
+    // Find the invite code, without include because we return it
     const inviteCode = await prisma.inviteCode.findUnique({
       where: { id: body.inviteId },
-      include: {
-        createdBy: {
-          include: {
-            profile: true,
-          },
-        },
-        notificationTargets: {
-          include: {
-            deviceIdentity: true,
-          },
-        },
-      },
     });
 
     if (!inviteCode) {
@@ -113,9 +101,21 @@ export async function requestToJoin(
           include: { profile: true },
         },
         inviteCode: {
-          include: {
+          select: {
+            id: true,
+            name: true,
+            description: true,
+            groupId: true,
+            autoApprove: true,
             createdBy: {
-              select: { xmtpId: true },
+              select: {
+                xmtpId: true,
+              },
+            },
+            notificationTargets: {
+              include: {
+                deviceIdentity: true,
+              },
             },
           },
         },
@@ -150,7 +150,7 @@ export async function requestToJoin(
     // Collect all recipients (creator + notification targets)
     const allRecipientIds = [
       requestToJoin.inviteCode.createdBy.xmtpId,
-      ...inviteCode.notificationTargets.map(
+      ...requestToJoin.inviteCode.notificationTargets.map(
         (target) => target.deviceIdentity.xmtpId,
       ),
     ];
@@ -178,7 +178,7 @@ export async function requestToJoin(
 
     const response: RequestToJoinResponse = {
       id: requestToJoin.id,
-      invite: requestToJoin.inviteCode,
+      invite: inviteCode,
       createdAt: requestToJoin.createdAt.toISOString(),
     };
 
