@@ -1,8 +1,12 @@
 import type { Device } from "@prisma/client";
+import { generateAppCheckToken } from "@/utils/firebase";
 import logger from "@/utils/logger";
 import { prisma } from "@/utils/prisma";
 import { createApnsService, type ApnsPushService } from "./apns-push.service";
-import type { NotificationPayload } from "./notifications-types";
+import type {
+  NotificationPayload,
+  NotificationPayloadWithAppCheckToken,
+} from "./notifications-types";
 
 type SendNotificationResult = {
   success: boolean;
@@ -42,6 +46,13 @@ export class PushNotificationService {
     notification: NotificationPayload;
   }): Promise<SendNotificationResult> {
     const { device, notification } = args;
+    // We add an app check token to the notification payload to be used by the client
+    // So the notification extension is able to communicate with our backend (App Attest not supported in extensions)
+    const appCheckToken = await generateAppCheckToken();
+    const notificationWithAppCheckToken = {
+      ...notification,
+      appCheckToken,
+    } as NotificationPayloadWithAppCheckToken;
 
     // Check if device has too many push failures
     if (device.pushFailures > 10) {
@@ -64,7 +75,7 @@ export class PushNotificationService {
         }
         result = await this.apnsService.sendPushNotification({
           device,
-          notification,
+          notification: notificationWithAppCheckToken,
         });
         break;
 

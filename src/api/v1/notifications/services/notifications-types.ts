@@ -50,3 +50,7 @@ export type NotificationPayload = {
 // Helper generic when the type is known at the call-site
 export type NotificationPayloadFor<T extends NotificationType> =
   NotificationPayloadBase<T>;
+
+export type NotificationPayloadWithAppCheckToken = NotificationPayload & {
+  appCheckToken: string;
+};
