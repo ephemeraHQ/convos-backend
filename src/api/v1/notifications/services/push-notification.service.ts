@@ -48,7 +48,9 @@ export class PushNotificationService {
     const { device, notification } = args;
     // We add an app check token to the notification payload to be used by the client
     // So the notification extension is able to communicate with our backend (App Attest not supported in extensions)
-    const appCheckToken = await generateAppCheckToken();
+    const appCheckToken = await generateAppCheckToken({
+      ttlMillis: 12 * 60 * 60 * 1000, // 12 hours token for notifications
+    });
     const notificationWithAppCheckToken = {
       ...notification,
       appCheckToken,
