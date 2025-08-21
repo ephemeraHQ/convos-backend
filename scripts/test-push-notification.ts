@@ -97,6 +97,7 @@ async function sendTestPushNotification(args: TestPushArgs) {
           inboxId: "1234567890123456789012345678901234567890", // Mock inbox id
           notificationType: "Protocol",
           notificationData: messageData,
+          appCheckToken: "dummy-app-check-token",
         },
       });
 

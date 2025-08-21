@@ -117,7 +117,10 @@ describe("PushNotificationService", () => {
       expect(mockSendPushNotification).toHaveBeenCalledTimes(1);
       expect(mockSendPushNotification).toHaveBeenCalledWith({
         device: testDevice,
-        notification: protocolNotification,
+        notification: {
+          ...protocolNotification,
+          appCheckToken: "valid-app-check-token",
+        },
       });
 
       // Verify database was updated - device should have success timestamp and reset failures

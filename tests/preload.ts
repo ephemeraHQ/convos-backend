@@ -4,7 +4,7 @@ import type { SocialProfile } from "@/utils/thirdweb";
 // Set required environment variables for tests
 process.env.PUBLIC_ASSETS_BUCKET = "test-public-assets-bucket";
 process.env.JWT_SECRET = "test-jwt-secret";
-process.env.FIREBASE_SERVICE_ACCOUNT = "test-firebase-service-account";
+process.env.FIREBASE_SERVICE_ACCOUNT = "{}";
 
 // mock Firebase functions
 
@@ -15,6 +15,11 @@ void mock.module("firebase-admin/app-check", () => ({
         return Promise.resolve(true);
       }
       return Promise.reject(new Error("Invalid AppCheck token"));
+    },
+    createToken: (_appId: string) => {
+      return Promise.resolve({
+        token: "valid-app-check-token",
+      });
     },
   }),
 }));
