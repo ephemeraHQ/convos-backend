@@ -29,7 +29,35 @@ export type GetPublicInviteDetailsResponse = {
   description: string | null;
   imageUrl: string | null;
   inviteLinkURL: string;
+};
+
+export type GetAuthenticatedInviteDetailsResponse = {
+  id: string;
+  name: string | null;
+  description: string | null;
+  imageUrl: string | null;
+  inviteLinkURL: string;
   groupId: string;
+};
+
+/**
+ * Fetches an active, non-expired invite with public fields
+ */
+const fetchActiveInvite = async (inviteId: string) => {
+  return await prisma.inviteCode.findFirst({
+    where: {
+      id: inviteId,
+      status: "ACTIVE",
+      OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }],
+    },
+    select: {
+      id: true,
+      name: true,
+      description: true,
+      imageUrl: true,
+      groupId: true,
+    },
+  });
 };
 
 export const getPublicInviteDetailsHandler = async (
@@ -39,29 +67,9 @@ export const getPublicInviteDetailsHandler = async (
   try {
     const { inviteId } = await paramsSchema.parseAsync(req.params);
 
-    const inviteCode = await prisma.inviteCode.findUnique({
-      where: { id: inviteId },
-    });
+    const invite = await fetchActiveInvite(inviteId);
 
-    if (!inviteCode) {
-      res.status(404).json({
-        success: false,
-        message: "Invite not found",
-      });
-      return;
-    }
-
-    // Check if invite is active
-    if (inviteCode.status !== "ACTIVE") {
-      res.status(404).json({
-        success: false,
-        message: "Invite not found",
-      });
-      return;
-    }
-
-    // Check if invite is expired
-    if (inviteCode.expiresAt && inviteCode.expiresAt < new Date()) {
+    if (!invite) {
       res.status(404).json({
         success: false,
         message: "Invite not found",
@@ -70,12 +78,11 @@ export const getPublicInviteDetailsHandler = async (
     }
 
     const response: GetPublicInviteDetailsResponse = {
-      id: inviteCode.id,
-      name: inviteCode.name,
-      description: inviteCode.description,
-      imageUrl: inviteCode.imageUrl,
-      inviteLinkURL: getInviteLink(inviteCode.id),
-      groupId: inviteCode.groupId,
+      id: invite.id,
+      name: invite.name,
+      description: invite.description,
+      imageUrl: invite.imageUrl,
+      inviteLinkURL: getInviteLink(invite.id),
     };
 
     res.status(200).json(response);
@@ -119,11 +126,11 @@ export const getOwnerInviteDetailsHandler = async (
       return;
     }
 
-    const inviteCode = await prisma.inviteCode.findUnique({
+    const invite = await prisma.inviteCode.findUnique({
       where: { id: inviteId },
     });
 
-    if (!inviteCode) {
+    if (!invite) {
       res.status(404).json({
         success: false,
         message: "Invite not found",
@@ -132,7 +139,7 @@ export const getOwnerInviteDetailsHandler = async (
     }
 
     // Only allow the invite creator to see full details
-    if (inviteCode.createdById !== identity.id) {
+    if (invite.createdById !== identity.id) {
       res.status(403).json({
         success: false,
         message: "Forbidden: you don't have access to this invite",
@@ -141,18 +148,18 @@ export const getOwnerInviteDetailsHandler = async (
     }
 
     const response: GetInviteDetailsResponse = {
-      id: inviteCode.id,
-      name: inviteCode.name,
-      description: inviteCode.description,
-      imageUrl: inviteCode.imageUrl,
-      maxUses: inviteCode.maxUses,
-      usesCount: inviteCode.usesCount,
-      status: inviteCode.status,
-      expiresAt: inviteCode.expiresAt?.toISOString() || null,
-      autoApprove: inviteCode.autoApprove,
-      groupId: inviteCode.groupId,
-      createdAt: inviteCode.createdAt.toISOString(),
-      inviteLinkURL: getInviteLink(inviteCode.id),
+      id: invite.id,
+      name: invite.name,
+      description: invite.description,
+      imageUrl: invite.imageUrl,
+      maxUses: invite.maxUses,
+      usesCount: invite.usesCount,
+      status: invite.status,
+      expiresAt: invite.expiresAt?.toISOString() || null,
+      autoApprove: invite.autoApprove,
+      groupId: invite.groupId,
+      createdAt: invite.createdAt.toISOString(),
+      inviteLinkURL: getInviteLink(invite.id),
     };
 
     res.status(200).json(response);
@@ -181,8 +188,16 @@ export const getAuthenticatedInviteDetailsHandler = async (
   try {
     const { inviteId } = await paramsSchema.parseAsync(req.params);
 
-    // Get the authenticated user's identity from the JWT (for auth validation)
-    const { xmtpId } = req.app.locals;
+    // Get the authenticated user's identity from the JWT
+    const xmtpId = req.app.locals.xmtpId;
+
+    if (!xmtpId) {
+      res.status(404).json({
+        success: false,
+        message: "Invite not found",
+      });
+      return;
+    }
 
     const identity = await prisma.deviceIdentity.findFirst({
       where: { xmtpId },
@@ -191,16 +206,14 @@ export const getAuthenticatedInviteDetailsHandler = async (
     if (!identity) {
       res.status(404).json({
         success: false,
-        message: "Identity not found",
+        message: "Invite not found",
       });
       return;
     }
 
-    const inviteCode = await prisma.inviteCode.findUnique({
-      where: { id: inviteId },
-    });
+    const invite = await fetchActiveInvite(inviteId);
 
-    if (!inviteCode) {
+    if (!invite) {
       res.status(404).json({
         success: false,
         message: "Invite not found",
@@ -208,32 +221,13 @@ export const getAuthenticatedInviteDetailsHandler = async (
       return;
     }
 
-    // Check if invite is active
-    if (inviteCode.status !== "ACTIVE") {
-      res.status(404).json({
-        success: false,
-        message: "Invite not found",
-      });
-      return;
-    }
-
-    // Check if invite is expired
-    if (inviteCode.expiresAt && inviteCode.expiresAt < new Date()) {
-      res.status(404).json({
-        success: false,
-        message: "Invite not found",
-      });
-      return;
-    }
-
-    // Return the same data as public endpoint (including groupId)
-    const response: GetPublicInviteDetailsResponse = {
-      id: inviteCode.id,
-      name: inviteCode.name,
-      description: inviteCode.description,
-      imageUrl: inviteCode.imageUrl,
-      inviteLinkURL: getInviteLink(inviteCode.id),
-      groupId: inviteCode.groupId,
+    const response: GetAuthenticatedInviteDetailsResponse = {
+      id: invite.id,
+      name: invite.name,
+      description: invite.description,
+      imageUrl: invite.imageUrl,
+      inviteLinkURL: getInviteLink(invite.id),
+      groupId: invite.groupId,
     };
 
     res.status(200).json(response);
@@ -247,7 +241,7 @@ export const getAuthenticatedInviteDetailsHandler = async (
       return;
     }
 
-    req.log.error({ error }, "Error fetching authenticated invite details");
+    req.log.error({ error }, "Authenticated invite details fetch failed");
     res.status(500).json({
       success: false,
       message: "Failed to fetch invite details",
