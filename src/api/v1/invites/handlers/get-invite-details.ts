@@ -29,9 +29,13 @@ export type GetPublicInviteDetailsResponse = {
   description: string | null;
   imageUrl: string | null;
   inviteLinkURL: string;
+  groupId: string;
 };
 
-export const getInviteDetailsHandler = async (req: Request, res: Response) => {
+export const getPublicInviteDetailsHandler = async (
+  req: Request,
+  res: Response,
+) => {
   try {
     const { inviteId } = await paramsSchema.parseAsync(req.params);
 
@@ -71,6 +75,7 @@ export const getInviteDetailsHandler = async (req: Request, res: Response) => {
       description: inviteCode.description,
       imageUrl: inviteCode.imageUrl,
       inviteLinkURL: getInviteLink(inviteCode.id),
+      groupId: inviteCode.groupId,
     };
 
     res.status(200).json(response);
@@ -92,7 +97,7 @@ export const getInviteDetailsHandler = async (req: Request, res: Response) => {
   }
 };
 
-export const getAuthenticatedInviteDetailsHandler = async (
+export const getOwnerInviteDetailsHandler = async (
   req: Request,
   res: Response,
 ) => {
@@ -162,6 +167,87 @@ export const getAuthenticatedInviteDetailsHandler = async (
     }
 
     req.log.error({ error }, "Error fetching invite details");
+    res.status(500).json({
+      success: false,
+      message: "Failed to fetch invite details",
+    });
+  }
+};
+
+export const getAuthenticatedInviteDetailsHandler = async (
+  req: Request,
+  res: Response,
+) => {
+  try {
+    const { inviteId } = await paramsSchema.parseAsync(req.params);
+
+    // Get the authenticated user's identity from the JWT (for auth validation)
+    const { xmtpId } = req.app.locals;
+
+    const identity = await prisma.deviceIdentity.findFirst({
+      where: { xmtpId },
+    });
+
+    if (!identity) {
+      res.status(404).json({
+        success: false,
+        message: "Identity not found",
+      });
+      return;
+    }
+
+    const inviteCode = await prisma.inviteCode.findUnique({
+      where: { id: inviteId },
+    });
+
+    if (!inviteCode) {
+      res.status(404).json({
+        success: false,
+        message: "Invite not found",
+      });
+      return;
+    }
+
+    // Check if invite is active
+    if (inviteCode.status !== "ACTIVE") {
+      res.status(404).json({
+        success: false,
+        message: "Invite not found",
+      });
+      return;
+    }
+
+    // Check if invite is expired
+    if (inviteCode.expiresAt && inviteCode.expiresAt < new Date()) {
+      res.status(404).json({
+        success: false,
+        message: "Invite not found",
+      });
+      return;
+    }
+
+    // Return the same data as public endpoint (including groupId)
+    const response: GetPublicInviteDetailsResponse = {
+      id: inviteCode.id,
+      name: inviteCode.name,
+      description: inviteCode.description,
+      imageUrl: inviteCode.imageUrl,
+      inviteLinkURL: getInviteLink(inviteCode.id),
+      groupId: inviteCode.groupId,
+    };
+
+    res.status(200).json(response);
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      res.status(400).json({
+        success: false,
+        message: "Invalid invite ID",
+        errors: error.errors,
+      });
+      return;
+    }
+
+    req.log.error({ error }, "Error fetching authenticated invite details");
     res.status(500).json({
       success: false,
       message: "Failed to fetch invite details",
