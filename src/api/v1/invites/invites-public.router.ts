@@ -1,8 +1,8 @@
 import { Router } from "express";
-import { getInviteDetailsHandler } from "./handlers/get-invite-details";
+import { getPublicInviteDetailsHandler } from "./handlers/get-invite-details";
 
 const publicInvitesRouter = Router();
 
-publicInvitesRouter.get("/:inviteId", getInviteDetailsHandler);
+publicInvitesRouter.get("/:inviteId", getPublicInviteDetailsHandler);
 
 export default publicInvitesRouter;
