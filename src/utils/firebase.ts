@@ -1,5 +1,5 @@
-import { credential } from "firebase-admin";
 import {
+  cert,
   initializeApp,
   type App,
   type ServiceAccount,
@@ -24,7 +24,7 @@ const getFirebaseApp = () => {
   ) as ServiceAccount;
 
   cachedFirebaseApp = initializeApp({
-    credential: credential.cert(serviceAccount),
+    credential: cert(serviceAccount),
   });
 
   return cachedFirebaseApp;

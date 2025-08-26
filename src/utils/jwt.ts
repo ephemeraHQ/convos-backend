@@ -12,6 +12,9 @@ export const createJwtToken = async (args: {
   inboxId: string;
   xmtpInstallationId: string;
 }) => {
+  if (!process.env.JWT_SECRET) {
+    throw new AppError(500, "JWT_SECRET is not set");
+  }
   // Create JWT token
   const { data: jwt, error: jwtError } = await tryCatch(
     new jose.SignJWT({
