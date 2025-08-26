@@ -225,7 +225,7 @@ export const getAuthenticatedInviteDetailsHandler = async (
       },
     });
 
-    if (!invite) {
+    if (!invite || !invite.createdBy?.xmtpId) {
       res.status(404).json({
         success: false,
         message: "Invite not found",
