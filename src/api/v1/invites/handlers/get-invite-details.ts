@@ -38,26 +38,7 @@ export type GetAuthenticatedInviteDetailsResponse = {
   imageUrl: string | null;
   inviteLinkURL: string;
   groupId: string;
-};
-
-/**
- * Fetches an active, non-expired invite with public fields
- */
-const fetchActiveInvite = async (inviteId: string) => {
-  return await prisma.inviteCode.findFirst({
-    where: {
-      id: inviteId,
-      status: "ACTIVE",
-      OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }],
-    },
-    select: {
-      id: true,
-      name: true,
-      description: true,
-      imageUrl: true,
-      groupId: true,
-    },
-  });
+  inviterInboxId: string;
 };
 
 export const getPublicInviteDetailsHandler = async (
@@ -67,7 +48,20 @@ export const getPublicInviteDetailsHandler = async (
   try {
     const { inviteId } = await paramsSchema.parseAsync(req.params);
 
-    const invite = await fetchActiveInvite(inviteId);
+    const invite = await prisma.inviteCode.findFirst({
+      where: {
+        id: inviteId,
+        status: "ACTIVE",
+        OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }],
+      },
+      select: {
+        id: true,
+        name: true,
+        description: true,
+        imageUrl: true,
+        groupId: true,
+      },
+    });
 
     if (!invite) {
       res.status(404).json({
@@ -211,9 +205,27 @@ export const getAuthenticatedInviteDetailsHandler = async (
       return;
     }
 
-    const invite = await fetchActiveInvite(inviteId);
+    const invite = await prisma.inviteCode.findFirst({
+      where: {
+        id: inviteId,
+        status: "ACTIVE",
+        OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }],
+      },
+      select: {
+        id: true,
+        name: true,
+        description: true,
+        imageUrl: true,
+        groupId: true,
+        createdBy: {
+          select: {
+            xmtpId: true,
+          },
+        },
+      },
+    });
 
-    if (!invite) {
+    if (!invite || !invite.createdBy?.xmtpId) {
       res.status(404).json({
         success: false,
         message: "Invite not found",
@@ -228,6 +240,7 @@ export const getAuthenticatedInviteDetailsHandler = async (
       imageUrl: invite.imageUrl,
       inviteLinkURL: getInviteLink(invite.id),
       groupId: invite.groupId,
+      inviterInboxId: invite.createdBy.xmtpId,
     };
 
     res.status(200).json(response);
