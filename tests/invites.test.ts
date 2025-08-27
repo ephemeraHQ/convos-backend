@@ -9,13 +9,13 @@ import {
   test,
 } from "bun:test";
 import express from "express";
+import type { InitResponse } from "@/api/v1/init/handlers/init";
 import type {
   CreateInviteCodeRequestBody,
   CreateInviteCodeResponse,
 } from "@/api/v1/invites/handlers/create-invite-code";
 import type { GetInviteDetailsResponse } from "@/api/v1/invites/handlers/get-invite-details";
 import invitesRouter from "@/api/v1/invites/invites.router";
-import type { CreatedReturnedUser } from "@/api/v1/users/handlers/create-user";
 import { jsonMiddleware } from "@/middleware/json";
 import { pinoMiddleware } from "@/middleware/pino";
 import { prisma } from "@/utils/prisma";
@@ -117,7 +117,7 @@ async function createTestUser(suffix = "", xmtpId = AUTH_USER_XMTP_ID) {
       description: deviceIdentity.profile!.description,
       avatar: deviceIdentity.profile!.avatar,
     },
-  } as CreatedReturnedUser;
+  } as InitResponse;
 }
 
 describe("/invites API", () => {

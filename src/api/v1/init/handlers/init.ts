@@ -27,9 +27,9 @@ export const createUserRequestBodySchema = z.object({
   }),
 });
 
-export type CreateUserRequestBody = z.infer<typeof createUserRequestBodySchema>;
+export type InitRequestBody = z.infer<typeof createUserRequestBodySchema>;
 
-export type CreatedReturnedUser = {
+export type InitResponse = {
   device: {
     id: string;
     os: DeviceOS;
@@ -49,8 +49,8 @@ export type CreatedReturnedUser = {
   };
 };
 
-export async function createUser(
-  req: Request<unknown, unknown, CreateUserRequestBody>,
+export async function init(
+  req: Request<unknown, unknown, InitRequestBody>,
   res: Response,
 ) {
   try {
@@ -143,7 +143,7 @@ export async function createUser(
       throw new Error("Profile was not created successfully");
     }
 
-    const returnedUser: CreatedReturnedUser = {
+    const returnedUser: InitResponse = {
       device: {
         id: device.id,
         os: device.os,

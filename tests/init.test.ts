@@ -10,17 +10,16 @@ import {
 } from "bun:test";
 import express from "express";
 import type {
-  CreatedReturnedUser,
-  CreateUserRequestBody,
-} from "@/api/v1/users/handlers/create-user";
-import type { ReturnedCurrentUser } from "@/api/v1/users/handlers/get-current-user";
-import usersRouter from "@/api/v1/users/users.router";
+  InitRequestBody,
+  InitResponse,
+} from "@/api/v1/init/handlers/init";
+import initRouter from "@/api/v1/init/init.router";
 import { jsonMiddleware } from "@/middleware/json";
 import { prisma } from "@/utils/prisma";
 
 const app = express();
 app.use(jsonMiddleware);
-app.use("/init", usersRouter);
+app.use("/init", initRouter);
 
 let server: Server;
 
@@ -46,7 +45,7 @@ beforeEach(async () => {
 
 describe("/init API", () => {
   test("POST /init creates a new user", async () => {
-    const createUserBody: CreateUserRequestBody = {
+    const createUserBody: InitRequestBody = {
       device: {
         id: "test-device-id",
         os: DeviceOS.ios,
@@ -73,7 +72,7 @@ describe("/init API", () => {
 
     expect(response.status).toBe(201);
 
-    const user = (await response.json()) as CreatedReturnedUser;
+    const user = (await response.json()) as InitResponse;
     expect(user.device.id).toBeDefined();
     expect(user.device.os).toBe(createUserBody.device.os);
     expect(user.device.name!).toBe(createUserBody.device.name!);
@@ -85,59 +84,8 @@ describe("/init API", () => {
     expect(user.profile.name).toBe(createUserBody.profile.name ?? null);
   });
 
-  test("GET /init/me returns 404 without auth header", async () => {
-    const response = await fetch("http://localhost:3001/init/me");
-    const data = (await response.json()) as { error: string };
-    expect(response.status).toBe(404);
-    expect(data.error).toBe("Identity not found");
-  });
-
-  test("GET /init/me returns current user", async () => {
-    // First create a user
-    const createUserBody: CreateUserRequestBody = {
-      device: {
-        id: "test-device-id",
-        os: DeviceOS.ios,
-        name: "iPhone 14",
-      },
-      identity: {
-        identityAddress: "test-turnkey-address",
-        xmtpId: "test-xmtp-id",
-        xmtpInstallationId: "test-xmtp-installation-id",
-      },
-      profile: {
-        name: "Test User",
-        username: "test-user",
-      },
-    };
-
-    const createResponse = await fetch("http://localhost:3001/init", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: "Bearer test-turnkey-user-id",
-      },
-      body: JSON.stringify(createUserBody),
-    });
-    expect(createResponse.status).toBe(201);
-
-    // Then try to get /me with auth header
-    const response = await fetch("http://localhost:3001/init/me", {
-      headers: {
-        Authorization: "Bearer test-turnkey-user-id",
-      },
-    });
-
-    expect(response.status).toBe(200);
-
-    const user = (await response.json()) as ReturnedCurrentUser;
-    expect(user.identities).toHaveLength(1);
-    expect(user.identities[0].identityAddress).toBe("test-turnkey-address");
-    expect(user.identities[0].xmtpId).toBe("test-xmtp-id");
-  });
-
   test("POST /init can create two users with different devices", async () => {
-    const createUser1Body: CreateUserRequestBody = {
+    const createUser1Body: InitRequestBody = {
       device: {
         id: "test-device-id",
         os: DeviceOS.ios,
@@ -164,7 +112,7 @@ describe("/init API", () => {
 
     expect(response1.status).toBe(201);
 
-    const createUser2Body: CreateUserRequestBody = {
+    const createUser2Body: InitRequestBody = {
       device: {
         id: "test-device-id-2",
         os: DeviceOS.ios,
@@ -194,7 +142,7 @@ describe("/init API", () => {
 
   test("POST /init can create two users with same device", async () => {
     const sameDeviceId = "test-device-id";
-    const createUser1Body: CreateUserRequestBody = {
+    const createUser1Body: InitRequestBody = {
       device: {
         id: sameDeviceId,
         os: DeviceOS.ios,
@@ -221,7 +169,7 @@ describe("/init API", () => {
 
     expect(response1.status).toBe(201);
 
-    const createUser2Body: CreateUserRequestBody = {
+    const createUser2Body: InitRequestBody = {
       device: {
         id: sameDeviceId,
         os: DeviceOS.ios,
