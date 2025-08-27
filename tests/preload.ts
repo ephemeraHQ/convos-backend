@@ -24,14 +24,9 @@ void mock.module("firebase-admin/app-check", () => ({
   }),
 }));
 
-void mock.module("firebase-admin", () => ({
-  credential: {
-    cert: () => {},
-  },
-}));
-
 void mock.module("firebase-admin/app", () => ({
   initializeApp: () => {},
+  cert: () => {},
 }));
 
 // Mock thirdweb functions
