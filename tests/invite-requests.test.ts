@@ -139,7 +139,7 @@ describe("/invites/request API", () => {
 
     const joinRequest = (await response.json()) as RequestToJoinResponse;
     expect(joinRequest.id).toBeDefined();
-    expect(joinRequest.inviteId).toBe(inviteCode.id);
+    expect(joinRequest.invite.id).toBe(inviteCode.id);
     expect(joinRequest.createdAt).toBeDefined();
 
     // Verify the request was created in the database

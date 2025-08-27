@@ -168,6 +168,31 @@ async function handleCurrentRegistration(args: {
           },
         });
 
+        // Find all existing identities on the device for logging
+        const allExistingIdentitiesOnDevice =
+          await tx.identitiesOnDevice.findMany({
+            where: {
+              deviceId: body.deviceId,
+              xmtpInstallationId: { not: null },
+            },
+            select: { xmtpInstallationId: true, identityId: true },
+          });
+
+        const incomingInstallationIds = body.installations.map(
+          (inst) => inst.xmtpInstallationId,
+        );
+
+        req.log.info(
+          {
+            deviceId: body.deviceId,
+            existingInstallations: allExistingIdentitiesOnDevice.map(
+              (i) => i.xmtpInstallationId,
+            ),
+            incomingInstallations: incomingInstallationIds,
+          },
+          "Registration update: comparing existing vs incoming installations",
+        );
+
         // Find all the identities on the device that are not in the new installations
         const staleIdentitiesOnDevice = await tx.identitiesOnDevice.findMany({
           where: {
@@ -176,9 +201,7 @@ async function handleCurrentRegistration(args: {
               {
                 xmtpInstallationId: {
                   not: {
-                    in: body.installations.map(
-                      (inst) => inst.xmtpInstallationId,
-                    ),
+                    in: incomingInstallationIds,
                   },
                 },
               },
@@ -192,17 +215,55 @@ async function handleCurrentRegistration(args: {
           select: { xmtpInstallationId: true, identityId: true },
         });
 
-        // If there are any identities on the device that are not in the new installations, delete them because they are stale
         if (staleIdentitiesOnDevice.length > 0) {
-          const staleIdentityIds = staleIdentitiesOnDevice.map(
-            (r) => r.identityId,
-          );
-          await tx.identitiesOnDevice.deleteMany({
-            where: {
+          req.log.warn(
+            {
               deviceId: body.deviceId,
-              identityId: { in: staleIdentityIds },
+              staleInstallations: staleIdentitiesOnDevice.map(
+                (i) => i.xmtpInstallationId,
+              ),
+              staleIdentityIds: staleIdentitiesOnDevice.map(
+                (i) => i.identityId,
+              ),
+              incomingInstallations: incomingInstallationIds,
+              totalExistingInstallations: allExistingIdentitiesOnDevice.length,
             },
-          });
+            "POTENTIAL BUG: About to delete installations that may still be active",
+          );
+        }
+
+        // SAFER APPROACH: Instead of automatically deleting "stale" installations,
+        // only delete them if they meet stricter criteria to avoid deleting active installations
+        //
+        // For now, we'll disable automatic cleanup to prevent the bug where active
+        // installations get deleted. This needs to be replaced with a more sophisticated
+        // cleanup strategy that can distinguish truly stale installations from active ones.
+        //
+        // TODO: Implement proper cleanup logic that:
+        // 1. Checks installation age/last activity
+        // 2. Verifies with XMTP server before deletion
+        // 3. Uses explicit cleanup requests rather than inference
+
+        if (staleIdentitiesOnDevice.length > 0) {
+          req.log.warn(
+            {
+              deviceId: body.deviceId,
+              potentialStaleCount: staleIdentitiesOnDevice.length,
+              staleInstallations: staleIdentitiesOnDevice.map(
+                (i) => i.xmtpInstallationId,
+              ),
+            },
+            "CLEANUP DISABLED: Found installations not in current request, but skipping deletion to prevent breaking active notifications",
+          );
+
+          // COMMENTED OUT to prevent bug - do not delete installations automatically
+          // const staleIdentityIds = staleIdentitiesOnDevice.map((r) => r.identityId);
+          // await tx.identitiesOnDevice.deleteMany({
+          //   where: {
+          //     deviceId: body.deviceId,
+          //     identityId: { in: staleIdentityIds },
+          //   },
+          // });
         }
 
         // Upsert the new installations
@@ -240,39 +301,27 @@ async function handleCurrentRegistration(args: {
           });
         }
 
-        return staleIdentitiesOnDevice;
+        // Return empty array since we're not deleting installations anymore
+        return [];
       },
     );
 
-    // Delete the stale installations from XMTP
-    // Process deletions in parallel for better performance
-    await Promise.all(
-      identitiesOnDeviceToRemoveFromDb
-        .filter((installation) => installation.xmtpInstallationId)
-        .map(async (removedInstallation) => {
-          try {
-            // TODO: Shouldn't happen later but added this until we put xmtpInstallationId as required in the DB
-            if (!removedInstallation.xmtpInstallationId) {
-              return;
-            }
-            await notificationClient.deleteInstallation({
-              installationId: removedInstallation.xmtpInstallationId,
-            });
-            req.log.info(
-              `Successfully deleted stale XMTP installation ${removedInstallation.xmtpInstallationId} for identity ${removedInstallation.identityId}`,
-            );
-          } catch (delError) {
-            req.log.error(
-              {
-                error: delError,
-                xmtpInstallationId: removedInstallation.xmtpInstallationId,
-                identityId: removedInstallation.identityId,
-              },
-              "Failed to delete stale installation from XMTP server",
-            );
-          }
-        }),
-    );
+    // CLEANUP DISABLED: No longer automatically deleting "stale" installations
+    // This prevents the bug where active installations get incorrectly deleted
+    //
+    // The previous logic would delete installations from XMTP server here,
+    // but since we're not removing them from our DB, we shouldn't delete them
+    // from XMTP either.
+
+    if (identitiesOnDeviceToRemoveFromDb.length > 0) {
+      req.log.info(
+        {
+          deviceId: body.deviceId,
+          skippedDeletions: identitiesOnDeviceToRemoveFromDb.length,
+        },
+        "Skipped deleting installations from XMTP server to prevent breaking active notifications",
+      );
+    }
 
     // Register the new installations with XMTP
     // Process registrations in parallel for better performance
