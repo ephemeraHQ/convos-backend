@@ -32,7 +32,10 @@ v1Router.use("/wallets", walletsRouter);
 // mount notifications routes under /notifications
 v1Router.use("/notifications", authMiddleware, notificationsRouter);
 
-// mount user routes under /users
+// mount user routes under /init
+v1Router.use("/init", authMiddleware, usersRouter);
+
+// (backward compatibility) mount user routes under /users
 v1Router.use("/users", authMiddleware, usersRouter);
 
 // mount device routes under /devices
