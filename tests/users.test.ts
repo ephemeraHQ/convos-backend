@@ -20,7 +20,7 @@ import { prisma } from "@/utils/prisma";
 
 const app = express();
 app.use(jsonMiddleware);
-app.use("/users", usersRouter);
+app.use("/init", usersRouter);
 
 let server: Server;
 
@@ -44,8 +44,8 @@ beforeEach(async () => {
   await prisma.device.deleteMany();
 });
 
-describe("/users API", () => {
-  test("POST /users creates a new user", async () => {
+describe("/init API", () => {
+  test("POST /init creates a new user", async () => {
     const createUserBody: CreateUserRequestBody = {
       device: {
         id: "test-device-id",
@@ -63,7 +63,7 @@ describe("/users API", () => {
       },
     };
 
-    const response = await fetch("http://localhost:3001/users", {
+    const response = await fetch("http://localhost:3001/init", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -85,14 +85,14 @@ describe("/users API", () => {
     expect(user.profile.name).toBe(createUserBody.profile.name ?? null);
   });
 
-  test("GET /users/me returns 404 without auth header", async () => {
-    const response = await fetch("http://localhost:3001/users/me");
+  test("GET /init/me returns 404 without auth header", async () => {
+    const response = await fetch("http://localhost:3001/init/me");
     const data = (await response.json()) as { error: string };
     expect(response.status).toBe(404);
     expect(data.error).toBe("Identity not found");
   });
 
-  test("GET /users/me returns current user", async () => {
+  test("GET /init/me returns current user", async () => {
     // First create a user
     const createUserBody: CreateUserRequestBody = {
       device: {
@@ -111,7 +111,7 @@ describe("/users API", () => {
       },
     };
 
-    const createResponse = await fetch("http://localhost:3001/users", {
+    const createResponse = await fetch("http://localhost:3001/init", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -122,7 +122,7 @@ describe("/users API", () => {
     expect(createResponse.status).toBe(201);
 
     // Then try to get /me with auth header
-    const response = await fetch("http://localhost:3001/users/me", {
+    const response = await fetch("http://localhost:3001/init/me", {
       headers: {
         Authorization: "Bearer test-turnkey-user-id",
       },
@@ -136,7 +136,7 @@ describe("/users API", () => {
     expect(user.identities[0].xmtpId).toBe("test-xmtp-id");
   });
 
-  test("POST /users can create two users with different devices", async () => {
+  test("POST /init can create two users with different devices", async () => {
     const createUser1Body: CreateUserRequestBody = {
       device: {
         id: "test-device-id",
@@ -154,7 +154,7 @@ describe("/users API", () => {
       },
     };
 
-    const response1 = await fetch("http://localhost:3001/users", {
+    const response1 = await fetch("http://localhost:3001/init", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -181,7 +181,7 @@ describe("/users API", () => {
       },
     };
 
-    const response2 = await fetch("http://localhost:3001/users", {
+    const response2 = await fetch("http://localhost:3001/init", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -192,7 +192,7 @@ describe("/users API", () => {
     expect(response2.status).toBe(201);
   });
 
-  test("POST /users can create two users with same device", async () => {
+  test("POST /init can create two users with same device", async () => {
     const sameDeviceId = "test-device-id";
     const createUser1Body: CreateUserRequestBody = {
       device: {
@@ -211,7 +211,7 @@ describe("/users API", () => {
       },
     };
 
-    const response1 = await fetch("http://localhost:3001/users", {
+    const response1 = await fetch("http://localhost:3001/init", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -238,7 +238,7 @@ describe("/users API", () => {
       },
     };
 
-    const response2 = await fetch("http://localhost:3001/users", {
+    const response2 = await fetch("http://localhost:3001/init", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
