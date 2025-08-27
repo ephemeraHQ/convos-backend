@@ -143,7 +143,9 @@ export const getAuthenticatedInviteDetailsHandler = async (
       maxUses: inviteCode.maxUses,
       usesCount: inviteCode.usesCount,
       status: inviteCode.status,
-      expiresAt: inviteCode.expiresAt?.toISOString() || null,
+      expiresAt: inviteCode.expiresAt
+        ? inviteCode.expiresAt.toISOString()
+        : null,
       autoApprove: inviteCode.autoApprove,
       groupId: inviteCode.groupId,
       createdAt: inviteCode.createdAt.toISOString(),
