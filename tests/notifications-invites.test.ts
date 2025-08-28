@@ -1,5 +1,5 @@
 import type { Server } from "http";
-import { DeviceOS, UserType, type InviteCode } from "@prisma/client";
+import { DeviceOS, type InviteCode } from "@prisma/client";
 import {
   afterAll,
   afterEach,
@@ -101,118 +101,103 @@ describe("Invite Notifications Integration", () => {
     await prisma.identitiesOnDevice.deleteMany();
     await prisma.deviceIdentity.deleteMany();
     await prisma.device.deleteMany();
-    await prisma.user.deleteMany();
   };
 
   const setupTestData = async (): Promise<InviteCode> => {
-    // Create invite creator user
-    await prisma.user.create({
+    // Create invite creator identity and device
+    const creatorIdentity = await prisma.deviceIdentity.create({
       data: {
-        userId: "test-creator-user-notifications",
-        userType: UserType.turnkey,
-        devices: {
+        xmtpId: "test-creator-xmtp-id-notifications",
+        identityAddress: "0x1234creator",
+        profile: {
           create: {
-            device: {
-              create: {
-                id: "test-device-creator-notifications",
-                os: DeviceOS.ios,
-                name: "Creator Device",
-                pushToken: "creator-push-token",
-                pushTokenType: "apns",
-                apnsEnv: "sandbox",
-              },
-            },
-          },
-        },
-        DeviceIdentity: {
-          create: {
-            xmtpId: "test-creator-xmtp-id-notifications",
-            identityAddress: "0x1234creator",
-            profile: {
-              create: {
-                name: "Test Creator",
-                username: "testcreator",
-                description: "Test creator user",
-              },
-            },
+            name: "Test Creator",
+            username: "testcreator",
+            description: "Test creator user",
           },
         },
       },
+      include: { profile: true },
     });
-
-    // Create requester user
-    await prisma.user.create({
+    const creatorDevice = await prisma.device.create({
       data: {
-        userId: "test-requester-user-notifications",
-        userType: UserType.turnkey,
-        devices: {
-          create: {
-            device: {
-              create: {
-                id: "test-device-requester-notifications",
-                os: DeviceOS.android,
-                name: "Requester Device",
-                pushToken: "requester-push-token",
-                pushTokenType: "apns",
-                apnsEnv: "sandbox",
-              },
-            },
-          },
-        },
-        DeviceIdentity: {
-          create: {
-            xmtpId: "test-requester-xmtp-id-notifications",
-            identityAddress: "0x1234requester",
-            profile: {
-              create: {
-                name: "Test Requester",
-                username: "testrequester",
-                description: "Test requester user",
-              },
-            },
-          },
-        },
+        id: "test-device-creator-notifications",
+        os: DeviceOS.ios,
+        name: "Creator Device",
+        pushToken: "creator-push-token",
+        pushTokenType: "apns",
+        apnsEnv: "sandbox",
+      },
+    });
+    await prisma.identitiesOnDevice.create({
+      data: {
+        deviceId: creatorDevice.id,
+        identityId: creatorIdentity.id,
       },
     });
 
-    // Create notification target user (someone who should receive notifications)
-    await prisma.user.create({
+    // Create requester identity and device
+    const requesterIdentity = await prisma.deviceIdentity.create({
       data: {
-        userId: "test-notification-target-user",
-        userType: UserType.turnkey,
-        devices: {
+        xmtpId: "test-requester-xmtp-id-notifications",
+        identityAddress: "0x1234requester",
+        profile: {
           create: {
-            device: {
-              create: {
-                id: "test-device-notification-target",
-                os: DeviceOS.ios,
-                name: "Notification Target Device",
-                pushToken: "notification-target-push-token",
-                pushTokenType: "apns",
-                apnsEnv: "sandbox",
-              },
-            },
-          },
-        },
-        DeviceIdentity: {
-          create: {
-            xmtpId: "test-notification-target-xmtp-id",
-            identityAddress: "0x1234notificationtarget",
-            profile: {
-              create: {
-                name: "Test Notification Target",
-                username: "testnotificationtarget",
-                description: "Test notification target user",
-              },
-            },
+            name: "Test Requester",
+            username: "testrequester",
+            description: "Test requester user",
           },
         },
       },
+      include: { profile: true },
+    });
+    const requesterDevice = await prisma.device.create({
+      data: {
+        id: "test-device-requester-notifications",
+        os: DeviceOS.android,
+        name: "Requester Device",
+        pushToken: "requester-push-token",
+        pushTokenType: "apns",
+        apnsEnv: "sandbox",
+      },
+    });
+    await prisma.identitiesOnDevice.create({
+      data: {
+        deviceId: requesterDevice.id,
+        identityId: requesterIdentity.id,
+      },
     });
 
-    // Get creator identity for invite creation
-    const creatorIdentity = await prisma.deviceIdentity.findFirst({
-      where: { xmtpId: "test-creator-xmtp-id-notifications" },
+    // Create notification target identity and device
+    const notifyIdentity = await prisma.deviceIdentity.create({
+      data: {
+        xmtpId: "test-notification-target-xmtp-id",
+        identityAddress: "0x1234notificationtarget",
+        profile: {
+          create: {
+            name: "Test Notification Target",
+            username: "testnotificationtarget",
+            description: "Test notification target user",
+          },
+        },
+      },
+      include: { profile: true },
+    });
+    const notifyDevice = await prisma.device.create({
+      data: {
+        id: "test-device-notification-target",
+        os: DeviceOS.ios,
+        name: "Notification Target Device",
+        pushToken: "notification-target-push-token",
+        pushTokenType: "apns",
+        apnsEnv: "sandbox",
+      },
+    });
+    await prisma.identitiesOnDevice.create({
+      data: {
+        deviceId: notifyDevice.id,
+        identityId: notifyIdentity.id,
+      },
     });
 
     // Create invite code
@@ -222,7 +207,7 @@ describe("Invite Notifications Integration", () => {
         name: "Test Notification Group Invite",
         description: "Test invite for notification testing",
         autoApprove: false, // Require approval to trigger notifications
-        createdById: creatorIdentity!.id,
+        createdById: creatorIdentity.id,
       },
     });
 

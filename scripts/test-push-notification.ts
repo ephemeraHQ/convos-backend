@@ -3,7 +3,7 @@ import { createApnsService } from "@/api/v1/notifications/services/apns-push.ser
 import { prisma } from "@/utils/prisma";
 
 interface TestPushArgs {
-  userId: string;
+  xmtpId: string;
   title?: string;
   body?: string;
   isSilent?: boolean;
@@ -12,45 +12,38 @@ interface TestPushArgs {
 
 async function sendTestPushNotification(args: TestPushArgs) {
   const {
-    userId,
+    xmtpId,
     title: _title = "Test Notification",
     body: _body = "This is a test push notification",
     isSilent = false,
     forceApnsEnv = null,
   } = args;
 
-  console.log(`🔍 Looking for devices for user: ${userId}`);
+  console.log(`🔍 Looking for APNS devices for identity (xmtpId): ${xmtpId}`);
 
-  // Find all APNS devices for the given user
-  const user = await prisma.user.findFirst({
+  // Find all APNS devices linked to this identity
+  const devices = await prisma.device.findMany({
     where: {
-      userId,
-      devices: {
+      pushTokenType: "apns",
+      pushToken: { not: null },
+      identities: {
         some: {
-          device: {
-            pushTokenType: "apns",
-            pushToken: { not: null },
+          identity: {
+            xmtpId: xmtpId,
           },
-        },
-      },
-    },
-    include: {
-      devices: {
-        include: {
-          device: true,
         },
       },
     },
   });
 
-  const devices = user?.devices.map((device) => device.device);
-
-  if (!devices || devices.length === 0) {
-    console.log(`❌ No APNS devices found for user ${userId}`);
+  if (devices.length === 0) {
+    console.log(`❌ No APNS devices found for user ${xmtpId}`);
     return;
   }
 
-  console.log(`📱 Found ${devices.length} APNS device(s) for user ${userId}`);
+  console.log(
+    `📱 Found ${devices.length} APNS device(s) for identity ${xmtpId}`,
+  );
 
   // Create APNS service
   const apnsService = createApnsService();
@@ -94,7 +87,7 @@ async function sendTestPushNotification(args: TestPushArgs) {
       const result = await apnsService.sendPushNotification({
         device: effectiveDevice,
         notification: {
-          inboxId: "1234567890123456789012345678901234567890", // Mock inbox id
+          inboxId: "1234567890123456789012345678901234567890",
           notificationType: "Protocol",
           notificationData: messageData,
         },
@@ -125,10 +118,10 @@ async function main() {
     console.log(`
 🚀 Test Push Notification CLI
 
-Usage: bun run scripts/test-push-notification.ts <userId> [options]
+Usage: bun run scripts/test-push-notification.ts <xmtpId> [options]
 
 Arguments:
-  userId                   The user ID to send test push notifications to
+  xmtpId                   The xmtp ID to send test push notifications to
 
 Options:
   --title <title>         Custom notification title (default: "Test Notification")
@@ -153,7 +146,7 @@ Environment Variables Required:
     process.exit(0);
   }
 
-  const userId = args[0];
+  const xmtpId = args[0];
   let title = "Test Notification";
   let body = "This is a test push notification";
   let isSilent = false;
@@ -196,7 +189,7 @@ Environment Variables Required:
     }
   }
 
-  if (!userId) {
+  if (!xmtpId) {
     console.error("❌ User ID is required");
     process.exit(1);
   }
@@ -205,7 +198,7 @@ Environment Variables Required:
 
   try {
     await sendTestPushNotification({
-      userId,
+      xmtpId,
       title,
       body,
       isSilent,

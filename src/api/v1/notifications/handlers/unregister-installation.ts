@@ -27,14 +27,14 @@ export async function unregisterInstallation(
       await Promise.all([
         prisma.deviceIdentity.findFirstOrThrow({
           where: { xmtpId: authenticatedXmtpId },
-          select: { userId: true },
+          select: { id: true },
         }),
         prisma.identitiesOnDevice.findUnique({
           where: {
             xmtpInstallationId: xmtpInstallationId,
           },
           include: {
-            device: { select: { users: true } },
+            device: { select: { identities: true } },
           },
         }),
       ]);
@@ -49,12 +49,12 @@ export async function unregisterInstallation(
 
     // Verify that the installation belongs to the authenticated user
     if (
-      !identityOnDeviceForInstallation.device.users.some(
-        (user) => user.userId === deviceIdentityForUser.userId,
+      !identityOnDeviceForInstallation.device.identities.some(
+        (d) => d.identityId === deviceIdentityForUser.id,
       )
     ) {
       req.log.warn(
-        `User ${deviceIdentityForUser.userId} attempt to unregister unowned installation ${xmtpInstallationId}`,
+        `Identity ${deviceIdentityForUser.id} attempt to unregister unowned installation ${xmtpInstallationId}`,
       );
       res.status(403).json({ error: "Forbidden: Installation access denied" });
       return;

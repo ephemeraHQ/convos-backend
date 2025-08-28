@@ -1,5 +1,5 @@
 import type { Server } from "http";
-import { DeviceOS, UserType } from "@prisma/client";
+import { DeviceOS } from "@prisma/client";
 import {
   afterAll,
   beforeAll,
@@ -10,17 +10,16 @@ import {
 } from "bun:test";
 import express from "express";
 import type {
-  CreatedReturnedUser,
-  CreateUserRequestBody,
-} from "@/api/v1/users/handlers/create-user";
-import type { ReturnedCurrentUser } from "@/api/v1/users/handlers/get-current-user";
-import usersRouter from "@/api/v1/users/users.router";
+  InitRequestBody,
+  InitResponse,
+} from "@/api/v1/init/handlers/init";
+import initRouter from "@/api/v1/init/init.router";
 import { jsonMiddleware } from "@/middleware/json";
 import { prisma } from "@/utils/prisma";
 
 const app = express();
 app.use(jsonMiddleware);
-app.use("/users", usersRouter);
+app.use("/init", initRouter);
 
 let server: Server;
 
@@ -42,14 +41,11 @@ beforeEach(async () => {
   await prisma.identitiesOnDevice.deleteMany();
   await prisma.deviceIdentity.deleteMany();
   await prisma.device.deleteMany();
-  await prisma.user.deleteMany();
 });
 
-describe("/users API", () => {
-  test("POST /users creates a new user", async () => {
-    const createUserBody: CreateUserRequestBody = {
-      userId: "test-users-turnkey-user-id",
-      userType: UserType.turnkey,
+describe("/init API", () => {
+  test("POST /init creates a new user", async () => {
+    const createUserBody: InitRequestBody = {
       device: {
         id: "test-device-id",
         os: DeviceOS.ios,
@@ -66,7 +62,7 @@ describe("/users API", () => {
       },
     };
 
-    const response = await fetch("http://localhost:3001/users", {
+    const response = await fetch("http://localhost:3001/init", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -76,14 +72,10 @@ describe("/users API", () => {
 
     expect(response.status).toBe(201);
 
-    const user = (await response.json()) as CreatedReturnedUser;
-    expect(user.userId).toBe(createUserBody.userId);
-    expect(user.userType).toBe(createUserBody.userType);
-    expect(user.id).toBeDefined();
+    const user = (await response.json()) as InitResponse;
     expect(user.device.id).toBeDefined();
     expect(user.device.os).toBe(createUserBody.device.os);
     expect(user.device.name!).toBe(createUserBody.device.name!);
-    expect(user.device.id).toBe(createUserBody.device.id);
     expect(user.identity.id).toBeDefined();
     expect(user.identity.identityAddress).toBe(
       createUserBody.identity.identityAddress || null,
@@ -92,18 +84,8 @@ describe("/users API", () => {
     expect(user.profile.name).toBe(createUserBody.profile.name ?? null);
   });
 
-  test("GET /users/me returns 401 without auth header", async () => {
-    const response = await fetch("http://localhost:3001/users/me");
-    const data = (await response.json()) as { error: string };
-    expect(response.status).toBe(404);
-    expect(data.error).toBe("User not found");
-  });
-
-  test("GET /users/me returns current user", async () => {
-    // First create a user
-    const createUserBody: CreateUserRequestBody = {
-      userId: "test-turnkey-user-id",
-      userType: UserType.turnkey,
+  test("POST /init can create two users with different devices", async () => {
+    const createUser1Body: InitRequestBody = {
       device: {
         id: "test-device-id",
         os: DeviceOS.ios,
@@ -120,53 +102,7 @@ describe("/users API", () => {
       },
     };
 
-    const createResponse = await fetch("http://localhost:3001/users", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: "Bearer test-turnkey-user-id",
-      },
-      body: JSON.stringify(createUserBody),
-    });
-    expect(createResponse.status).toBe(201);
-
-    // Then try to get /me with auth header
-    const response = await fetch("http://localhost:3001/users/me", {
-      headers: {
-        Authorization: "Bearer test-turnkey-user-id",
-      },
-    });
-
-    expect(response.status).toBe(200);
-
-    const user = (await response.json()) as ReturnedCurrentUser;
-    expect(user.id).toBeDefined();
-    expect(user.identities).toHaveLength(1);
-    expect(user.identities[0].identityAddress).toBe("test-turnkey-address");
-    expect(user.identities[0].xmtpId).toBe("test-xmtp-id");
-  });
-
-  test("POST /users can create two users with different devices", async () => {
-    const createUser1Body: CreateUserRequestBody = {
-      userId: "test-users-turnkey-user-id",
-      userType: UserType.turnkey,
-      device: {
-        id: "test-device-id",
-        os: DeviceOS.ios,
-        name: "iPhone 14",
-      },
-      identity: {
-        identityAddress: "test-turnkey-address",
-        xmtpId: "test-xmtp-id",
-        xmtpInstallationId: "test-xmtp-installation-id",
-      },
-      profile: {
-        name: "Test User",
-        username: "test-user",
-      },
-    };
-
-    const response1 = await fetch("http://localhost:3001/users", {
+    const response1 = await fetch("http://localhost:3001/init", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -176,9 +112,7 @@ describe("/users API", () => {
 
     expect(response1.status).toBe(201);
 
-    const createUser2Body: CreateUserRequestBody = {
-      userId: "test-users-turnkey-user-id-2",
-      userType: UserType.turnkey,
+    const createUser2Body: InitRequestBody = {
       device: {
         id: "test-device-id-2",
         os: DeviceOS.ios,
@@ -195,7 +129,7 @@ describe("/users API", () => {
       },
     };
 
-    const response2 = await fetch("http://localhost:3001/users", {
+    const response2 = await fetch("http://localhost:3001/init", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -206,11 +140,9 @@ describe("/users API", () => {
     expect(response2.status).toBe(201);
   });
 
-  test("POST /users can create two users with same device", async () => {
+  test("POST /init can create two users with same device", async () => {
     const sameDeviceId = "test-device-id";
-    const createUser1Body: CreateUserRequestBody = {
-      userId: "test-users-turnkey-user-id",
-      userType: UserType.turnkey,
+    const createUser1Body: InitRequestBody = {
       device: {
         id: sameDeviceId,
         os: DeviceOS.ios,
@@ -227,7 +159,7 @@ describe("/users API", () => {
       },
     };
 
-    const response1 = await fetch("http://localhost:3001/users", {
+    const response1 = await fetch("http://localhost:3001/init", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -237,9 +169,7 @@ describe("/users API", () => {
 
     expect(response1.status).toBe(201);
 
-    const createUser2Body: CreateUserRequestBody = {
-      userId: "test-users-turnkey-user-id-2",
-      userType: UserType.turnkey,
+    const createUser2Body: InitRequestBody = {
       device: {
         id: sameDeviceId,
         os: DeviceOS.ios,
@@ -256,7 +186,7 @@ describe("/users API", () => {
       },
     };
 
-    const response2 = await fetch("http://localhost:3001/users", {
+    const response2 = await fetch("http://localhost:3001/init", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",

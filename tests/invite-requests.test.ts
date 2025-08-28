@@ -1,5 +1,5 @@
 import type { Server } from "http";
-import { DeviceOS, UserType } from "@prisma/client";
+import { DeviceOS } from "@prisma/client";
 import {
   afterAll,
   beforeAll,
@@ -43,8 +43,9 @@ beforeAll(() => {
   server = app.listen(3011);
 });
 
-afterAll(() => {
+afterAll(async () => {
   server.close();
+  await prisma.$disconnect();
 });
 
 beforeEach(async () => {
@@ -57,75 +58,38 @@ beforeEach(async () => {
   await prisma.identitiesOnDevice.deleteMany();
   await prisma.deviceIdentity.deleteMany();
   await prisma.device.deleteMany();
-  await prisma.user.deleteMany();
 });
 
 async function createTestUsers() {
-  // Create invite creator user
-  const creatorUser = await prisma.user.create({
+  // Create invite creator identity
+  const creatorIdentity = await prisma.deviceIdentity.create({
     data: {
-      userId: "test-creator-user",
-      userType: UserType.turnkey,
-      devices: {
-        create: {
-          device: {
-            create: {
-              id: "test-device-id-creator",
-              os: DeviceOS.ios,
-              name: "Test Creator Device",
-            },
-          },
-        },
-      },
-      DeviceIdentity: {
-        create: {
-          xmtpId: "test-creator-xmtp-id",
-          identityAddress: "0x1234creator",
-          profile: {
-            create: {
-              name: "Test Creator",
-              username: "testcreator",
-              description: "Test creator user",
-            },
-          },
-        },
-      },
+      xmtpId: "test-creator-xmtp-id",
+      identityAddress: "0x1234creator",
     },
   });
-
-  // Create requester user
-  const requesterUser = await prisma.user.create({
-    data: {
-      userId: "test-requester-user",
-      userType: UserType.turnkey,
-      devices: {
-        create: {
-          device: {
-            create: {
-              id: "test-device-id-requester",
-              os: DeviceOS.android,
-              name: "Test Requester Device",
-            },
-          },
-        },
-      },
-      DeviceIdentity: {
-        create: {
-          xmtpId: "test-xmtp-id-requester",
-          identityAddress: "0x1234requester",
-          profile: {
-            create: {
-              name: "Test Requester",
-              username: "testrequester",
-              description: "Test requester user",
-            },
-          },
-        },
-      },
-    },
+  const creatorDevice = await prisma.device.create({
+    data: { id: "test-device-id-creator", os: DeviceOS.ios },
+  });
+  await prisma.identitiesOnDevice.create({
+    data: { deviceId: creatorDevice.id, identityId: creatorIdentity.id },
   });
 
-  return { creatorUser, requesterUser };
+  // Create requester identity used in some tests
+  const requesterIdentity = await prisma.deviceIdentity.create({
+    data: {
+      xmtpId: "test-xmtp-id-requester",
+      identityAddress: "0x1234requester",
+    },
+  });
+  const requesterDevice = await prisma.device.create({
+    data: { id: "test-device-id-requester", os: DeviceOS.android },
+  });
+  await prisma.identitiesOnDevice.create({
+    data: { deviceId: requesterDevice.id, identityId: requesterIdentity.id },
+  });
+
+  return { creatorIdentity, requesterIdentity };
 }
 
 async function createTestInviteCode(args: { autoApprove?: boolean } = {}) {
@@ -387,43 +351,13 @@ describe("/invites/request API", () => {
     const inviteCode = await createTestInviteCode();
 
     // Create a notification target identity and link it to the invite
-    await prisma.user.create({
-      data: {
-        userId: "test-notifier-user",
-        userType: UserType.turnkey,
-        devices: {
-          create: {
-            device: {
-              create: {
-                id: "test-device-id-notifier",
-                os: DeviceOS.ios,
-                name: "Test Notifier Device",
-              },
-            },
-          },
-        },
-        DeviceIdentity: {
-          create: {
-            xmtpId: "test-notifier-xmtp-id",
-            identityAddress: "0x1234notifier",
-            profile: {
-              create: {
-                name: "Test Notifier",
-                username: "testnotifier",
-                description: "Test notifier user",
-              },
-            },
-          },
-        },
-      },
-    });
-    const notifierIdentity = await prisma.deviceIdentity.findFirst({
-      where: { xmtpId: "test-notifier-xmtp-id" },
+    const notifier = await prisma.deviceIdentity.create({
+      data: { xmtpId: "test-notifier-xmtp-id" },
     });
     await prisma.inviteCodeNotificationTarget.create({
       data: {
         inviteCodeId: inviteCode.id,
-        deviceIdentityId: notifierIdentity!.id,
+        deviceIdentityId: notifier.id,
       },
     });
 
@@ -469,36 +403,9 @@ describe("/invites/request API", () => {
     // Arrange: create creator/requester and invite code
     const inviteCode = await createTestInviteCode();
 
-    // Ensure we also have a third user (user3) in DB
-    await prisma.user.create({
-      data: {
-        userId: "test-user3",
-        userType: UserType.turnkey,
-        devices: {
-          create: {
-            device: {
-              create: {
-                id: "test-device-id-user3",
-                os: DeviceOS.ios,
-                name: "Test User3 Device",
-              },
-            },
-          },
-        },
-        DeviceIdentity: {
-          create: {
-            xmtpId: "test-user3-xmtp-id",
-            identityAddress: "0x1234user3",
-            profile: {
-              create: {
-                name: "Test User3",
-                username: "testuser3",
-                description: "Test user3",
-              },
-            },
-          },
-        },
-      },
+    // Ensure we also have a third identity
+    await prisma.deviceIdentity.create({
+      data: { xmtpId: "test-user3-xmtp-id" },
     });
 
     // Act: requester creates a join request

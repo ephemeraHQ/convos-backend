@@ -10,9 +10,9 @@ import profilesRouter from "@/api/v1/profiles/profiles.router";
 import { authMiddleware } from "@/middleware/auth";
 import attachmentsRouter from "./attachments";
 import devicesRouter from "./devices/devices.router";
+import initRouter from "./init/init.router";
 import publicInvitesRouter from "./invites/invites-public.router";
 import invitesRouter from "./invites/invites.router";
-import usersRouter from "./users/users.router";
 import walletsRouter from "./wallets/wallets.router";
 
 const v1Router = Router();
@@ -32,8 +32,11 @@ v1Router.use("/wallets", walletsRouter);
 // mount notifications routes under /notifications
 v1Router.use("/notifications", authMiddleware, notificationsRouter);
 
-// mount user routes under /users
-v1Router.use("/users", authMiddleware, usersRouter);
+// mount init routes under /init
+v1Router.use("/init", authMiddleware, initRouter);
+
+// (backward compatibility) mount init routes under /users
+v1Router.use("/users", authMiddleware, initRouter);
 
 // mount device routes under /devices
 v1Router.use("/devices", authMiddleware, devicesRouter);

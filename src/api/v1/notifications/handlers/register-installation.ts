@@ -93,11 +93,11 @@ async function handleCurrentRegistration(args: {
   try {
     const authenticatedXmtpId = req.app.locals.xmtpId;
 
-    // Make sure the authenticated user has a DeviceIdentity
+    // Ensure the authenticated identity exists
     const deviceIdentityForAuthenticatedUser =
       await prisma.deviceIdentity.findFirst({
         where: { xmtpId: authenticatedXmtpId },
-        select: { userId: true },
+        select: { id: true },
       });
 
     if (!deviceIdentityForAuthenticatedUser) {
@@ -107,20 +107,20 @@ async function handleCurrentRegistration(args: {
       return;
     }
 
-    // Make sure the device belongs to the authenticated user
+    // Make sure the device belongs to the authenticated identity
     const deviceOwnerCheck = await prisma.device.findUnique({
       where: { id: body.deviceId },
-      select: { users: true },
+      select: { identities: true },
     });
 
     if (
       !deviceOwnerCheck ||
-      !deviceOwnerCheck.users.some(
-        (user) => user.userId === deviceIdentityForAuthenticatedUser.userId,
+      !deviceOwnerCheck.identities.some(
+        (entry) => entry.identityId === deviceIdentityForAuthenticatedUser.id,
       )
     ) {
       req.log.warn(
-        `User ${deviceIdentityForAuthenticatedUser.userId} attempt to register for unowned/unknown device ${body.deviceId}`,
+        `Identity ${deviceIdentityForAuthenticatedUser.id} attempt to register for unowned/unknown device ${body.deviceId}`,
       );
       res.status(403).json({ error: "Forbidden: Device access denied" });
       return;
@@ -133,14 +133,15 @@ async function handleCurrentRegistration(args: {
       const ownedIdentities = await prisma.deviceIdentity.findMany({
         where: {
           xmtpId: { in: xmtpIdsToVerify },
-          userId: deviceIdentityForAuthenticatedUser.userId,
+          // Same person == same identity id
+          id: deviceIdentityForAuthenticatedUser.id,
         },
         select: { id: true, xmtpId: true },
       });
 
       if (ownedIdentities.length !== xmtpIdsToVerify.length) {
         req.log.warn(
-          `User ${deviceIdentityForAuthenticatedUser.userId} attempt to register with one or more unowned/unknown identities (by xmtpId).`,
+          `Identity ${deviceIdentityForAuthenticatedUser.id} attempt to register with one or more unowned/unknown identities (by xmtpId).`,
         );
         res.status(403).json({
           error: "Forbidden: Identity access denied for one or more identities",

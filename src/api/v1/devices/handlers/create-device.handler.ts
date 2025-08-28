@@ -22,31 +22,20 @@ export const DeviceInputSchema = DeviceSchema.pick({
 
 export type CreateDeviceRequestBody = z.infer<typeof DeviceInputSchema>;
 
-export type CreateDeviceRequestParams = {
-  userId: string;
-};
-
 export async function createDeviceHandler(
-  req: Request<CreateDeviceRequestParams, unknown, CreateDeviceRequestBody>,
+  req: Request<unknown, unknown, CreateDeviceRequestBody>,
   res: Response,
 ) {
   try {
-    const { userId } = req.params;
     const { xmtpId } = req.app.locals;
 
-    // First find the user to verify they exist and are the authenticated user
-    const user = await prisma.user.findFirst({
-      where: {
-        userId: userId,
-        DeviceIdentity: {
-          some: {
-            xmtpId,
-          },
-        },
-      },
+    // Verify the authenticated identity exists
+    const identity = await prisma.deviceIdentity.findFirst({
+      where: { xmtpId },
+      select: { id: true },
     });
 
-    if (!user) {
+    if (!identity) {
       res
         .status(403)
         .json({ error: "Not authorized to create a device for this user" });
@@ -55,16 +44,28 @@ export async function createDeviceHandler(
 
     const validatedData = DeviceInputSchema.parse(req.body);
 
-    const device = await prisma.device.create({
-      data: {
-        ...validatedData,
-        pushFailures: 0,
-        users: {
-          create: {
-            userId: user.id,
+    const device = await prisma.$transaction(async (tx) => {
+      const device = await tx.device.create({
+        data: {
+          ...validatedData,
+          pushFailures: 0,
+        },
+      });
+      // Associate device with the authenticated identity
+      await tx.identitiesOnDevice.upsert({
+        where: {
+          deviceId_identityId: {
+            deviceId: device.id,
+            identityId: identity.id,
           },
         },
-      },
+        create: {
+          deviceId: device.id,
+          identityId: identity.id,
+        },
+        update: {},
+      });
+      return device;
     });
 
     res.status(201).json(device);
