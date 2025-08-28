@@ -1,10 +1,10 @@
-name: Sync dev to main (Legacy)
+name: Sync otr-dev to otr-prod
 
 on:
   workflow_dispatch: # Only manual triggering via GitHub UI
 
 permissions:
-  contents: write # Need write access to push to main
+  contents: write # Need write access to push to otr-prod
 
 jobs:
   sync-branches:
@@ -19,13 +19,13 @@ jobs:
 
       - name: Validate branch
         run: |
-          if [ "${{ github.ref_name }}" != "dev" ]; then
-            echo "❌ This workflow must be run from the 'dev' branch only"
+          if [ "${{ github.ref_name }}" != "otr-dev" ]; then
+            echo "❌ This workflow must be run from the 'otr-dev' branch only"
             echo "Current branch: ${{ github.ref_name }}"
-            echo "Expected branch: dev"
+            echo "Expected branch: otr-dev"
             exit 1
           fi
-          echo "✅ Running from correct branch: dev"
+          echo "✅ Running from correct branch: otr-dev"
 
       - name: Configure Git
         run: |
@@ -34,24 +34,24 @@ jobs:
 
       - name: Fetch both branches
         run: |
-          git fetch origin main:main || git fetch origin main
-          git fetch origin dev:dev || git fetch origin dev
+          git fetch origin otr-prod:otr-prod || git fetch origin otr-prod
+          git fetch origin otr-dev:otr-dev || git fetch origin otr-dev
 
-      - name: Merge dev to main (prefer fast-forward)
+      - name: Merge otr-dev to otr-prod (prefer fast-forward)
         id: merge
         run: |
-          git checkout main
-          git pull origin main # Ensure we have latest main
+          git checkout otr-prod
+          git pull origin otr-prod # Ensure we have latest otr-prod
 
           # Try fast-forward first, fall back to regular merge if needed
-          if git merge --ff-only origin/dev 2>/dev/null; then
+          if git merge --ff-only origin/otr-dev 2>/dev/null; then
             echo "success=true" >> $GITHUB_OUTPUT
             echo "merge_type=fast-forward" >> $GITHUB_OUTPUT
             echo "✅ Fast-forward merge successful - clean linear history maintained"
-          elif git merge origin/dev --no-edit; then
+          elif git merge origin/otr-dev --no-edit; then
             echo "success=true" >> $GITHUB_OUTPUT
             echo "merge_type=merge-commit" >> $GITHUB_OUTPUT
-            echo "✅ Merge successful with merge commit (main had diverged)"
+            echo "✅ Merge successful with merge commit (otr-prod had diverged)"
           else
             echo "success=false" >> $GITHUB_OUTPUT
             echo "❌ Merge failed due to conflicts"
@@ -61,8 +61,8 @@ jobs:
       - name: Push successful merge
         if: steps.merge.outputs.success == 'true'
         run: |
-          git push origin main
-          echo "✅ Successfully synced main with dev" >> $GITHUB_STEP_SUMMARY
+          git push origin otr-prod
+          echo "✅ Successfully synced otr-prod with otr-dev" >> $GITHUB_STEP_SUMMARY
           echo "**Merge Details:**" >> $GITHUB_STEP_SUMMARY
           echo "- Merge commit: \`$(git log -1 --oneline)\`" >> $GITHUB_STEP_SUMMARY
           echo "- Triggered by: ${{ github.actor }}" >> $GITHUB_STEP_SUMMARY
@@ -73,11 +73,11 @@ jobs:
           echo "⚠️ **Merge failed due to conflicts**" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "**To resolve manually:**" >> $GITHUB_STEP_SUMMARY
-          echo "1. \`git checkout main && git pull\`" >> $GITHUB_STEP_SUMMARY
-          echo "2. \`git merge dev\`" >> $GITHUB_STEP_SUMMARY
+          echo "1. \`git checkout otr-prod && git pull\`" >> $GITHUB_STEP_SUMMARY
+          echo "2. \`git merge otr-dev\`" >> $GITHUB_STEP_SUMMARY
           echo "3. Resolve conflicts in your editor" >> $GITHUB_STEP_SUMMARY
           echo "4. \`git add . && git commit\`" >> $GITHUB_STEP_SUMMARY
-          echo "5. \`git push origin main\`" >> $GITHUB_STEP_SUMMARY
+          echo "5. \`git push origin otr-prod\`" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "After resolving conflicts, future syncs should work smoothly." >> $GITHUB_STEP_SUMMARY
           exit 1
