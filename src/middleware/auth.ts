@@ -1,6 +1,5 @@
 import type { NextFunction, Request, Response } from "express";
-import * as jose from "jose";
-import type { JWTPayload } from "@/utils/jwt";
+import { isEndpointAllowed, verifyJwtToken } from "@/utils/jwt";
 
 export const AUTH_HEADER = "X-Convos-AuthToken";
 
@@ -17,18 +16,28 @@ export const authMiddleware = async (
   }
 
   try {
-    // verify JWT token and get payload
-    const { payload } = await jose.jwtVerify<JWTPayload>(
-      authToken,
-      new TextEncoder().encode(process.env.JWT_SECRET),
-    );
+    // Verify JWT token and get payload
+    const payload = await verifyJwtToken({ token: authToken });
 
-    // So we can use them in request handlers
+    // Check if endpoint is allowed (if metadata specifies restrictions)
+    const endpoint = req.path;
+    if (!isEndpointAllowed({ payload, endpoint })) {
+      res.status(403).json({ error: "Access denied for this endpoint" });
+      return;
+    }
+
+    // Set values for request handlers
     req.app.locals.xmtpId = payload.inboxId;
     req.app.locals.xmtpInstallationId = payload.xmtpInstallationId;
 
     next();
-  } catch {
+  } catch (error) {
+    // Handle specific error types for better debugging
+    if (error instanceof Error && error.message.includes("Access denied")) {
+      res.status(403).json({ error: error.message });
+      return;
+    }
     res.status(401).send();
+    return;
   }
 };

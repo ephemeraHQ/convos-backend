@@ -56,4 +56,11 @@ v1Router.use("/invites/public", publicInvitesRouter);
 // mount invites routes under /invites
 v1Router.use("/invites", authMiddleware, invitesRouter);
 
+// simple auth check endpoint
+v1Router.get("/auth-check", authMiddleware, (req, res) => {
+  res.status(200).json({
+    success: true,
+  });
+});
+
 export default v1Router;
