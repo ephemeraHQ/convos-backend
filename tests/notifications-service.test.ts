@@ -245,31 +245,14 @@ describe("PushNotificationService", () => {
   });
 
   describe("sendPushNotificationToXmtpId", () => {
-    let testUser: { id: string; userId: string };
     let testIdentity: { id: string; xmtpId: string };
 
     beforeEach(async () => {
-      // Create test user and identity
-      testUser = await prisma.user.create({
-        data: {
-          userId: "test-user-notifications",
-          userType: "turnkey",
-        },
-      });
-
+      // Create test identity
       testIdentity = await prisma.deviceIdentity.create({
         data: {
-          userId: testUser.id,
           xmtpId: "test-xmtp-id-notifications",
           identityAddress: "0x1234567890",
-        },
-      });
-
-      // Link device to user
-      await prisma.usersOnDevice.create({
-        data: {
-          userId: testUser.id,
-          deviceId: testDevice.id,
         },
       });
 
@@ -285,9 +268,7 @@ describe("PushNotificationService", () => {
 
     afterEach(async () => {
       await prisma.identitiesOnDevice.deleteMany();
-      await prisma.usersOnDevice.deleteMany();
       await prisma.deviceIdentity.deleteMany();
-      await prisma.user.deleteMany();
     });
 
     test("successfully sends notification to device by xmtpId", async () => {

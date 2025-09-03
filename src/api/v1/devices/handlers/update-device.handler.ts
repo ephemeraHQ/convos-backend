@@ -5,7 +5,6 @@ import { prisma } from "@/utils/prisma";
 import { DeviceSchema } from "../../../../../prisma/generated/zod";
 
 export type UpdateDeviceRequestParams = {
-  userId: string;
   deviceId: string;
 };
 
@@ -26,22 +25,16 @@ export async function updateDeviceHandler(
   res: Response,
 ) {
   try {
-    const { userId, deviceId } = req.params;
+    const { deviceId } = req.params;
     const { xmtpId } = req.app.locals;
 
-    // First find the user to verify they exist and are the authenticated user
-    const user = await prisma.user.findFirst({
-      where: {
-        userId: userId,
-        DeviceIdentity: {
-          some: {
-            xmtpId,
-          },
-        },
-      },
+    // Verify the authenticated identity exists
+    const identity = await prisma.deviceIdentity.findFirst({
+      where: { xmtpId },
+      select: { id: true },
     });
 
-    if (!user) {
+    if (!identity) {
       res
         .status(403)
         .json({ error: "Not authorized to update this user's device" });
@@ -54,11 +47,7 @@ export async function updateDeviceHandler(
     const updateResult = await prisma.device.updateMany({
       where: {
         id: deviceId,
-        users: {
-          some: {
-            userId: user.id,
-          },
-        },
+        identities: { some: { identityId: identity.id } },
       },
       data: {
         ...validatedData,
@@ -71,7 +60,6 @@ export async function updateDeviceHandler(
 
     if (updateResult.count === 0) {
       logError(new Error("Device access attempt failed"), {
-        userId,
         deviceId,
         xmtpId,
         reason: "Device not found or not associated with user",
@@ -86,11 +74,7 @@ export async function updateDeviceHandler(
     const device = await prisma.device.findFirst({
       where: {
         id: deviceId,
-        users: {
-          some: {
-            userId: user.id,
-          },
-        },
+        identities: { some: { identityId: identity.id } },
       },
       select: {
         id: true,
@@ -110,7 +94,6 @@ export async function updateDeviceHandler(
 
     if (!device) {
       logError(new Error("Device ownership lost after update"), {
-        userId,
         deviceId,
         xmtpId,
         reason: "Device not found or ownership changed after update",
@@ -125,7 +108,6 @@ export async function updateDeviceHandler(
     return;
   } catch (error) {
     logError(error, {
-      userId: req.params.userId,
       deviceId: req.params.deviceId,
       xmtpId: req.app.locals.xmtpId,
       requestBodyMetadata: {

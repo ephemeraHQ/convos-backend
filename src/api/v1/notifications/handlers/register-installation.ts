@@ -93,11 +93,11 @@ async function handleCurrentRegistration(args: {
   try {
     const authenticatedXmtpId = req.app.locals.xmtpId;
 
-    // Make sure the authenticated user has a DeviceIdentity
+    // Ensure the authenticated identity exists
     const deviceIdentityForAuthenticatedUser =
       await prisma.deviceIdentity.findFirst({
         where: { xmtpId: authenticatedXmtpId },
-        select: { userId: true },
+        select: { id: true },
       });
 
     if (!deviceIdentityForAuthenticatedUser) {
@@ -107,20 +107,20 @@ async function handleCurrentRegistration(args: {
       return;
     }
 
-    // Make sure the device belongs to the authenticated user
+    // Make sure the device belongs to the authenticated identity
     const deviceOwnerCheck = await prisma.device.findUnique({
       where: { id: body.deviceId },
-      select: { users: true },
+      select: { identities: true },
     });
 
     if (
       !deviceOwnerCheck ||
-      !deviceOwnerCheck.users.some(
-        (user) => user.userId === deviceIdentityForAuthenticatedUser.userId,
+      !deviceOwnerCheck.identities.some(
+        (entry) => entry.identityId === deviceIdentityForAuthenticatedUser.id,
       )
     ) {
       req.log.warn(
-        `User ${deviceIdentityForAuthenticatedUser.userId} attempt to register for unowned/unknown device ${body.deviceId}`,
+        `Identity ${deviceIdentityForAuthenticatedUser.id} attempt to register for unowned/unknown device ${body.deviceId}`,
       );
       res.status(403).json({ error: "Forbidden: Device access denied" });
       return;
@@ -133,14 +133,15 @@ async function handleCurrentRegistration(args: {
       const ownedIdentities = await prisma.deviceIdentity.findMany({
         where: {
           xmtpId: { in: xmtpIdsToVerify },
-          userId: deviceIdentityForAuthenticatedUser.userId,
+          // Same person == same identity id
+          id: deviceIdentityForAuthenticatedUser.id,
         },
         select: { id: true, xmtpId: true },
       });
 
       if (ownedIdentities.length !== xmtpIdsToVerify.length) {
         req.log.warn(
-          `User ${deviceIdentityForAuthenticatedUser.userId} attempt to register with one or more unowned/unknown identities (by xmtpId).`,
+          `Identity ${deviceIdentityForAuthenticatedUser.id} attempt to register with one or more unowned/unknown identities (by xmtpId).`,
         );
         res.status(403).json({
           error: "Forbidden: Identity access denied for one or more identities",
@@ -153,174 +154,79 @@ async function handleCurrentRegistration(args: {
       );
     }
 
-    const identitiesOnDeviceToRemoveFromDb = await prisma.$transaction(
-      async (tx) => {
-        // Update the device with the new push token
-        await tx.device.update({
-          where: {
-            id: body.deviceId,
-          },
-          data: {
-            pushToken: body.pushToken,
-            pushTokenType: body.pushTokenType,
-            apnsEnv: body.apnsEnv,
-          },
-        });
+    await prisma.$transaction(async (tx) => {
+      // Update the device with the new push token
+      await tx.device.update({
+        where: {
+          id: body.deviceId,
+        },
+        data: {
+          pushToken: body.pushToken,
+          pushTokenType: body.pushTokenType,
+          apnsEnv: body.apnsEnv,
+        },
+      });
 
-        // Find all existing identities on the device for logging
-        const allExistingIdentitiesOnDevice =
-          await tx.identitiesOnDevice.findMany({
-            where: {
-              deviceId: body.deviceId,
-              xmtpInstallationId: { not: null },
-            },
-            select: { xmtpInstallationId: true, identityId: true },
-          });
-
-        const incomingInstallationIds = body.installations.map(
-          (inst) => inst.xmtpInstallationId,
-        );
-
-        req.log.info(
-          {
-            deviceId: body.deviceId,
-            existingInstallations: allExistingIdentitiesOnDevice.map(
-              (i) => i.xmtpInstallationId,
-            ),
-            incomingInstallations: incomingInstallationIds,
-          },
-          "Registration update: comparing existing vs incoming installations",
-        );
-
-        // Find all the identities on the device that are not in the new installations
-        const staleIdentitiesOnDevice = await tx.identitiesOnDevice.findMany({
+      // Find all existing identities on the device for logging
+      const allExistingIdentitiesOnDevice =
+        await tx.identitiesOnDevice.findMany({
           where: {
             deviceId: body.deviceId,
-            AND: [
-              {
-                xmtpInstallationId: {
-                  not: {
-                    in: incomingInstallationIds,
-                  },
-                },
-              },
-              {
-                xmtpInstallationId: {
-                  not: null,
-                },
-              },
-            ],
+            xmtpInstallationId: { not: null },
           },
           select: { xmtpInstallationId: true, identityId: true },
         });
 
-        if (staleIdentitiesOnDevice.length > 0) {
-          req.log.warn(
-            {
-              deviceId: body.deviceId,
-              staleInstallations: staleIdentitiesOnDevice.map(
-                (i) => i.xmtpInstallationId,
-              ),
-              staleIdentityIds: staleIdentitiesOnDevice.map(
-                (i) => i.identityId,
-              ),
-              incomingInstallations: incomingInstallationIds,
-              totalExistingInstallations: allExistingIdentitiesOnDevice.length,
-            },
-            "POTENTIAL BUG: About to delete installations that may still be active",
-          );
-        }
+      const incomingInstallationIds = body.installations.map(
+        (inst) => inst.xmtpInstallationId,
+      );
 
-        // SAFER APPROACH: Instead of automatically deleting "stale" installations,
-        // only delete them if they meet stricter criteria to avoid deleting active installations
-        //
-        // For now, we'll disable automatic cleanup to prevent the bug where active
-        // installations get deleted. This needs to be replaced with a more sophisticated
-        // cleanup strategy that can distinguish truly stale installations from active ones.
-        //
-        // TODO: Implement proper cleanup logic that:
-        // 1. Checks installation age/last activity
-        // 2. Verifies with XMTP server before deletion
-        // 3. Uses explicit cleanup requests rather than inference
-
-        if (staleIdentitiesOnDevice.length > 0) {
-          req.log.warn(
-            {
-              deviceId: body.deviceId,
-              potentialStaleCount: staleIdentitiesOnDevice.length,
-              staleInstallations: staleIdentitiesOnDevice.map(
-                (i) => i.xmtpInstallationId,
-              ),
-            },
-            "CLEANUP DISABLED: Found installations not in current request, but skipping deletion to prevent breaking active notifications",
-          );
-
-          // COMMENTED OUT to prevent bug - do not delete installations automatically
-          // const staleIdentityIds = staleIdentitiesOnDevice.map((r) => r.identityId);
-          // await tx.identitiesOnDevice.deleteMany({
-          //   where: {
-          //     deviceId: body.deviceId,
-          //     identityId: { in: staleIdentityIds },
-          //   },
-          // });
-        }
-
-        // Upsert the new installations
-        for (const installation of body.installations) {
-          const resolvedIdentityId = xmtpIdToIdentityIdMap.get(
-            installation.identityId,
-          );
-          if (!resolvedIdentityId) {
-            // This should not happen due to pre-verification; skip defensively
-            req.log.warn(
-              {
-                xmtpId: installation.identityId,
-                deviceId: body.deviceId,
-              },
-              "Skipping upsert for installation due to unresolved identityId from xmtpId",
-            );
-            continue;
-          }
-
-          await tx.identitiesOnDevice.upsert({
-            where: {
-              deviceId_identityId: {
-                deviceId: body.deviceId,
-                identityId: resolvedIdentityId,
-              },
-            },
-            create: {
-              deviceId: body.deviceId,
-              identityId: resolvedIdentityId,
-              xmtpInstallationId: installation.xmtpInstallationId,
-            },
-            update: {
-              xmtpInstallationId: installation.xmtpInstallationId,
-            },
-          });
-        }
-
-        // Return empty array since we're not deleting installations anymore
-        return [];
-      },
-    );
-
-    // CLEANUP DISABLED: No longer automatically deleting "stale" installations
-    // This prevents the bug where active installations get incorrectly deleted
-    //
-    // The previous logic would delete installations from XMTP server here,
-    // but since we're not removing them from our DB, we shouldn't delete them
-    // from XMTP either.
-
-    if (identitiesOnDeviceToRemoveFromDb.length > 0) {
       req.log.info(
         {
           deviceId: body.deviceId,
-          skippedDeletions: identitiesOnDeviceToRemoveFromDb.length,
+          existingInstallations: allExistingIdentitiesOnDevice.map(
+            (i) => i.xmtpInstallationId,
+          ),
+          incomingInstallations: incomingInstallationIds,
         },
-        "Skipped deleting installations from XMTP server to prevent breaking active notifications",
+        "Registration update: comparing existing vs incoming installations",
       );
-    }
+
+      // Upsert the new installations
+      for (const installation of body.installations) {
+        const resolvedIdentityId = xmtpIdToIdentityIdMap.get(
+          installation.identityId,
+        );
+        if (!resolvedIdentityId) {
+          // This should not happen due to pre-verification; skip defensively
+          req.log.warn(
+            {
+              xmtpId: installation.identityId,
+              deviceId: body.deviceId,
+            },
+            "Skipping upsert for installation due to unresolved identityId from xmtpId",
+          );
+          continue;
+        }
+
+        await tx.identitiesOnDevice.upsert({
+          where: {
+            deviceId_identityId: {
+              deviceId: body.deviceId,
+              identityId: resolvedIdentityId,
+            },
+          },
+          create: {
+            deviceId: body.deviceId,
+            identityId: resolvedIdentityId,
+            xmtpInstallationId: installation.xmtpInstallationId,
+          },
+          update: {
+            xmtpInstallationId: installation.xmtpInstallationId,
+          },
+        });
+      }
+    });
 
     // Register the new installations with XMTP
     // Process registrations in parallel for better performance

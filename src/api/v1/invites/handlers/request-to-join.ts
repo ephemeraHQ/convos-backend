@@ -198,8 +198,6 @@ export async function requestToJoin(
       });
       return;
     }
-    req.log.warn(`ERROR DEBUGGING : ${error as string}`);
-
     req.log.error({ error }, "Error creating join request");
     res.status(500).json({
       success: false,

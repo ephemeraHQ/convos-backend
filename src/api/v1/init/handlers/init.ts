@@ -1,8 +1,7 @@
-import { DeviceOS, type UserType } from "@prisma/client";
+import { DeviceOS } from "@prisma/client";
 import type { Request, Response } from "express";
 import { z } from "zod";
 import { prisma } from "@/utils/prisma";
-import { UserTypeSchema } from "../../../../../prisma/generated/zod";
 import { namestoneService } from "../../../../utils/namestone";
 import {
   validateOnChainName,
@@ -10,8 +9,6 @@ import {
 } from "../../profiles/handlers/validate-profile";
 
 export const createUserRequestBodySchema = z.object({
-  userId: z.string(),
-  userType: UserTypeSchema,
   device: z.object({
     id: z.string(),
     os: z.enum(Object.keys(DeviceOS) as [DeviceOS, ...DeviceOS[]]),
@@ -30,12 +27,9 @@ export const createUserRequestBodySchema = z.object({
   }),
 });
 
-export type CreateUserRequestBody = z.infer<typeof createUserRequestBodySchema>;
+export type InitRequestBody = z.infer<typeof createUserRequestBodySchema>;
 
-export type CreatedReturnedUser = {
-  id: string;
-  userId: string;
-  userType: UserType;
+export type InitResponse = {
   device: {
     id: string;
     os: DeviceOS;
@@ -55,8 +49,8 @@ export type CreatedReturnedUser = {
   };
 };
 
-export async function createUser(
-  req: Request<unknown, unknown, CreateUserRequestBody>,
+export async function init(
+  req: Request<unknown, unknown, InitRequestBody>,
   res: Response,
 ) {
   try {
@@ -100,85 +94,56 @@ export async function createUser(
     }
 
     // Execute all database operations in a transaction to ensure atomicity
-    const { createdUser, device, deviceIdentity } = await prisma.$transaction(
-      async (tx) => {
-        // Create user first
-        const createdUser = await tx.user.create({
-          data: {
-            userId: body.userId,
-            userType: body.userType,
-          },
-        });
+    const { device, deviceIdentity } = await prisma.$transaction(async (tx) => {
+      // Connect or create device
+      const device = await tx.device.upsert({
+        where: {
+          id: body.device.id,
+        },
+        update: {},
+        create: {
+          id: body.device.id,
+          os: body.device.os,
+          name: body.device.name,
+        },
+      });
 
-        // Connect or create device
-        const device = await tx.device.upsert({
-          where: {
-            id: body.device.id,
-          },
-          update: {},
-          create: {
-            id: body.device.id,
-            os: body.device.os,
-            name: body.device.name,
-          },
-        });
-
-        // Connect user to device
-        await tx.usersOnDevice.upsert({
-          where: {
-            userId_deviceId: {
-              userId: createdUser.id,
-              deviceId: device.id,
+      // Create device identity
+      const deviceIdentity = await tx.deviceIdentity.create({
+        data: {
+          xmtpId: body.identity.xmtpId,
+          identityAddress: body.identity.identityAddress,
+          profile: {
+            create: {
+              name: body.profile.name || null,
+              username: body.profile.username || null,
+              description: body.profile.description,
+              avatar: body.profile.avatar,
             },
           },
-          update: {},
-          create: {
-            userId: createdUser.id,
-            deviceId: device.id,
-          },
-        });
+        },
+        include: {
+          profile: true,
+        },
+      });
 
-        // Create device identity
-        const deviceIdentity = await tx.deviceIdentity.create({
-          data: {
-            userId: createdUser.id,
-            xmtpId: body.identity.xmtpId,
-            identityAddress: body.identity.identityAddress,
-            profile: {
-              create: {
-                name: body.profile.name || null,
-                username: body.profile.username || null,
-                description: body.profile.description,
-                avatar: body.profile.avatar,
-              },
-            },
-          },
-          include: {
-            profile: true,
-          },
-        });
+      // Link identity to device
+      await tx.identitiesOnDevice.create({
+        data: {
+          deviceId: device.id,
+          identityId: deviceIdentity.id,
+          xmtpInstallationId: body.identity.xmtpInstallationId,
+        },
+      });
 
-        // Link identity to device
-        await tx.identitiesOnDevice.create({
-          data: {
-            deviceId: device.id,
-            identityId: deviceIdentity.id,
-            xmtpInstallationId: body.identity.xmtpInstallationId,
-          },
-        });
-
-        return { createdUser, device, deviceIdentity };
-      },
-    );
+      return { device, deviceIdentity };
+    });
 
     if (!deviceIdentity.profile) {
       throw new Error("Profile was not created successfully");
     }
 
-    const returnedUser: CreatedReturnedUser = {
-      id: createdUser.id,
-      userId: createdUser.userId,
-      userType: createdUser.userType,
+    const returnedUser: InitResponse = {
       device: {
         id: device.id,
         os: device.os,
@@ -232,7 +197,7 @@ export async function createUser(
 
     res.status(201).json(returnedUser);
   } catch (error) {
-    console.error("Error creating user:", error);
+    req.log.error({ error }, "Error creating user");
     res.status(500).json({ error: "Failed to create user" });
   }
 }

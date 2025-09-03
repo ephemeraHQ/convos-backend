@@ -29,6 +29,12 @@ export async function updateProfile(
       return;
     }
 
+    // Enforce that the authenticated identity matches the target identity
+    if (!authenticatedXmtpId || authenticatedXmtpId !== targetXmtpId) {
+      res.status(403).json({ error: "Not authorized to update this profile" });
+      return;
+    }
+
     // First verify if the target device identity exists
     const deviceIdentity = await prisma.deviceIdentity.findFirst({
       where: {
@@ -38,19 +44,6 @@ export async function updateProfile(
 
     if (!deviceIdentity) {
       res.status(404).json({ error: "Device identity not found" });
-      return;
-    }
-
-    // Check if the authenticated user has access to this profile
-    const hasAccess = await prisma.deviceIdentity.findFirst({
-      where: {
-        xmtpId: authenticatedXmtpId,
-        userId: deviceIdentity.userId,
-      },
-    });
-
-    if (!hasAccess) {
-      res.status(403).json({ error: "Not authorized to update this profile" });
       return;
     }
 

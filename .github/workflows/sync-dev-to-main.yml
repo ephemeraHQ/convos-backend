@@ -1,4 +1,4 @@
-name: Sync dev to main
+name: Sync dev to main (Legacy)
 
 on:
   workflow_dispatch: # Only manual triggering via GitHub UI

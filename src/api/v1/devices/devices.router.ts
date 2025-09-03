@@ -6,16 +6,16 @@ import { updateDeviceHandler } from "./handlers/update-device.handler";
 
 const devicesRouter = Router();
 
-// GET /devices/:userId/:deviceId - Get a single device by ID
-devicesRouter.get("/:userId/:deviceId", getDeviceHandler);
+// GET /devices/:deviceId - Get a single device by ID
+devicesRouter.get("/:deviceId", getDeviceHandler);
 
-// GET /devices/:userId - Get all devices for a user
-devicesRouter.get("/:userId", listDevicesHandler);
+// GET /devices - Get all devices for the authenticated identity
+devicesRouter.get("/", listDevicesHandler);
 
-// POST /devices/:userId - Create a new device
-devicesRouter.post("/:userId", createDeviceHandler);
+// POST /devices - Create a new device for the authenticated identity
+devicesRouter.post("/", createDeviceHandler);
 
-// PATCH /devices/:userId/:deviceId - Update a device
-devicesRouter.patch("/:userId/:deviceId", updateDeviceHandler);
+// PATCH /devices/:deviceId - Update a device for the authenticated identity
+devicesRouter.patch("/:deviceId", updateDeviceHandler);
 
 export default devicesRouter;

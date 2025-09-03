@@ -1,31 +1,17 @@
 import { type Request, type Response } from "express";
 import { prisma } from "@/utils/prisma";
 
-export type GetDevicesRequestParams = {
-  userId: string;
-};
-
-export async function listDevicesHandler(
-  req: Request<GetDevicesRequestParams>,
-  res: Response,
-) {
+export async function listDevicesHandler(req: Request, res: Response) {
   try {
-    const { userId } = req.params;
     const { xmtpId } = req.app.locals;
 
-    // First find the user to verify they exist and are the authenticated user
-    const user = await prisma.user.findFirst({
-      where: {
-        userId: userId,
-        DeviceIdentity: {
-          some: {
-            xmtpId,
-          },
-        },
-      },
+    // Verify authenticated identity exists
+    const identity = await prisma.deviceIdentity.findFirst({
+      where: { xmtpId },
+      select: { id: true },
     });
 
-    if (!user) {
+    if (!identity) {
       res
         .status(403)
         .json({ error: "Not authorized to access this user's devices" });
@@ -35,11 +21,7 @@ export async function listDevicesHandler(
     // Get all devices associated with this user
     const devices = await prisma.device.findMany({
       where: {
-        users: {
-          some: {
-            userId: user.id,
-          },
-        },
+        identities: { some: { identityId: identity.id } },
       },
       select: {
         id: true,

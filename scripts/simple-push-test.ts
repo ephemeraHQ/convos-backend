@@ -2,46 +2,36 @@
 import { createApnsService } from "@/api/v1/notifications/services/apns-push.service";
 import { prisma } from "@/utils/prisma";
 
-// Simple version - just provide a userId and it will send a basic test notification
-async function quickPushTest(userId: string) {
-  console.log(`🔥 Quick Push Test for user: ${userId}\n`);
+// Simple version - just provide an XMTP ID and it will send a basic test notification
+async function quickPushTest(xmtpId: string) {
+  console.log(`🔥 Quick Push Test for identity (xmtpId): ${xmtpId}\n`);
 
-  // Find any APNS device for this user
-  const user = await prisma.user.findFirst({
+  // Find any APNS device linked to this identity
+  const firstDevice = await prisma.device.findFirst({
     where: {
-      userId,
-      devices: {
+      pushTokenType: "apns",
+      pushToken: { not: null },
+      identities: {
         some: {
-          device: {
-            pushTokenType: "apns",
-            pushToken: { not: null },
+          identity: {
+            xmtpId,
           },
         },
       },
     },
     include: {
-      devices: {
+      identities: {
         include: {
-          device: {
-            include: {
-              identities: {
-                include: {
-                  identity: true,
-                },
-              },
-            },
-          },
+          identity: true,
         },
       },
     },
   });
 
-  if (!user) {
-    console.log("❌ No APNS device found for this user");
+  if (!firstDevice) {
+    console.log("❌ No APNS device found for this identity");
     return;
   }
-
-  const firstDevice = user.devices[0].device;
 
   console.log(
     `📱 Found device: ${firstDevice.id || "Unnamed"} (${firstDevice.os})`,
@@ -79,13 +69,13 @@ async function quickPushTest(userId: string) {
   }
 }
 
-const userId = process.argv[2];
-if (!userId) {
-  console.log("Usage: bun run scripts/simple-push-test.ts <userId>");
+const xmtpId = process.argv[2];
+if (!xmtpId) {
+  console.log("Usage: bun run scripts/simple-push-test.ts <xmtpId>");
   process.exit(1);
 }
 
-quickPushTest(userId)
+quickPushTest(xmtpId)
   .then(() => prisma.$disconnect())
   .catch((error: unknown) => {
     console.error(error);

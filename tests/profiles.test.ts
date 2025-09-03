@@ -1,5 +1,5 @@
 import type { Server } from "http";
-import { DeviceOS, UserType, type Profile } from "@prisma/client";
+import { DeviceOS, type Profile } from "@prisma/client";
 import {
   afterAll,
   beforeAll,
@@ -9,15 +9,15 @@ import {
   test,
 } from "bun:test";
 import express from "express";
+import type {
+  InitRequestBody,
+  InitResponse,
+} from "@/api/v1/init/handlers/init";
+import initRouter from "@/api/v1/init/init.router";
 import { ProfileValidationErrorType } from "@/api/v1/profiles/handlers/validate-profile";
 import type { ProfileValidationResponse } from "@/api/v1/profiles/profile.types";
 import profilesRouter from "@/api/v1/profiles/profiles.router";
 import type { ProfileRequestResult } from "@/api/v1/profiles/profiles.types";
-import type {
-  CreatedReturnedUser,
-  CreateUserRequestBody,
-} from "@/api/v1/users/handlers/create-user";
-import usersRouter from "@/api/v1/users/users.router";
 import { jsonMiddleware } from "@/middleware/json";
 import { pinoMiddleware } from "@/middleware/pino";
 import { prisma } from "@/utils/prisma";
@@ -25,7 +25,15 @@ import { prisma } from "@/utils/prisma";
 const app = express();
 app.use(jsonMiddleware);
 app.use(pinoMiddleware);
-app.use("/users", usersRouter);
+// Mock authentication by allowing tests to override the authenticated XMTP ID via header
+app.use((req, _res, next) => {
+  const overrideXmtpId = req.headers["x-test-xmtp-id"];
+  if (typeof overrideXmtpId === "string") {
+    req.app.locals.xmtpId = overrideXmtpId;
+  }
+  next();
+});
+app.use("/users", initRouter);
 app.use("/profiles", profilesRouter);
 
 let server: Server;
@@ -45,12 +53,9 @@ beforeEach(async () => {
   await prisma.identitiesOnDevice.deleteMany();
   await prisma.deviceIdentity.deleteMany();
   await prisma.device.deleteMany();
-  await prisma.user.deleteMany();
 });
 
-const createUserBody: CreateUserRequestBody = {
-  userId: "test-profiles-turnkey-user-id",
-  userType: UserType.turnkey,
+const createUserBody: InitRequestBody = {
   device: {
     id: "test-device-id",
     os: DeviceOS.ios,
@@ -67,9 +72,7 @@ const createUserBody: CreateUserRequestBody = {
   },
 };
 
-const firstUserBody: CreateUserRequestBody = {
-  userId: "test-profiles-turnkey-user-id-6",
-  userType: UserType.turnkey,
+const firstUserBody: InitRequestBody = {
   device: {
     id: "test-device-id-6",
     os: DeviceOS.ios,
@@ -86,9 +89,7 @@ const firstUserBody: CreateUserRequestBody = {
   },
 };
 
-const secondUserBody: CreateUserRequestBody = {
-  userId: "test-profiles-turnkey-user-id-7",
-  userType: UserType.turnkey,
+const secondUserBody: InitRequestBody = {
   device: {
     id: "test-device-id-7",
     os: DeviceOS.ios,
@@ -122,8 +123,7 @@ describe("/profiles API", () => {
       },
       body: JSON.stringify(createUserBody),
     });
-    const createdUser =
-      (await createUserResponse.json()) as CreatedReturnedUser;
+    const createdUser = (await createUserResponse.json()) as InitResponse;
 
     const response = await fetch(
       `http://localhost:3004/profiles/${createdUser.identity.xmtpId}`,
@@ -144,8 +144,7 @@ describe("/profiles API", () => {
       },
       body: JSON.stringify(createUserBody),
     });
-    const createdUser =
-      (await createUserResponse.json()) as CreatedReturnedUser;
+    const createdUser = (await createUserResponse.json()) as InitResponse;
 
     // Update the profile
     const response = await fetch(
@@ -154,6 +153,7 @@ describe("/profiles API", () => {
         method: "PUT",
         headers: {
           "Content-Type": "application/json",
+          "x-test-xmtp-id": createUserBody.identity.xmtpId,
         },
         body: JSON.stringify({
           name: "UpdatedName123",
@@ -179,8 +179,7 @@ describe("/profiles API", () => {
       },
       body: JSON.stringify(createUserBody),
     });
-    const createdUser =
-      (await createUserResponse.json()) as CreatedReturnedUser;
+    const createdUser = (await createUserResponse.json()) as InitResponse;
 
     const response = await fetch(
       `http://localhost:3004/profiles/${createdUser.identity.xmtpId}`,
@@ -188,6 +187,7 @@ describe("/profiles API", () => {
         method: "PUT",
         headers: {
           "Content-Type": "application/json",
+          "x-test-xmtp-id": createUserBody.identity.xmtpId,
         },
         body: JSON.stringify({
           name: "Test@Profile", // Contains special characters
@@ -212,8 +212,7 @@ describe("/profiles API", () => {
       },
       body: JSON.stringify(createUserBody),
     });
-    const createdUser =
-      (await createUserResponse.json()) as CreatedReturnedUser;
+    const createdUser = (await createUserResponse.json()) as InitResponse;
 
     const response = await fetch(
       `http://localhost:3004/profiles/${createdUser.identity.xmtpId}`,
@@ -221,6 +220,7 @@ describe("/profiles API", () => {
         method: "PUT",
         headers: {
           "Content-Type": "application/json",
+          "x-test-xmtp-id": createUserBody.identity.xmtpId,
         },
         body: JSON.stringify({
           username: "test_user!", // Contains underscore and special characters
@@ -245,8 +245,7 @@ describe("/profiles API", () => {
       },
       body: JSON.stringify(createUserBody),
     });
-    const createdUser =
-      (await createUserResponse.json()) as CreatedReturnedUser;
+    const createdUser = (await createUserResponse.json()) as InitResponse;
 
     const response = await fetch(
       `http://localhost:3004/profiles/${createdUser.identity.xmtpId}`,
@@ -254,6 +253,7 @@ describe("/profiles API", () => {
         method: "PUT",
         headers: {
           "Content-Type": "application/json",
+          "x-test-xmtp-id": createUserBody.identity.xmtpId,
         },
         body: JSON.stringify({
           name: 123, // Invalid type for name (should be string)
@@ -278,8 +278,7 @@ describe("/profiles API", () => {
       },
       body: JSON.stringify(createUserBody),
     });
-    const createdUser =
-      (await createUserResponse.json()) as CreatedReturnedUser;
+    const createdUser = (await createUserResponse.json()) as InitResponse;
 
     const response = await fetch(
       `http://localhost:3004/profiles/${createdUser.identity.xmtpId}`,
@@ -287,6 +286,7 @@ describe("/profiles API", () => {
         method: "PUT",
         headers: {
           "Content-Type": "application/json",
+          "x-test-xmtp-id": createUserBody.identity.xmtpId,
         },
         body: JSON.stringify({
           name: "ab", // Too short (minimum 3 characters)
@@ -311,8 +311,7 @@ describe("/profiles API", () => {
       },
       body: JSON.stringify(createUserBody),
     });
-    const createdUser =
-      (await createUserResponse.json()) as CreatedReturnedUser;
+    const createdUser = (await createUserResponse.json()) as InitResponse;
 
     const response = await fetch(
       `http://localhost:3004/profiles/${createdUser.identity.xmtpId}`,
@@ -320,6 +319,7 @@ describe("/profiles API", () => {
         method: "PUT",
         headers: {
           "Content-Type": "application/json",
+          "x-test-xmtp-id": createUserBody.identity.xmtpId,
         },
         body: JSON.stringify({
           name: "a".repeat(51), // Too long (maximum 50 characters)
@@ -344,8 +344,7 @@ describe("/profiles API", () => {
       },
       body: JSON.stringify(createUserBody),
     });
-    const createdUser =
-      (await createUserResponse.json()) as CreatedReturnedUser;
+    const createdUser = (await createUserResponse.json()) as InitResponse;
 
     const response = await fetch(
       `http://localhost:3004/profiles/${createdUser.identity.xmtpId}`,
@@ -353,6 +352,7 @@ describe("/profiles API", () => {
         method: "PUT",
         headers: {
           "Content-Type": "application/json",
+          "x-test-xmtp-id": createUserBody.identity.xmtpId,
         },
         body: JSON.stringify({
           description: "a".repeat(501), // Too long (maximum 500 characters)
@@ -377,8 +377,7 @@ describe("/profiles API", () => {
       },
       body: JSON.stringify(createUserBody),
     });
-    const createdUser =
-      (await createUserResponse.json()) as CreatedReturnedUser;
+    const createdUser = (await createUserResponse.json()) as InitResponse;
 
     const response = await fetch(
       `http://localhost:3004/profiles/${createdUser.identity.xmtpId}`,
@@ -386,6 +385,7 @@ describe("/profiles API", () => {
         method: "PUT",
         headers: {
           "Content-Type": "application/json",
+          "x-test-xmtp-id": createUserBody.identity.xmtpId,
         },
         body: JSON.stringify({
           avatar: "not-a-valid-url", // Invalid URL format
@@ -421,8 +421,7 @@ describe("/profiles API", () => {
         body: JSON.stringify(secondUserBody),
       },
     );
-    const secondUser =
-      (await createSecondUserResponse.json()) as CreatedReturnedUser;
+    const secondUser = (await createSecondUserResponse.json()) as InitResponse;
 
     // Try to update second user's username to first user's username
     const response = await fetch(
@@ -431,6 +430,7 @@ describe("/profiles API", () => {
         method: "PUT",
         headers: {
           "Content-Type": "application/json",
+          "x-test-xmtp-id": secondUserBody.identity.xmtpId,
         },
         body: JSON.stringify({
           username: "existinguser123", // Already taken by first user
@@ -523,8 +523,7 @@ describe("/profiles API", () => {
       },
       body: JSON.stringify(createUserBody),
     });
-    const createdUser =
-      (await createUserResponse.json()) as CreatedReturnedUser;
+    const createdUser = (await createUserResponse.json()) as InitResponse;
 
     // Update just the avatar
     const response = await fetch(
@@ -533,6 +532,7 @@ describe("/profiles API", () => {
         method: "PUT",
         headers: {
           "Content-Type": "application/json",
+          "x-test-xmtp-id": createUserBody.identity.xmtpId,
         },
         body: JSON.stringify({
           avatar: "https://example.com/new-avatar.jpg",
@@ -607,8 +607,7 @@ describe("/profiles API", () => {
       },
       body: JSON.stringify(createUserBody),
     });
-    const createdUser =
-      (await createUserResponse.json()) as CreatedReturnedUser;
+    const createdUser = (await createUserResponse.json()) as InitResponse;
 
     // Update only the name
     const response = await fetch(
@@ -617,6 +616,7 @@ describe("/profiles API", () => {
         method: "PUT",
         headers: {
           "Content-Type": "application/json",
+          "x-test-xmtp-id": createUserBody.identity.xmtpId,
         },
         body: JSON.stringify({
           name: "UpdatedName123",
@@ -640,8 +640,7 @@ describe("/profiles API", () => {
       },
       body: JSON.stringify(createUserBody),
     });
-    const createdUser =
-      (await createUserResponse.json()) as CreatedReturnedUser;
+    const createdUser = (await createUserResponse.json()) as InitResponse;
 
     const response = await fetch(
       `http://localhost:3004/profiles/${createdUser.identity.xmtpId}`,
@@ -649,6 +648,7 @@ describe("/profiles API", () => {
         method: "PUT",
         headers: {
           "Content-Type": "application/json",
+          "x-test-xmtp-id": createUserBody.identity.xmtpId,
         },
         body: JSON.stringify({
           name: "Test@Profile", // Contains special characters
@@ -683,7 +683,7 @@ describe("/profiles API", () => {
     });
 
     expect(response.status).toBe(201);
-    const user = (await response.json()) as CreatedReturnedUser;
+    const user = (await response.json()) as InitResponse;
     expect(user.profile.name).toBe(null);
     expect(user.profile.username).toBe(null);
     expect(user.profile.description).toBe("Test Description");
@@ -697,8 +697,7 @@ describe("/profiles API", () => {
       },
       body: JSON.stringify(createUserBody),
     });
-    const createdUser =
-      (await createUserResponse.json()) as CreatedReturnedUser;
+    const createdUser = (await createUserResponse.json()) as InitResponse;
 
     // Update with minimal data
     const response = await fetch(
@@ -707,6 +706,7 @@ describe("/profiles API", () => {
         method: "PUT",
         headers: {
           "Content-Type": "application/json",
+          "x-test-xmtp-id": createUserBody.identity.xmtpId,
         },
         body: JSON.stringify({
           username: "newuser123",
@@ -729,8 +729,7 @@ describe("/profiles API", () => {
       },
       body: JSON.stringify(createUserBody),
     });
-    const createdUser =
-      (await createUserResponse.json()) as CreatedReturnedUser;
+    const createdUser = (await createUserResponse.json()) as InitResponse;
 
     const response = await fetch(
       `http://localhost:3004/profiles/${createdUser.identity.xmtpId}`,
@@ -738,6 +737,7 @@ describe("/profiles API", () => {
         method: "PUT",
         headers: {
           "Content-Type": "application/json",
+          "x-test-xmtp-id": createUserBody.identity.xmtpId,
         },
         body: JSON.stringify({
           name: "ab", // Too short
@@ -777,8 +777,7 @@ describe("/profiles API", () => {
       },
       body: JSON.stringify(createUserBody),
     });
-    const createdUser =
-      (await createUserResponse.json()) as CreatedReturnedUser;
+    const createdUser = (await createUserResponse.json()) as InitResponse;
 
     const response = await fetch(
       `http://localhost:3004/profiles/${createdUser.identity.xmtpId}`,
@@ -786,6 +785,7 @@ describe("/profiles API", () => {
         method: "PUT",
         headers: {
           "Content-Type": "application/json",
+          "x-test-xmtp-id": createUserBody.identity.xmtpId,
         },
         body: JSON.stringify({
           name: "vitalik.eth", // On-chain name that the user doesn't own
@@ -819,8 +819,7 @@ describe("/profiles API", () => {
       },
       body: JSON.stringify(vitalikUserBody),
     });
-    const createdUser =
-      (await createUserResponse.json()) as CreatedReturnedUser;
+    const createdUser = (await createUserResponse.json()) as InitResponse;
 
     // Try to update the name to vitalik.eth
     const response = await fetch(
@@ -829,6 +828,7 @@ describe("/profiles API", () => {
         method: "PUT",
         headers: {
           "Content-Type": "application/json",
+          "x-test-xmtp-id": vitalikUserBody.identity.xmtpId,
         },
         body: JSON.stringify({
           name: "vitalik.eth",
@@ -849,8 +849,7 @@ describe("/profiles API", () => {
       },
       body: JSON.stringify(createUserBody),
     });
-    const createdUser =
-      (await createUserResponse.json()) as CreatedReturnedUser;
+    const createdUser = (await createUserResponse.json()) as InitResponse;
 
     const response = await fetch(
       `http://localhost:3004/profiles/${createdUser.identity.xmtpId}`,
@@ -858,6 +857,7 @@ describe("/profiles API", () => {
         method: "PUT",
         headers: {
           "Content-Type": "application/json",
+          "x-test-xmtp-id": createUserBody.identity.xmtpId,
         },
         body: JSON.stringify({
           name: "vitalik.eth", // Try to claim vitalik.eth with a different address
@@ -872,5 +872,68 @@ describe("/profiles API", () => {
       type: ProfileValidationErrorType.ONCHAIN_NAME_NOT_OWNED,
       message: "You don't own this on-chain name",
     });
+  });
+
+  test("PUT /profiles/:id forbids updating another user's profile", async () => {
+    // Create victim user
+    const victimBody: InitRequestBody = {
+      device: {
+        id: "victim-device-id",
+        os: DeviceOS.ios,
+        name: "Victim iPhone",
+      },
+      identity: { identityAddress: "victim-address", xmtpId: "victim-xmtp-id" },
+      profile: {
+        name: "Victim",
+        username: "victimuser",
+        description: "Victim bio",
+      },
+    };
+    const victimRes = await fetch("http://localhost:3004/users", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(victimBody),
+    });
+    expect(victimRes.status).toBe(201);
+
+    // Create attacker user
+    const attackerBody: InitRequestBody = {
+      device: {
+        id: "attacker-device-id",
+        os: DeviceOS.ios,
+        name: "Attacker iPhone",
+      },
+      identity: {
+        identityAddress: "attacker-address",
+        xmtpId: "attacker-xmtp-id",
+      },
+      profile: {
+        name: "Attacker",
+        username: "attackeruser",
+        description: "Attacker bio",
+      },
+    };
+    const attackerRes = await fetch("http://localhost:3004/users", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(attackerBody),
+    });
+    expect(attackerRes.status).toBe(201);
+
+    // Attempt to update victim profile while authenticated as attacker
+    const updateRes = await fetch(
+      `http://localhost:3004/profiles/${victimBody.identity.xmtpId}`,
+      {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          "x-test-xmtp-id": "attacker-xmtp-id",
+        },
+        body: JSON.stringify({ name: "Hacked Name" }),
+      },
+    );
+
+    // Expectation: should be forbidden (403). If this fails, it indicates a vulnerability.
+    expect(updateRes.status).toBe(403);
   });
 });

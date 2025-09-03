@@ -1,5 +1,5 @@
 import type { Server } from "http";
-import { DeviceOS, InviteCodeStatus, UserType } from "@prisma/client";
+import { DeviceOS, InviteCodeStatus } from "@prisma/client";
 import {
   afterAll,
   beforeAll,
@@ -9,13 +9,13 @@ import {
   test,
 } from "bun:test";
 import express from "express";
+import type { InitResponse } from "@/api/v1/init/handlers/init";
 import type {
   CreateInviteCodeRequestBody,
   CreateInviteCodeResponse,
 } from "@/api/v1/invites/handlers/create-invite-code";
 import type { GetInviteDetailsResponse } from "@/api/v1/invites/handlers/get-invite-details";
 import invitesRouter from "@/api/v1/invites/invites.router";
-import type { CreatedReturnedUser } from "@/api/v1/users/handlers/create-user";
 import { jsonMiddleware } from "@/middleware/json";
 import { pinoMiddleware } from "@/middleware/pino";
 import { prisma } from "@/utils/prisma";
@@ -59,23 +59,13 @@ beforeEach(async () => {
   await prisma.identitiesOnDevice.deleteMany();
   await prisma.deviceIdentity.deleteMany();
   await prisma.device.deleteMany();
-  await prisma.user.deleteMany();
 });
 
 // Helper function to create a test user with DeviceIdentity
 async function createTestUser(suffix = "", xmtpId = AUTH_USER_XMTP_ID) {
-  // Create user first
-  const user = await prisma.user.create({
-    data: {
-      userId: `test-invites-turnkey-user-id${suffix}`,
-      userType: UserType.turnkey,
-    },
-  });
-
   // Create DeviceIdentity directly
   const deviceIdentity = await prisma.deviceIdentity.create({
     data: {
-      userId: user.id,
       xmtpId,
       identityAddress: `test-turnkey-address${suffix}`,
       profile: {
@@ -100,14 +90,6 @@ async function createTestUser(suffix = "", xmtpId = AUTH_USER_XMTP_ID) {
     },
   });
 
-  // Link user and device
-  await prisma.usersOnDevice.create({
-    data: {
-      userId: user.id,
-      deviceId: device.id,
-    },
-  });
-
   // Link device and identity
   await prisma.identitiesOnDevice.create({
     data: {
@@ -118,9 +100,6 @@ async function createTestUser(suffix = "", xmtpId = AUTH_USER_XMTP_ID) {
   });
 
   return {
-    id: user.id,
-    userId: user.userId,
-    userType: user.userType,
     device: {
       id: device.id,
       os: device.os,
@@ -138,7 +117,7 @@ async function createTestUser(suffix = "", xmtpId = AUTH_USER_XMTP_ID) {
       description: deviceIdentity.profile!.description,
       avatar: deviceIdentity.profile!.avatar,
     },
-  } as CreatedReturnedUser;
+  } as InitResponse;
 }
 
 describe("/invites API", () => {
