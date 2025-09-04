@@ -26,7 +26,7 @@ export async function updateDeviceHandler(
 ) {
   try {
     const { deviceId } = req.params;
-    const { xmtpId } = req.app.locals;
+    const { xmtpId } = res.locals;
 
     // Verify the authenticated identity exists
     const identity = await prisma.deviceIdentity.findFirst({
@@ -109,7 +109,7 @@ export async function updateDeviceHandler(
   } catch (error) {
     logError(error, {
       deviceId: req.params.deviceId,
-      xmtpId: req.app.locals.xmtpId,
+      xmtpId: res.locals.xmtpId,
       requestBodyMetadata: {
         hasPushToken: Boolean(req.body.pushToken),
         pushTokenType: typeof req.body.pushTokenType,

@@ -3,7 +3,7 @@ import { prisma } from "@/utils/prisma";
 
 export async function listDevicesHandler(req: Request, res: Response) {
   try {
-    const { xmtpId } = req.app.locals;
+    const { xmtpId } = res.locals;
 
     // Verify authenticated identity exists
     const identity = await prisma.deviceIdentity.findFirst({

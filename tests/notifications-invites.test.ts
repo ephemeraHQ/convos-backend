@@ -46,11 +46,11 @@ describe("Invite Notifications Integration", () => {
     // Mock authentication middleware
     app.use((req, _res, next) => {
       const overrideXmtpId = req.headers["x-test-xmtp-id"];
-      req.app.locals.xmtpId =
+      _res.locals.xmtpId =
         typeof overrideXmtpId === "string"
           ? overrideXmtpId
           : "test-default-xmtp-id";
-      req.app.locals.xmtpInstallationId = "test-installation-id";
+      _res.locals.xmtpInstallationId = "test-installation-id";
       next();
     });
 

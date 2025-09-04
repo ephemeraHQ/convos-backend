@@ -18,7 +18,7 @@ export type DeleteRequestToJoinResponse = {
 export async function deleteRequestToJoin(req: Request, res: Response) {
   try {
     const params = await deleteRequestToJoinParams.parseAsync(req.params);
-    const { xmtpId } = req.app.locals;
+    const { xmtpId } = res.locals;
 
     // Find the authenticated user's identity (by xmtpId)
     const authenticatedIdentity = await prisma.deviceIdentity.findFirst({

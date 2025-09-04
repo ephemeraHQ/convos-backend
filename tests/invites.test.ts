@@ -29,7 +29,7 @@ const AUTH_USER_XMTP_ID = "test-invite-xmtp-id";
 // Add middleware to simulate authentication for tests
 app.use((req, res, next) => {
   const overrideXmtpId = req.headers["x-test-xmtp-id"];
-  req.app.locals.xmtpId =
+  res.locals.xmtpId =
     typeof overrideXmtpId === "string" ? overrideXmtpId : AUTH_USER_XMTP_ID;
   next();
 });
@@ -622,8 +622,8 @@ describe("/invites API", () => {
     secondUserApp.use(pinoMiddleware);
     secondUserApp.use(jsonMiddleware);
     secondUserApp.use((req, _res, next) => {
-      req.app.locals.xmtpId = "different-user-xmtp-id";
-      req.app.locals.xmtpInstallationId = "different-installation-id";
+      _res.locals.xmtpId = "different-user-xmtp-id";
+      _res.locals.xmtpInstallationId = "different-installation-id";
       next();
     });
     secondUserApp.use("/invites", invitesRouter);
@@ -737,8 +737,8 @@ describe("/invites API", () => {
     secondUserApp.use(pinoMiddleware);
     secondUserApp.use(jsonMiddleware);
     secondUserApp.use((req, _res, next) => {
-      req.app.locals.xmtpId = "different-user-get-details-xmtp-id";
-      req.app.locals.xmtpInstallationId = "different-installation-id";
+      _res.locals.xmtpId = "different-user-get-details-xmtp-id";
+      _res.locals.xmtpInstallationId = "different-installation-id";
       next();
     });
     secondUserApp.use("/invites", invitesRouter);

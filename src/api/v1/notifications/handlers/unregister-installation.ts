@@ -17,7 +17,7 @@ export async function unregisterInstallation(
   res: Response,
 ) {
   try {
-    const authenticatedXmtpId = req.app.locals.xmtpId;
+    const authenticatedXmtpId = res.locals.xmtpId;
 
     const { xmtpInstallationId } = unregisterRequestParamsSchema.parse(
       req.params,

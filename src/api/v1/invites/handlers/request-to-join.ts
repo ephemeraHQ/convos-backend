@@ -26,7 +26,7 @@ export async function requestToJoin(
 ) {
   try {
     const body = await requestToJoinSchema.parseAsync(req.body);
-    const { xmtpId } = req.app.locals;
+    const { xmtpId } = res.locals;
 
     const pushNotificationService = getPushNotificationService();
 
