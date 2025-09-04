@@ -17,7 +17,7 @@ export async function deleteInvite(req: Request, res: Response) {
   try {
     const params = await deleteInviteParamsSchema.parseAsync(req.params);
 
-    const { xmtpId } = req.app.locals;
+    const { xmtpId } = res.locals;
 
     // Find the authenticated user's identity
     const identity = await prisma.deviceIdentity.findFirst({

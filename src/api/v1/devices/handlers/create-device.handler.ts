@@ -27,7 +27,7 @@ export async function createDeviceHandler(
   res: Response,
 ) {
   try {
-    const { xmtpId } = req.app.locals;
+    const { xmtpId } = res.locals;
 
     // Verify the authenticated identity exists
     const identity = await prisma.deviceIdentity.findFirst({

@@ -12,7 +12,7 @@ export async function getDeviceHandler(
 ) {
   try {
     const { deviceId } = req.params;
-    const { xmtpId } = req.app.locals;
+    const { xmtpId } = res.locals;
 
     // Verify authenticated identity exists
     const identity = await prisma.deviceIdentity.findFirst({
@@ -67,7 +67,7 @@ export async function getDeviceHandler(
   } catch (error) {
     logError(error, {
       deviceId: req.params.deviceId,
-      xmtpId: req.app.locals.xmtpId,
+      xmtpId: res.locals.xmtpId,
     });
 
     if (error instanceof AppError) {

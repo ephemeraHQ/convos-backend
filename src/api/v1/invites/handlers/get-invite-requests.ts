@@ -41,7 +41,7 @@ export async function getInviteRequests(
 ) {
   try {
     const query = await querySchema.parseAsync(req.query);
-    const { xmtpId } = req.app.locals;
+    const { xmtpId } = res.locals;
 
     // Find the authenticated user's identity
     const identity = await prisma.deviceIdentity.findFirst({

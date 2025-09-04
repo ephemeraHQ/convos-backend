@@ -29,7 +29,7 @@ app.use(pinoMiddleware);
 app.use((req, _res, next) => {
   const overrideXmtpId = req.headers["x-test-xmtp-id"];
   if (typeof overrideXmtpId === "string") {
-    req.app.locals.xmtpId = overrideXmtpId;
+    _res.locals.xmtpId = overrideXmtpId;
   }
   next();
 });

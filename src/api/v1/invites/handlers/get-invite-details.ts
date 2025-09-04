@@ -106,7 +106,7 @@ export const getOwnerInviteDetailsHandler = async (
     const { inviteId } = await paramsSchema.parseAsync(req.params);
 
     // Get the authenticated user's identity from the JWT
-    const { xmtpId } = req.app.locals;
+    const { xmtpId } = res.locals;
 
     const identity = await prisma.deviceIdentity.findFirst({
       where: { xmtpId },
@@ -183,7 +183,7 @@ export const getAuthenticatedInviteDetailsHandler = async (
     const { inviteId } = await paramsSchema.parseAsync(req.params);
 
     // Get the authenticated user's identity from the JWT
-    const xmtpId = req.app.locals.xmtpId;
+    const xmtpId = res.locals.xmtpId;
 
     if (!xmtpId) {
       res.status(404).json({
