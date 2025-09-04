@@ -35,8 +35,13 @@ let baseUrl: string;
 
 describe("Batch Profile endpoints", () => {
   const testProfiles: (Profile & { deviceIdentity: DeviceIdentity })[] = [];
-  const xmtpIds = ["test-xmtp-id-1", "test-xmtp-id-2", "test-xmtp-id-3"];
-  const testIdentityId = "test-user-id-batch-profiles";
+  const testRunId = `${Date.now()}-${Math.random().toString(36).substring(7)}`;
+  const xmtpIds = [
+    `test-xmtp-id-1-${testRunId}`,
+    `test-xmtp-id-2-${testRunId}`,
+    `test-xmtp-id-3-${testRunId}`,
+  ];
+  const testIdentityId = `test-user-id-batch-profiles-${testRunId}`;
 
   beforeAll(async () => {
     // Wait a bit in CI environments
@@ -50,7 +55,7 @@ describe("Batch Profile endpoints", () => {
       await prisma.deviceIdentity.create({
         data: {
           id: testIdentityId,
-          xmtpId: "test-turnkey-user-id-batch-profiles",
+          xmtpId: `test-turnkey-user-id-batch-profiles-${testRunId}`,
         },
       });
 
