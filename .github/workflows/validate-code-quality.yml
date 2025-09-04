@@ -34,4 +34,3 @@ jobs:
           NOTIFICATION_SERVER_URL: ${{ secrets.NOTIFICATION_SERVER_URL }}
           XMTP_NOTIFICATION_SECRET: ${{ secrets.XMTP_NOTIFICATION_SECRET }}
           FIREBASE_SERVICE_ACCOUNT: "{}"
-          FIREBASE_BACKEND_APP_ID: "firebase-test-app-id"
