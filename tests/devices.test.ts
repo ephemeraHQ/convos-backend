@@ -27,7 +27,7 @@ app.use(jsonMiddleware);
 // Add middleware to simulate authentication for tests
 app.use((req, res, next) => {
   // Set xmtpId for testing - this simulates the auth middleware
-  req.app.locals.xmtpId = AUTH_XMTP_ID;
+  res.locals.xmtpId = AUTH_XMTP_ID;
   next();
 });
 

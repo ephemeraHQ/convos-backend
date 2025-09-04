@@ -27,11 +27,11 @@ app.use(jsonMiddleware);
 // Mock authentication by setting the request locals with optional override
 app.use((req, _res, next) => {
   const overrideXmtpId = req.headers["x-test-xmtp-id"];
-  req.app.locals.xmtpId =
+  _res.locals.xmtpId =
     typeof overrideXmtpId === "string"
       ? overrideXmtpId
       : "test-xmtp-id-requester";
-  req.app.locals.xmtpInstallationId = "test-installation-id";
+  _res.locals.xmtpInstallationId = "test-installation-id";
   next();
 });
 
@@ -213,7 +213,7 @@ describe("/invites/request API", () => {
     testApp.use(pinoMiddleware);
     testApp.use(jsonMiddleware);
     testApp.use((req, _res, next) => {
-      req.app.locals.xmtpId = "non-existent-xmtp-id";
+      _res.locals.xmtpId = "non-existent-xmtp-id";
       next();
     });
     testApp.use("/invites", invitesRouter);

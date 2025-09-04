@@ -22,7 +22,7 @@ export async function updateProfile(
 ) {
   try {
     const { xmtpId: targetXmtpId } = req.params;
-    const { xmtpId: authenticatedXmtpId } = req.app.locals;
+    const { xmtpId: authenticatedXmtpId } = res.locals;
 
     if (!targetXmtpId) {
       res.status(400).json({ error: "Invalid request parameters" });

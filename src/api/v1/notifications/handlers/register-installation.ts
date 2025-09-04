@@ -91,7 +91,7 @@ async function handleCurrentRegistration(args: {
   const { req, res, body } = args;
 
   try {
-    const authenticatedXmtpId = req.app.locals.xmtpId;
+    const authenticatedXmtpId = res.locals.xmtpId;
 
     // Ensure the authenticated identity exists
     const deviceIdentityForAuthenticatedUser =
