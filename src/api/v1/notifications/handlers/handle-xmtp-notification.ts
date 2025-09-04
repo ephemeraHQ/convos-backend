@@ -79,7 +79,7 @@ export async function handleXmtpNotification(req: Request, res: Response) {
     const { device, identity } = identityOnDevice;
 
     const result = await pushNotificationService.sendPushNotification({
-      device,
+      identityOnDevice,
       notification: {
         inboxId: identity.xmtpId,
         notificationType: "Protocol",

@@ -1,12 +1,21 @@
-import type { Device } from "@prisma/client";
-import { generateAppCheckToken } from "@/utils/firebase";
+import type {
+  Device,
+  DeviceIdentity,
+  IdentitiesOnDevice,
+} from "@prisma/client";
+import { createJwtToken } from "@/utils/jwt";
 import logger from "@/utils/logger";
 import { prisma } from "@/utils/prisma";
 import { createApnsService, type ApnsPushService } from "./apns-push.service";
 import type {
   NotificationPayload,
-  NotificationPayloadWithAppCheckToken,
+  NotificationPayloadWithJWTToken,
 } from "./notifications-types";
+
+type IdentityOnDeviceWithRelations = IdentitiesOnDevice & {
+  device: Device;
+  identity: DeviceIdentity;
+};
 
 type SendNotificationResult = {
   success: boolean;
@@ -34,27 +43,83 @@ export class PushNotificationService {
           },
         },
       },
+      include: {
+        identities: {
+          include: {
+            identity: true,
+          },
+        },
+      },
     });
     if (!device) {
       return { success: false, shouldCleanup: false };
     }
-    return this.sendPushNotification({ device, notification });
+    // Find the identity that matches the notification's inboxId to get the xmtpInstallationId
+    const targetIdentityOnDevice = device.identities.find(
+      (identityOnDevice) =>
+        identityOnDevice.identity.xmtpId === notification.inboxId,
+    );
+
+    if (!targetIdentityOnDevice) {
+      logger.error(
+        { deviceId: device.id, inboxId: notification.inboxId },
+        "No matching identity found on device for notification",
+      );
+      return { success: false };
+    }
+
+    if (!targetIdentityOnDevice.xmtpInstallationId) {
+      logger.error(
+        { deviceId: device.id, inboxId: notification.inboxId },
+        "No XMTP installation ID found for identity",
+      );
+      return { success: false };
+    }
+
+    // Create the IdentityOnDeviceWithRelations object
+    const identityOnDevice: IdentityOnDeviceWithRelations = {
+      ...targetIdentityOnDevice,
+      device,
+    };
+
+    return this.sendPushNotification({
+      identityOnDevice,
+      notification,
+    });
   }
 
   async _sendPushNotification(args: {
-    device: Device;
+    identityOnDevice: IdentityOnDeviceWithRelations;
     notification: NotificationPayload;
   }): Promise<SendNotificationResult> {
-    const { device, notification } = args;
-    // We add an app check token to the notification payload to be used by the client
-    // So the notification extension is able to communicate with our backend (App Attest not supported in extensions)
-    const appCheckToken = await generateAppCheckToken({
-      ttlMillis: 12 * 60 * 60 * 1000, // 12 hours token for notifications
+    const { identityOnDevice, notification } = args;
+    const device = identityOnDevice.device;
+
+    if (!identityOnDevice.xmtpInstallationId) {
+      logger.error(
+        { deviceId: device.id, identityId: identityOnDevice.identityId },
+        "No XMTP installation ID found for identity on device",
+      );
+      return { success: false };
+    }
+
+    const xmtpInstallationId = identityOnDevice.xmtpInstallationId;
+
+    // We add an JWT token to the notification payload to be used by the client
+    // So the notification extension is able to communicate with our backend (App Attest not supported in extensions so we can't call authenticate)
+    const apiJWT = await createJwtToken({
+      inboxId: notification.inboxId,
+      xmtpInstallationId,
+      expirationTime: "72h",
+      metadata: {
+        notificationExtensionOnly: true,
+      },
     });
-    const notificationWithAppCheckToken = {
+
+    const notificationWithJWTToken = {
       ...notification,
-      appCheckToken,
-    } as NotificationPayloadWithAppCheckToken;
+      apiJWT,
+    } as NotificationPayloadWithJWTToken;
 
     // Check if device has too many push failures
     if (device.pushFailures > 10) {
@@ -77,7 +142,7 @@ export class PushNotificationService {
         }
         result = await this.apnsService.sendPushNotification({
           device,
-          notification: notificationWithAppCheckToken,
+          notification: notificationWithJWTToken,
         });
         break;
 
@@ -109,7 +174,7 @@ export class PushNotificationService {
   }
 
   async sendPushNotification(args: {
-    device: Device;
+    identityOnDevice: IdentityOnDeviceWithRelations;
     notification: NotificationPayload;
   }): Promise<SendNotificationResult> {
     try {
@@ -117,10 +182,10 @@ export class PushNotificationService {
       return notificationResult;
     } catch (error) {
       logger.error(
-        { error, deviceId: args.device.id },
+        { error, deviceId: args.identityOnDevice.device.id },
         "Unexpected error sending push",
       );
-      await this.incrementPushFailures(args.device.id);
+      await this.incrementPushFailures(args.identityOnDevice.device.id);
       return { success: false };
     }
   }

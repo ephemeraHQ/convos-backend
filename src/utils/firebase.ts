@@ -38,18 +38,3 @@ export const verifyAppCheckToken = async (token: string) => {
   const appCheck = await getAppCheck(app).verifyToken(token);
   logger.info(`App Check token verified for app ${appCheck.appId}`);
 };
-
-/**
- * Generate a Firebase App Check token using the shared Firebase app instance.
- */
-export const generateAppCheckToken = async (args?: { ttlMillis?: number }) => {
-  if (!process.env.FIREBASE_BACKEND_APP_ID) {
-    throw new AppError(500, "FIREBASE_BACKEND_APP_ID is not set");
-  }
-  const app = getFirebaseApp();
-  const appCheckToken = await getAppCheck(app).createToken(
-    process.env.FIREBASE_BACKEND_APP_ID,
-    { ttlMillis: args?.ttlMillis },
-  );
-  return appCheckToken.token;
-};

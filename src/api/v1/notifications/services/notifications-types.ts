@@ -51,6 +51,6 @@ export type NotificationPayload = {
 export type NotificationPayloadFor<T extends NotificationType> =
   NotificationPayloadBase<T>;
 
-export type NotificationPayloadWithAppCheckToken = NotificationPayload & {
-  appCheckToken: string;
+export type NotificationPayloadWithJWTToken = NotificationPayload & {
+  apiJWT: string;
 };

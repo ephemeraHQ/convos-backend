@@ -4,7 +4,7 @@ import jwt from "jsonwebtoken";
 import logger from "@/utils/logger";
 import type {
   NotificationPayload,
-  NotificationPayloadWithAppCheckToken,
+  NotificationPayloadWithJWTToken,
 } from "./notifications-types";
 
 export interface ApnsConfig {
@@ -75,7 +75,7 @@ export class ApnsPushService {
 
   async sendPushNotification(args: {
     device: Device;
-    notification: NotificationPayloadWithAppCheckToken;
+    notification: NotificationPayloadWithJWTToken;
     isSilent?: boolean;
   }): Promise<{ success: boolean; error?: string }> {
     const { device, notification, isSilent } = args;

@@ -58,7 +58,7 @@ async function quickPushTest(xmtpId: string) {
       inboxId: firstDevice.identities[0].identity.xmtpId,
       notificationType: "Protocol",
       notificationData: messageData,
-      appCheckToken: "dummy-app-check-token",
+      apiJWT: "dummy-jwt-token",
     },
   });
 

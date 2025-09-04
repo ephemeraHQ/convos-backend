@@ -4,7 +4,7 @@ import { tryCatch } from "@/utils/try-catch";
 import logger from "./logger";
 
 export type JWTMetadata = {
-  allowedEndpoints?: string[];
+  notificationExtensionOnly?: boolean;
 };
 
 export type JWTPayload = {
@@ -70,12 +70,6 @@ export const verifyJwtToken = async (args: { token: string }) => {
   return verified.payload as JWTPayload;
 };
 
-export const isEndpointAllowed = (args: {
-  payload: JWTPayload;
-  endpoint: string;
-}) => {
-  const allowedEndpoints = args.payload.metadata?.allowedEndpoints;
-  // If no allowedEndpoints specified, allow all endpoints
-  if (!allowedEndpoints) return true;
-  return allowedEndpoints.includes(args.endpoint);
+export const isNotificationExtensionOnlyToken = (payload: JWTPayload) => {
+  return payload.metadata?.notificationExtensionOnly === true;
 };
