@@ -149,7 +149,7 @@ export const getOwnerInviteDetailsHandler = async (
       maxUses: invite.maxUses,
       usesCount: invite.usesCount,
       status: invite.status,
-      expiresAt: invite.expiresAt?.toISOString() || null,
+      expiresAt: invite.expiresAt ? invite.expiresAt.toISOString() : null,
       autoApprove: invite.autoApprove,
       groupId: invite.groupId,
       createdAt: invite.createdAt.toISOString(),

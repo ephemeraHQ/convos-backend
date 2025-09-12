@@ -103,10 +103,27 @@ describe("PushNotificationService", () => {
     });
   };
 
+  // Helper to create test identity on device
+  const createTestIdentityOnDevice = (device: Device) => ({
+    deviceId: device.id,
+    identityId: "test-identity-id",
+    xmtpInstallationId: "test-xmtp-installation-id",
+    device,
+    identity: {
+      id: "test-identity-id",
+      xmtpId: "test-inbox-id",
+      identityAddress: null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    },
+  });
+
   describe("sendPushNotification", () => {
     test("successfully sends notification to APNS device", async () => {
+      const identityOnDevice = createTestIdentityOnDevice(testDevice);
+
       const result = await pushService.sendPushNotification({
-        device: testDevice,
+        identityOnDevice,
         notification: protocolNotification,
       });
 
@@ -117,7 +134,10 @@ describe("PushNotificationService", () => {
       expect(mockSendPushNotification).toHaveBeenCalledTimes(1);
       expect(mockSendPushNotification).toHaveBeenCalledWith({
         device: testDevice,
-        notification: protocolNotification,
+        notification: {
+          ...protocolNotification,
+          apiJWT: expect.any(String) as string,
+        },
       });
 
       // Verify database was updated - device should have success timestamp and reset failures
@@ -135,8 +155,11 @@ describe("PushNotificationService", () => {
         data: { pushFailures: 15 },
       });
 
+      const deviceWithFailures = { ...testDevice, pushFailures: 15 };
+      const identityOnDevice = createTestIdentityOnDevice(deviceWithFailures);
+
       const result = await pushService.sendPushNotification({
-        device: { ...testDevice, pushFailures: 15 },
+        identityOnDevice,
         notification: protocolNotification,
       });
 
@@ -153,8 +176,10 @@ describe("PushNotificationService", () => {
         pushTokenType: "fcm" as const,
       };
 
+      const identityOnDevice = createTestIdentityOnDevice(fcmDevice);
+
       const result = await pushService.sendPushNotification({
-        device: fcmDevice,
+        identityOnDevice,
         notification: protocolNotification,
       });
 
@@ -169,8 +194,10 @@ describe("PushNotificationService", () => {
         error: "InvalidPayload",
       });
 
+      const identityOnDevice = createTestIdentityOnDevice(testDevice);
+
       const result = await pushService.sendPushNotification({
-        device: testDevice,
+        identityOnDevice,
         notification: protocolNotification,
       });
 
@@ -192,8 +219,10 @@ describe("PushNotificationService", () => {
         error: "BadDeviceToken",
       });
 
+      const identityOnDevice = createTestIdentityOnDevice(testDevice);
+
       const result = await pushService.sendPushNotification({
-        device: testDevice,
+        identityOnDevice,
         notification: protocolNotification,
       });
 
@@ -214,8 +243,10 @@ describe("PushNotificationService", () => {
         error: "DeviceNotRegistered",
       });
 
+      const identityOnDevice = createTestIdentityOnDevice(testDevice);
+
       const result = await pushService.sendPushNotification({
-        device: testDevice,
+        identityOnDevice,
         notification: protocolNotification,
       });
 
@@ -230,8 +261,10 @@ describe("PushNotificationService", () => {
         id: "non-existent-device-id",
       };
 
+      const identityOnDevice = createTestIdentityOnDevice(invalidDevice);
+
       const result = await pushService.sendPushNotification({
-        device: invalidDevice,
+        identityOnDevice,
         notification: protocolNotification,
       });
 
@@ -248,7 +281,7 @@ describe("PushNotificationService", () => {
       // Create test identity
       testIdentity = await prisma.deviceIdentity.create({
         data: {
-          xmtpId: "test-xmtp-id-notifications",
+          xmtpId: "test-inbox-id",
           identityAddress: "0x1234567890",
         },
       });
@@ -270,7 +303,7 @@ describe("PushNotificationService", () => {
 
     test("successfully sends notification to device by xmtpId", async () => {
       const result = await pushService.sendPushNotificationToXmtpId({
-        xmtpId: "test-xmtp-id-notifications",
+        xmtpId: "test-inbox-id",
         notification: protocolNotification,
       });
 
@@ -307,8 +340,10 @@ describe("PushNotificationService", () => {
       // @ts-expect-error - Accessing private property for testing
       pushServiceWithoutApns.apnsService = null;
 
+      const identityOnDevice = createTestIdentityOnDevice(testDevice);
+
       const result = await pushServiceWithoutApns.sendPushNotification({
-        device: testDevice,
+        identityOnDevice,
         notification: protocolNotification,
       });
 

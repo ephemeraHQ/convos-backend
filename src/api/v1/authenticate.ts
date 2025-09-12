@@ -1,21 +1,14 @@
 import { Client, type XmtpEnv } from "@xmtp/node-sdk";
 import { Router, type Request, type Response } from "express";
-import * as jose from "jose";
 import { hexToBytes, type Hex } from "viem";
-// import { credential } from "firebase-admin";
-// import { initializeApp, type ServiceAccount } from "firebase-admin/app";
-// import { getAppCheck } from "firebase-admin/app-check";
 import { AppError } from "@/utils/errors";
+import { verifyAppCheckToken } from "@/utils/firebase";
+import { createJwtToken } from "@/utils/jwt";
 import { tryCatch } from "@/utils/try-catch";
 
 const authenticateRouter = Router();
 
 const xmtpEnv = (process.env.XMTP_ENV || "dev") as XmtpEnv;
-
-export type JWTPayload = {
-  inboxId: string;
-  xmtpInstallationId: string;
-};
 
 export type AuthenticateResponse = {
   token: string;
@@ -78,31 +71,12 @@ authenticateRouter.post("/", async (req: Request, res: Response) => {
     throw new AppError(400, "Invalid signature");
   }
 
-  // TODO: re-enable when AppCheck works in bun
-  // const serviceAccount = JSON.parse(
-  //   process.env.FIREBASE_SERVICE_ACCOUNT,
-  // ) as ServiceAccount;
-  // const app = initializeApp({
-  //   credential: credential.cert(serviceAccount),
-  // });
-  // await getAppCheck(app).verifyToken(appCheckToken);
+  await verifyAppCheckToken(appCheckToken);
 
-  // Create JWT token
-  const { data: jwt, error: jwtError } = await tryCatch(
-    new jose.SignJWT({
-      inboxId: xmtpId,
-      xmtpInstallationId,
-    } satisfies JWTPayload)
-      .setProtectedHeader({ alg: "HS256" })
-      .setIssuedAt()
-      .setExpirationTime("1h")
-      .sign(new TextEncoder().encode(process.env.JWT_SECRET)),
-  );
-
-  if (jwtError) {
-    req.log.error(jwtError);
-    throw new AppError(500, "Failed to create JWT token", jwtError);
-  }
+  const jwt = await createJwtToken({
+    inboxId: xmtpId,
+    xmtpInstallationId,
+  });
 
   res.json({ token: jwt });
 });
