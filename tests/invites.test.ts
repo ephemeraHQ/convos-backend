@@ -169,7 +169,7 @@ describe("/invites API", () => {
     expect(inviteCode.autoApprove).toBe(false);
     expect(inviteCode.createdAt).toBeDefined();
     expect(inviteCode.inviteLinkURL).toBeDefined();
-    expect(inviteCode.inviteLinkURL).toMatch(/^.*\/join\/c[a-z0-9]{24}$/);
+    expect(inviteCode.inviteLinkURL).toMatch(/^.*\/c[a-z0-9]{24}$/);
   });
 
   test("POST /invites creates a new invite code with all optional fields", async () => {
@@ -211,7 +211,7 @@ describe("/invites API", () => {
     expect(inviteCode.autoApprove).toBe(true);
     expect(inviteCode.createdAt).toBeDefined();
     expect(inviteCode.inviteLinkURL).toBeDefined();
-    expect(inviteCode.inviteLinkURL).toMatch(/^.*\/join\/c[a-z0-9]{24}$/);
+    expect(inviteCode.inviteLinkURL).toMatch(/^.*\/c[a-z0-9]{24}$/);
   });
 
   test("POST /invites validates required fields", async () => {
@@ -374,7 +374,7 @@ describe("/invites API", () => {
     // CUID should be 25 characters long and start with 'c'
     expect(inviteCode.id).toMatch(/^c[a-z0-9]{24}$/);
     expect(inviteCode.inviteLinkURL).toBeDefined();
-    expect(inviteCode.inviteLinkURL).toMatch(/^.*\/join\/c[a-z0-9]{24}$/);
+    expect(inviteCode.inviteLinkURL).toMatch(/^.*\/c[a-z0-9]{24}$/);
   });
 
   test("POST /invites stores correct createdById", async () => {
@@ -430,7 +430,7 @@ describe("/invites API", () => {
     expect(inviteCode.status).toBe(InviteCodeStatus.ACTIVE); // Default value
     expect(inviteCode.usesCount).toBe(0); // Default value
     expect(inviteCode.inviteLinkURL).toBeDefined();
-    expect(inviteCode.inviteLinkURL).toMatch(/^.*\/join\/c[a-z0-9]{24}$/);
+    expect(inviteCode.inviteLinkURL).toMatch(/^.*\/c[a-z0-9]{24}$/);
   });
 
   test("POST /invites/:inviteId updates existing invite code", async () => {
