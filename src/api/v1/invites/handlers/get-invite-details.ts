@@ -56,10 +56,14 @@ export const getPublicInviteDetailsHandler = async (
       },
       select: {
         id: true,
-        name: true,
-        description: true,
-        imageUrl: true,
         groupId: true,
+        groupMetadata: {
+          select: {
+            name: true,
+            description: true,
+            imageUrl: true,
+          },
+        },
       },
     });
 
@@ -73,9 +77,9 @@ export const getPublicInviteDetailsHandler = async (
 
     const response: GetPublicInviteDetailsResponse = {
       id: invite.id,
-      name: invite.name,
-      description: invite.description,
-      imageUrl: invite.imageUrl,
+      name: invite.groupMetadata.name,
+      description: invite.groupMetadata.description,
+      imageUrl: invite.groupMetadata.imageUrl,
       inviteLinkURL: getInviteLink(invite.id),
     };
 
@@ -122,6 +126,9 @@ export const getOwnerInviteDetailsHandler = async (
 
     const invite = await prisma.inviteCode.findUnique({
       where: { id: inviteId },
+      include: {
+        groupMetadata: true,
+      },
     });
 
     if (!invite) {
@@ -143,9 +150,9 @@ export const getOwnerInviteDetailsHandler = async (
 
     const response: GetInviteDetailsResponse = {
       id: invite.id,
-      name: invite.name,
-      description: invite.description,
-      imageUrl: invite.imageUrl,
+      name: invite.groupMetadata.name,
+      description: invite.groupMetadata.description,
+      imageUrl: invite.groupMetadata.imageUrl,
       maxUses: invite.maxUses,
       usesCount: invite.usesCount,
       status: invite.status,
@@ -213,10 +220,14 @@ export const getAuthenticatedInviteDetailsHandler = async (
       },
       select: {
         id: true,
-        name: true,
-        description: true,
-        imageUrl: true,
         groupId: true,
+        groupMetadata: {
+          select: {
+            name: true,
+            description: true,
+            imageUrl: true,
+          },
+        },
         createdBy: {
           select: {
             xmtpId: true,
@@ -235,9 +246,9 @@ export const getAuthenticatedInviteDetailsHandler = async (
 
     const response: GetAuthenticatedInviteDetailsResponse = {
       id: invite.id,
-      name: invite.name,
-      description: invite.description,
-      imageUrl: invite.imageUrl,
+      name: invite.groupMetadata.name,
+      description: invite.groupMetadata.description,
+      imageUrl: invite.groupMetadata.imageUrl,
       inviteLinkURL: getInviteLink(invite.id),
       groupId: invite.groupId,
       inviterInboxId: invite.createdBy.xmtpId,

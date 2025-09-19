@@ -138,13 +138,26 @@ export async function updateInviteCode(
         where: { inviteCodeId: params.inviteId },
       });
 
-      // Update the invite code
-      const updatedInvite = await tx.inviteCode.update({
-        where: { id: params.inviteId },
-        data: {
+      // Update or create group metadata
+      await tx.groupMetadata.upsert({
+        where: { id: body.groupId },
+        update: {
           name: body.name,
           description: body.description,
           imageUrl: body.imageUrl,
+        },
+        create: {
+          id: body.groupId,
+          name: body.name,
+          description: body.description,
+          imageUrl: body.imageUrl,
+        },
+      });
+
+      // Update the invite code (without metadata fields)
+      const updatedInvite = await tx.inviteCode.update({
+        where: { id: params.inviteId },
+        data: {
           maxUses: body.maxUses,
           expiresAt: body.expiresAt ? new Date(body.expiresAt) : null,
           autoApprove: body.autoApprove,
@@ -156,6 +169,9 @@ export async function updateInviteCode(
             })),
           },
         },
+        include: {
+          groupMetadata: true,
+        },
       });
 
       return updatedInvite;
@@ -163,9 +179,9 @@ export async function updateInviteCode(
 
     const response: UpdateInviteCodeResponse = {
       id: inviteCode.id,
-      name: inviteCode.name,
-      description: inviteCode.description,
-      imageUrl: inviteCode.imageUrl,
+      name: inviteCode.groupMetadata.name,
+      description: inviteCode.groupMetadata.description,
+      imageUrl: inviteCode.groupMetadata.imageUrl,
       maxUses: inviteCode.maxUses,
       usesCount: inviteCode.usesCount,
       status: inviteCode.status,

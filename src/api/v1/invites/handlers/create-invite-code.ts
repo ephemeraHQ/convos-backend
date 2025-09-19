@@ -101,29 +101,48 @@ export async function createInviteCode(
     }
 
     // Create the invite code with notification targets
-    const inviteCode = await prisma.inviteCode.create({
-      data: {
-        name: body.name,
-        description: body.description,
-        imageUrl: body.imageUrl,
-        maxUses: body.maxUses,
-        expiresAt: body.expiresAt ? new Date(body.expiresAt) : null,
-        autoApprove: body.autoApprove,
-        groupId: body.groupId,
-        createdById: identity.id,
-        notificationTargets: {
-          create: notificationTargetIds.map((deviceIdentityId) => ({
-            deviceIdentityId,
-          })),
+    const inviteCode = await prisma.$transaction(async (tx) => {
+      // Update or create group metadata
+      await tx.groupMetadata.upsert({
+        where: { id: body.groupId },
+        update: {
+          name: body.name,
+          description: body.description,
+          imageUrl: body.imageUrl,
         },
-      },
+        create: {
+          id: body.groupId,
+          name: body.name,
+          description: body.description,
+          imageUrl: body.imageUrl,
+        },
+      });
+
+      // Create the invite code
+      return await tx.inviteCode.create({
+        data: {
+          maxUses: body.maxUses,
+          expiresAt: body.expiresAt ? new Date(body.expiresAt) : null,
+          autoApprove: body.autoApprove,
+          groupId: body.groupId,
+          createdById: identity.id,
+          notificationTargets: {
+            create: notificationTargetIds.map((deviceIdentityId) => ({
+              deviceIdentityId,
+            })),
+          },
+        },
+        include: {
+          groupMetadata: true,
+        },
+      });
     });
 
     const response: CreateInviteCodeResponse = {
       id: inviteCode.id, // This cuid serves as the invite code for /join/INVITECODE
-      name: inviteCode.name,
-      description: inviteCode.description,
-      imageUrl: inviteCode.imageUrl,
+      name: inviteCode.groupMetadata.name,
+      description: inviteCode.groupMetadata.description,
+      imageUrl: inviteCode.groupMetadata.imageUrl,
       maxUses: inviteCode.maxUses,
       usesCount: inviteCode.usesCount,
       status: inviteCode.status,

@@ -14,7 +14,20 @@ export type RequestToJoinRequestBody = z.infer<typeof requestToJoinSchema>;
 
 export type RequestToJoinResponse = {
   id: string;
-  invite: InviteCode & {
+  invite: {
+    id: string;
+    name: string | null;
+    description: string | null;
+    imageUrl: string | null;
+    maxUses: number | null;
+    usesCount: number;
+    status: string;
+    expiresAt: string | null;
+    autoApprove: boolean;
+    groupId: string;
+    createdAt: string;
+    updatedAt: string;
+    createdById: string;
     inviteLinkURL: string;
   };
   createdAt: string;
@@ -106,10 +119,22 @@ export async function requestToJoin(
         inviteCode: {
           select: {
             id: true,
-            name: true,
-            description: true,
-            groupId: true,
+            maxUses: true,
+            usesCount: true,
+            status: true,
+            expiresAt: true,
             autoApprove: true,
+            groupId: true,
+            createdAt: true,
+            updatedAt: true,
+            createdById: true,
+            groupMetadata: {
+              select: {
+                name: true,
+                description: true,
+                imageUrl: true,
+              },
+            },
             createdBy: {
               select: {
                 xmtpId: true,
@@ -143,8 +168,8 @@ export async function requestToJoin(
       },
       inviteCode: {
         id: requestToJoin.inviteCode.id,
-        name: requestToJoin.inviteCode.name,
-        description: requestToJoin.inviteCode.description,
+        name: requestToJoin.inviteCode.groupMetadata.name,
+        description: requestToJoin.inviteCode.groupMetadata.description,
         groupId: requestToJoin.inviteCode.groupId,
       },
       autoApprove: requestToJoin.inviteCode.autoApprove,
@@ -182,8 +207,22 @@ export async function requestToJoin(
     const response: RequestToJoinResponse = {
       id: requestToJoin.id,
       invite: {
-        ...inviteCode,
-        inviteLinkURL: getInviteLink(inviteCode.id),
+        id: requestToJoin.inviteCode.id,
+        name: requestToJoin.inviteCode.groupMetadata.name,
+        description: requestToJoin.inviteCode.groupMetadata.description,
+        imageUrl: requestToJoin.inviteCode.groupMetadata.imageUrl,
+        maxUses: requestToJoin.inviteCode.maxUses,
+        usesCount: requestToJoin.inviteCode.usesCount,
+        status: requestToJoin.inviteCode.status,
+        expiresAt: requestToJoin.inviteCode.expiresAt
+          ? requestToJoin.inviteCode.expiresAt.toISOString()
+          : null,
+        autoApprove: requestToJoin.inviteCode.autoApprove,
+        groupId: requestToJoin.inviteCode.groupId,
+        createdAt: requestToJoin.inviteCode.createdAt.toISOString(),
+        updatedAt: requestToJoin.inviteCode.updatedAt.toISOString(),
+        createdById: requestToJoin.inviteCode.createdById,
+        inviteLinkURL: getInviteLink(requestToJoin.inviteCode.id),
       },
       createdAt: requestToJoin.createdAt.toISOString(),
     };

@@ -76,9 +76,13 @@ export async function getInviteRequests(
         inviteCode: {
           select: {
             id: true,
-            name: true,
-            description: true,
             groupId: true,
+            groupMetadata: {
+              select: {
+                name: true,
+                description: true,
+              },
+            },
           },
         },
       },
@@ -106,8 +110,8 @@ export async function getInviteRequests(
         },
         inviteCode: {
           id: request.inviteCode.id,
-          name: request.inviteCode.name,
-          description: request.inviteCode.description,
+          name: request.inviteCode.groupMetadata.name,
+          description: request.inviteCode.groupMetadata.description,
           groupId: request.inviteCode.groupId,
         },
       })),
