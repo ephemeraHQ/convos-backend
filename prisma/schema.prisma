@@ -108,11 +108,20 @@ enum InviteCodeRequestStatus {
   REJECTED
 }
 
-model InviteCode {
-  id          String           @id @default(cuid())
+model GroupMetadata {
+  id          String   @id // This is the groupId
   name        String?
   description String?
   imageUrl    String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relations
+  inviteCodes InviteCode[]
+}
+
+model InviteCode {
+  id          String           @id @default(cuid())
   maxUses     Int? // null = unlimited uses
   usesCount   Int              @default(0)
   status      InviteCodeStatus @default(ACTIVE)
@@ -121,6 +130,9 @@ model InviteCode {
 
   // Group ID to identify which group this invite code is for
   groupId String
+
+  // Shared metadata reference
+  groupMetadata GroupMetadata @relation(fields: [groupId], references: [id], onDelete: Cascade)
 
   // Keep track of who created it for admin purposes
   createdById String
