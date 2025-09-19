@@ -99,10 +99,19 @@ async function createTestInviteCode(args: { autoApprove?: boolean } = {}) {
     where: { xmtpId: "test-creator-xmtp-id" },
   });
 
+  // Create group metadata first
+  await prisma.groupMetadata.upsert({
+    where: { id: "test-group-123" },
+    update: {},
+    create: {
+      id: "test-group-123",
+      name: "Test Group Invite",
+    },
+  });
+
   return await prisma.inviteCode.create({
     data: {
       groupId: "test-group-123",
-      name: "Test Group Invite",
       autoApprove: args.autoApprove ?? false, // Default to requiring approval
       createdById: creatorIdentity!.id,
     },

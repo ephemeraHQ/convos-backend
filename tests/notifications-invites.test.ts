@@ -200,12 +200,21 @@ describe("Invite Notifications Integration", () => {
       },
     });
 
+    // Create group metadata first
+    await prisma.groupMetadata.upsert({
+      where: { id: "test-group-notifications-123" },
+      update: {},
+      create: {
+        id: "test-group-notifications-123",
+        name: "Test Notification Group Invite",
+        description: "Test invite for notification testing",
+      },
+    });
+
     // Create invite code
     const createdInviteCode = await prisma.inviteCode.create({
       data: {
         groupId: "test-group-notifications-123",
-        name: "Test Notification Group Invite",
-        description: "Test invite for notification testing",
         autoApprove: false, // Require approval to trigger notifications
         createdById: creatorIdentity.id,
       },

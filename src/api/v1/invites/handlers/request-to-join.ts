@@ -1,4 +1,3 @@
-import type { InviteCode } from "@prisma/client";
 import type { Request, Response } from "express";
 import { z } from "zod";
 import { getInviteLink } from "@/utils/invites";
