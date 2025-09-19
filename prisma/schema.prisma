@@ -132,7 +132,7 @@ model InviteCode {
   groupId String
 
   // Shared metadata reference
-  groupMetadata GroupMetadata @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  groupMetadata GroupMetadata @relation(fields: [groupId], references: [id])
 
   // Keep track of who created it for admin purposes
   createdById String

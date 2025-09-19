@@ -53,7 +53,23 @@ export async function deleteInvite(req: Request, res: Response) {
       return;
     }
 
-    await prisma.inviteCode.delete({ where: { id: params.inviteId } });
+    // Delete the invite and clean up orphaned group metadata
+    await prisma.$transaction(async (tx) => {
+      // Delete the invite code
+      await tx.inviteCode.delete({ where: { id: params.inviteId } });
+
+      // Check if this was the last invite for this group
+      const remainingInvites = await tx.inviteCode.count({
+        where: { groupId: invite.groupId },
+      });
+
+      // If no more invites exist for this group, delete the metadata
+      if (remainingInvites === 0) {
+        await tx.groupMetadata.delete({
+          where: { id: invite.groupId },
+        });
+      }
+    });
 
     const response: DeleteInviteResponse = {
       id: params.inviteId,
