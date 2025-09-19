@@ -15,12 +15,7 @@ export interface InviteRequestItem {
   requester: {
     id: string;
     xmtpId: string;
-    profile: {
-      name: string | null;
-      username: string | null;
-      description: string | null;
-      avatar: string | null;
-    } | null;
+    profile: null; // Profile data no longer available
   };
   inviteCode: {
     id: string;
@@ -68,11 +63,7 @@ export async function getInviteRequests(
     const requests = await prisma.inviteCodeRequest.findMany({
       where: whereClause,
       include: {
-        requester: {
-          include: {
-            profile: true,
-          },
-        },
+        requester: true,
         inviteCode: {
           select: {
             id: true,
@@ -95,14 +86,7 @@ export async function getInviteRequests(
         requester: {
           id: request.requester.id,
           xmtpId: request.requester.xmtpId,
-          profile: request.requester.profile
-            ? {
-                name: request.requester.profile.name,
-                username: request.requester.profile.username,
-                description: request.requester.profile.description,
-                avatar: request.requester.profile.avatar,
-              }
-            : null,
+          profile: null, // Profile data no longer available
         },
         inviteCode: {
           id: request.inviteCode.id,

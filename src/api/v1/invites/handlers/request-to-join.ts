@@ -1,4 +1,3 @@
-import type { InviteCode } from "@prisma/client";
 import type { Request, Response } from "express";
 import { z } from "zod";
 import { getInviteLink } from "@/utils/invites";
@@ -33,7 +32,6 @@ export async function requestToJoin(
     // Find the requester's identity
     const requesterIdentity = await prisma.deviceIdentity.findFirst({
       where: { xmtpId },
-      include: { profile: true },
     });
 
     if (!requesterIdentity) {
@@ -100,9 +98,7 @@ export async function requestToJoin(
         requesterId: requesterIdentity.id,
       },
       include: {
-        requester: {
-          include: { profile: true },
-        },
+        requester: true,
         inviteCode: {
           select: {
             id: true,
@@ -132,14 +128,7 @@ export async function requestToJoin(
       requester: {
         id: requestToJoin.requester.id,
         xmtpId: requestToJoin.requester.xmtpId,
-        profile: requestToJoin.requester.profile
-          ? {
-              name: requestToJoin.requester.profile.name,
-              username: requestToJoin.requester.profile.username,
-              description: requestToJoin.requester.profile.description,
-              avatar: requestToJoin.requester.profile.avatar,
-            }
-          : null,
+        profile: null, // Profile data no longer available
       },
       inviteCode: {
         id: requestToJoin.inviteCode.id,

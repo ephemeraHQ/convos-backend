@@ -56,7 +56,6 @@ model DeviceIdentity {
   identityAddress     String? // Optional Identity address (for instance Turnkey address)
   createdAt           DateTime                       @default(now())
   updatedAt           DateTime                       @updatedAt
-  profile             Profile?
   devices             IdentitiesOnDevice[]
   createdInviteCodes  InviteCode[]
   usedInviteCodes     InviteCodeUse[]
@@ -74,18 +73,6 @@ model IdentitiesOnDevice {
   xmtpInstallationId String?        @unique
 
   @@id([deviceId, identityId])
-}
-
-model Profile {
-  id               String         @id @default(uuid())
-  deviceIdentityId String         @unique
-  name             String?
-  username         String?        @unique
-  description      String?
-  avatar           String?
-  createdAt        DateTime       @default(now())
-  updatedAt        DateTime       @updatedAt
-  deviceIdentity   DeviceIdentity @relation(fields: [deviceIdentityId], references: [id], onDelete: Cascade) // A Profile is intrinsically linked to a DeviceIdentity; if the identity is gone, the profile is meaningless.
 }
 
 model SubOrg {

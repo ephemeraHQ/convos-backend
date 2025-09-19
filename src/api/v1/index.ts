@@ -5,8 +5,6 @@ import {
   notificationsRouter,
   xmtpNotificationsRouter,
 } from "@/api/v1/notifications/notifications.router";
-import publicProfilesRouter from "@/api/v1/profiles/profiles-public.router";
-import profilesRouter from "@/api/v1/profiles/profiles.router";
 import { authMiddleware } from "@/middleware/auth";
 import attachmentsRouter from "./attachments";
 import devicesRouter from "./devices/devices.router";
@@ -41,11 +39,10 @@ v1Router.use("/users", authMiddleware, initRouter);
 // mount device routes under /devices
 v1Router.use("/devices", authMiddleware, devicesRouter);
 
-// mount public profile routes under /profiles/public
-v1Router.use("/profiles/public", publicProfilesRouter);
-
-// mount authenticated profile routes under /profiles
-v1Router.use("/profiles", authMiddleware, profilesRouter);
+// Profile routes removed - return 404 for all profile endpoints
+v1Router.use("/profiles", (req, res) => {
+  res.status(404).json({ error: "Profile endpoints have been removed" });
+});
 
 // mount attachments routes under /attachments
 v1Router.use("/attachments", authMiddleware, attachmentsRouter);
