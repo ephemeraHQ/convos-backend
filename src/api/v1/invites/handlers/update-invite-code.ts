@@ -138,14 +138,19 @@ export async function updateInviteCode(
         where: { inviteCodeId: params.inviteId },
       });
 
-      // Update or create group metadata
-      await tx.groupMetadata.upsert({
-        where: { id: body.groupId },
-        update: {
+      // Build update object with only provided fields
+      const metadataUpdate = Object.fromEntries(
+        Object.entries({
           name: body.name,
           description: body.description,
           imageUrl: body.imageUrl,
-        },
+        }).filter(([_, value]) => value !== undefined),
+      );
+
+      // Update or create group metadata (only update provided fields)
+      await tx.groupMetadata.upsert({
+        where: { id: body.groupId },
+        update: metadataUpdate,
         create: {
           id: body.groupId,
           name: body.name,
