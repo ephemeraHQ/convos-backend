@@ -184,9 +184,9 @@ export async function updateInviteCode(
 
     const response: UpdateInviteCodeResponse = {
       id: inviteCode.id,
-      name: inviteCode.groupMetadata.name,
-      description: inviteCode.groupMetadata.description,
-      imageUrl: inviteCode.groupMetadata.imageUrl,
+      name: inviteCode.groupMetadata.name ?? null,
+      description: inviteCode.groupMetadata.description ?? null,
+      imageUrl: inviteCode.groupMetadata.imageUrl ?? null,
       maxUses: inviteCode.maxUses,
       usesCount: inviteCode.usesCount,
       status: inviteCode.status,

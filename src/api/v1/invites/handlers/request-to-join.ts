@@ -167,8 +167,8 @@ export async function requestToJoin(
       },
       inviteCode: {
         id: requestToJoin.inviteCode.id,
-        name: requestToJoin.inviteCode.groupMetadata.name,
-        description: requestToJoin.inviteCode.groupMetadata.description,
+        name: requestToJoin.inviteCode.groupMetadata.name ?? null,
+        description: requestToJoin.inviteCode.groupMetadata.description ?? null,
         groupId: requestToJoin.inviteCode.groupId,
       },
       autoApprove: requestToJoin.inviteCode.autoApprove,
@@ -207,9 +207,9 @@ export async function requestToJoin(
       id: requestToJoin.id,
       invite: {
         id: requestToJoin.inviteCode.id,
-        name: requestToJoin.inviteCode.groupMetadata.name,
-        description: requestToJoin.inviteCode.groupMetadata.description,
-        imageUrl: requestToJoin.inviteCode.groupMetadata.imageUrl,
+        name: requestToJoin.inviteCode.groupMetadata.name ?? null,
+        description: requestToJoin.inviteCode.groupMetadata.description ?? null,
+        imageUrl: requestToJoin.inviteCode.groupMetadata.imageUrl ?? null,
         maxUses: requestToJoin.inviteCode.maxUses,
         usesCount: requestToJoin.inviteCode.usesCount,
         status: requestToJoin.inviteCode.status,

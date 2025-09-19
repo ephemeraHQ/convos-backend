@@ -110,8 +110,8 @@ export async function getInviteRequests(
         },
         inviteCode: {
           id: request.inviteCode.id,
-          name: request.inviteCode.groupMetadata.name,
-          description: request.inviteCode.groupMetadata.description,
+          name: request.inviteCode.groupMetadata.name ?? null,
+          description: request.inviteCode.groupMetadata.description ?? null,
           groupId: request.inviteCode.groupId,
         },
       })),

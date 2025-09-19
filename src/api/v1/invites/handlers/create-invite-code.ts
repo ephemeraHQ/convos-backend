@@ -144,10 +144,10 @@ export async function createInviteCode(
     });
 
     const response: CreateInviteCodeResponse = {
-      id: inviteCode.id, // This cuid serves as the invite code for /join/INVITECODE
-      name: inviteCode.groupMetadata.name,
-      description: inviteCode.groupMetadata.description,
-      imageUrl: inviteCode.groupMetadata.imageUrl,
+      id: inviteCode.id,
+      name: inviteCode.groupMetadata.name ?? null,
+      description: inviteCode.groupMetadata.description ?? null,
+      imageUrl: inviteCode.groupMetadata.imageUrl ?? null,
       maxUses: inviteCode.maxUses,
       usesCount: inviteCode.usesCount,
       status: inviteCode.status,

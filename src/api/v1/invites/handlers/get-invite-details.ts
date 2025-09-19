@@ -77,9 +77,9 @@ export const getPublicInviteDetailsHandler = async (
 
     const response: GetPublicInviteDetailsResponse = {
       id: invite.id,
-      name: invite.groupMetadata.name,
-      description: invite.groupMetadata.description,
-      imageUrl: invite.groupMetadata.imageUrl,
+      name: invite.groupMetadata.name ?? null,
+      description: invite.groupMetadata.description ?? null,
+      imageUrl: invite.groupMetadata.imageUrl ?? null,
       inviteLinkURL: getInviteLink(invite.id),
     };
 
@@ -150,9 +150,9 @@ export const getOwnerInviteDetailsHandler = async (
 
     const response: GetInviteDetailsResponse = {
       id: invite.id,
-      name: invite.groupMetadata.name,
-      description: invite.groupMetadata.description,
-      imageUrl: invite.groupMetadata.imageUrl,
+      name: invite.groupMetadata.name ?? null,
+      description: invite.groupMetadata.description ?? null,
+      imageUrl: invite.groupMetadata.imageUrl ?? null,
       maxUses: invite.maxUses,
       usesCount: invite.usesCount,
       status: invite.status,
@@ -246,9 +246,9 @@ export const getAuthenticatedInviteDetailsHandler = async (
 
     const response: GetAuthenticatedInviteDetailsResponse = {
       id: invite.id,
-      name: invite.groupMetadata.name,
-      description: invite.groupMetadata.description,
-      imageUrl: invite.groupMetadata.imageUrl,
+      name: invite.groupMetadata.name ?? null,
+      description: invite.groupMetadata.description ?? null,
+      imageUrl: invite.groupMetadata.imageUrl ?? null,
       inviteLinkURL: getInviteLink(invite.id),
       groupId: invite.groupId,
       inviterInboxId: invite.createdBy.xmtpId,
