@@ -1,23 +1,64 @@
-import type { InviteCodeStatus } from "@prisma/client";
+import type { InviteCodeStatus, Prisma } from "@prisma/client";
 import type { Request, Response } from "express";
 import { z } from "zod";
 import { getInviteLink } from "@/utils/invites";
 import { prisma } from "@/utils/prisma";
 import { InviteCodeStatusSchema } from "../../../../../prisma/generated/zod";
 
+/**
+ * Checks if a user can update group metadata based on security rules:
+ * - Pre-migration (before Sept 25, 2025): Allow all invite creators (since everyone was one)
+ * - Post-migration: Only users who have a valid InviteCodeUse (legitimate group members)
+ *
+ * Note: Currently, the app creates invite codes for every new joiner, but this
+ * might change in the future as not everyone should be able to create invites
+ * and therefore invite others in turn.
+ */
+async function checkCanUpdateGroupMetadata(args: {
+  tx: Prisma.TransactionClient;
+  identityId: string;
+  groupId: string;
+  inviteCreatedAt: Date;
+}) {
+  const { tx, identityId, groupId, inviteCreatedAt } = args;
+
+  const migrationCutoff = new Date("2025-09-25T00:00:00Z");
+
+  // Pre-migration: Allow all invite creators (since everyone was one anyway)
+  if (inviteCreatedAt < migrationCutoff) {
+    const hasCreatedInvite = await tx.inviteCode.findFirst({
+      where: {
+        groupId,
+        createdById: identityId,
+      },
+    });
+    return !!hasCreatedInvite;
+  }
+
+  // Post-migration: Only users with valid InviteCodeUse (legitimate group members)
+  // This ensures only people who actually joined the group can edit metadata
+  const hasValidUse = await tx.inviteCodeUse.findFirst({
+    where: {
+      usedById: identityId,
+      inviteCode: { groupId },
+    },
+  });
+
+  return !!hasValidUse;
+}
+
 const paramsSchema = z.object({
   inviteId: z.string().min(1, "Invite ID is required"),
 });
 
 export const updateInviteCodeRequestBodySchema = z.object({
-  groupId: z.string(),
   name: z.string().optional(),
   description: z.string().optional(),
   imageUrl: z.string().url().optional(),
   maxUses: z.number().int().positive().optional(),
   expiresAt: z.string().datetime().optional(),
-  autoApprove: z.boolean().default(false),
-  notificationTargets: z.array(z.string()).default([]),
+  autoApprove: z.boolean().optional(),
+  notificationTargets: z.array(z.string()).optional(),
   status: InviteCodeStatusSchema.optional(),
 });
 
@@ -103,7 +144,7 @@ export async function updateInviteCode(
 
     // Validate notification targets exist if provided
     let notificationTargetIds: string[] = [];
-    if (body.notificationTargets.length > 0) {
+    if (body.notificationTargets && body.notificationTargets.length > 0) {
       const targetIdentities = await prisma.deviceIdentity.findMany({
         where: {
           xmtpId: {
@@ -133,47 +174,78 @@ export async function updateInviteCode(
 
     // Update the invite code
     const inviteCode = await prisma.$transaction(async (tx) => {
-      // Delete existing notification targets
-      await tx.inviteCodeNotificationTarget.deleteMany({
-        where: { inviteCodeId: params.inviteId },
+      // Delete existing notification targets if new ones are provided
+      if (body.notificationTargets !== undefined) {
+        await tx.inviteCodeNotificationTarget.deleteMany({
+          where: { inviteCodeId: params.inviteId },
+        });
+      }
+
+      // Check authorization for metadata updates
+      const canUpdateMetadata = await checkCanUpdateGroupMetadata({
+        tx,
+        identityId: identity.id,
+        groupId: existingInvite.groupId, // Use groupId from existing invite
+        inviteCreatedAt: existingInvite.createdAt,
       });
+
+      // Build metadata update if authorized and fields provided
+      if (
+        canUpdateMetadata &&
+        (body.name !== undefined ||
+          body.description !== undefined ||
+          body.imageUrl !== undefined)
+      ) {
+        const metadataUpdate = Object.fromEntries(
+          Object.entries({
+            name: body.name,
+            description: body.description,
+            imageUrl: body.imageUrl,
+          }).filter(([_, value]) => value !== undefined),
+        );
+
+        await tx.groupMetadata.upsert({
+          where: { id: existingInvite.groupId },
+          update: metadataUpdate,
+          create: {
+            id: existingInvite.groupId,
+            name: body.name,
+            description: body.description,
+            imageUrl: body.imageUrl,
+          },
+        });
+      }
 
       // Build update object with only provided fields
-      const metadataUpdate = Object.fromEntries(
-        Object.entries({
-          name: body.name,
-          description: body.description,
-          imageUrl: body.imageUrl,
-        }).filter(([_, value]) => value !== undefined),
-      );
-
-      // Update or create group metadata (only update provided fields)
-      await tx.groupMetadata.upsert({
-        where: { id: body.groupId },
-        update: metadataUpdate,
-        create: {
-          id: body.groupId,
-          name: body.name,
-          description: body.description,
-          imageUrl: body.imageUrl,
-        },
-      });
-
-      // Update the invite code (without metadata fields)
-      const updatedInvite = await tx.inviteCode.update({
-        where: { id: params.inviteId },
-        data: {
-          maxUses: body.maxUses,
+      const fieldsToUpdate = {
+        maxUses: body.maxUses,
+        autoApprove: body.autoApprove,
+        status: body.status,
+        ...(body.expiresAt !== undefined && {
           expiresAt: body.expiresAt ? new Date(body.expiresAt) : null,
-          autoApprove: body.autoApprove,
-          groupId: body.groupId,
-          ...(body.status ? { status: body.status } : {}),
+        }),
+      };
+
+      const updateData = {
+        ...Object.fromEntries(
+          Object.entries(fieldsToUpdate).filter(
+            ([_, value]) => value !== undefined,
+          ),
+        ),
+        // Handle notification targets if provided
+        ...(body.notificationTargets !== undefined && {
           notificationTargets: {
             create: notificationTargetIds.map((deviceIdentityId) => ({
               deviceIdentityId,
             })),
           },
-        },
+        }),
+      };
+
+      // Update the invite code
+      const updatedInvite = await tx.inviteCode.update({
+        where: { id: params.inviteId },
+        data: updateData,
         include: {
           groupMetadata: true,
         },

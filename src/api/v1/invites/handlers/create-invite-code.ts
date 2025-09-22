@@ -102,26 +102,22 @@ export async function createInviteCode(
 
     // Create the invite code with notification targets
     const inviteCode = await prisma.$transaction(async (tx) => {
-      // Build object with only provided fields
-      const metadataCreate = Object.fromEntries(
-        Object.entries({
-          name: body.name,
-          description: body.description,
-          imageUrl: body.imageUrl,
-        }).filter(([_, value]) => value !== undefined),
-      );
-
-      // Update or create group metadata (only update provided fields)
-      await tx.groupMetadata.upsert({
+      // Only create group metadata if it doesn't exist (don't overwrite existing)
+      const existingMetadata = await tx.groupMetadata.findUnique({
         where: { id: body.groupId },
-        update: metadataCreate,
-        create: {
-          id: body.groupId,
-          name: body.name,
-          description: body.description,
-          imageUrl: body.imageUrl,
-        },
       });
+
+      if (!existingMetadata) {
+        await tx.groupMetadata.create({
+          data: {
+            id: body.groupId,
+            name: body.name,
+            description: body.description,
+            imageUrl: body.imageUrl,
+          },
+        });
+      }
+      // If metadata exists, leave it untouched (don't overwrite other users' group data)
 
       // Create the invite code
       return await tx.inviteCode.create({
