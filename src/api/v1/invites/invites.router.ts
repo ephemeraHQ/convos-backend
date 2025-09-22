@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { acceptRequestToJoin } from "./handlers/accept-request-to-join";
 import { createInviteCode } from "./handlers/create-invite-code";
 import { deleteInvite } from "./handlers/delete-invite";
 import { deleteRequestToJoin } from "./handlers/delete-request-to-join";
@@ -15,6 +16,7 @@ const invitesRouter = Router();
 invitesRouter.post("/", createInviteCode);
 invitesRouter.post("/request", requestToJoin);
 invitesRouter.get("/requests", getInviteRequests);
+invitesRouter.put("/requests/:requestId/accept", acceptRequestToJoin);
 invitesRouter.delete("/requests/:requestId", deleteRequestToJoin);
 invitesRouter.put("/:inviteId", updateInviteCode);
 invitesRouter.get(

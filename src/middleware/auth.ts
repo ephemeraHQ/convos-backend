@@ -59,6 +59,7 @@ const NOTIFICATION_EXTENSION_ALLOWED_ROUTES = [
   // Invites routes
   { method: "GET", path: "/api/v1/invites/requests" },
   { method: "DELETE", path: "/api/v1/invites/requests/:requestId" },
+  { method: "PUT", path: "/api/v1/invites/requests/:requestId/accept" },
   { method: "GET", path: "/api/v1/invites/:inviteId/with-group" },
   { method: "GET", path: "/api/v1/invites/:inviteId" },
   { method: "DELETE", path: "/api/v1/invites/:inviteId" },
