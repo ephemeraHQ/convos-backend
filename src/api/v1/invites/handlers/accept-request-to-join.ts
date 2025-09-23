@@ -1,3 +1,4 @@
+import { Prisma } from "@prisma/client";
 import type { Request, Response } from "express";
 import { z } from "zod";
 import { prisma } from "@/utils/prisma";
@@ -65,7 +66,23 @@ export async function acceptRequestToJoin(req: Request, res: Response) {
       return;
     }
 
+    // Authorization: only invite creator OR notification targets can accept
+    const isCreator = requestToJoin.inviteCode.createdBy.xmtpId === xmtpId;
+    const isNotificationTarget =
+      requestToJoin.inviteCode.notificationTargets.some(
+        (target) => target.deviceIdentity.xmtpId === xmtpId,
+      );
+
+    if (!isCreator && !isNotificationTarget) {
+      res.status(404).json({
+        success: false,
+        message: "Request not found",
+      });
+      return;
+    }
+
     // Check if user has already been accepted (has InviteCodeUse record)
+    // This check is done AFTER authorization to prevent information disclosure
     const existingUse = await prisma.inviteCodeUse.findUnique({
       where: {
         inviteCodeId_usedById: {
@@ -85,21 +102,6 @@ export async function acceptRequestToJoin(req: Request, res: Response) {
           id: existingUse.id,
           usedAt: existingUse.usedAt.toISOString(),
         },
-      });
-      return;
-    }
-
-    // Authorization: only invite creator OR notification targets can accept
-    const isCreator = requestToJoin.inviteCode.createdBy.xmtpId === xmtpId;
-    const isNotificationTarget =
-      requestToJoin.inviteCode.notificationTargets.some(
-        (target) => target.deviceIdentity.xmtpId === xmtpId,
-      );
-
-    if (!isCreator && !isNotificationTarget) {
-      res.status(404).json({
-        success: false,
-        message: "Request not found",
       });
       return;
     }
@@ -211,6 +213,59 @@ export async function acceptRequestToJoin(req: Request, res: Response) {
         message: "Invite not found",
       });
       return;
+    }
+
+    // Handle race condition where another request already created the InviteCodeUse
+    if (
+      error instanceof Prisma.PrismaClientKnownRequestError &&
+      error.code === "P2002" &&
+      Array.isArray(error.meta?.target) &&
+      (error.meta.target as string[]).some((field) =>
+        ["inviteCodeId_usedById", "inviteCodeId", "usedById"].includes(field),
+      )
+    ) {
+      // Another request already created the InviteCodeUse - fetch it for idempotent response
+      // We need the original request data to look up the correct record
+      const requestId = req.params.requestId;
+      const requestData = await prisma.inviteCodeRequest.findUnique({
+        where: { id: requestId },
+      });
+
+      if (!requestData) {
+        // Request was already deleted, which means it was processed successfully
+        // Return success for idempotency
+        res.status(200).json({
+          id: requestId,
+          accepted: true,
+          inviteCodeUse: {
+            id: "unknown",
+            usedAt: new Date().toISOString(),
+          },
+        });
+        return;
+      }
+
+      const existingUse = await prisma.inviteCodeUse.findUnique({
+        where: {
+          inviteCodeId_usedById: {
+            inviteCodeId: requestData.inviteCodeId,
+            usedById: requestData.requesterId,
+          },
+        },
+      });
+
+      if (existingUse) {
+        const response: AcceptRequestToJoinResponse = {
+          id: requestId,
+          accepted: true,
+          inviteCodeUse: {
+            id: existingUse.id,
+            usedAt: existingUse.usedAt.toISOString(),
+          },
+        };
+        res.status(200).json(response);
+        return;
+      }
     }
 
     req.log.error({ error }, "Error accepting request to join");
