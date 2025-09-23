@@ -1,4 +1,3 @@
-import { Prisma } from "@prisma/client";
 import type { Request, Response } from "express";
 import { z } from "zod";
 import { prisma } from "@/utils/prisma";
@@ -93,15 +92,10 @@ export async function acceptRequestToJoin(req: Request, res: Response) {
     });
 
     if (existingUse) {
-      // Return success for idempotency - request was already processed
-      res.status(200).json({
-        id: params.requestId,
-        accepted: true,
-        alreadyAccepted: true,
-        inviteCodeUse: {
-          id: existingUse.id,
-          usedAt: existingUse.usedAt.toISOString(),
-        },
+      // User already accepted - this should not happen with proper client flow
+      res.status(409).json({
+        success: false,
+        message: "Request has already been processed",
       });
       return;
     }
@@ -216,25 +210,6 @@ export async function acceptRequestToJoin(req: Request, res: Response) {
       res.status(404).json({
         success: false,
         message: "Invite not found",
-      });
-      return;
-    }
-
-    // Handle race condition where another request already created the InviteCodeUse
-    if (
-      error instanceof Prisma.PrismaClientKnownRequestError &&
-      error.code === "P2002"
-    ) {
-      // Duplicate key error - likely another request processed this already
-      // Return success for idempotency
-      res.status(200).json({
-        id: req.params.requestId,
-        accepted: true,
-        alreadyAccepted: true,
-        inviteCodeUse: {
-          id: "race-condition-handled",
-          usedAt: new Date().toISOString(),
-        },
       });
       return;
     }
