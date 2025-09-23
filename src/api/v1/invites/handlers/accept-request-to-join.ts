@@ -76,9 +76,15 @@ export async function acceptRequestToJoin(req: Request, res: Response) {
     });
 
     if (existingUse) {
-      res.status(400).json({
-        success: false,
-        message: "Request has already been accepted",
+      // Return success for idempotency - request was already processed
+      res.status(200).json({
+        id: params.requestId,
+        accepted: true,
+        alreadyAccepted: true,
+        inviteCodeUse: {
+          id: existingUse.id,
+          usedAt: existingUse.usedAt.toISOString(),
+        },
       });
       return;
     }
