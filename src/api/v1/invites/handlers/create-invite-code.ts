@@ -58,6 +58,14 @@ export async function createInviteCode(
     // Get the authenticated user's identity from the JWT
     const { xmtpId } = res.locals;
 
+    if (!xmtpId) {
+      res.status(401).json({
+        success: false,
+        message: "Authentication required",
+      });
+      return;
+    }
+
     const identity = await prisma.deviceIdentity.findFirst({
       where: { xmtpId },
     });
