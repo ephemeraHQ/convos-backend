@@ -118,14 +118,30 @@ export async function acceptRequestToJoin(req: Request, res: Response) {
 
     // Accept the request and create InviteCodeUse in a transaction
     const result = await prisma.$transaction(async (tx) => {
+      // First fetch the current invite to get maxUses value
+      const currentInvite = await tx.inviteCode.findUnique({
+        where: { id: requestToJoin.inviteCodeId },
+        select: { maxUses: true, usesCount: true },
+      });
+
+      if (!currentInvite) {
+        throw new Error("INVITE_NOT_FOUND");
+      }
+
       // Atomically claim a slot by incrementing uses count with a guard
+      const whereConditions: Array<
+        { maxUses: null } | { usesCount: { lt: number } }
+      > = [{ maxUses: null }];
+
+      // Only add the usesCount comparison if maxUses is not null
+      if (currentInvite.maxUses !== null) {
+        whereConditions.push({ usesCount: { lt: currentInvite.maxUses } });
+      }
+
       const updateResult = await tx.inviteCode.updateMany({
         where: {
           id: requestToJoin.inviteCodeId,
-          OR: [
-            { maxUses: null },
-            { usesCount: { lt: prisma.inviteCode.fields.maxUses } },
-          ],
+          OR: whereConditions,
         },
         data: {
           usesCount: {
@@ -179,6 +195,14 @@ export async function acceptRequestToJoin(req: Request, res: Response) {
       res.status(400).json({
         success: false,
         message: "Invite has reached maximum uses",
+      });
+      return;
+    }
+
+    if (error instanceof Error && error.message === "INVITE_NOT_FOUND") {
+      res.status(404).json({
+        success: false,
+        message: "Invite not found",
       });
       return;
     }
