@@ -147,6 +147,8 @@ model InviteCode {
   @@index([status])
   @@index([createdById])
   @@index([groupId])
+  @@index([status, expiresAt])
+  @@index([createdById, groupId])
 }
 
 model InviteCodeUse {
@@ -187,4 +189,5 @@ model InviteCodeRequest {
   @@unique([inviteCodeId, requesterId])
   @@index([inviteCodeId])
   @@index([requesterId])
+  @@index([inviteCodeId, createdAt])
 }
