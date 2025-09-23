@@ -40,9 +40,23 @@ export async function acceptRequestToJoin(req: Request, res: Response) {
       return;
     }
 
-    // Load the join request with related entities
-    const requestToJoin = await prisma.inviteCodeRequest.findUnique({
-      where: { id: params.requestId },
+    // Load the join request with related entities and check authorization in one query
+    const requestToJoin = await prisma.inviteCodeRequest.findFirst({
+      where: {
+        id: params.requestId,
+        OR: [
+          // User is the invite creator
+          { inviteCode: { createdBy: { xmtpId } } },
+          // User is a notification target
+          {
+            inviteCode: {
+              notificationTargets: {
+                some: { deviceIdentity: { xmtpId } },
+              },
+            },
+          },
+        ],
+      },
       include: {
         requester: true,
         inviteCode: {
@@ -58,22 +72,8 @@ export async function acceptRequestToJoin(req: Request, res: Response) {
       },
     });
 
+    // Single 404 response for both "not found" and "not authorized"
     if (!requestToJoin) {
-      res.status(404).json({
-        success: false,
-        message: "Request not found",
-      });
-      return;
-    }
-
-    // Authorization: only invite creator OR notification targets can accept
-    const isCreator = requestToJoin.inviteCode.createdBy.xmtpId === xmtpId;
-    const isNotificationTarget =
-      requestToJoin.inviteCode.notificationTargets.some(
-        (target) => target.deviceIdentity.xmtpId === xmtpId,
-      );
-
-    if (!isCreator && !isNotificationTarget) {
       res.status(404).json({
         success: false,
         message: "Request not found",
@@ -149,7 +149,11 @@ export async function acceptRequestToJoin(req: Request, res: Response) {
       const updateResult = await tx.inviteCode.updateMany({
         where: {
           id: requestToJoin.inviteCodeId,
-          OR: whereConditions,
+          AND: [
+            { status: "ACTIVE" },
+            { OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }] },
+            { OR: whereConditions },
+          ],
         },
         data: {
           usesCount: {
@@ -160,7 +164,7 @@ export async function acceptRequestToJoin(req: Request, res: Response) {
 
       // Check if we successfully claimed a slot
       if (updateResult.count === 0) {
-        throw new Error("INVITE_MAX_USES_REACHED");
+        throw new Error("INVITE_NOT_AVAILABLE");
       }
 
       // Create InviteCodeUse record
@@ -199,10 +203,11 @@ export async function acceptRequestToJoin(req: Request, res: Response) {
       return;
     }
 
-    if (error instanceof Error && error.message === "INVITE_MAX_USES_REACHED") {
+    if (error instanceof Error && error.message === "INVITE_NOT_AVAILABLE") {
       res.status(400).json({
         success: false,
-        message: "Invite has reached maximum uses",
+        message:
+          "Invite is no longer available (may be expired, inactive, or at capacity)",
       });
       return;
     }
@@ -218,54 +223,20 @@ export async function acceptRequestToJoin(req: Request, res: Response) {
     // Handle race condition where another request already created the InviteCodeUse
     if (
       error instanceof Prisma.PrismaClientKnownRequestError &&
-      error.code === "P2002" &&
-      Array.isArray(error.meta?.target) &&
-      (error.meta.target as string[]).some((field) =>
-        ["inviteCodeId_usedById", "inviteCodeId", "usedById"].includes(field),
-      )
+      error.code === "P2002"
     ) {
-      // Another request already created the InviteCodeUse - fetch it for idempotent response
-      // We need the original request data to look up the correct record
-      const requestId = req.params.requestId;
-      const requestData = await prisma.inviteCodeRequest.findUnique({
-        where: { id: requestId },
-      });
-
-      if (!requestData) {
-        // Request was already deleted, which means it was processed successfully
-        // Return success for idempotency
-        res.status(200).json({
-          id: requestId,
-          accepted: true,
-          inviteCodeUse: {
-            id: "unknown",
-            usedAt: new Date().toISOString(),
-          },
-        });
-        return;
-      }
-
-      const existingUse = await prisma.inviteCodeUse.findUnique({
-        where: {
-          inviteCodeId_usedById: {
-            inviteCodeId: requestData.inviteCodeId,
-            usedById: requestData.requesterId,
-          },
+      // Duplicate key error - likely another request processed this already
+      // Return success for idempotency
+      res.status(200).json({
+        id: req.params.requestId,
+        accepted: true,
+        alreadyAccepted: true,
+        inviteCodeUse: {
+          id: "race-condition-handled",
+          usedAt: new Date().toISOString(),
         },
       });
-
-      if (existingUse) {
-        const response: AcceptRequestToJoinResponse = {
-          id: requestId,
-          accepted: true,
-          inviteCodeUse: {
-            id: existingUse.id,
-            usedAt: existingUse.usedAt.toISOString(),
-          },
-        };
-        res.status(200).json(response);
-        return;
-      }
+      return;
     }
 
     req.log.error({ error }, "Error accepting request to join");
