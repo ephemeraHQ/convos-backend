@@ -128,7 +128,14 @@ export async function updateInviteCode(
       return;
     }
 
-    if (existingInvite.createdById !== identity.id) {
+    const canUpdate = await checkCanUpdateGroupMetadata({
+      tx: prisma,
+      identityId: identity.id,
+      groupId: existingInvite.groupId,
+      inviteId: params.inviteId,
+    });
+
+    if (!canUpdate) {
       res.status(403).json({
         success: false,
         message: "Not authorized to update this invite",
