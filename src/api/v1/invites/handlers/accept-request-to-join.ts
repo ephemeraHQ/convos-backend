@@ -116,32 +116,34 @@ export async function acceptRequestToJoin(req: Request, res: Response) {
       return;
     }
 
-    // Check max uses limit
-    if (inviteCode.maxUses && inviteCode.usesCount >= inviteCode.maxUses) {
-      res.status(400).json({
-        success: false,
-        message: "Invite has reached maximum uses",
-      });
-      return;
-    }
-
     // Accept the request and create InviteCodeUse in a transaction
     const result = await prisma.$transaction(async (tx) => {
+      // Atomically claim a slot by incrementing uses count with a guard
+      const updateResult = await tx.inviteCode.updateMany({
+        where: {
+          id: requestToJoin.inviteCodeId,
+          OR: [
+            { maxUses: null },
+            { usesCount: { lt: prisma.inviteCode.fields.maxUses } },
+          ],
+        },
+        data: {
+          usesCount: {
+            increment: 1,
+          },
+        },
+      });
+
+      // Check if we successfully claimed a slot
+      if (updateResult.count === 0) {
+        throw new Error("INVITE_MAX_USES_REACHED");
+      }
+
       // Create InviteCodeUse record
       const inviteCodeUse = await tx.inviteCodeUse.create({
         data: {
           inviteCodeId: requestToJoin.inviteCodeId,
           usedById: requestToJoin.requesterId,
-        },
-      });
-
-      // Increment uses count
-      await tx.inviteCode.update({
-        where: { id: requestToJoin.inviteCodeId },
-        data: {
-          usesCount: {
-            increment: 1,
-          },
         },
       });
 
@@ -169,6 +171,14 @@ export async function acceptRequestToJoin(req: Request, res: Response) {
         success: false,
         message: "Invalid request data",
         errors: error.errors,
+      });
+      return;
+    }
+
+    if (error instanceof Error && error.message === "INVITE_MAX_USES_REACHED") {
+      res.status(400).json({
+        success: false,
+        message: "Invite has reached maximum uses",
       });
       return;
     }
