@@ -6,41 +6,35 @@ import { prisma } from "@/utils/prisma";
 import { InviteCodeStatusSchema } from "../../../../../prisma/generated/zod";
 
 /**
- * Checks if a user can update group metadata based on security rules:
- * - Pre-migration (before Sept 25, 2025): Allow all invite creators (since everyone was one)
- * - Post-migration: Only users who have a valid InviteCodeUse (legitimate group members)
- *
- * Note: Currently, the app creates invite codes for every new joiner, but this
- * might change in the future as not everyone should be able to create invites
- * and therefore invite others in turn.
+ * Checks if a user can update group metadata.
+ * Allows both the creator of the specific invite being updated and users with valid InviteCodeUse
  */
 async function checkCanUpdateGroupMetadata(args: {
   tx: Prisma.TransactionClient;
   identityId: string;
   groupId: string;
-  inviteCreatedAt: Date;
+  inviteId: string;
 }) {
-  const { tx, identityId, groupId, inviteCreatedAt } = args;
+  const { tx, identityId, groupId, inviteId } = args;
 
-  const migrationCutoff = new Date("2025-09-25T00:00:00Z");
+  const hasCreatedThisInvite = await tx.inviteCode.findFirst({
+    where: {
+      id: inviteId,
+      groupId,
+      createdById: identityId,
+    },
+  });
 
-  // Pre-migration: Allow all invite creators (since everyone was one anyway)
-  if (inviteCreatedAt < migrationCutoff) {
-    const hasCreatedInvite = await tx.inviteCode.findFirst({
-      where: {
-        groupId,
-        createdById: identityId,
-      },
-    });
-    return !!hasCreatedInvite;
+  if (hasCreatedThisInvite) {
+    return true;
   }
 
-  // Post-migration: Only users with valid InviteCodeUse (legitimate group members)
-  // This ensures only people who actually joined the group can edit metadata
   const hasValidUse = await tx.inviteCodeUse.findFirst({
     where: {
       usedById: identityId,
-      inviteCode: { groupId },
+      inviteCode: {
+        groupId: groupId,
+      },
     },
   });
 
@@ -186,7 +180,7 @@ export async function updateInviteCode(
         tx,
         identityId: identity.id,
         groupId: existingInvite.groupId, // Use groupId from existing invite
-        inviteCreatedAt: existingInvite.createdAt,
+        inviteId: params.inviteId,
       });
 
       // Build metadata update if authorized and fields provided
