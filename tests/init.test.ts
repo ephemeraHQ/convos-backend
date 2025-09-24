@@ -37,7 +37,6 @@ afterAll(async () => {
 
 beforeEach(async () => {
   // clean up the database before each test
-  await prisma.profile.deleteMany();
   await prisma.identitiesOnDevice.deleteMany();
   await prisma.deviceIdentity.deleteMany();
   await prisma.device.deleteMany();
@@ -81,7 +80,8 @@ describe("/init API", () => {
       createUserBody.identity.identityAddress || null,
     );
     expect(user.identity.xmtpId).toBe(createUserBody.identity.xmtpId);
-    expect(user.profile.name).toBe(createUserBody.profile.name ?? null);
+    // Profile has been removed, should be null
+    expect(user.profile).toBe(null);
   });
 
   test("POST /init can create two users with different devices", async () => {

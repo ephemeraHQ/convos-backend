@@ -62,12 +62,6 @@ const NOTIFICATION_EXTENSION_ALLOWED_ROUTES = [
   { method: "GET", path: "/api/v1/invites/:inviteId/with-group" },
   { method: "GET", path: "/api/v1/invites/:inviteId" },
   { method: "DELETE", path: "/api/v1/invites/:inviteId" },
-
-  // Profiles routes
-  { method: "GET", path: "/api/v1/profiles/search" },
-  { method: "GET", path: "/api/v1/profiles/check/:username" },
-  { method: "POST", path: "/api/v1/profiles/batch" },
-  { method: "GET", path: "/api/v1/profiles/:xmtpId" }, // For getting profile by xmtp ID
 ].map((route) => ({
   ...route,
   regexp: pathToRegexp(route.path), // Pre-compile the regex for better performance

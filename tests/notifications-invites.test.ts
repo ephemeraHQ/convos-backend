@@ -97,7 +97,6 @@ describe("Invite Notifications Integration", () => {
     await prisma.inviteCodeRequest.deleteMany();
     await prisma.inviteCodeUse.deleteMany();
     await prisma.inviteCode.deleteMany();
-    await prisma.profile.deleteMany();
     await prisma.identitiesOnDevice.deleteMany();
     await prisma.deviceIdentity.deleteMany();
     await prisma.device.deleteMany();
@@ -109,15 +108,7 @@ describe("Invite Notifications Integration", () => {
       data: {
         xmtpId: "test-creator-xmtp-id-notifications",
         identityAddress: "0x1234creator",
-        profile: {
-          create: {
-            name: "Test Creator",
-            username: "testcreator",
-            description: "Test creator user",
-          },
-        },
       },
-      include: { profile: true },
     });
     const creatorDevice = await prisma.device.create({
       data: {
@@ -141,15 +132,7 @@ describe("Invite Notifications Integration", () => {
       data: {
         xmtpId: "test-requester-xmtp-id-notifications",
         identityAddress: "0x1234requester",
-        profile: {
-          create: {
-            name: "Test Requester",
-            username: "testrequester",
-            description: "Test requester user",
-          },
-        },
       },
-      include: { profile: true },
     });
     const requesterDevice = await prisma.device.create({
       data: {
@@ -173,15 +156,7 @@ describe("Invite Notifications Integration", () => {
       data: {
         xmtpId: "test-notification-target-xmtp-id",
         identityAddress: "0x1234notificationtarget",
-        profile: {
-          create: {
-            name: "Test Notification Target",
-            username: "testnotificationtarget",
-            description: "Test notification target user",
-          },
-        },
       },
-      include: { profile: true },
     });
     const notifyDevice = await prisma.device.create({
       data: {

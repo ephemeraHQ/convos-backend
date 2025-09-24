@@ -55,7 +55,6 @@ beforeEach(async () => {
   await prisma.inviteCodeRequest.deleteMany();
   await prisma.inviteCodeUse.deleteMany();
   await prisma.inviteCode.deleteMany();
-  await prisma.profile.deleteMany();
   await prisma.identitiesOnDevice.deleteMany();
   await prisma.deviceIdentity.deleteMany();
   await prisma.device.deleteMany();
@@ -63,21 +62,11 @@ beforeEach(async () => {
 
 // Helper function to create a test user with DeviceIdentity
 async function createTestUser(suffix = "", xmtpId = AUTH_USER_XMTP_ID) {
-  // Create DeviceIdentity directly
+  // Create DeviceIdentity directly (without profile)
   const deviceIdentity = await prisma.deviceIdentity.create({
     data: {
       xmtpId,
       identityAddress: `test-turnkey-address${suffix}`,
-      profile: {
-        create: {
-          name: `Test User${suffix}`,
-          username: `test-user${suffix.replace(/-/g, "")}`,
-          description: "Test bio",
-        },
-      },
-    },
-    include: {
-      profile: true,
     },
   });
 
@@ -110,13 +99,7 @@ async function createTestUser(suffix = "", xmtpId = AUTH_USER_XMTP_ID) {
       identityAddress: deviceIdentity.identityAddress,
       xmtpId: deviceIdentity.xmtpId,
     },
-    profile: {
-      id: deviceIdentity.profile!.id,
-      name: deviceIdentity.profile!.name,
-      username: deviceIdentity.profile!.username,
-      description: deviceIdentity.profile!.description,
-      avatar: deviceIdentity.profile!.avatar,
-    },
+    profile: null, // Profiles have been removed
   } as InitResponse;
 }
 

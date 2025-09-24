@@ -2,11 +2,6 @@ import { DeviceOS } from "@prisma/client";
 import type { Request, Response } from "express";
 import { z } from "zod";
 import { prisma } from "@/utils/prisma";
-import { namestoneService } from "../../../../utils/namestone";
-import {
-  validateOnChainName,
-  validateUsernameUniqueness,
-} from "../../profiles/handlers/validate-profile";
 
 export const createUserRequestBodySchema = z.object({
   device: z.object({
@@ -19,12 +14,16 @@ export const createUserRequestBodySchema = z.object({
     xmtpId: z.string(),
     xmtpInstallationId: z.string().optional(), // TO DO remove optional once all users have fully migrated to newer version of app
   }),
-  profile: z.object({
-    name: z.string().min(1).optional(),
-    username: z.string().min(1).optional(),
-    description: z.string().nullable().optional(),
-    avatar: z.string().url().nullable().optional(),
-  }),
+  // Profile data no longer accepted as profiles have been removed
+  // Keeping for backwards compatibility but will be ignored
+  profile: z
+    .object({
+      name: z.string().min(1).optional(),
+      username: z.string().min(1).optional(),
+      description: z.string().nullable().optional(),
+      avatar: z.string().url().nullable().optional(),
+    })
+    .optional(),
 });
 
 export type InitRequestBody = z.infer<typeof createUserRequestBodySchema>;
@@ -40,13 +39,7 @@ export type InitResponse = {
     identityAddress: string | null;
     xmtpId: string | null;
   };
-  profile: {
-    id: string;
-    name: string | null;
-    username: string | null;
-    description: string | null;
-    avatar: string | null;
-  };
+  profile: null; // Profiles have been removed, returning null for backwards compatibility
 };
 
 export async function init(
@@ -70,28 +63,7 @@ export async function init(
       throw parseError;
     }
 
-    // Validate username uniqueness only if username is provided
-    if (body.profile.username?.trim()) {
-      const uniquenessResult = await validateUsernameUniqueness(
-        body.profile.username,
-      );
-      if (!uniquenessResult.success) {
-        res.status(400).json(uniquenessResult);
-        return;
-      }
-    }
-
-    // If name contains a dot, validate on-chain name ownership
-    if (body.profile.name && body.profile.name.includes(".")) {
-      const onChainResult = await validateOnChainName({
-        name: body.profile.name,
-        xmtpId: body.identity.xmtpId,
-      });
-      if (!onChainResult.success) {
-        res.status(400).json(onChainResult);
-        return;
-      }
-    }
+    // Profile validation removed as profiles are no longer supported
 
     // Execute all database operations in a transaction to ensure atomicity
     const { device, deviceIdentity } = await prisma.$transaction(async (tx) => {
@@ -108,22 +80,11 @@ export async function init(
         },
       });
 
-      // Create device identity
+      // Create device identity without profile (profiles have been removed)
       const deviceIdentity = await tx.deviceIdentity.create({
         data: {
           xmtpId: body.identity.xmtpId,
           identityAddress: body.identity.identityAddress,
-          profile: {
-            create: {
-              name: body.profile.name || null,
-              username: body.profile.username || null,
-              description: body.profile.description,
-              avatar: body.profile.avatar,
-            },
-          },
-        },
-        include: {
-          profile: true,
         },
       });
 
@@ -139,10 +100,6 @@ export async function init(
       return { device, deviceIdentity };
     });
 
-    if (!deviceIdentity.profile) {
-      throw new Error("Profile was not created successfully");
-    }
-
     const returnedUser: InitResponse = {
       device: {
         id: device.id,
@@ -154,46 +111,10 @@ export async function init(
         identityAddress: deviceIdentity.identityAddress,
         xmtpId: deviceIdentity.xmtpId,
       },
-      profile: {
-        id: deviceIdentity.profile.id,
-        name: deviceIdentity.profile.name,
-        username: deviceIdentity.profile.username,
-        description: deviceIdentity.profile.description,
-        avatar: deviceIdentity.profile.avatar,
-      },
+      profile: null, // Profiles have been removed
     };
 
-    // Register the username with Namestone only if both username and identityAddress are available
-    if (deviceIdentity.identityAddress && deviceIdentity.profile.username) {
-      // Don't await to avoid blocking the user creation response
-      namestoneService
-        .setName({
-          username: deviceIdentity.profile.username,
-          address: deviceIdentity.identityAddress,
-          textRecords: {
-            ...(deviceIdentity.profile.name && {
-              "display.name": deviceIdentity.profile.name,
-            }),
-            ...(deviceIdentity.profile.description && {
-              description: deviceIdentity.profile.description,
-            }),
-            ...(deviceIdentity.profile.avatar && {
-              avatar: deviceIdentity.profile.avatar,
-            }),
-          },
-        })
-        .catch((namestoneError: unknown) => {
-          // Log error but don't fail user creation
-          req.log.error(
-            {
-              error: namestoneError,
-              username: deviceIdentity.profile?.username,
-              address: deviceIdentity.identityAddress,
-            },
-            "Failed to register username with Namestone during user creation",
-          );
-        });
-    }
+    // Namestone registration removed as profiles are no longer supported
 
     res.status(201).json(returnedUser);
   } catch (error) {
