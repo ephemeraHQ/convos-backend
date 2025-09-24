@@ -1,8 +1,8 @@
+import type { InviteCode } from "@prisma/client";
 import type { Request, Response } from "express";
 import { z } from "zod";
 import { getInviteLink } from "@/utils/invites";
 import { prisma } from "@/utils/prisma";
-import type { InviteCode } from "../../../../../prisma/generated/zod";
 import type { InviteJoinRequestNotificationData } from "../../notifications/services/notifications-types";
 import { getPushNotificationService } from "../../notifications/services/push-notification.service";
 
