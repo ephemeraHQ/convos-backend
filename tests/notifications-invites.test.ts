@@ -246,11 +246,8 @@ describe("Invite Notifications Integration", () => {
     expect(notificationData.requester.xmtpId).toBe(
       "test-requester-xmtp-id-notifications",
     );
-    expect(notificationData.requester.profile?.name).toBe("Test Requester");
-    expect(notificationData.requester.profile?.username).toBe("testrequester");
-    expect(notificationData.requester.profile?.description).toBe(
-      "Test requester user",
-    );
+    // Profile has been removed, should be null or undefined
+    expect(notificationData.requester.profile).toBeUndefined();
 
     // Verify invite code data
     expect(notificationData.inviteCode.id).toBe(inviteCode.id);

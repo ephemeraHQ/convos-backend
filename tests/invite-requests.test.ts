@@ -211,8 +211,8 @@ describe("/invites/request API", () => {
     const testApp = express();
     testApp.use(pinoMiddleware);
     testApp.use(jsonMiddleware);
-    testApp.use((req, _res, next) => {
-      _res.locals.xmtpId = "non-existent-xmtp-id";
+    testApp.use((_req, res, next) => {
+      res.locals.xmtpId = "non-existent-xmtp-id";
       next();
     });
     testApp.use("/invites", invitesRouter);

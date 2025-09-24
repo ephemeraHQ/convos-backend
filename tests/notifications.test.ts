@@ -27,7 +27,7 @@ app.use(pinoMiddleware);
 
 const AUTH_XMTP_ID = "test-auth-xmtp-id";
 
-app.use((req, res, next) => {
+app.use((_req, res, next) => {
   res.locals.xmtpId = AUTH_XMTP_ID;
   next();
 });

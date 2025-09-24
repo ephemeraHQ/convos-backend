@@ -604,9 +604,9 @@ describe("/invites API", () => {
     const secondUserApp = express();
     secondUserApp.use(pinoMiddleware);
     secondUserApp.use(jsonMiddleware);
-    secondUserApp.use((req, _res, next) => {
-      _res.locals.xmtpId = "different-user-xmtp-id";
-      _res.locals.xmtpInstallationId = "different-installation-id";
+    secondUserApp.use((_req, res, next) => {
+      res.locals.xmtpId = "different-user-xmtp-id";
+      res.locals.xmtpInstallationId = "different-installation-id";
       next();
     });
     secondUserApp.use("/invites", invitesRouter);
@@ -719,9 +719,9 @@ describe("/invites API", () => {
     const secondUserApp = express();
     secondUserApp.use(pinoMiddleware);
     secondUserApp.use(jsonMiddleware);
-    secondUserApp.use((req, _res, next) => {
-      _res.locals.xmtpId = "different-user-get-details-xmtp-id";
-      _res.locals.xmtpInstallationId = "different-installation-id";
+    secondUserApp.use((_req, res, next) => {
+      res.locals.xmtpId = "different-user-get-details-xmtp-id";
+      res.locals.xmtpInstallationId = "different-installation-id";
       next();
     });
     secondUserApp.use("/invites", invitesRouter);

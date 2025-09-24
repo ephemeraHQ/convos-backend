@@ -1,4 +1,5 @@
--- Remove profile relation from DeviceIdentity (already handled by cascade)
+-- Drop FK column if it still exists (avoid leaving an orphan column)
+ALTER TABLE "DeviceIdentity" DROP COLUMN IF EXISTS "profileId";
 
--- Drop Profile table (this will also remove the foreign key constraint)
-DROP TABLE "Profile";
+-- Drop Profile table (remove any dependent constraints/views)
+DROP TABLE IF EXISTS "Profile" CASCADE;
