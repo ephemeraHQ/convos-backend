@@ -1,6 +1,6 @@
 version: v2
 plugins:
   - local: protoc-gen-es
-    out: src/notifications/gen
+    out: src/gen
     include_imports: true
     opt: target=ts
