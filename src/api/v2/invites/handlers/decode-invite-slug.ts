@@ -6,6 +6,7 @@ import { z } from "zod";
 import {
   InvitePayloadSchema,
   SignedInviteSchema,
+  type InvitePayload,
   type SignedInvite,
 } from "@/gen/invite/v2/invite_pb";
 
@@ -16,9 +17,12 @@ const paramsSchema = z.object({
 type DecodeInviteSlugParams = z.infer<typeof paramsSchema>;
 
 type DecodedInvite = {
-  encryptedCode: string;
+  conversationToken: string;
   creatorInboxId: string;
   tag: string;
+  name?: string;
+  description?: string;
+  imageURL?: string;
   signerPublicKey: string;
   isSignatureValid: boolean;
 };
@@ -93,9 +97,12 @@ function decodeInviteSlug(slug: string): DecodedInvite {
     }
 
     return {
-      encryptedCode: payload.code,
+      conversationToken: payload.conversationToken,
       creatorInboxId: payload.creatorInboxId,
       tag: payload.tag,
+      name: payload.name,
+      description: payload.description,
+      imageURL: payload.imageURL,
       signerPublicKey: publicKey,
       isSignatureValid: isValid,
     };
@@ -109,10 +116,9 @@ function decodeInviteSlug(slug: string): DecodedInvite {
 export type DecodeInviteSlugResponse = {
   success: boolean;
   data?: {
-    encryptedCode: string;
-    creatorInboxId: string;
-    tag: string;
-    signerPublicKey: string;
+    name: string | null;
+    description: string | null;
+    imageURL: string | null;
   };
   error?: string;
   message?: string;
@@ -130,8 +136,8 @@ export async function decodeInviteSlugHandler(
     if (!decoded.isSignatureValid) {
       res.status(400).json({
         success: false,
-        error: "INVALID_SIGNATURE",
-        message: "Invite signature is invalid",
+        error: "INVALID_INVITE",
+        message: "The invite signature is invalid",
       });
       return;
     }
@@ -139,10 +145,9 @@ export async function decodeInviteSlugHandler(
     const response: DecodeInviteSlugResponse = {
       success: true,
       data: {
-        encryptedCode: decoded.encryptedCode,
-        creatorInboxId: decoded.creatorInboxId,
-        tag: decoded.tag,
-        signerPublicKey: decoded.signerPublicKey,
+        name: decoded.name ?? null,
+        description: decoded.description ?? null,
+        imageURL: decoded.imageURL ?? null,
       },
     };
 
