@@ -18,6 +18,7 @@ jobs:
         with:
           bun-version-file: ".bun-version"
       - run: bun install
+      - run: bun run buf:generate
       - run: ./dev/up
         env:
           TEST_NOTIFICATION_DELIVERY_URL: "http://host.docker.internal:8081"
