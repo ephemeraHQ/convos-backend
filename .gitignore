@@ -64,6 +64,8 @@ logs
 # Prisma generated files
 /prisma/generated/
 
+# Protobuf generated files
+/src/gen/
+
 # Claude
 .claude
-

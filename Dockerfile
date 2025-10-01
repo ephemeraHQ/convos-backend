@@ -11,17 +11,27 @@ RUN curl -fsSL https://bun.sh/install | bash -s "bun-v1.2.2" && \
   ln -s $HOME/.bun/bin/bun /usr/local/bin/bun
 
 RUN mkdir -p /temp/prod
-COPY package.json bun.lock tsconfig.json /temp/prod/
+COPY package.json bun.lock tsconfig.json buf.yaml buf.gen.yaml /temp/prod/
 RUN mkdir -p /temp/prod/src
 COPY src /temp/prod/src
 RUN mkdir -p /temp/prod/prisma
 COPY prisma /temp/prod/prisma
-RUN cd /temp/prod && bun install --frozen-lockfile --production
+RUN mkdir -p /temp/prod/proto
+COPY proto /temp/prod/proto
+
+# Install all dependencies (including devDependencies needed for code generation)
+RUN cd /temp/prod && bun install --frozen-lockfile
 
 ENV NODE_ENV=production
 
+# generate protobuf types
+RUN cd /temp/prod && bun run buf:generate
+
 # generate Prisma client
 RUN cd /temp/prod && bun prisma generate
+
+# Remove devDependencies to keep the image small
+RUN cd /temp/prod && bun install --frozen-lockfile --production
 
 FROM base AS release
 

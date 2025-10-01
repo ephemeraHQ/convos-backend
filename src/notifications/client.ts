@@ -7,7 +7,7 @@ import {
   Subscription_HmacKeySchema,
   SubscriptionSchema,
   type Subscription,
-} from "@/notifications/gen/notifications/v1/service_pb";
+} from "@/gen/notifications/v1/service_pb";
 
 export function createNotificationClient() {
   if (!process.env.NOTIFICATION_SERVER_URL) {
