@@ -33,7 +33,7 @@ describe("V2 Invite API Tests", () => {
   });
 
   describe("GET /api/v2/invites/:slug", () => {
-    test("should return 400 for missing slug", async () => {
+    test("should return 404 for missing slug", async () => {
       const response = await fetch(`${baseURL}/api/v2/invites/`, {
         method: "GET",
       });
@@ -86,7 +86,8 @@ describe("V2 Invite API Tests", () => {
     });
 
     test("should return valid structure with null fields for valid old-format invite", async () => {
-      // Old test invite slug without metadata fields
+      // Pre-generated valid SignedInvite slug
+      // Contains: conversationId, inviteId, signature; no name/description/imageURL
       const validSlug =
         "CqQBClRBZjBJY3ZNSmo5TW9UcFZEc2x0YnNSakNwaldvcTA2am9iYmRWcVRZb2l4RUQzNVN1X1BJWmNaRmN0MkM5eDFqdEQydE4wZXM0Tkx4MDZMRkJhS3USQDYyZTFmMDIwNTc4YmRjNjMxMDZkZTJmYmFkODUzMzVjM2VkYzRhNzlhNWIyMWVhNjgxMjE2OGQxZjY3MTNlMjUaClVhN2RSRlFqdmESQcEhHVsmCTay20THnnQlEUDVGfhG9OnyHqgbtTFa9WBFat7aUl_22_SPdWfKSZuFUw3N90jc2vtWHkr2zb8eNrEB";
 
