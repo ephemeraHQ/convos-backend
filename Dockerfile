@@ -5,12 +5,10 @@ WORKDIR /usr/src/app
 # this will cache them and speed up future builds
 FROM base AS install
 
-# install bun and buf
+# install bun
 RUN apt-get update && apt-get install -y curl unzip
 RUN curl -fsSL https://bun.sh/install | bash -s "bun-v1.2.2" && \
   ln -s $HOME/.bun/bin/bun /usr/local/bin/bun
-RUN curl -sSL "https://github.com/bufbuild/buf/releases/download/v1.50.0/buf-Linux-x86_64" -o /usr/local/bin/buf && \
-  chmod +x /usr/local/bin/buf
 
 RUN mkdir -p /temp/prod
 COPY package.json bun.lock tsconfig.json buf.yaml buf.gen.yaml /temp/prod/
