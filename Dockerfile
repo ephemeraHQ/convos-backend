@@ -20,7 +20,9 @@ RUN mkdir -p /temp/prod/prisma
 COPY prisma /temp/prod/prisma
 RUN mkdir -p /temp/prod/proto
 COPY proto /temp/prod/proto
-RUN cd /temp/prod && bun install --frozen-lockfile --production
+
+# Install all dependencies (including devDependencies needed for code generation)
+RUN cd /temp/prod && bun install --frozen-lockfile
 
 ENV NODE_ENV=production
 
@@ -29,6 +31,9 @@ RUN cd /temp/prod && bun run buf:generate
 
 # generate Prisma client
 RUN cd /temp/prod && bun prisma generate
+
+# Remove devDependencies to keep the image small
+RUN cd /temp/prod && bun install --frozen-lockfile --production
 
 FROM base AS release
 
