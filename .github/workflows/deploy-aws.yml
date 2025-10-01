@@ -100,7 +100,7 @@ jobs:
           timeout: 20m
           terraform-token: ${{ secrets.TERRAFORM_TOKEN }}
           terraform-org: xmtp
-          terraform-workspace: convos_otr_dev
+          terraform-workspace: convos-otr-dev
           variable-name: api_image
           variable-value: "ghcr.io/ephemerahq/convos-backend@${{ needs.push_to_registry.outputs.digest }}"
           variable-value-required-prefix: "ghcr.io/ephemerahq/convos-backend@sha256:"
