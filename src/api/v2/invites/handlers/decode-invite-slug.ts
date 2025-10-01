@@ -16,16 +16,16 @@ const paramsSchema = z.object({
 
 type DecodeInviteSlugParams = z.infer<typeof paramsSchema>;
 
-type DecodedInvite = {
-  conversationToken: string;
-  creatorInboxId: string;
-  tag: string;
-  name?: string;
-  description?: string;
-  imageURL?: string;
-  signerPublicKey: string;
-  isSignatureValid: boolean;
-};
+// Use pick to only include the fields we need and avoid typing errors
+type DecodedInvite = Pick<
+  InvitePayload,
+  | "conversationToken"
+  | "creatorInboxId"
+  | "tag"
+  | "name"
+  | "description"
+  | "imageURL"
+>;
 
 function base64URLDecode(slug: string): Uint8Array {
   let base64 = slug.replace(/-/g, "+").replace(/_/g, "/");
@@ -85,16 +85,7 @@ function decodeInviteSlug(slug: string): DecodedInvite {
       throw new Error("Missing payload in signed invite");
     }
 
-    let isValid = false;
-    let publicKey = "";
-
-    try {
-      const recoveredKey = recoverPublicKey(signedInvite);
-      publicKey = recoveredKey.toString("hex");
-      isValid = true;
-    } catch {
-      isValid = false;
-    }
+    recoverPublicKey(signedInvite);
 
     return {
       conversationToken: payload.conversationToken,
@@ -103,8 +94,6 @@ function decodeInviteSlug(slug: string): DecodedInvite {
       name: payload.name,
       description: payload.description,
       imageURL: payload.imageURL,
-      signerPublicKey: publicKey,
-      isSignatureValid: isValid,
     };
   } catch (error) {
     throw new Error(
@@ -132,15 +121,6 @@ export async function decodeInviteSlugHandler(
     const { slug } = await paramsSchema.parseAsync(req.params);
 
     const decoded = decodeInviteSlug(slug);
-
-    if (!decoded.isSignatureValid) {
-      res.status(400).json({
-        success: false,
-        error: "INVALID_INVITE",
-        message: "The invite signature is invalid",
-      });
-      return;
-    }
 
     const response: DecodeInviteSlugResponse = {
       success: true,
