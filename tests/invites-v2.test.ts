@@ -76,13 +76,13 @@ describe("V2 Invite API Tests", () => {
     });
 
     test("should reject slugs that are too large (DoS protection)", async () => {
-      const hugSlug = "A".repeat(20000);
+      const hugSlug = "A".repeat(2050);
       const response = await fetch(`${baseURL}/api/v2/invites/${hugSlug}`, {
         method: "GET",
       });
 
-      // Server rejects with 431 (Request Header Fields Too Large) before reaching handler
-      expect(response.status).toBe(431);
+      // Handler rejects with 413 (Payload Too Large) for slugs over 2048 chars
+      expect(response.status).toBe(413);
     });
 
     test("should return valid structure with null fields for valid old-format invite", async () => {
