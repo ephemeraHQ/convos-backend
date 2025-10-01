@@ -34,13 +34,8 @@ function base64URLDecode(slug: string): Uint8Array {
     base64 += "=";
   }
 
-  const binary = atob(base64);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i++) {
-    bytes[i] = binary.charCodeAt(i);
-  }
-
-  return bytes;
+  const buffer = Buffer.from(base64, "base64");
+  return new Uint8Array(buffer);
 }
 
 function sha256(data: Uint8Array): Buffer {
