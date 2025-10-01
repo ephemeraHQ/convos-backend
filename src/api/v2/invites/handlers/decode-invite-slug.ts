@@ -27,7 +27,15 @@ type DecodedInvite = Pick<
   | "imageURL"
 >;
 
+// Maximum slug length to prevent DoS (browser URL limit is ~2048 chars)
+// Reserve some space for the rest of the URL path
+const MAX_SLUG_LENGTH = 2048;
+
 function base64URLDecode(slug: string): Uint8Array {
+  if (slug.length > MAX_SLUG_LENGTH) {
+    throw new Error("Slug too large");
+  }
+
   let base64 = slug.replace(/-/g, "+").replace(/_/g, "/");
 
   while (base64.length % 4 !== 0) {
@@ -134,6 +142,15 @@ export async function decodeInviteSlugHandler(
         success: false,
         error: "INVALID_REQUEST",
         message: "Slug is required",
+      });
+      return;
+    }
+
+    if (error instanceof Error && error.message.includes("Slug too large")) {
+      res.status(413).json({
+        success: false,
+        error: "SLUG_TOO_LARGE",
+        message: "The invite link is too long",
       });
       return;
     }
