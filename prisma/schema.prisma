@@ -176,3 +176,32 @@ model InviteCodeRequest {
   @@index([inviteCodeId])
   @@index([requesterId])
 }
+
+// v2 Push Notification Models
+model PushTokenRegistration {
+  deviceId          String             @id
+  pushToken         String             @db.Text
+  tokenType         PushTokenType      @default(apns)
+  apnsEnv           ApnsEnvironment?
+  pushFailures      Int                @default(0)
+  disabled          Boolean            @default(false)
+  addedAt           DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
+  lastSentAt        DateTime?
+  lastFailureAt     DateTime?
+  clientIdentifiers ClientIdentifier[]
+
+  @@index([pushToken])
+}
+
+model ClientIdentifier {
+  id               String                @id @default(cuid())
+  clientIdentifier String                @unique
+  deviceId         String
+  device           PushTokenRegistration @relation(fields: [deviceId], references: [deviceId], onDelete: Cascade)
+  addedAt          DateTime              @default(now())
+  updatedAt        DateTime              @updatedAt
+
+  @@index([clientIdentifier])
+  @@index([deviceId])
+}
