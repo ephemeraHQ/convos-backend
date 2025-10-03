@@ -195,13 +195,11 @@ model PushTokenRegistration {
 }
 
 model ClientIdentifier {
-  id               String                @id @default(cuid())
-  clientIdentifier String                @unique
-  deviceId         String
-  device           PushTokenRegistration @relation(fields: [deviceId], references: [deviceId], onDelete: Cascade)
-  addedAt          DateTime              @default(now())
-  updatedAt        DateTime              @updatedAt
+  id        String                @id
+  deviceId  String
+  device    PushTokenRegistration @relation(fields: [deviceId], references: [deviceId], onDelete: Cascade)
+  addedAt   DateTime              @default(now())
+  updatedAt DateTime              @updatedAt
 
-  @@index([clientIdentifier])
   @@index([deviceId])
 }
