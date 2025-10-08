@@ -1,5 +1,5 @@
 -- CreateTable
-CREATE TABLE "PushTokenRegistration" (
+CREATE TABLE "DeviceRegistration" (
     "deviceId" TEXT NOT NULL,
     "pushToken" TEXT NOT NULL,
     "tokenType" "PushTokenType" NOT NULL DEFAULT 'apns',
@@ -11,7 +11,7 @@ CREATE TABLE "PushTokenRegistration" (
     "lastSentAt" TIMESTAMP(3),
     "lastFailureAt" TIMESTAMP(3),
 
-    CONSTRAINT "PushTokenRegistration_pkey" PRIMARY KEY ("deviceId")
+    CONSTRAINT "DeviceRegistration_pkey" PRIMARY KEY ("deviceId")
 );
 
 -- CreateTable
@@ -25,10 +25,10 @@ CREATE TABLE "ClientIdentifier" (
 );
 
 -- CreateIndex
-CREATE INDEX "PushTokenRegistration_pushToken_idx" ON "PushTokenRegistration"("pushToken");
+CREATE INDEX "DeviceRegistration_pushToken_idx" ON "DeviceRegistration"("pushToken");
 
 -- CreateIndex
 CREATE INDEX "ClientIdentifier_deviceId_idx" ON "ClientIdentifier"("deviceId");
 
 -- AddForeignKey
-ALTER TABLE "ClientIdentifier" ADD CONSTRAINT "ClientIdentifier_deviceId_fkey" FOREIGN KEY ("deviceId") REFERENCES "PushTokenRegistration"("deviceId") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "ClientIdentifier" ADD CONSTRAINT "ClientIdentifier_deviceId_fkey" FOREIGN KEY ("deviceId") REFERENCES "DeviceRegistration"("deviceId") ON DELETE CASCADE ON UPDATE CASCADE;
