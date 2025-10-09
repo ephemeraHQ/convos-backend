@@ -10,7 +10,8 @@
     "strict": true,
     "skipLibCheck": true,
     "paths": {
-      "@/*": ["./src/*"]
+      "@/*": ["./src/*"],
+      "@prisma-zod/*": ["./prisma/generated/zod/*"]
     }
   },
   "include": [

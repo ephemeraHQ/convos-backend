@@ -1,7 +1,7 @@
+import { ApnsEnvironmentSchema, PushTokenTypeSchema } from "@prisma-zod/index";
 import type { Request, Response } from "express";
 import { z } from "zod";
 import { prisma } from "@/utils/prisma";
-import { ApnsEnvironmentSchema, PushTokenTypeSchema } from "../../../../../prisma/generated/zod";
 
 const registerRequestSchema = z.object({
   deviceId: z.string(),

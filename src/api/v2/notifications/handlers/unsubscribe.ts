@@ -8,9 +8,7 @@ const unsubscribeRequestSchema = z.object({
   topics: z.array(z.string()),
 });
 
-export type IUnsubscribeRequestBody = z.infer<
-  typeof unsubscribeRequestSchema
->;
+export type IUnsubscribeRequestBody = z.infer<typeof unsubscribeRequestSchema>;
 
 const notificationClient = createNotificationClient();
 

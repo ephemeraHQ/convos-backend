@@ -1,7 +1,7 @@
+import { DeviceSchema } from "@prisma-zod/index";
 import { type Request, type Response } from "express";
 import { z } from "zod";
 import { prisma } from "@/utils/prisma";
-import { DeviceSchema } from "../../../../../prisma/generated/zod";
 
 export const DeviceInputSchema = DeviceSchema.pick({
   id: true,
