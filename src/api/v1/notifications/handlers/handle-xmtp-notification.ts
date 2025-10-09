@@ -1,11 +1,14 @@
 import type { Request, Response } from "express";
+import type { ClientIdentifier, DeviceRegistration } from "@prisma/client";
 import {
   createNotificationClient,
   type WebhookNotificationBody,
 } from "@/notifications/client";
 import { getHttpDeliveryNotificationAuthHeader } from "@/notifications/utils";
 import { prisma } from "@/utils/prisma";
+import { createV2JwtToken } from "@/utils/v2/jwt";
 import { getPushNotificationService } from "../services/push-notification.service";
+import { createApnsService } from "../services/apns-push.service";
 
 const notificationClient = createNotificationClient();
 const pushNotificationService = getPushNotificationService();
@@ -51,6 +54,24 @@ export async function handleXmtpNotification(req: Request, res: Response) {
       return;
     }
 
+    // TRY V2 FIRST (clientIdentifier lookup)
+    const v2Client = await prisma.clientIdentifier.findUnique({
+      where: { id: notification.installation.id },
+      include: { device: true },
+    });
+
+    if (v2Client) {
+      req.log.info("Processing v2 notification");
+      const result = await handleV2Notification({
+        notification,
+        client: v2Client,
+        req,
+      });
+      res.status(200).end();
+      return;
+    }
+
+    // FALLBACK TO V1 (xmtpInstallationId lookup)
     const identityOnDevice = await prisma.identitiesOnDevice.findUnique({
       where: {
         xmtpInstallationId: notification.installation.id,
@@ -63,13 +84,15 @@ export async function handleXmtpNotification(req: Request, res: Response) {
 
     if (!identityOnDevice || !identityOnDevice.xmtpInstallationId) {
       req.log.error(
-        `IdentityOnDevice not found for xmtpInstallationId ${notification.installation.id}`,
+        `Installation not found (v1 or v2) for installationId ${notification.installation.id}`,
       );
       res.status(400).json({
-        error: `IdentityOnDevice not found for xmtpInstallationId ${notification.installation.id}`,
+        error: `Installation not found for installationId ${notification.installation.id}`,
       });
       return;
     }
+
+    req.log.info("Processing v1 notification");
 
     identityOnDeviceToCleanup = {
       xmtpInstallationId: identityOnDevice.xmtpInstallationId,
@@ -153,4 +176,98 @@ async function cleanupFailedInstallation(args: {
       "Failed during cleanup of installation",
     );
   }
+}
+
+async function handleV2Notification(args: {
+  notification: WebhookNotificationBody;
+  client: ClientIdentifier & { device: DeviceRegistration };
+  req: Request;
+}) {
+  const { notification, client, req } = args;
+
+  // Check if device is disabled or has too many failures
+  if (client.device.disabled || client.device.pushFailures >= 10) {
+    req.log.warn(
+      `Device ${client.deviceId} is disabled or has too many failures. Skipping notification.`,
+    );
+    return { success: false };
+  }
+
+  // Generate JWT for NSE to use
+  const apiJWT = await createV2JwtToken({
+    clientIdentifier: client.id,
+    deviceId: client.deviceId,
+    expirationTime: "72h",
+    metadata: {
+      notificationExtensionOnly: true,
+    },
+  });
+
+  // Create APNS service
+  const apnsService = createApnsService();
+
+  if (!apnsService) {
+    req.log.error("APNS service not configured");
+    return { success: false };
+  }
+
+  // Send push notification
+  const result = await apnsService.sendPushNotification({
+    device: {
+      id: client.deviceId,
+      pushToken: client.device.pushToken,
+      pushTokenType: client.device.tokenType,
+      apnsEnv: client.device.apnsEnv,
+      pushFailures: client.device.pushFailures,
+    } as any,
+    notification: {
+      clientIdentifier: client.id,
+      apiJWT,
+      notificationType: "Protocol",
+      notificationData: {
+        contentTopic: notification.message.content_topic,
+        messageType: notification.message_context.message_type,
+        encryptedMessage: notification.message.message,
+        timestamp: notification.message.timestamp_ns,
+      },
+    } as any,
+  });
+
+  // Track success/failure
+  if (result.success) {
+    await prisma.deviceRegistration.update({
+      where: { deviceId: client.deviceId },
+      data: {
+        pushFailures: 0,
+        lastSentAt: new Date(),
+      },
+    });
+    req.log.info(`Successfully sent v2 push notification to ${client.deviceId}`);
+  } else {
+    const newFailureCount = client.device.pushFailures + 1;
+    await prisma.deviceRegistration.update({
+      where: { deviceId: client.deviceId },
+      data: {
+        pushFailures: newFailureCount,
+        lastFailureAt: new Date(),
+        disabled: newFailureCount >= 10,
+      },
+    });
+    req.log.warn(
+      `Failed to send v2 push notification to ${client.deviceId}. Failure count: ${newFailureCount}`,
+    );
+
+    // Cleanup if unrecoverable error
+    if (result.error === "DeviceNotRegistered" || result.error === "BadDeviceToken") {
+      req.log.info(`Cleaning up v2 client ${client.id} due to unrecoverable error`);
+      await notificationClient.deleteInstallation({
+        installationId: client.id,
+      });
+      await prisma.clientIdentifier.delete({
+        where: { id: client.id },
+      });
+    }
+  }
+
+  return result;
 }
