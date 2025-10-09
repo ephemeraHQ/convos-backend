@@ -36,6 +36,7 @@ export async function register(
     });
 
     res.status(200).send();
+    return;
   } catch (error) {
     if (error instanceof z.ZodError) {
       res.status(400).json({ error: "Invalid request body" });

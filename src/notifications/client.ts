@@ -2,6 +2,7 @@ import { create } from "@bufbuild/protobuf";
 import { createClient } from "@connectrpc/connect";
 import { createConnectTransport } from "@connectrpc/connect-node";
 import { type HmacKey } from "@xmtp/node-sdk";
+import { z } from "zod";
 import {
   Notifications,
   Subscription_HmacKeySchema,
@@ -25,30 +26,35 @@ export type Topic = {
   hmacKeys: HmacKey[];
 };
 
-export type WebhookNotificationBody = {
-  idempotency_key: string;
-  message: {
-    content_topic: string;
-    timestamp_ns: string;
-    message: string;
-  };
-  message_context: {
-    message_type: string;
-    should_push?: boolean;
-  };
-  installation: {
-    id: string;
-    delivery_mechanism: {
-      kind: string;
-      token: string;
-    };
-  };
-  subscription: {
-    created_at: string;
-    topic: string;
-    is_silent: boolean;
-  };
-};
+// Zod schema for webhook notification validation
+export const webhookNotificationBodySchema = z.object({
+  idempotency_key: z.string(),
+  message: z.object({
+    content_topic: z.string(),
+    timestamp_ns: z.string(),
+    message: z.string(),
+  }),
+  message_context: z.object({
+    message_type: z.string(),
+    should_push: z.boolean().optional(),
+  }),
+  installation: z.object({
+    id: z.string(),
+    delivery_mechanism: z.object({
+      kind: z.string(),
+      token: z.string(),
+    }),
+  }),
+  subscription: z.object({
+    created_at: z.string(),
+    topic: z.string(),
+    is_silent: z.boolean(),
+  }),
+});
+
+export type WebhookNotificationBody = z.infer<
+  typeof webhookNotificationBodySchema
+>;
 
 export async function subscribeToTopics(
   // The installationId we want to apply the subscription to

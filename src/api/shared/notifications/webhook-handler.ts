@@ -8,6 +8,7 @@ import type {
 import { getPushNotificationService } from "@/api/shared/notifications/services/push-notification.service";
 import {
   createNotificationClient,
+  webhookNotificationBodySchema,
   type WebhookNotificationBody,
 } from "@/notifications/client";
 import { getHttpDeliveryNotificationAuthHeader } from "@/notifications/utils";
@@ -32,7 +33,21 @@ export async function handleXmtpNotification(req: Request, res: Response) {
   } | null = null;
 
   try {
-    const notification = req.body as WebhookNotificationBody;
+    // Validate webhook body structure
+    const parseResult = webhookNotificationBodySchema.safeParse(req.body);
+    if (!parseResult.success) {
+      req.log.error(
+        { errors: parseResult.error.errors },
+        "Invalid webhook payload",
+      );
+      res.status(400).json({
+        error: "Invalid webhook payload",
+        details: parseResult.error.errors,
+      });
+      return;
+    }
+
+    const notification = parseResult.data;
 
     // Log the notification for debugging
     req.log.info(
