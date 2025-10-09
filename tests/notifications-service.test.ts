@@ -13,11 +13,11 @@ import { rimrafSync } from "rimraf";
 import type {
   NotificationPayload,
   ProtocolNotificationData,
-} from "@/api/v1/notifications/services/notifications-types";
+} from "@/api/shared/notifications/services/notifications-types";
 import {
   getPushNotificationService,
   PushNotificationService,
-} from "@/api/v1/notifications/services/push-notification.service";
+} from "@/api/shared/notifications/services/push-notification.service";
 import { prisma } from "@/utils/prisma";
 
 // Mock functions for APNS service

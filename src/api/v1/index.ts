@@ -1,10 +1,8 @@
 import { Router } from "express";
+import { webhookRouter } from "@/api/shared/notifications/webhook.router";
 import appConfigRouter from "@/api/v1/appConfig";
 import authenticateRouter from "@/api/v1/authenticate";
-import {
-  notificationsRouter,
-  xmtpNotificationsRouter,
-} from "@/api/v1/notifications/notifications.router";
+import { notificationsRouter } from "@/api/v1/notifications/notifications.router";
 import publicProfilesRouter from "@/api/v1/profiles/profiles-public.router";
 import profilesRouter from "@/api/v1/profiles/profiles.router";
 import { authMiddleware } from "@/middleware/auth";
@@ -24,7 +22,7 @@ v1Router.use("/app-config", appConfigRouter);
 v1Router.use("/authenticate", authenticateRouter);
 
 // mount xmtp notification webhook (no auth middleware)
-v1Router.use("/notifications/xmtp", xmtpNotificationsRouter);
+v1Router.use("/notifications/xmtp", webhookRouter);
 
 // create and manage turnkey wallets/suborgs
 v1Router.use("/wallets", walletsRouter);
