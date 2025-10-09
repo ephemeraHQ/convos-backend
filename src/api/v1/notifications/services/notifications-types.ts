@@ -54,3 +54,11 @@ export type NotificationPayloadFor<T extends NotificationType> =
 export type NotificationPayloadWithJWTToken = NotificationPayload & {
   apiJWT: string;
 };
+
+// V2 notification types
+export type V2NotificationPayload = {
+  clientIdentifier: string;
+  apiJWT: string;
+  notificationType: "Protocol";
+  notificationData: ProtocolNotificationData;
+};

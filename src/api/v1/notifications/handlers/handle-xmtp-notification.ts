@@ -8,6 +8,10 @@ import { getHttpDeliveryNotificationAuthHeader } from "@/notifications/utils";
 import { prisma } from "@/utils/prisma";
 import { createV2JwtToken } from "@/utils/v2/jwt";
 import { createApnsService } from "../services/apns-push.service";
+import type {
+  NotificationPayloadWithJWTToken,
+  V2NotificationPayload,
+} from "../services/notifications-types";
 import { getPushNotificationService } from "../services/push-notification.service";
 
 const notificationClient = createNotificationClient();
@@ -62,7 +66,7 @@ export async function handleXmtpNotification(req: Request, res: Response) {
 
     if (v2Client) {
       req.log.info("Processing v2 notification");
-      const result = await handleV2Notification({
+      await handleV2Notification({
         notification,
         client: v2Client,
         req,
@@ -211,26 +215,38 @@ async function handleV2Notification(args: {
     return { success: false };
   }
 
-  // Send push notification
+  // Send push notification with v2 types
+  const v2Notification: V2NotificationPayload = {
+    clientIdentifier: client.id,
+    apiJWT,
+    notificationType: "Protocol",
+    notificationData: {
+      contentTopic: notification.message.content_topic,
+      messageType: notification.message_context.message_type,
+      encryptedMessage: notification.message.message,
+      timestamp: notification.message.timestamp_ns,
+    },
+  };
+
+  // Create a device-like object for APNS service
+  const deviceForApns = {
+    id: client.deviceId,
+    pushToken: client.device.pushToken,
+    pushTokenType: client.device.tokenType,
+    apnsEnv: client.device.apnsEnv,
+    pushFailures: client.device.pushFailures,
+    name: null,
+    os: "ios" as const,
+    appVersion: null,
+    appBuildNumber: null,
+    createdAt: client.device.addedAt,
+    updatedAt: client.device.updatedAt,
+    lastPushSuccessAt: client.device.lastSentAt,
+  };
+
   const result = await apnsService.sendPushNotification({
-    device: {
-      id: client.deviceId,
-      pushToken: client.device.pushToken,
-      pushTokenType: client.device.tokenType,
-      apnsEnv: client.device.apnsEnv,
-      pushFailures: client.device.pushFailures,
-    } as any,
-    notification: {
-      clientIdentifier: client.id,
-      apiJWT,
-      notificationType: "Protocol",
-      notificationData: {
-        contentTopic: notification.message.content_topic,
-        messageType: notification.message_context.message_type,
-        encryptedMessage: notification.message.message,
-        timestamp: notification.message.timestamp_ns,
-      },
-    } as any,
+    device: deviceForApns,
+    notification: v2Notification as unknown as NotificationPayloadWithJWTToken,
   });
 
   // Track success/failure

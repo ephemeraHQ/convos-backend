@@ -17,7 +17,8 @@ export const authV2Middleware = async (
   if (appCheckToken) {
     try {
       await verifyAppCheckToken(appCheckToken);
-      return next();
+      next();
+      return;
     } catch (error) {
       req.log.error({ error }, "AppCheck verification failed");
       res.status(401).json({ error: "Invalid AppCheck token" });
@@ -33,7 +34,8 @@ export const authV2Middleware = async (
       res.locals.clientIdentifier = payload.clientIdentifier;
       res.locals.deviceId = payload.deviceId;
       res.locals.jwtMetadata = payload.metadata;
-      return next();
+      next();
+      return;
     } catch (error) {
       req.log.error({ error }, "V2 JWT verification failed");
       res.status(401).json({ error: "Invalid auth token" });
