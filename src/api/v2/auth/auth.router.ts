@@ -1,6 +1,6 @@
 import { Router } from "express";
-import { authV2Middleware } from "@/middleware/v2/auth";
 import { authRateLimitMiddleware } from "@/middleware/rateLimit";
+import { authV2Middleware } from "@/middleware/v2/auth";
 import { generateToken } from "./handlers/generate-token";
 
 const authRouter = Router();

@@ -3,6 +3,22 @@ import { z } from "zod";
 import { prisma } from "@/utils/prisma";
 import { createV2JwtToken } from "@/utils/v2/jwt";
 
+/**
+ * Token Generation Security Model
+ *
+ * This endpoint generates short-lived JWT tokens for Gateway authentication:
+ *
+ * 1. The outer authV2Middleware validates the request using Firebase AppCheck,
+ *    which verifies the request originates from a legitimate app instance.
+ * 2. AppCheck validation is sufficient to prove device ownership - if a device
+ *    passes AppCheck, it's trusted to request tokens for any client identifier
+ *    associated with that device.
+ * 3. The clientIdentifier->deviceId mapping is validated in the database to
+ *    ensure the client belongs to the requesting device.
+ * 4. Rate limiting (10 requests per 15 minutes) prevents token exhaustion attacks.
+ * 5. Tokens are short-lived (15 minutes) to limit exposure window.
+ */
+
 const generateTokenRequestSchema = z.object({
   clientIdentifier: z.string(),
   deviceId: z.string(),

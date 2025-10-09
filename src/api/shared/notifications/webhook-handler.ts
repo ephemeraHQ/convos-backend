@@ -13,6 +13,7 @@ import {
 import { getHttpDeliveryNotificationAuthHeader } from "@/notifications/utils";
 import { prisma } from "@/utils/prisma";
 import { createV2JwtToken } from "@/utils/v2/jwt";
+import { MAX_PUSH_FAILURES } from "./constants";
 
 const notificationClient = createNotificationClient();
 const pushNotificationService = getPushNotificationService();
@@ -186,7 +187,10 @@ async function handleV2Notification(args: {
   const { notification, client, req } = args;
 
   // Check if device is disabled or has too many failures
-  if (client.device.disabled || client.device.pushFailures >= 10) {
+  if (
+    client.device.disabled ||
+    client.device.pushFailures >= MAX_PUSH_FAILURES
+  ) {
     req.log.warn(
       `Device ${client.deviceId} is disabled or has too many failures. Skipping notification.`,
     );
@@ -264,7 +268,7 @@ async function handleV2Notification(args: {
       data: {
         pushFailures: newFailureCount,
         lastFailureAt: new Date(),
-        disabled: newFailureCount >= 10,
+        disabled: newFailureCount >= MAX_PUSH_FAILURES,
       },
     });
     req.log.warn(

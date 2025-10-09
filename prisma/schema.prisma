@@ -192,6 +192,7 @@ model DeviceRegistration {
   clientIdentifiers ClientIdentifier[]
 
   @@index([pushToken])
+  @@index([disabled, pushFailures])
 }
 
 model ClientIdentifier {

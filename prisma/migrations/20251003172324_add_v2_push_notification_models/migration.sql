@@ -28,6 +28,9 @@ CREATE TABLE "ClientIdentifier" (
 CREATE INDEX "DeviceRegistration_pushToken_idx" ON "DeviceRegistration"("pushToken");
 
 -- CreateIndex
+CREATE INDEX "DeviceRegistration_disabled_pushFailures_idx" ON "DeviceRegistration"("disabled", "pushFailures");
+
+-- CreateIndex
 CREATE INDEX "ClientIdentifier_deviceId_idx" ON "ClientIdentifier"("deviceId");
 
 -- AddForeignKey

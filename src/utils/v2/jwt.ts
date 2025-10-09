@@ -1,4 +1,5 @@
 import * as jose from "jose";
+import { MAX_JWT_METADATA_SIZE } from "@/api/shared/notifications/constants";
 import { AppError } from "@/utils/errors";
 import logger from "@/utils/logger";
 import { tryCatch } from "@/utils/try-catch";
@@ -20,6 +21,17 @@ export const createV2JwtToken = async (args: {
   metadata?: V2JWTMetadata;
   expirationTime?: string;
 }) => {
+  // Validate metadata size to prevent JWT bloat
+  if (args.metadata) {
+    const metadataSize = JSON.stringify(args.metadata).length;
+    if (metadataSize > MAX_JWT_METADATA_SIZE) {
+      throw new AppError(
+        400,
+        `JWT metadata exceeds maximum size of ${MAX_JWT_METADATA_SIZE} bytes`,
+      );
+    }
+  }
+
   const payload: V2JWTPayload = {
     clientIdentifier: args.clientIdentifier,
     deviceId: args.deviceId,
