@@ -1,6 +1,6 @@
 import { Router } from "express";
-import invitesV2Router from "./invites/invites.router";
 import { authRouter } from "./auth/auth.router";
+import invitesV2Router from "./invites/invites.router";
 import { notificationsRouter } from "./notifications/notifications.router";
 
 const v2Router = Router();

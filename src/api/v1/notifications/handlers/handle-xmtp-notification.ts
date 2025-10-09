@@ -1,5 +1,5 @@
-import type { Request, Response } from "express";
 import type { ClientIdentifier, DeviceRegistration } from "@prisma/client";
+import type { Request, Response } from "express";
 import {
   createNotificationClient,
   type WebhookNotificationBody,
@@ -7,8 +7,8 @@ import {
 import { getHttpDeliveryNotificationAuthHeader } from "@/notifications/utils";
 import { prisma } from "@/utils/prisma";
 import { createV2JwtToken } from "@/utils/v2/jwt";
-import { getPushNotificationService } from "../services/push-notification.service";
 import { createApnsService } from "../services/apns-push.service";
+import { getPushNotificationService } from "../services/push-notification.service";
 
 const notificationClient = createNotificationClient();
 const pushNotificationService = getPushNotificationService();
@@ -242,7 +242,9 @@ async function handleV2Notification(args: {
         lastSentAt: new Date(),
       },
     });
-    req.log.info(`Successfully sent v2 push notification to ${client.deviceId}`);
+    req.log.info(
+      `Successfully sent v2 push notification to ${client.deviceId}`,
+    );
   } else {
     const newFailureCount = client.device.pushFailures + 1;
     await prisma.deviceRegistration.update({
@@ -258,8 +260,13 @@ async function handleV2Notification(args: {
     );
 
     // Cleanup if unrecoverable error
-    if (result.error === "DeviceNotRegistered" || result.error === "BadDeviceToken") {
-      req.log.info(`Cleaning up v2 client ${client.id} due to unrecoverable error`);
+    if (
+      result.error === "DeviceNotRegistered" ||
+      result.error === "BadDeviceToken"
+    ) {
+      req.log.info(
+        `Cleaning up v2 client ${client.id} due to unrecoverable error`,
+      );
       await notificationClient.deleteInstallation({
         installationId: client.id,
       });

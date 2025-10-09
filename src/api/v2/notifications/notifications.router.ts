@@ -2,8 +2,8 @@ import { Router } from "express";
 import { authV2Middleware } from "@/middleware/v2/auth";
 import { register } from "./handlers/register";
 import { subscribe } from "./handlers/subscribe";
-import { unsubscribe } from "./handlers/unsubscribe";
 import { unregister } from "./handlers/unregister";
+import { unsubscribe } from "./handlers/unsubscribe";
 
 const notificationsRouter = Router();
 
