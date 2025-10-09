@@ -20,10 +20,6 @@ export const createV2JwtToken = async (args: {
   metadata?: V2JWTMetadata;
   expirationTime?: string;
 }) => {
-  if (!process.env.JWT_SECRET) {
-    throw new AppError(500, "JWT_SECRET is not set");
-  }
-
   const payload: V2JWTPayload = {
     clientIdentifier: args.clientIdentifier,
     deviceId: args.deviceId,
@@ -52,10 +48,6 @@ export const createV2JwtToken = async (args: {
 };
 
 export const verifyV2JwtToken = async (args: { token: string }) => {
-  if (!process.env.JWT_SECRET) {
-    throw new AppError(500, "JWT_SECRET is not set");
-  }
-
   const { data: verified, error: verifyError } = await tryCatch(
     jose.jwtVerify(
       args.token,

@@ -17,10 +17,6 @@ import { createV2JwtToken } from "@/utils/v2/jwt";
 const notificationClient = createNotificationClient();
 const pushNotificationService = getPushNotificationService();
 
-if (!process.env.XMTP_NOTIFICATION_SECRET) {
-  throw new Error("XMTP_NOTIFICATION_SECRET is not set");
-}
-
 /**
  * Webhook handler for XMTP notifications
  *
@@ -58,7 +54,7 @@ export async function handleXmtpNotification(req: Request, res: Response) {
       return;
     }
 
-    // TRY V2 FIRST (clientIdentifier lookup)
+    // Try v2 first (clientIdentifier lookup)
     const v2Client = await prisma.clientIdentifier.findUnique({
       where: { id: notification.installation.id },
       include: { device: true },
@@ -88,7 +84,7 @@ export async function handleXmtpNotification(req: Request, res: Response) {
 
     if (!identityOnDevice || !identityOnDevice.xmtpInstallationId) {
       req.log.error(
-        `Installation not found (v1 or v2) for installationId ${notification.installation.id}`,
+        `Installation not found for installationId ${notification.installation.id}`,
       );
       res.status(400).json({
         error: `Installation not found for installationId ${notification.installation.id}`,
@@ -201,7 +197,7 @@ async function handleV2Notification(args: {
   const apiJWT = await createV2JwtToken({
     clientIdentifier: client.id,
     deviceId: client.deviceId,
-    expirationTime: "72h",
+    expirationTime: "24h",
     metadata: {
       notificationExtensionOnly: true,
     },

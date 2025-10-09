@@ -11,6 +11,16 @@ import { rateLimitMiddleware } from "./middleware/rateLimit";
 import healthcheckRouter from "./routes/healthcheck";
 import logger from "./utils/logger";
 
+if (!process.env.JWT_SECRET) {
+  logger.error("JWT_SECRET is not set");
+  process.exit(1);
+}
+
+if (!process.env.XMTP_NOTIFICATION_SECRET) {
+  logger.error("XMTP_NOTIFICATION_SECRET is not set");
+  process.exit(1);
+}
+
 const getLocalIpAddresses = () => {
   const interfaces = os.networkInterfaces();
   const addresses: string[] = [];
