@@ -52,14 +52,11 @@ export async function generateToken(
       return;
     }
 
-    // Generate JWT
+    // Generate JWT (short-lived for app-generated Gateway requests)
     const token = await createV2JwtToken({
       clientIdentifier: body.clientIdentifier,
       deviceId: body.deviceId,
-      expirationTime: "15m", // Short-lived for app-generated requests
-      metadata: {
-        gatewayAuthorized: true,
-      },
+      expirationTime: "15m",
     });
 
     res.json({ token });

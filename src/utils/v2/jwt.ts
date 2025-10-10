@@ -7,7 +7,6 @@ import { tryCatch } from "@/utils/try-catch";
 
 export type V2JWTMetadata = {
   notificationExtensionOnly?: boolean;
-  gatewayAuthorized?: boolean;
 };
 
 export type V2JWTPayload = {
