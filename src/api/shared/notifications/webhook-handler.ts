@@ -56,7 +56,7 @@ export async function handleXmtpNotification(req: Request, res: Response) {
       "received notification",
     );
 
-    // Try v2 first (clientIdentifier lookup)
+    // Try v2 first (clientId lookup)
     const v2Client = await prisma.clientIdentifier.findUnique({
       where: { id: notification.installation.id },
       include: { device: true },
@@ -201,7 +201,6 @@ async function handleV2Notification(args: {
   // Generate JWT for NSE to use (24h expiration for security)
   const apiJWT = await createV2JwtToken({
     deviceId: client.deviceId,
-    clientIdentifier: client.id,
     expirationTime: "24h",
     metadata: {
       notificationExtensionOnly: true,
@@ -220,7 +219,7 @@ async function handleV2Notification(args: {
 
   // Send push notification with v2 types
   const v2Notification: V2NotificationPayload = {
-    clientIdentifier: client.id,
+    clientId: client.id,
     apiJWT,
     notificationType: "Protocol",
     notificationData: {
@@ -236,7 +235,7 @@ async function handleV2Notification(args: {
   const deviceForApns = {
     id: client.deviceId,
     pushToken: client.device.pushToken,
-    pushTokenType: client.device.tokenType,
+    pushTokenType: client.device.pushTokenType,
     apnsEnv: client.device.apnsEnv,
     pushFailures: client.device.pushFailures,
     name: null,

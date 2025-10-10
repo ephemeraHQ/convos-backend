@@ -6,21 +6,19 @@ import { createV2JwtToken } from "@/utils/v2/jwt";
 /**
  * Token Generation Security Model
  *
- * This endpoint generates short-lived JWT tokens for Gateway authentication:
+ * This endpoint generates short-lived JWT tokens for NSE/Gateway authentication:
  *
  * 1. The outer authV2Middleware validates the request using Firebase AppCheck,
  *    which verifies the request originates from a legitimate app instance.
- * 2. AppCheck validation is sufficient to prove device ownership - if a device
- *    passes AppCheck, it's trusted to request tokens for any client identifier
- *    associated with that device.
- * 3. The clientIdentifier->deviceId mapping is validated in the database to
- *    ensure the client belongs to the requesting device.
- * 4. Rate limiting (10 requests per 15 minutes) prevents token exhaustion attacks.
- * 5. Tokens are short-lived (15 minutes) to limit exposure window.
+ * 2. AppCheck validation is sufficient to prove device ownership.
+ * 3. Device does NOT need to be registered yet - token generation works independently.
+ * 4. If device is registered and disabled, token generation is rejected.
+ * 5. Rate limiting (10 requests per 15 minutes) prevents token exhaustion attacks.
+ * 6. Tokens are short-lived (15 minutes) to limit exposure window.
+ * 7. The JWT contains only deviceId - handlers receive clientId in request bodies.
  */
 
 const generateTokenRequestSchema = z.object({
-  clientIdentifier: z.string(),
   deviceId: z.string(),
 });
 
@@ -35,34 +33,37 @@ export async function generateToken(
   try {
     const body = generateTokenRequestSchema.parse(req.body);
 
-    // Validate client exists and belongs to device
-    const client = await prisma.clientIdentifier.findUnique({
-      where: { id: body.clientIdentifier },
-      include: { device: true },
+    req.log.info({ deviceId: body.deviceId }, "Generating token");
+
+    // Check if device is registered and disabled
+    const device = await prisma.deviceRegistration.findUnique({
+      where: { deviceId: body.deviceId },
     });
 
-    if (!client || client.deviceId !== body.deviceId) {
-      res.status(404).json({ error: "Client not found" });
-      return;
-    }
-
-    // Check if device is disabled
-    if (client.device.disabled) {
+    if (device?.disabled) {
+      req.log.warn({ deviceId: body.deviceId }, "Device is disabled");
       res.status(403).json({ error: "Device is disabled" });
       return;
     }
 
-    // Generate JWT (short-lived for app-generated Gateway requests)
+    // Generate JWT, this works even if device not registered yet
     const token = await createV2JwtToken({
       deviceId: body.deviceId,
-      clientIdentifier: body.clientIdentifier,
       expirationTime: "15m",
     });
 
+    req.log.info(
+      { deviceId: body.deviceId, deviceRegistered: !!device },
+      "Token generated successfully",
+    );
     res.json({ token });
     return;
   } catch (error) {
     if (error instanceof z.ZodError) {
+      req.log.warn(
+        { errors: error.errors },
+        "Invalid request body for generate-token",
+      );
       res.status(400).json({ error: "Invalid request body" });
       return;
     }

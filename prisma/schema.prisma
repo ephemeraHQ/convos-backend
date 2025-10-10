@@ -181,7 +181,7 @@ model InviteCodeRequest {
 model DeviceRegistration {
   deviceId          String             @id
   pushToken         String             @db.Text
-  tokenType         PushTokenType      @default(apns)
+  pushTokenType     PushTokenType      @default(apns)
   apnsEnv           ApnsEnvironment?
   pushFailures      Int                @default(0)
   disabled          Boolean            @default(false)

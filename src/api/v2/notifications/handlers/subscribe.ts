@@ -5,8 +5,8 @@ import { createNotificationClient } from "@/notifications/client";
 import { prisma } from "@/utils/prisma";
 
 const subscribeRequestSchema = z.object({
-  clientIdentifier: z.string(),
   deviceId: z.string(),
+  clientId: z.string(),
   topics: z.array(
     z.object({
       topic: z.string(),
@@ -31,17 +31,31 @@ export async function subscribe(
   try {
     const body = subscribeRequestSchema.parse(req.body);
 
+    req.log.info(
+      {
+        deviceId: body.deviceId,
+        clientId: body.clientId,
+        topicCount: body.topics.length,
+      },
+      "Subscribing to topics",
+    );
+
     // Verify device exists and is not disabled
     const device = await prisma.deviceRegistration.findUnique({
       where: { deviceId: body.deviceId },
     });
 
     if (!device) {
+      req.log.warn(
+        { deviceId: body.deviceId },
+        "Device not found for subscribe",
+      );
       res.status(404).json({ error: "Device not found" });
       return;
     }
 
     if (device.disabled) {
+      req.log.warn({ deviceId: body.deviceId }, "Device is disabled");
       res.status(403).json({ error: "Device is disabled" });
       return;
     }
@@ -59,11 +73,11 @@ export async function subscribe(
     // Register installation with notification server
     try {
       await notificationClient.registerInstallation({
-        installationId: body.clientIdentifier,
+        installationId: body.clientId,
         deliveryMechanism: {
           deliveryMechanismType: {
             case:
-              device.tokenType === "apns"
+              device.pushTokenType === "apns"
                 ? "apnsDeviceToken"
                 : "firebaseDeviceToken",
             value: device.pushToken,
@@ -73,18 +87,18 @@ export async function subscribe(
 
       // Subscribe to topics
       await notificationClient.subscribeWithMetadata({
-        installationId: body.clientIdentifier,
+        installationId: body.clientId,
         subscriptions,
       });
     } catch (remoteErr) {
       // Compensate: best-effort delete installation to avoid orphaned state
       try {
         await notificationClient.deleteInstallation({
-          installationId: body.clientIdentifier,
+          installationId: body.clientId,
         });
       } catch (cleanupErr) {
         req.log.warn(
-          { error: cleanupErr, installationId: body.clientIdentifier },
+          { error: cleanupErr, installationId: body.clientId },
           "Failed to cleanup installation after subscription failure",
         );
       }
@@ -93,19 +107,31 @@ export async function subscribe(
 
     // Create or update client identifier record
     await prisma.clientIdentifier.upsert({
-      where: { id: body.clientIdentifier },
+      where: { id: body.clientId },
       create: {
-        id: body.clientIdentifier,
+        id: body.clientId,
         deviceId: body.deviceId,
       },
       // Refresh updatedAt
       update: {},
     });
 
+    req.log.info(
+      { deviceId: body.deviceId, clientId: body.clientId },
+      "Subscribed successfully",
+    );
     res.status(200).send();
   } catch (error) {
     if (error instanceof z.ZodError) {
-      res.status(400).json({ error: "Invalid request body" });
+      req.log.warn(
+        { errors: error.errors, body: req.body },
+        "Invalid request body for subscribe",
+      );
+      res.status(400).json({
+        error: "Invalid request body",
+        details: error.errors,
+        hint: "topics must be an array of objects with { topic: string, hmacKeys: [{ thirtyDayPeriodsSinceEpoch: number, key: string }] }",
+      });
       return;
     }
     req.log.error({ error }, "Failed to subscribe to topics");

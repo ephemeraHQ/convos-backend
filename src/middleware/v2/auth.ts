@@ -13,10 +13,21 @@ export const authV2Middleware = async (
   const appCheckToken = req.header(APPCHECK_HEADER);
   const authToken = req.header(AUTH_HEADER);
 
+  req.log.info(
+    {
+      path: req.path,
+      method: req.method,
+      hasAppCheck: !!appCheckToken,
+      hasAuthToken: !!authToken,
+    },
+    "V2 auth middleware - incoming request",
+  );
+
   // Try AppCheck first (main app)
   if (appCheckToken) {
     try {
       await verifyAppCheckToken(appCheckToken);
+      req.log.info("AppCheck verification successful");
       next();
       return;
     } catch (error) {
@@ -31,9 +42,15 @@ export const authV2Middleware = async (
     try {
       const payload = await verifyV2JwtToken({ token: authToken });
       // Store payload for handlers if needed
-      res.locals.clientIdentifier = payload.clientIdentifier;
       res.locals.deviceId = payload.deviceId;
       res.locals.jwtMetadata = payload.metadata;
+      req.log.info(
+        {
+          deviceId: payload.deviceId,
+          isNSEOnly: payload.metadata?.notificationExtensionOnly,
+        },
+        "V2 JWT verification successful",
+      );
       next();
       return;
     } catch (error) {
@@ -43,5 +60,6 @@ export const authV2Middleware = async (
     }
   }
 
+  req.log.warn("No authentication headers provided");
   res.status(401).json({ error: "Missing authentication" });
 };

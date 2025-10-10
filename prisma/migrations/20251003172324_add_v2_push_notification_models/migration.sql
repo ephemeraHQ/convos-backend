@@ -2,7 +2,7 @@
 CREATE TABLE "DeviceRegistration" (
     "deviceId" TEXT NOT NULL,
     "pushToken" TEXT NOT NULL,
-    "tokenType" "PushTokenType" NOT NULL DEFAULT 'apns',
+    "pushTokenType" "PushTokenType" NOT NULL DEFAULT 'apns',
     "apnsEnv" "ApnsEnvironment",
     "pushFailures" INTEGER NOT NULL DEFAULT 0,
     "disabled" BOOLEAN NOT NULL DEFAULT false,

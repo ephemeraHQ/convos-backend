@@ -4,7 +4,7 @@ import { createNotificationClient } from "@/notifications/client";
 import { prisma } from "@/utils/prisma";
 
 const unsubscribeRequestSchema = z.object({
-  clientIdentifier: z.string(),
+  clientId: z.string(),
   topics: z.array(z.string()),
 });
 
@@ -19,25 +19,39 @@ export async function unsubscribe(
   try {
     const body = unsubscribeRequestSchema.parse(req.body);
 
+    req.log.info(
+      { clientId: body.clientId, topicCount: body.topics.length },
+      "Unsubscribing from topics",
+    );
+
     // Look up client
     const client = await prisma.clientIdentifier.findUnique({
-      where: { id: body.clientIdentifier },
+      where: { id: body.clientId },
     });
 
     if (!client) {
+      req.log.warn(
+        { clientId: body.clientId },
+        "Client not found for unsubscribe",
+      );
       res.status(404).json({ error: "Client not found" });
       return;
     }
 
     // Unsubscribe from topics
     await notificationClient.unsubscribe({
-      installationId: body.clientIdentifier,
+      installationId: body.clientId,
       topics: body.topics,
     });
 
+    req.log.info({ clientId: body.clientId }, "Unsubscribed successfully");
     res.status(200).send();
   } catch (error) {
     if (error instanceof z.ZodError) {
+      req.log.warn(
+        { errors: error.errors },
+        "Invalid request body for unsubscribe",
+      );
       res.status(400).json({ error: "Invalid request body" });
       return;
     }

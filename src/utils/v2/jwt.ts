@@ -11,13 +11,11 @@ export type V2JWTMetadata = {
 };
 
 export type V2JWTPayload = {
-  clientIdentifier: string;
   deviceId: string;
   metadata?: V2JWTMetadata;
 };
 
 const v2JWTPayloadSchema = z.object({
-  clientIdentifier: z.string(),
   deviceId: z.string(),
   metadata: z
     .object({
@@ -27,7 +25,6 @@ const v2JWTPayloadSchema = z.object({
 });
 
 export const createV2JwtToken = async (args: {
-  clientIdentifier: string;
   deviceId: string;
   metadata?: V2JWTMetadata;
   expirationTime?: string;
@@ -44,7 +41,6 @@ export const createV2JwtToken = async (args: {
   }
 
   const payload: V2JWTPayload = {
-    clientIdentifier: args.clientIdentifier,
     deviceId: args.deviceId,
   };
 
