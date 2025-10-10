@@ -208,7 +208,9 @@ async function handleV2Notification(args: {
     },
   });
 
-  // Create APNS service
+  // NOTE: v2 currently only supports APNS/iOS push notifications
+  // Android/FCM support can be added when needed by using pushNotificationService
+  // and deriving OS from tokenType (see v1 implementation above)
   const apnsService = createApnsService();
 
   if (!apnsService) {
@@ -230,6 +232,7 @@ async function handleV2Notification(args: {
   };
 
   // Create a device-like object for APNS service
+  // NOTE: os is hardcoded to "ios" since v2 only supports APNS for now
   const deviceForApns = {
     id: client.deviceId,
     pushToken: client.device.pushToken,
