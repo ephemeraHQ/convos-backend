@@ -264,12 +264,12 @@ async function handleV2Notification(args: {
     notification: v2Notification as unknown as NotificationPayloadWithJWTToken,
   });
 
-  // Track success/failure
+  // Track success/failure using atomic operations to prevent race conditions
   if (result.success) {
     await prisma.deviceRegistration.update({
       where: { deviceId: client.deviceId },
       data: {
-        pushFailures: 0,
+        pushFailures: { set: 0 },
         lastSentAt: new Date(),
       },
     });
@@ -277,17 +277,25 @@ async function handleV2Notification(args: {
       `Successfully sent v2 push notification to ${client.deviceId}`,
     );
   } else {
-    const newFailureCount = client.device.pushFailures + 1;
-    await prisma.deviceRegistration.update({
+    // Use atomic increment and fetch the result to check threshold
+    const updated = await prisma.deviceRegistration.update({
       where: { deviceId: client.deviceId },
       data: {
-        pushFailures: newFailureCount,
+        pushFailures: { increment: 1 },
         lastFailureAt: new Date(),
-        disabled: newFailureCount >= MAX_PUSH_FAILURES,
       },
     });
+
+    // Check if we've hit the threshold and need to disable
+    if (updated.pushFailures >= MAX_PUSH_FAILURES && !updated.disabled) {
+      await prisma.deviceRegistration.update({
+        where: { deviceId: client.deviceId },
+        data: { disabled: true },
+      });
+    }
+
     req.log.warn(
-      `Failed to send v2 push notification to ${client.deviceId}. Failure count: ${newFailureCount}`,
+      `Failed to send v2 push notification to ${client.deviceId}. Failure count: ${updated.pushFailures}`,
     );
 
     // Cleanup if unrecoverable error
