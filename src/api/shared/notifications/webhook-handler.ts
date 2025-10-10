@@ -266,22 +266,28 @@ async function handleV2Notification(args: {
       `Successfully sent v2 push notification to ${client.deviceId}`,
     );
   } else {
-    // Use atomic increment and fetch the result to check threshold
-    const updated = await prisma.deviceRegistration.update({
-      where: { deviceId: client.deviceId },
-      data: {
-        pushFailures: { increment: 1 },
-        lastFailureAt: new Date(),
-      },
-    });
-
-    // Check if we've hit the threshold and need to disable
-    if (updated.pushFailures >= MAX_PUSH_FAILURES && !updated.disabled) {
-      await prisma.deviceRegistration.update({
+    // Use transaction to atomically increment failures and conditionally disable
+    const updated = await prisma.$transaction(async (tx) => {
+      const u = await tx.deviceRegistration.update({
         where: { deviceId: client.deviceId },
+        data: {
+          pushFailures: { increment: 1 },
+          lastFailureAt: new Date(),
+        },
+      });
+
+      // Atomic conditional disable - only disables if not already disabled and threshold reached
+      await tx.deviceRegistration.updateMany({
+        where: {
+          deviceId: client.deviceId,
+          disabled: false,
+          pushFailures: { gte: MAX_PUSH_FAILURES },
+        },
         data: { disabled: true },
       });
-    }
+
+      return u;
+    });
 
     req.log.warn(
       `Failed to send v2 push notification to ${client.deviceId}. Failure count: ${updated.pushFailures}`,
