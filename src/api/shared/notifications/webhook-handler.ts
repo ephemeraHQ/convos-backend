@@ -11,7 +11,6 @@ import {
   webhookNotificationBodySchema,
   type WebhookNotificationBody,
 } from "@/notifications/client";
-import { getHttpDeliveryNotificationAuthHeader } from "@/notifications/utils";
 import { prisma } from "@/utils/prisma";
 import { createV2JwtToken } from "@/utils/v2/jwt";
 import { MAX_PUSH_FAILURES } from "./constants";
@@ -22,9 +21,8 @@ const pushNotificationService = getPushNotificationService();
 /**
  * Webhook handler for XMTP notifications
  *
- * This endpoint uses custom header-based authentication instead of the standard authMiddleware.
- * It validates the request using the XMTP_NOTIFICATION_SECRET to verify the webhook is coming
- * from the authorized XMTP server.
+ * Authentication is handled by xmtpWebhookAuthMiddleware which validates the
+ * XMTP_NOTIFICATION_SECRET header to verify the request is from the authorized XMTP server.
  */
 export async function handleXmtpNotification(req: Request, res: Response) {
   let identityOnDeviceToCleanup: {
@@ -57,18 +55,6 @@ export async function handleXmtpNotification(req: Request, res: Response) {
       },
       "received notification",
     );
-
-    // Verify the authorization header
-    const authHeader = req.headers.authorization;
-    const expectedAuthHeader = getHttpDeliveryNotificationAuthHeader();
-
-    if (!authHeader || authHeader !== expectedAuthHeader) {
-      req.log.error("Invalid or missing authorization header");
-      res.status(401).json({
-        error: "Unauthorized: Invalid authentication token",
-      });
-      return;
-    }
 
     // Try v2 first (clientIdentifier lookup)
     const v2Client = await prisma.clientIdentifier.findUnique({
@@ -212,10 +198,10 @@ async function handleV2Notification(args: {
     return { success: false };
   }
 
-  // Generate JWT for NSE to use
+  // Generate JWT for NSE to use (24h expiration for security)
   const apiJWT = await createV2JwtToken({
-    clientIdentifier: client.id,
     deviceId: client.deviceId,
+    clientIdentifier: client.id,
     expirationTime: "24h",
     metadata: {
       notificationExtensionOnly: true,

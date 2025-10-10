@@ -54,8 +54,8 @@ export async function generateToken(
 
     // Generate JWT (short-lived for app-generated Gateway requests)
     const token = await createV2JwtToken({
-      clientIdentifier: body.clientIdentifier,
       deviceId: body.deviceId,
+      clientIdentifier: body.clientIdentifier,
       expirationTime: "15m",
     });
 
