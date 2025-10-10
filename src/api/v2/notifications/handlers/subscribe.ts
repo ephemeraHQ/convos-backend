@@ -57,24 +57,39 @@ export async function subscribe(
     }));
 
     // Register installation with notification server
-    await notificationClient.registerInstallation({
-      installationId: body.clientIdentifier,
-      deliveryMechanism: {
-        deliveryMechanismType: {
-          case:
-            client.device.tokenType === "apns"
-              ? "apnsDeviceToken"
-              : "firebaseDeviceToken",
-          value: client.device.pushToken,
+    try {
+      await notificationClient.registerInstallation({
+        installationId: body.clientIdentifier,
+        deliveryMechanism: {
+          deliveryMechanismType: {
+            case:
+              client.device.tokenType === "apns"
+                ? "apnsDeviceToken"
+                : "firebaseDeviceToken",
+            value: client.device.pushToken,
+          },
         },
-      },
-    });
+      });
 
-    // Subscribe to topics
-    await notificationClient.subscribeWithMetadata({
-      installationId: body.clientIdentifier,
-      subscriptions,
-    });
+      // Subscribe to topics
+      await notificationClient.subscribeWithMetadata({
+        installationId: body.clientIdentifier,
+        subscriptions,
+      });
+    } catch (remoteErr) {
+      // Compensate: best-effort delete installation to avoid orphaned state
+      try {
+        await notificationClient.deleteInstallation({
+          installationId: body.clientIdentifier,
+        });
+      } catch (cleanupErr) {
+        req.log.warn(
+          { error: cleanupErr, installationId: body.clientIdentifier },
+          "Failed to cleanup installation after subscription failure",
+        );
+      }
+      throw remoteErr;
+    }
 
     // Create or update client identifier record
     await prisma.clientIdentifier.upsert({

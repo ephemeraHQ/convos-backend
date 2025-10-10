@@ -28,17 +28,27 @@ export async function unregister(
       return;
     }
 
-    // Delete installation from notification server
-    await notificationClient.deleteInstallation({
-      installationId: params.clientIdentifier,
-    });
+    try {
+      await notificationClient.deleteInstallation({
+        installationId: params.clientIdentifier,
+      });
 
-    // Delete client from database
-    await prisma.clientIdentifier.delete({
-      where: { id: params.clientIdentifier },
-    });
+      await prisma.clientIdentifier.delete({
+        where: { id: params.clientIdentifier },
+      });
 
-    res.status(200).send();
+      req.log.info(
+        { clientId: params.clientIdentifier },
+        "Successfully cleaned up v2 client",
+      );
+      res.status(200).send();
+    } catch (cleanupError) {
+      req.log.error(
+        { error: cleanupError, clientId: params.clientIdentifier },
+        "Failed to cleanup v2 notification subscriptions during unregister()",
+      );
+      throw cleanupError;
+    }
   } catch (error) {
     if (error instanceof z.ZodError) {
       res.status(400).json({ error: "Invalid request parameters" });

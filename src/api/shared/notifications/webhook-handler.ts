@@ -304,14 +304,28 @@ async function handleV2Notification(args: {
       result.error === "BadDeviceToken"
     ) {
       req.log.info(
-        `Cleaning up v2 client ${client.id} due to unrecoverable error`,
+        `Cleaning up v2 notification client ${client.id} due to unrecoverable error`,
       );
-      await notificationClient.deleteInstallation({
-        installationId: client.id,
-      });
-      await prisma.clientIdentifier.delete({
-        where: { id: client.id },
-      });
+      try {
+        await notificationClient.deleteInstallation({
+          installationId: client.id,
+        });
+
+        await prisma.clientIdentifier.delete({
+          where: { id: client.id },
+        });
+
+        req.log.info(
+          { clientId: client.id },
+          "Successfully cleaned up v2 notifications",
+        );
+      } catch (cleanupError) {
+        req.log.error(
+          { error: cleanupError, clientId: client.id },
+          "Failed to cleanup v2 notification subscriptions after push failure",
+        );
+        // Don't throw here - this is already in error handling path
+      }
     }
   }
 
