@@ -31,7 +31,6 @@ export async function register(
         pushToken: body.pushToken,
         tokenType: body.tokenType ?? "apns",
         apnsEnv: body.apnsEnv ?? null,
-        updatedAt: new Date(),
       },
     });
 

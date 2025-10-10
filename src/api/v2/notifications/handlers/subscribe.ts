@@ -6,6 +6,7 @@ import { prisma } from "@/utils/prisma";
 
 const subscribeRequestSchema = z.object({
   clientIdentifier: z.string(),
+  deviceId: z.string(),
   topics: z.array(
     z.object({
       topic: z.string(),
@@ -30,18 +31,17 @@ export async function subscribe(
   try {
     const body = subscribeRequestSchema.parse(req.body);
 
-    // Look up client and device
-    const client = await prisma.clientIdentifier.findUnique({
-      where: { id: body.clientIdentifier },
-      include: { device: true },
+    // Verify device exists and is not disabled
+    const device = await prisma.deviceRegistration.findUnique({
+      where: { deviceId: body.deviceId },
     });
 
-    if (!client) {
-      res.status(404).json({ error: "Client not found" });
+    if (!device) {
+      res.status(404).json({ error: "Device not found" });
       return;
     }
 
-    if (client.device.disabled) {
+    if (device.disabled) {
       res.status(403).json({ error: "Device is disabled" });
       return;
     }
@@ -63,10 +63,10 @@ export async function subscribe(
         deliveryMechanism: {
           deliveryMechanismType: {
             case:
-              client.device.tokenType === "apns"
+              device.tokenType === "apns"
                 ? "apnsDeviceToken"
                 : "firebaseDeviceToken",
-            value: client.device.pushToken,
+            value: device.pushToken,
           },
         },
       });
@@ -96,11 +96,10 @@ export async function subscribe(
       where: { id: body.clientIdentifier },
       create: {
         id: body.clientIdentifier,
-        deviceId: client.deviceId,
+        deviceId: body.deviceId,
       },
-      update: {
-        updatedAt: new Date(),
-      },
+      // Refresh updatedAt
+      update: {},
     });
 
     res.status(200).send();

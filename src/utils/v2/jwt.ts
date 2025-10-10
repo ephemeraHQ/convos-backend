@@ -1,4 +1,5 @@
 import * as jose from "jose";
+import { z } from "zod";
 import { MAX_JWT_METADATA_SIZE } from "@/api/shared/notifications/constants";
 import { JWT_SECRET_BYTES } from "@/config";
 import { AppError } from "@/utils/errors";
@@ -14,6 +15,16 @@ export type V2JWTPayload = {
   deviceId: string;
   metadata?: V2JWTMetadata;
 };
+
+const v2JWTPayloadSchema = z.object({
+  clientIdentifier: z.string(),
+  deviceId: z.string(),
+  metadata: z
+    .object({
+      notificationExtensionOnly: z.boolean().optional(),
+    })
+    .optional(),
+});
 
 export const createV2JwtToken = async (args: {
   clientIdentifier: string;
@@ -69,7 +80,12 @@ export const verifyV2JwtToken = async (args: { token: string }) => {
     throw new AppError(401, "Invalid or expired token", verifyError);
   }
 
-  return verified.payload as V2JWTPayload;
+  const parseResult = v2JWTPayloadSchema.safeParse(verified.payload);
+  if (!parseResult.success) {
+    throw new AppError(401, "Invalid JWT payload structure");
+  }
+
+  return parseResult.data;
 };
 
 export const isNotificationExtensionOnlyToken = (payload: V2JWTPayload) => {
