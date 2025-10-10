@@ -3,6 +3,7 @@ import { createClient } from "@connectrpc/connect";
 import { createConnectTransport } from "@connectrpc/connect-node";
 import { type HmacKey } from "@xmtp/node-sdk";
 import { z } from "zod";
+import { NOTIFICATION_SERVER_URL } from "@/config";
 import {
   Notifications,
   Subscription_HmacKeySchema,
@@ -11,11 +12,8 @@ import {
 } from "@/gen/notifications/v1/service_pb";
 
 export function createNotificationClient() {
-  if (!process.env.NOTIFICATION_SERVER_URL) {
-    throw new Error("NOTIFICATION_SERVER_URL is not set");
-  }
   const transport = createConnectTransport({
-    baseUrl: process.env.NOTIFICATION_SERVER_URL,
+    baseUrl: NOTIFICATION_SERVER_URL,
     httpVersion: "1.1",
   });
   return createClient(Notifications, transport);

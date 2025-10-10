@@ -3,6 +3,7 @@ import cors from "cors";
 import express from "express";
 import helmet from "helmet";
 import apiRouter from "./api";
+import { IS_DEVELOPMENT } from "./config";
 import { errorHandlerMiddleware } from "./middleware/errorHandler";
 import { jsonMiddleware } from "./middleware/json";
 import { noRouteMiddleware } from "./middleware/noRoute";
@@ -10,16 +11,6 @@ import { pinoMiddleware } from "./middleware/pino";
 import { rateLimitMiddleware } from "./middleware/rateLimit";
 import healthcheckRouter from "./routes/healthcheck";
 import logger from "./utils/logger";
-
-if (!process.env.JWT_SECRET) {
-  logger.error("JWT_SECRET is not set");
-  process.exit(1);
-}
-
-if (!process.env.XMTP_NOTIFICATION_SECRET) {
-  logger.error("XMTP_NOTIFICATION_SECRET is not set");
-  process.exit(1);
-}
 
 const getLocalIpAddresses = () => {
   const interfaces = os.networkInterfaces();
@@ -66,7 +57,7 @@ const port = process.env.PORT || 4000;
 const server = app.listen(port, () => {
   logger.info(`Convos API service is running on port ${port}`);
 
-  if (process.env.NODE_ENV == "development") {
+  if (IS_DEVELOPMENT) {
     const localIps = getLocalIpAddresses();
     logger.info(`Available at: http://localhost:${port}`);
     localIps.forEach((ip) => {

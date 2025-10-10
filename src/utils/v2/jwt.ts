@@ -1,5 +1,6 @@
 import * as jose from "jose";
 import { MAX_JWT_METADATA_SIZE } from "@/api/shared/notifications/constants";
+import { JWT_SECRET_BYTES } from "@/config";
 import { AppError } from "@/utils/errors";
 import logger from "@/utils/logger";
 import { tryCatch } from "@/utils/try-catch";
@@ -21,10 +22,6 @@ export const createV2JwtToken = async (args: {
   metadata?: V2JWTMetadata;
   expirationTime?: string;
 }) => {
-  if (!process.env.JWT_SECRET) {
-    throw new AppError(500, "JWT_SECRET is not configured");
-  }
-
   // Validate metadata size to prevent JWT bloat
   if (args.metadata) {
     const metadataSize = JSON.stringify(args.metadata).length;
@@ -52,7 +49,7 @@ export const createV2JwtToken = async (args: {
       .setProtectedHeader({ alg: "HS256" })
       .setIssuedAt()
       .setExpirationTime(args.expirationTime ?? "15m")
-      .sign(new TextEncoder().encode(process.env.JWT_SECRET)),
+      .sign(JWT_SECRET_BYTES),
   );
 
   if (jwtError) {
@@ -64,15 +61,8 @@ export const createV2JwtToken = async (args: {
 };
 
 export const verifyV2JwtToken = async (args: { token: string }) => {
-  if (!process.env.JWT_SECRET) {
-    throw new AppError(500, "JWT_SECRET is not configured");
-  }
-
   const { data: verified, error: verifyError } = await tryCatch(
-    jose.jwtVerify(
-      args.token,
-      new TextEncoder().encode(process.env.JWT_SECRET),
-    ),
+    jose.jwtVerify(args.token, JWT_SECRET_BYTES),
   );
 
   if (verifyError) {

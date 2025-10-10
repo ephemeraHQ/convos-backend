@@ -1,6 +1,7 @@
 import type express from "express";
 import { type NextFunction, type Request, type Response } from "express";
 import { ZodError } from "zod";
+import { IS_DEVELOPMENT } from "@/config";
 import { AppError } from "../utils/errors";
 
 // Express requires error handling middleware to have exactly 4 parameters
@@ -37,7 +38,7 @@ function errorHandler(
   // Handle unknown errors
   return res.status(500).json({
     error: "Internal Server Error",
-    ...(process.env.NODE_ENV === "development" && {
+    ...(IS_DEVELOPMENT && {
       message: err.message,
     }),
   });
