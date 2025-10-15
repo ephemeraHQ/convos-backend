@@ -24,57 +24,48 @@ export async function register(
       {
         deviceId: body.deviceId,
         hasPushToken: !!body.pushToken,
-        pushTokenType: body.pushTokenType ?? "apns",
+        pushTokenType: body.pushTokenType,
         apnsEnv: body.apnsEnv,
       },
       "Registering device",
     );
 
-    // Check if device exists
-    const existingDevice = await prisma.deviceRegistration.findUnique({
-      where: { deviceId: body.deviceId },
-    });
+    // Build update data - only include fields that were explicitly provided
+    const updateData: {
+      pushTokenType?: PushTokenType;
+      apnsEnv?: ApnsEnvironment | null;
+      pushToken?: string;
+    } = {};
 
-    if (existingDevice) {
-      // Update existing device - only update pushToken if provided
-      const updateData: {
-        pushTokenType?: PushTokenType;
-        apnsEnv?: ApnsEnvironment | null;
-        pushToken?: string;
-      } = {
+    if (body.pushToken !== undefined) {
+      updateData.pushToken = body.pushToken;
+    }
+    if (body.pushTokenType !== undefined) {
+      updateData.pushTokenType = body.pushTokenType;
+    }
+    if (body.apnsEnv !== undefined) {
+      updateData.apnsEnv = body.apnsEnv;
+    }
+
+    // Use upsert to avoid race conditions
+    // On create: use defaults for missing fields
+    // On update: only update fields that were provided
+    await prisma.deviceRegistration.upsert({
+      where: { deviceId: body.deviceId },
+      create: {
+        deviceId: body.deviceId,
+        pushToken: body.pushToken ?? "",
         pushTokenType: body.pushTokenType ?? "apns",
         apnsEnv: body.apnsEnv ?? null,
-      };
+      },
+      update: updateData,
+    });
 
-      if (body.pushToken) {
-        updateData.pushToken = body.pushToken;
-      }
+    req.log.info(
+      { deviceId: body.deviceId, hasPushToken: !!body.pushToken },
+      "Device registered successfully",
+    );
 
-      await prisma.deviceRegistration.update({
-        where: { deviceId: body.deviceId },
-        data: updateData,
-      });
-
-      req.log.info(
-        { deviceId: body.deviceId, updatedPushToken: !!body.pushToken },
-        "Device updated successfully",
-      );
-    } else {
-      // Create new device - pushToken can be empty initially
-      await prisma.deviceRegistration.create({
-        data: {
-          deviceId: body.deviceId,
-          pushToken: body.pushToken ?? "",
-          pushTokenType: body.pushTokenType ?? "apns",
-          apnsEnv: body.apnsEnv ?? null,
-        },
-      });
-
-      req.log.info(
-        { deviceId: body.deviceId, hasPushToken: !!body.pushToken },
-        "Device registered successfully",
-      );
-    }
     res.status(200).send();
     return;
   } catch (error) {

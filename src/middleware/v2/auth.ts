@@ -5,6 +5,38 @@ import { verifyV2JwtToken } from "@/utils/v2/jwt";
 export const AUTH_HEADER = "X-Convos-AuthToken";
 export const APPCHECK_HEADER = "X-Firebase-AppCheck";
 
+export const appCheckOnlyMiddleware = async (
+  req: Request,
+  res: Response,
+  next: NextFunction,
+) => {
+  const appCheckToken = req.header(APPCHECK_HEADER);
+
+  req.log.info(
+    {
+      path: req.path,
+      method: req.method,
+      hasAppCheck: !!appCheckToken,
+    },
+    "AppCheck-only middleware - incoming request",
+  );
+
+  if (!appCheckToken) {
+    req.log.warn("No AppCheck token provided");
+    res.status(401).json({ error: "Missing AppCheck token" });
+    return;
+  }
+
+  try {
+    await verifyAppCheckToken(appCheckToken);
+    req.log.info("AppCheck verification successful");
+    next();
+  } catch (error) {
+    req.log.error({ error }, "AppCheck verification failed");
+    res.status(401).json({ error: "Invalid AppCheck token" });
+  }
+};
+
 export const authV2Middleware = async (
   req: Request,
   res: Response,
