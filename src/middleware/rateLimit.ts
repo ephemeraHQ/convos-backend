@@ -10,8 +10,8 @@ export const rateLimitMiddleware = rateLimit({
 
 // Stricter rate limiting for auth endpoints (JWT generation)
 export const authRateLimitMiddleware = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  limit: 10, // 10 requests per 15 minutes per IP
+  windowMs: 5 * 60 * 1000, // 5 minutes
+  limit: 50, // 50 requests per 5 minutes per IP
   legacyHeaders: false,
   standardHeaders: "draft-8",
   message: "Too many authentication requests, please try again later",
