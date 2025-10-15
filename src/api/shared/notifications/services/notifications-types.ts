@@ -37,7 +37,8 @@ export type NotificationTypeToData = {
 };
 
 type NotificationPayloadBase<T extends NotificationType> = {
-  inboxId: string;
+  inboxId?: string; // Optional for v1→v2 transition
+  clientId?: string; // Optional for v1→v2 transition
   notificationType: T;
   notificationData: NotificationTypeToData[T];
 };

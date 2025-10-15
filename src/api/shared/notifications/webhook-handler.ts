@@ -63,7 +63,10 @@ export async function handleXmtpNotification(req: Request, res: Response) {
     });
 
     if (v2Client) {
-      req.log.info("Processing v2 notification");
+      req.log.info(
+        { clientId: notification.installation.id },
+        "Processing v2 notification",
+      );
       await handleV2Notification({
         notification,
         client: v2Client,
@@ -94,7 +97,10 @@ export async function handleXmtpNotification(req: Request, res: Response) {
       return;
     }
 
-    req.log.info("Processing v1 notification");
+    req.log.info(
+      { installationId: notification.installation.id },
+      "Processing v1 notification",
+    );
 
     identityOnDeviceToCleanup = {
       xmtpInstallationId: identityOnDevice.xmtpInstallationId,
@@ -219,7 +225,7 @@ async function handleV2Notification(args: {
 
   // Send push notification with v2 types
   const v2Notification: V2NotificationPayload = {
-    clientId: client.id,
+    clientId: notification.installation.id,
     apiJWT,
     notificationType: "Protocol",
     notificationData: {

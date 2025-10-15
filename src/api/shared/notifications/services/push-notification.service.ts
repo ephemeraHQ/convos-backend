@@ -105,6 +105,15 @@ export class PushNotificationService {
 
     const xmtpInstallationId = identityOnDevice.xmtpInstallationId;
 
+    // V1 notifications always have inboxId
+    if (!notification.inboxId) {
+      logger.error(
+        { deviceId: device.id },
+        "Missing inboxId for v1 notification",
+      );
+      return { success: false };
+    }
+
     // We add an JWT token to the notification payload to be used by the client
     // So the notification extension is able to communicate with our backend (App Attest not supported in extensions so we can't call authenticate)
     const apiJWT = await createJwtToken({
