@@ -29,7 +29,10 @@ export const webhookNotificationBodySchema = z.object({
   idempotency_key: z.string(),
   message: z.object({
     content_topic: z.string(),
-    timestamp_ns: z.string(),
+    // Accept both string and number for timestamp_ns (protobuf int64 compatibility)
+    timestamp_ns: z
+      .union([z.string(), z.number()])
+      .transform((val) => (typeof val === "number" ? val.toString() : val)),
     message: z.string(),
   }),
   message_context: z.object({
