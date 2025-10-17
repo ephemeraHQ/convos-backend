@@ -21,8 +21,15 @@ if (!process.env.NOTIFICATION_SERVER_URL) {
 // Cache environment variables
 export const XMTP_NOTIFICATION_SECRET = process.env.XMTP_NOTIFICATION_SECRET;
 export const JWT_SECRET = process.env.JWT_SECRET;
+
+// Validate JWT_SECRET is a non-empty string before encoding
+if (typeof JWT_SECRET !== "string" || JWT_SECRET.trim().length === 0) {
+  throw new Error(
+    "Missing `JWT_SECRET`: set a non-empty string in environment before starting the app",
+  );
+}
 export const JWT_SECRET_BYTES = new TextEncoder().encode(JWT_SECRET);
 export const NOTIFICATION_SERVER_URL = process.env.NOTIFICATION_SERVER_URL;
 export const NODE_ENV = process.env.NODE_ENV || "development";
-export const IS_PRODUCTION = NODE_ENV === "production";
-export const IS_DEVELOPMENT = NODE_ENV === "development";
+export const IS_PRODUCTION = process.env.NODE_ENV === "production";
+export const IS_DEVELOPMENT = process.env.NODE_ENV === "development";
