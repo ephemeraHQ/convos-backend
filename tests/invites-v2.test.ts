@@ -89,7 +89,7 @@ describe("V2 Invite API Tests", () => {
       // Pre-generated valid SignedInvite slug
       // Contains: conversationId, inviteId, signature; no name/description/imageURL
       const validSlug =
-        "CqQBClRBZjBJY3ZNSmo5TW9UcFZEc2x0YnNSakNwaldvcTA2am9iYmRWcVRZb2l4RUQzNVN1X1BJWmNaRmN0MkM5eDFqdEQydE4wZXM0Tkx4MDZMRkJhS3USQDYyZTFmMDIwNTc4YmRjNjMxMDZkZTJmYmFkODUzMzVjM2VkYzRhNzlhNWIyMWVhNjgxMjE2OGQxZjY3MTNlMjUaClVhN2RSRlFqdmESQcEhHVsmCTay20THnnQlEUDVGfhG9OnyHqgbtTFa9WBFat7aUl_22_SPdWfKSZuFUw3N90jc2vtWHkr2zb8eNrEB";
+        "CqoBClRBWWt1ZEJFY21YZDJuaTRUUlpqVXFCV0lKMWFhaXRHZEprTEI3N3prME1YT0Z1Q0dacXVzQ2VpcWNIaTl0eE9jcXVfZTU4bGlSa2VpRXdIQUlzZWcSQDgwYzViZDk4MzNmYTU4ZjMxYzRlYTYwMWIxYjQ0NmU1NjVhYzdmYTQ4ZTM5Y2UxY2Y4ZDE0ZjI3OTAyNzE4ZTkaCllZb1gycjROR2UiACoAMgASQfN77AHiMDWy2Aal8xoG0UJ";
 
       const response = await fetch(`${baseURL}/api/v2/invites/${validSlug}`, {
         method: "GET",
@@ -102,6 +102,9 @@ describe("V2 Invite API Tests", () => {
           name: string | null;
           description: string | null;
           imageURL: string | null;
+          conversationExpiresAt: string | null;
+          expiresAt: string | null;
+          expiresAfterUse: boolean;
         };
       };
       expect(data.success).toBe(true);
@@ -109,9 +112,15 @@ describe("V2 Invite API Tests", () => {
       expect(data.data).toHaveProperty("name");
       expect(data.data).toHaveProperty("description");
       expect(data.data).toHaveProperty("imageURL");
+      expect(data.data).toHaveProperty("conversationExpiresAt");
+      expect(data.data).toHaveProperty("expiresAt");
+      expect(data.data).toHaveProperty("expiresAfterUse");
       expect(data.data.name).toBeNull();
       expect(data.data.description).toBeNull();
       expect(data.data.imageURL).toBeNull();
+      expect(data.data.conversationExpiresAt).toBeNull();
+      expect(data.data.expiresAt).toBeNull();
+      expect(data.data.expiresAfterUse).toBe(false);
     });
   });
 
