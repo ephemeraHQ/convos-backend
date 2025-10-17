@@ -3,8 +3,8 @@ import type { Device } from "@prisma/client";
 import jwt from "jsonwebtoken";
 import logger from "@/utils/logger";
 import type {
+  AnyNotificationPayloadWithJWT,
   NotificationPayload,
-  NotificationPayloadWithJWTToken,
 } from "./notifications-types";
 
 export interface ApnsConfig {
@@ -75,7 +75,7 @@ export class ApnsPushService {
 
   async sendPushNotification(args: {
     device: Device;
-    notification: NotificationPayloadWithJWTToken;
+    notification: AnyNotificationPayloadWithJWT;
     isSilent?: boolean;
   }): Promise<{ success: boolean; error?: string }> {
     const { device, notification, isSilent } = args;

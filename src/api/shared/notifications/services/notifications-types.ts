@@ -36,12 +36,15 @@ export type NotificationTypeToData = {
   InviteJoinRequest: InviteJoinRequestNotificationData;
 };
 
+// Base notification payload with XOR semantics for v1/v2 transition
+// Ensures exactly one of inboxId (v1) or clientId (v2) is present
 type NotificationPayloadBase<T extends NotificationType> = {
-  inboxId?: string; // Optional for v1→v2 transition
-  clientId?: string; // Optional for v1→v2 transition
   notificationType: T;
   notificationData: NotificationTypeToData[T];
-};
+} & (
+  | { inboxId: string; clientId?: never }
+  | { clientId: string; inboxId?: never }
+);
 
 // Discriminated union over notificationType
 export type NotificationPayload = {
@@ -56,10 +59,15 @@ export type NotificationPayloadWithJWTToken = NotificationPayload & {
   apiJWT: string;
 };
 
-// V2 notification types
+// V2 notification types (structurally compatible with v2 branch of NotificationPayloadWithJWTToken)
 export type V2NotificationPayload = {
   clientId: string;
   apiJWT: string;
   notificationType: "Protocol";
   notificationData: ProtocolNotificationData;
 };
+
+// Union type for push services that can handle both v1 and v2
+export type AnyNotificationPayloadWithJWT =
+  | NotificationPayloadWithJWTToken
+  | V2NotificationPayload;

@@ -1,10 +1,7 @@
 import type { ClientIdentifier, DeviceRegistration } from "@prisma/client";
 import type { Request, Response } from "express";
 import { createApnsService } from "@/api/shared/notifications/services/apns-push.service";
-import type {
-  NotificationPayloadWithJWTToken,
-  V2NotificationPayload,
-} from "@/api/shared/notifications/services/notifications-types";
+import type { V2NotificationPayload } from "@/api/shared/notifications/services/notifications-types";
 import { getPushNotificationService } from "@/api/shared/notifications/services/push-notification.service";
 import {
   createNotificationClient,
@@ -300,7 +297,7 @@ async function handleV2Notification(args: {
 
   const result = await apnsService.sendPushNotification({
     device: deviceForApns,
-    notification: v2Notification as unknown as NotificationPayloadWithJWTToken,
+    notification: v2Notification,
   });
 
   // Track success/failure using atomic operations to prevent race conditions
