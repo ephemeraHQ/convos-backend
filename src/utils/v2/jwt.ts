@@ -31,7 +31,9 @@ export const createV2JwtToken = async (args: {
 }) => {
   // Validate metadata size to prevent JWT bloat
   if (args.metadata) {
-    const metadataSize = JSON.stringify(args.metadata).length;
+    const metadataSize = new TextEncoder().encode(
+      JSON.stringify(args.metadata),
+    ).length;
     if (metadataSize > MAX_JWT_METADATA_SIZE) {
       throw new AppError(
         400,
