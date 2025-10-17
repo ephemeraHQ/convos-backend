@@ -11,8 +11,27 @@ export const xmtpWebhookAuthMiddleware = (
   res: Response,
   next: NextFunction,
 ) => {
+  // Fail closed: reject if webhook secret is not configured
+  const expectedAuthHeaderRaw = getHttpDeliveryNotificationAuthHeader();
+  if (!expectedAuthHeaderRaw || expectedAuthHeaderRaw.trim().length === 0) {
+    req.log.error("XMTP webhook secret not configured - rejecting request");
+    res.status(500).json({
+      error: "Server configuration error",
+    });
+    return;
+  }
+  const expectedAuthHeader = expectedAuthHeaderRaw.trim();
+
   const authHeader = req.headers.authorization?.trim() ?? "";
-  const expectedAuthHeader = getHttpDeliveryNotificationAuthHeader().trim();
+
+  // Reject if no authorization header provided
+  if (authHeader.length === 0) {
+    req.log.error("Missing XMTP webhook authorization header");
+    res.status(401).json({
+      error: "Unauthorized: Invalid authentication token",
+    });
+    return;
+  }
 
   const provided = Buffer.from(authHeader, "utf8");
   const expected = Buffer.from(expectedAuthHeader, "utf8");
@@ -20,7 +39,7 @@ export const xmtpWebhookAuthMiddleware = (
     provided.length === expected.length && timingSafeEqual(provided, expected);
 
   if (!valid) {
-    req.log.error("Invalid or missing XMTP webhook authorization header");
+    req.log.error("Invalid XMTP webhook authorization header");
     res.status(401).json({
       error: "Unauthorized: Invalid authentication token",
     });
