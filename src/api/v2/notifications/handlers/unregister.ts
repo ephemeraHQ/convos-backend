@@ -66,5 +66,6 @@ export async function unregister(
     }
     req.log.error({ error }, "Failed to unregister client");
     res.status(500).json({ error: "Failed to unregister client" });
+    return;
   }
 }

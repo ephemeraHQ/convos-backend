@@ -79,5 +79,6 @@ export async function register(
     }
     req.log.error({ error }, "Failed to register device");
     res.status(500).json({ error: "Failed to register device" });
+    return;
   }
 }

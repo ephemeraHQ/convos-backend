@@ -81,6 +81,7 @@ export async function registerInstallation(
   }
 
   res.status(400).json({ error: "Invalid request body" });
+  return;
 }
 
 async function handleCurrentRegistration(args: {

@@ -12,15 +12,23 @@ export const xmtpWebhookAuthMiddleware = (
   next: NextFunction,
 ) => {
   // Fail closed: reject if webhook secret is not configured
-  const expectedAuthHeaderRaw = getHttpDeliveryNotificationAuthHeader();
-  if (!expectedAuthHeaderRaw || expectedAuthHeaderRaw.trim().length === 0) {
-    req.log.error("XMTP webhook secret not configured - rejecting request");
+  let expectedAuthHeader: string;
+  try {
+    const expectedAuthHeaderRaw = getHttpDeliveryNotificationAuthHeader();
+    if (!expectedAuthHeaderRaw || expectedAuthHeaderRaw.trim().length === 0) {
+      throw new Error("Webhook secret is empty");
+    }
+    expectedAuthHeader = expectedAuthHeaderRaw.trim();
+  } catch (error) {
+    req.log.error(
+      { error },
+      "XMTP webhook secret not configured - rejecting request",
+    );
     res.status(500).json({
       error: "Server configuration error",
     });
     return;
   }
-  const expectedAuthHeader = expectedAuthHeaderRaw.trim();
 
   const authHeader = req.headers.authorization?.trim() ?? "";
 

@@ -58,5 +58,6 @@ export async function unsubscribe(
     }
     req.log.error({ error }, "Failed to unsubscribe from topics");
     res.status(500).json({ error: "Failed to unsubscribe from topics" });
+    return;
   }
 }

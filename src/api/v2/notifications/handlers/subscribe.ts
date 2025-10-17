@@ -163,5 +163,6 @@ export async function subscribe(
     }
     req.log.error({ error }, "Failed to subscribe to topics");
     res.status(500).json({ error: "Failed to subscribe to topics" });
+    return;
   }
 }
