@@ -1,5 +1,6 @@
 import { createHash } from "crypto";
 import { fromBinary, toBinary } from "@bufbuild/protobuf";
+import { timestampDate } from "@bufbuild/protobuf/wkt";
 import type { Request, Response } from "express";
 import * as secp256k1 from "secp256k1";
 import { z } from "zod";
@@ -25,6 +26,9 @@ type DecodedInvite = Pick<
   | "name"
   | "description"
   | "imageURL"
+  | "conversationExpiresAt"
+  | "expiresAt"
+  | "expiresAfterUse"
 >;
 
 // Maximum slug length to prevent DoS (browser URL limit is ~2048 chars)
@@ -97,6 +101,9 @@ function decodeInviteSlug(slug: string): DecodedInvite {
       name: payload.name,
       description: payload.description,
       imageURL: payload.imageURL,
+      conversationExpiresAt: payload.conversationExpiresAt,
+      expiresAt: payload.expiresAt,
+      expiresAfterUse: payload.expiresAfterUse,
     };
   } catch (error) {
     throw new Error(
@@ -111,6 +118,9 @@ export type DecodeInviteSlugResponse = {
     name: string | null;
     description: string | null;
     imageURL: string | null;
+    conversationExpiresAt: string | null;
+    expiresAt: string | null;
+    expiresAfterUse: boolean;
   };
   error?: string;
   message?: string;
@@ -131,6 +141,13 @@ export async function decodeInviteSlugHandler(
         name: decoded.name ?? null,
         description: decoded.description ?? null,
         imageURL: decoded.imageURL ?? null,
+        conversationExpiresAt: decoded.conversationExpiresAt
+          ? timestampDate(decoded.conversationExpiresAt).toISOString()
+          : null,
+        expiresAt: decoded.expiresAt
+          ? timestampDate(decoded.expiresAt).toISOString()
+          : null,
+        expiresAfterUse: decoded.expiresAfterUse,
       },
     };
 
