@@ -151,7 +151,7 @@ export async function subscribe(
   } catch (error) {
     if (error instanceof z.ZodError) {
       req.log.warn(
-        { errors: error.errors, body: req.body },
+        { errors: error.errors },
         "Invalid request body for subscribe",
       );
       res.status(400).json({

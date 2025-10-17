@@ -170,7 +170,7 @@ describe("PushNotificationService", () => {
       expect(mockSendPushNotification).not.toHaveBeenCalled();
     });
 
-    test("handles FCM push token type (not implemented)", async () => {
+    test("rejects FCM push token type (not supported)", async () => {
       const fcmDevice = {
         ...testDevice,
         pushTokenType: "fcm" as const,

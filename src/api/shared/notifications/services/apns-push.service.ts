@@ -137,10 +137,11 @@ export class ApnsPushService {
         "content-type": "application/json",
       };
 
+      const safeHeaders = { ...headers, authorization: "[REDACTED]" };
       logger.info(
         {
           url: `https://${hostname}/3/device/${device.pushToken}`,
-          headers,
+          headers: safeHeaders,
           payload,
           deviceId: device.id,
           verbose: true,

@@ -156,13 +156,13 @@ export class PushNotificationService {
         break;
 
       case "fcm":
-        logger.warn(
-          `FCM push notifications not yet implemented for device ${device.id}`,
+        logger.error(
+          `FCM push notifications are not supported. Only APNS is supported for device ${device.id}`,
         );
         return { success: false };
 
       default:
-        logger.warn(`No valid push token type for device ${device.id}`);
+        logger.warn(`Invalid push token type for device ${device.id}`);
         return { success: false };
     }
 

@@ -24,9 +24,10 @@ enum DeviceOS {
   macos
 }
 
+// NOTE: Only APNS is supported. FCM is not supported.
 enum PushTokenType {
   apns
-  fcm
+  fcm // Not supported - kept for database compatibility only
 }
 
 enum ApnsEnvironment {
