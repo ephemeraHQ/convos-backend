@@ -60,18 +60,58 @@ export async function register(
       updateData.apnsEnv = body.apnsEnv;
     }
 
-    // Use upsert to avoid race conditions
-    // On create: use defaults for missing fields
-    // On update: only update fields that were provided
-    await prisma.deviceRegistration.upsert({
-      where: { deviceId: body.deviceId },
-      create: {
-        deviceId: body.deviceId,
-        pushToken: body.pushToken ?? null,
-        pushTokenType: body.pushTokenType ?? "apns",
-        apnsEnv: body.apnsEnv ?? null,
-      },
-      update: updateData,
+    // Use transaction to handle push token conflicts
+    // If this push token is already registered to a different device,
+    // we need to transfer ownership to the new device
+    await prisma.$transaction(async (tx) => {
+      // If a push token is provided, check if it's registered to another device
+      if (body.pushToken) {
+        const pushTokenType = body.pushTokenType ?? "apns";
+        const apnsEnv = body.apnsEnv ?? null;
+
+        // Find any other device with the same push token combination
+        const existingDevice = await tx.deviceRegistration.findFirst({
+          where: {
+            pushToken: body.pushToken,
+            pushTokenType,
+            apnsEnv,
+            deviceId: { not: body.deviceId },
+          },
+        });
+
+        if (existingDevice) {
+          req.log.info(
+            {
+              oldDeviceId: existingDevice.deviceId,
+              newDeviceId: body.deviceId,
+              pushToken: body.pushToken,
+            },
+            "Push token moving from old device to new device - clearing old registration",
+          );
+
+          // Clear the push token from the old device to avoid unique constraint violation
+          await tx.deviceRegistration.update({
+            where: { deviceId: existingDevice.deviceId },
+            data: {
+              pushToken: null,
+              pushTokenType: "apns",
+              apnsEnv: null,
+            },
+          });
+        }
+      }
+
+      // Now upsert the new device registration
+      await tx.deviceRegistration.upsert({
+        where: { deviceId: body.deviceId },
+        create: {
+          deviceId: body.deviceId,
+          pushToken: body.pushToken ?? null,
+          pushTokenType: body.pushTokenType ?? "apns",
+          apnsEnv: body.apnsEnv ?? null,
+        },
+        update: updateData,
+      });
     });
 
     req.log.info(
@@ -90,6 +130,25 @@ export async function register(
       res.status(400).json({ error: "Invalid request body" });
       return;
     }
+
+    // Handle unexpected Prisma unique constraint violations (should be rare due to transaction logic)
+    if (
+      error &&
+      typeof error === "object" &&
+      "code" in error &&
+      error.code === "P2002"
+    ) {
+      req.log.error(
+        { deviceId: req.body.deviceId, error },
+        "Unexpected unique constraint violation - possible race condition",
+      );
+      res.status(409).json({
+        error:
+          "Push token already registered. Please retry or contact support.",
+      });
+      return;
+    }
+
     req.log.error({ error }, "Failed to register device");
     res.status(500).json({ error: "Failed to register device" });
     return;
