@@ -4,7 +4,7 @@ import { createNotificationClient } from "@/notifications/client";
 import { prisma } from "@/utils/prisma";
 
 const unsubscribeRequestSchema = z.object({
-  clientId: z.string(),
+  clientId: z.string().max(255).nonempty(),
   topics: z.array(z.string()),
 });
 

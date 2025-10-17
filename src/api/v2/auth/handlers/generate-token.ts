@@ -19,7 +19,7 @@ import { createV2JwtToken } from "@/utils/v2/jwt";
  */
 
 const generateTokenRequestSchema = z.object({
-  deviceId: z.string(),
+  deviceId: z.string().max(255).nonempty(),
 });
 
 export type IGenerateTokenRequestBody = z.infer<
