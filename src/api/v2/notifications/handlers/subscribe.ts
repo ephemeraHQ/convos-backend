@@ -106,15 +106,30 @@ export async function subscribe(
     }
 
     // Create or update client identifier record
-    await prisma.clientIdentifier.upsert({
-      where: { id: body.clientId },
-      create: {
-        id: body.clientId,
-        deviceId: body.deviceId,
-      },
-      // Refresh updatedAt by updating deviceId
-      update: { deviceId: body.deviceId },
-    });
+    try {
+      await prisma.clientIdentifier.upsert({
+        where: { id: body.clientId },
+        create: {
+          id: body.clientId,
+          deviceId: body.deviceId,
+        },
+        // Refresh updatedAt by updating deviceId
+        update: { deviceId: body.deviceId },
+      });
+    } catch (dbErr) {
+      // Compensate: delete installation to maintain consistency
+      try {
+        await notificationClient.deleteInstallation({
+          installationId: body.clientId,
+        });
+      } catch (cleanupErr) {
+        req.log.warn(
+          { error: cleanupErr, installationId: body.clientId },
+          "Failed to cleanup installation after DB failure",
+        );
+      }
+      throw dbErr;
+    }
 
     req.log.info(
       { deviceId: body.deviceId, clientId: body.clientId },
