@@ -6,7 +6,11 @@ import { prisma } from "@/utils/prisma";
 
 const registerRequestSchema = z.object({
   deviceId: z.string().min(1).max(255),
-  pushToken: z.string().min(1).optional(),
+  pushToken: z
+    .string()
+    .min(1)
+    .optional()
+    .transform((val) => (val === "" ? undefined : val)), // Normalize empty strings
   pushTokenType: PushTokenTypeSchema.optional(),
   apnsEnv: ApnsEnvironmentSchema.nullable().optional(),
 });
@@ -47,11 +51,12 @@ export async function register(
     const updateData: {
       pushTokenType?: PushTokenType;
       apnsEnv?: ApnsEnvironment | null;
-      pushToken?: string;
+      pushToken?: string | null;
     } = {};
 
     if (body.pushToken !== undefined) {
-      updateData.pushToken = body.pushToken;
+      // Normalize: undefined or empty string -> null
+      updateData.pushToken = body.pushToken || null;
     }
     if (body.pushTokenType !== undefined) {
       updateData.pushTokenType = body.pushTokenType;
