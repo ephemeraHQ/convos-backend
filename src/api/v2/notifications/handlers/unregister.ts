@@ -48,6 +48,7 @@ export async function unregister(
         "Successfully cleaned up v2 client",
       );
       res.status(200).send();
+      return;
     } catch (cleanupError) {
       req.log.error(
         { error: cleanupError, clientId: params.clientId },
