@@ -5,12 +5,11 @@ import { z } from "zod";
 import { prisma } from "@/utils/prisma";
 
 const registerRequestSchema = z.object({
-  deviceId: z.string().min(1).max(255),
+  deviceId: z.string().uuid(),
   pushToken: z
     .string()
-    .min(1)
     .optional()
-    .transform((val) => (val === "" ? undefined : val)), // Normalize empty strings
+    .transform((val) => (!val || val.trim() === "" ? undefined : val)),
   pushTokenType: PushTokenTypeSchema.optional(),
   apnsEnv: ApnsEnvironmentSchema.nullable().optional(),
 });

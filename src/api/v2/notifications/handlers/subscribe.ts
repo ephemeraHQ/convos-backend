@@ -5,8 +5,8 @@ import { createNotificationClient } from "@/notifications/client";
 import { prisma } from "@/utils/prisma";
 
 const subscribeRequestSchema = z.object({
-  deviceId: z.string().min(1).max(255),
-  clientId: z.string().min(1).max(255),
+  deviceId: z.string().uuid(),
+  clientId: z.string().uuid(),
   topics: z
     .array(
       z.object({
