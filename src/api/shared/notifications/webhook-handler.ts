@@ -352,13 +352,23 @@ async function handleV2Notification(args: {
         `Cleaning up v2 notification client ${client.id} due to unrecoverable error`,
       );
       try {
-        await notificationClient.deleteInstallation({
-          installationId: client.id,
-        });
-
+        // Delete from local DB first to ensure we don't retry on failure
         await prisma.clientIdentifier.delete({
           where: { id: client.id },
         });
+
+        // Then attempt notification server cleanup
+        try {
+          await notificationClient.deleteInstallation({
+            installationId: client.id,
+          });
+        } catch (xmtpError) {
+          // Log but don't fail - DB is authoritative, orphaned XMTP installation is harmless
+          req.log.warn(
+            { error: xmtpError, clientId: client.id },
+            "Failed to delete XMTP installation, but local DB is clean",
+          );
+        }
 
         req.log.info(
           { clientId: client.id },
