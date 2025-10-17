@@ -105,6 +105,15 @@ export class PushNotificationService {
 
     const xmtpInstallationId = identityOnDevice.xmtpInstallationId;
 
+    // V1 notifications always have inboxId
+    if (!notification.inboxId) {
+      logger.error(
+        { deviceId: device.id },
+        "Missing inboxId for v1 notification",
+      );
+      return { success: false };
+    }
+
     // We add an JWT token to the notification payload to be used by the client
     // So the notification extension is able to communicate with our backend (App Attest not supported in extensions so we can't call authenticate)
     const apiJWT = await createJwtToken({
@@ -147,13 +156,13 @@ export class PushNotificationService {
         break;
 
       case "fcm":
-        logger.warn(
-          `FCM push notifications not yet implemented for device ${device.id}`,
+        logger.error(
+          `FCM push notifications are not supported. Only APNS is supported for device ${device.id}`,
         );
         return { success: false };
 
       default:
-        logger.warn(`No valid push token type for device ${device.id}`);
+        logger.warn(`Invalid push token type for device ${device.id}`);
         return { success: false };
     }
 

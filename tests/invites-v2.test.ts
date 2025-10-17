@@ -102,6 +102,9 @@ describe("V2 Invite API Tests", () => {
           name: string | null;
           description: string | null;
           imageURL: string | null;
+          conversationExpiresAt: string | null;
+          expiresAt: string | null;
+          expiresAfterUse: boolean;
         };
       };
       expect(data.success).toBe(true);
@@ -109,9 +112,15 @@ describe("V2 Invite API Tests", () => {
       expect(data.data).toHaveProperty("name");
       expect(data.data).toHaveProperty("description");
       expect(data.data).toHaveProperty("imageURL");
+      expect(data.data).toHaveProperty("conversationExpiresAt");
+      expect(data.data).toHaveProperty("expiresAt");
+      expect(data.data).toHaveProperty("expiresAfterUse");
       expect(data.data.name).toBeNull();
       expect(data.data.description).toBeNull();
       expect(data.data.imageURL).toBeNull();
+      expect(data.data.conversationExpiresAt).toBeNull();
+      expect(data.data.expiresAt).toBeNull();
+      expect(data.data.expiresAfterUse).toBe(false);
     });
   });
 

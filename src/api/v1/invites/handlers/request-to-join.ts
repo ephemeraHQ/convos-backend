@@ -1,10 +1,10 @@
 import type { InviteCode } from "@prisma/client";
 import type { Request, Response } from "express";
 import { z } from "zod";
+import type { InviteJoinRequestNotificationData } from "@/api/shared/notifications/services/notifications-types";
+import { getPushNotificationService } from "@/api/shared/notifications/services/push-notification.service";
 import { getInviteLink } from "@/utils/invites";
 import { prisma } from "@/utils/prisma";
-import type { InviteJoinRequestNotificationData } from "../../notifications/services/notifications-types";
-import { getPushNotificationService } from "../../notifications/services/push-notification.service";
 
 const requestToJoinSchema = z.object({
   inviteId: z.string().min(1, "Invite ID is required"),

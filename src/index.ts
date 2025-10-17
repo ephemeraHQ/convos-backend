@@ -3,6 +3,7 @@ import cors from "cors";
 import express from "express";
 import helmet from "helmet";
 import apiRouter from "./api";
+import { IS_DEVELOPMENT } from "./config";
 import { errorHandlerMiddleware } from "./middleware/errorHandler";
 import { jsonMiddleware } from "./middleware/json";
 import { noRouteMiddleware } from "./middleware/noRoute";
@@ -56,7 +57,7 @@ const port = process.env.PORT || 4000;
 const server = app.listen(port, () => {
   logger.info(`Convos API service is running on port ${port}`);
 
-  if (process.env.NODE_ENV == "development") {
+  if (IS_DEVELOPMENT) {
     const localIps = getLocalIpAddresses();
     logger.info(`Available at: http://localhost:${port}`);
     localIps.forEach((ip) => {

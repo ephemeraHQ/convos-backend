@@ -19,7 +19,7 @@ const subscribeWithMetadataRequestBodySchema = z.object({
       hmacKeys: z.array(
         z.object({
           thirtyDayPeriodsSinceEpoch: z.number(),
-          key: z.string(),
+          key: z.string().regex(/^[0-9a-fA-F]+$/, "Invalid hex string"),
         }),
       ),
     }),

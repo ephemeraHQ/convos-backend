@@ -1,9 +1,9 @@
+import { InviteCodeStatusSchema } from "@prisma-zod/index";
 import type { InviteCodeStatus } from "@prisma/client";
 import type { Request, Response } from "express";
 import { z } from "zod";
 import { getInviteLink } from "@/utils/invites";
 import { prisma } from "@/utils/prisma";
-import { InviteCodeStatusSchema } from "../../../../../prisma/generated/zod";
 
 const paramsSchema = z.object({
   inviteId: z.string().min(1, "Invite ID is required"),

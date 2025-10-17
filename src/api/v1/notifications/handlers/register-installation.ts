@@ -1,9 +1,9 @@
+import { ApnsEnvironmentSchema } from "@prisma-zod/index";
 import { PushTokenType } from "@prisma/client";
 import type { Request, Response } from "express";
 import { z } from "zod";
 import { createNotificationClient } from "@/notifications/client";
 import { prisma } from "@/utils/prisma";
-import { ApnsEnvironmentSchema } from "../../../../../prisma/generated/zod";
 
 const installationItemSchema = z.object({
   identityId: z.string(),
@@ -81,6 +81,7 @@ export async function registerInstallation(
   }
 
   res.status(400).json({ error: "Invalid request body" });
+  return;
 }
 
 async function handleCurrentRegistration(args: {

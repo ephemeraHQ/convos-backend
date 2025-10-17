@@ -24,9 +24,10 @@ enum DeviceOS {
   macos
 }
 
+// NOTE: Only APNS is supported. FCM is not supported.
 enum PushTokenType {
   apns
-  fcm
+  fcm // Not supported - kept for database compatibility only
 }
 
 enum ApnsEnvironment {
@@ -175,4 +176,33 @@ model InviteCodeRequest {
   @@unique([inviteCodeId, requesterId])
   @@index([inviteCodeId])
   @@index([requesterId])
+}
+
+// v2 Push Notification Models
+model DeviceRegistration {
+  deviceId          String             @id
+  pushToken         String?            @db.Text
+  pushTokenType     PushTokenType      @default(apns)
+  apnsEnv           ApnsEnvironment?
+  pushFailures      Int                @default(0)
+  disabled          Boolean            @default(false)
+  addedAt           DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
+  lastSentAt        DateTime?
+  lastFailureAt     DateTime?
+  clientIdentifiers ClientIdentifier[]
+
+  @@unique([pushTokenType, apnsEnv, pushToken])
+  @@index([pushToken])
+  @@index([disabled, pushFailures])
+}
+
+model ClientIdentifier {
+  id        String             @id
+  deviceId  String
+  device    DeviceRegistration @relation(fields: [deviceId], references: [deviceId], onDelete: Cascade)
+  addedAt   DateTime           @default(now())
+  updatedAt DateTime           @updatedAt
+
+  @@index([deviceId])
 }

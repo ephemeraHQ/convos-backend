@@ -2,6 +2,8 @@ import { create } from "@bufbuild/protobuf";
 import { createClient } from "@connectrpc/connect";
 import { createConnectTransport } from "@connectrpc/connect-node";
 import { type HmacKey } from "@xmtp/node-sdk";
+import { z } from "zod";
+import { NOTIFICATION_SERVER_URL } from "@/config";
 import {
   Notifications,
   Subscription_HmacKeySchema,
@@ -10,11 +12,8 @@ import {
 } from "@/gen/notifications/v1/service_pb";
 
 export function createNotificationClient() {
-  if (!process.env.NOTIFICATION_SERVER_URL) {
-    throw new Error("NOTIFICATION_SERVER_URL is not set");
-  }
   const transport = createConnectTransport({
-    baseUrl: process.env.NOTIFICATION_SERVER_URL,
+    baseUrl: NOTIFICATION_SERVER_URL,
     httpVersion: "1.1",
   });
   return createClient(Notifications, transport);
@@ -25,30 +24,38 @@ export type Topic = {
   hmacKeys: HmacKey[];
 };
 
-export type WebhookNotificationBody = {
-  idempotency_key: string;
-  message: {
-    content_topic: string;
-    timestamp_ns: string;
-    message: string;
-  };
-  message_context: {
-    message_type: string;
-    should_push?: boolean;
-  };
-  installation: {
-    id: string;
-    delivery_mechanism: {
-      kind: string;
-      token: string;
-    };
-  };
-  subscription: {
-    created_at: string;
-    topic: string;
-    is_silent: boolean;
-  };
-};
+// Zod schema for webhook notification validation
+export const webhookNotificationBodySchema = z.object({
+  idempotency_key: z.string(),
+  message: z.object({
+    content_topic: z.string(),
+    // Accept both string and number for timestamp_ns (protobuf int64 compatibility)
+    timestamp_ns: z
+      .union([z.string(), z.number()])
+      .transform((val) => (typeof val === "number" ? val.toString() : val)),
+    message: z.string(),
+  }),
+  message_context: z.object({
+    message_type: z.string(),
+    should_push: z.boolean().optional(),
+  }),
+  installation: z.object({
+    id: z.string(),
+    delivery_mechanism: z.object({
+      kind: z.string(),
+      token: z.string(),
+    }),
+  }),
+  subscription: z.object({
+    created_at: z.string(),
+    topic: z.string(),
+    is_silent: z.boolean(),
+  }),
+});
+
+export type WebhookNotificationBody = z.infer<
+  typeof webhookNotificationBodySchema
+>;
 
 export async function subscribeToTopics(
   // The installationId we want to apply the subscription to

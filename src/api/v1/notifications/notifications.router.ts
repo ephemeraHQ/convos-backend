@@ -1,5 +1,4 @@
 import { Router } from "express";
-import { handleXmtpNotification } from "@/api/v1/notifications/handlers/handle-xmtp-notification";
 import { registerInstallation } from "@/api/v1/notifications/handlers/register-installation";
 import { subscribeToTopics } from "@/api/v1/notifications/handlers/subscribe-to-topics";
 import { unregisterInstallation } from "@/api/v1/notifications/handlers/unregister-installation";
@@ -15,8 +14,4 @@ notificationsRouter.delete(
   unregisterInstallation,
 );
 
-const xmtpNotificationsRouter = Router();
-
-xmtpNotificationsRouter.post("/handle-notification", handleXmtpNotification);
-
-export { notificationsRouter, xmtpNotificationsRouter };
+export { notificationsRouter };

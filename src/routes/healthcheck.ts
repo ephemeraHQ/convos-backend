@@ -58,16 +58,12 @@ router.get("/details", async (req: Request, res: Response): Promise<void> => {
     logger.error("XMTP health check failed:", xmtpHealth.error);
   }
 
-  // Check notification service connectivity (optional, only if configured)
+  // Check notification service connectivity
   try {
-    if (process.env.NOTIFICATION_SERVER_URL) {
-      createNotificationClient();
-      // We can't easily test the notification client without making a real call,
-      // so we just verify it was created successfully
-      checks.services.notifications.status = "healthy";
-    } else {
-      checks.services.notifications.status = "not_configured";
-    }
+    createNotificationClient();
+    // We can't easily test the notification client without making a real call,
+    // so we just verify it was created successfully
+    checks.services.notifications.status = "healthy";
   } catch (error) {
     checks.services.notifications.status = "unhealthy";
     checks.services.notifications.error =

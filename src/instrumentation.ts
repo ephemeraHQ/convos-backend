@@ -10,6 +10,7 @@ import {
 } from "@opentelemetry/sdk-trace-base";
 import { ATTR_SERVICE_NAME } from "@opentelemetry/semantic-conventions";
 import { PrismaInstrumentation } from "@prisma/instrumentation";
+import { IS_PRODUCTION } from "./config";
 
 // Use the default config for the OTLP trace exporter
 // This will connect to localhost:4317
@@ -21,7 +22,7 @@ const sdk = new NodeSDK({
   traceExporter,
   spanProcessors: [
     // Use a batch processor in production to avoid overloading the collector
-    process.env.NODE_ENV === "production"
+    IS_PRODUCTION
       ? new BatchSpanProcessor(traceExporter)
       : new SimpleSpanProcessor(traceExporter),
   ],

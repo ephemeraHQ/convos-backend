@@ -13,13 +13,13 @@ import {
 } from "bun:test";
 import express from "express";
 import { rimrafSync } from "rimraf";
-import type { RequestToJoinRequestBody } from "@/api/v1/invites/handlers/request-to-join";
-import invitesRouter from "@/api/v1/invites/invites.router";
 import type {
   InviteJoinRequestNotificationData,
   NotificationPayload,
-} from "@/api/v1/notifications/services/notifications-types";
-import * as PushService from "@/api/v1/notifications/services/push-notification.service";
+} from "@/api/shared/notifications/services/notifications-types";
+import * as PushService from "@/api/shared/notifications/services/push-notification.service";
+import type { RequestToJoinRequestBody } from "@/api/v1/invites/handlers/request-to-join";
+import invitesRouter from "@/api/v1/invites/invites.router";
 import { jsonMiddleware } from "@/middleware/json";
 import { pinoMiddleware } from "@/middleware/pino";
 import { prisma } from "@/utils/prisma";
