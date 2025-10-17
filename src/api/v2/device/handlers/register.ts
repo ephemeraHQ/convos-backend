@@ -6,7 +6,7 @@ import { prisma } from "@/utils/prisma";
 
 const registerRequestSchema = z.object({
   deviceId: z.string().min(1).max(255),
-  pushToken: z.string().optional(),
+  pushToken: z.string().min(1).optional(),
   pushTokenType: PushTokenTypeSchema.optional(),
   apnsEnv: ApnsEnvironmentSchema.nullable().optional(),
 });
