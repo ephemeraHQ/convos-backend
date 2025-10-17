@@ -4,8 +4,8 @@ import { createNotificationClient } from "@/notifications/client";
 import { prisma } from "@/utils/prisma";
 
 const unsubscribeRequestSchema = z.object({
-  clientId: z.string().max(255).nonempty(),
-  topics: z.array(z.string()),
+  clientId: z.string().min(1).max(255),
+  topics: z.array(z.string()).min(1).max(100),
 });
 
 export type IUnsubscribeRequestBody = z.infer<typeof unsubscribeRequestSchema>;
@@ -46,6 +46,7 @@ export async function unsubscribe(
 
     req.log.info({ clientId: body.clientId }, "Unsubscribed successfully");
     res.status(200).send();
+    return;
   } catch (error) {
     if (error instanceof z.ZodError) {
       req.log.warn(

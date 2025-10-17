@@ -5,19 +5,22 @@ import { createNotificationClient } from "@/notifications/client";
 import { prisma } from "@/utils/prisma";
 
 const subscribeRequestSchema = z.object({
-  deviceId: z.string().max(255).nonempty(),
-  clientId: z.string().max(255).nonempty(),
-  topics: z.array(
-    z.object({
-      topic: z.string(),
-      hmacKeys: z.array(
-        z.object({
-          thirtyDayPeriodsSinceEpoch: z.number(),
-          key: z.string().regex(/^[0-9a-fA-F]+$/, "Invalid hex string"),
-        }),
-      ),
-    }),
-  ),
+  deviceId: z.string().min(1).max(255),
+  clientId: z.string().min(1).max(255),
+  topics: z
+    .array(
+      z.object({
+        topic: z.string(),
+        hmacKeys: z.array(
+          z.object({
+            thirtyDayPeriodsSinceEpoch: z.number(),
+            key: z.string().regex(/^[0-9a-fA-F]+$/, "Invalid hex string"),
+          }),
+        ),
+      }),
+    )
+    .min(1)
+    .max(100),
 });
 
 export type ISubscribeRequestBody = z.infer<typeof subscribeRequestSchema>;

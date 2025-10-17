@@ -4,7 +4,7 @@ import { createNotificationClient } from "@/notifications/client";
 import { prisma } from "@/utils/prisma";
 
 const unregisterParamsSchema = z.object({
-  clientId: z.string().max(255).nonempty(),
+  clientId: z.string().min(1).max(255),
 });
 
 export type IUnregisterParams = z.infer<typeof unregisterParamsSchema>;

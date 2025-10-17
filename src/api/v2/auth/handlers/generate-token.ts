@@ -13,13 +13,13 @@ import { createV2JwtToken } from "@/utils/v2/jwt";
  * 2. AppCheck validation is sufficient to prove device ownership.
  * 3. Device does NOT need to be registered yet - token generation works independently.
  * 4. If device is registered and disabled, token generation is rejected.
- * 5. Rate limiting (10 requests per 15 minutes) prevents token exhaustion attacks.
+ * 5. Rate limiting prevents token exhaustion attacks.
  * 6. Tokens are short-lived (15 minutes) to limit exposure window.
  * 7. The JWT contains only deviceId - handlers receive clientId in request bodies.
  */
 
 const generateTokenRequestSchema = z.object({
-  deviceId: z.string().max(255).nonempty(),
+  deviceId: z.string().min(1).max(255),
 });
 
 export type IGenerateTokenRequestBody = z.infer<
