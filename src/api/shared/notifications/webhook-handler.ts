@@ -19,6 +19,21 @@ const notificationClient = createNotificationClient();
 const pushNotificationService = getPushNotificationService();
 
 /**
+ * Detect if a message is a welcome message (XMTP MLS protocol message for group joins)
+ * Welcome messages are too large (~5-8KB) for APNS payload limit (4KB)
+ *
+ * Detection methods:
+ * 1. Content topic contains '/w-' (welcome topic pattern)
+ * 2. Message type is 'v3-welcome'
+ */
+function isWelcomeMessage(args: {
+  contentTopic: string;
+  messageType: string;
+}): boolean {
+  return args.contentTopic.includes("/w-") || args.messageType === "v3-welcome";
+}
+
+/**
  * Webhook handler for XMTP notifications
  *
  * Authentication is handled by xmtpWebhookAuthMiddleware which validates the
@@ -109,6 +124,18 @@ export async function handleXmtpNotification(req: Request, res: Response) {
 
     const { device, identity } = identityOnDevice;
 
+    const isWelcome = isWelcomeMessage({
+      contentTopic: notification.message.content_topic,
+      messageType: notification.message_context.message_type,
+    });
+
+    if (isWelcome) {
+      req.log.info(
+        { contentTopic: notification.message.content_topic },
+        "Detected welcome message - omitting encrypted content to avoid APNS payload limit",
+      );
+    }
+
     const result = await pushNotificationService.sendPushNotification({
       identityOnDevice,
       notification: {
@@ -117,7 +144,11 @@ export async function handleXmtpNotification(req: Request, res: Response) {
         notificationData: {
           contentTopic: notification.message.content_topic,
           messageType: notification.message_context.message_type,
-          encryptedMessage: notification.message.message,
+          // Omit encryptedMessage for welcome messages (too large for APNS 4KB limit)
+          // iOS NSE will handle notification display; app syncs from XMTP network
+          ...(isWelcome
+            ? {}
+            : { encryptedMessage: notification.message.message }),
           timestamp: notification.message.timestamp_ns,
         },
       },
@@ -223,6 +254,19 @@ async function handleV2Notification(args: {
     return { success: false };
   }
 
+  // Check if this is a welcome message (too large for APNS)
+  const isWelcome = isWelcomeMessage({
+    contentTopic: notification.message.content_topic,
+    messageType: notification.message_context.message_type,
+  });
+
+  if (isWelcome) {
+    req.log.info(
+      { contentTopic: notification.message.content_topic },
+      "Detected welcome message - omitting encrypted content to avoid APNS payload limit",
+    );
+  }
+
   // Send push notification with v2 types
   const v2Notification: V2NotificationPayload = {
     clientId: notification.installation.id,
@@ -231,7 +275,8 @@ async function handleV2Notification(args: {
     notificationData: {
       contentTopic: notification.message.content_topic,
       messageType: notification.message_context.message_type,
-      encryptedMessage: notification.message.message,
+      // Omit encryptedMessage for welcome messages (too large for APNS 4KB limit)
+      ...(isWelcome ? {} : { encryptedMessage: notification.message.message }),
       timestamp: notification.message.timestamp_ns,
     },
   };

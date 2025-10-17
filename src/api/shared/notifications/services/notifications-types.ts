@@ -3,7 +3,7 @@ export type NotificationType = "Protocol" | "InviteJoinRequest";
 export type ProtocolNotificationData = {
   contentTopic: string;
   messageType: string;
-  encryptedMessage: string;
+  encryptedMessage?: string;
   timestamp: string;
 };
 
