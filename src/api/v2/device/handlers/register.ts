@@ -54,7 +54,7 @@ export async function register(
       where: { deviceId: body.deviceId },
       create: {
         deviceId: body.deviceId,
-        pushToken: body.pushToken ?? "",
+        pushToken: body.pushToken ?? null,
         pushTokenType: body.pushTokenType ?? "apns",
         apnsEnv: body.apnsEnv ?? null,
       },

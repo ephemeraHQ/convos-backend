@@ -180,7 +180,7 @@ model InviteCodeRequest {
 // v2 Push Notification Models
 model DeviceRegistration {
   deviceId          String             @id
-  pushToken         String             @db.Text
+  pushToken         String?            @db.Text
   pushTokenType     PushTokenType      @default(apns)
   apnsEnv           ApnsEnvironment?
   pushFailures      Int                @default(0)
@@ -191,6 +191,7 @@ model DeviceRegistration {
   lastFailureAt     DateTime?
   clientIdentifiers ClientIdentifier[]
 
+  @@unique([pushTokenType, apnsEnv, pushToken])
   @@index([pushToken])
   @@index([disabled, pushFailures])
 }

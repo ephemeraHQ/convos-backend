@@ -63,6 +63,15 @@ export async function subscribe(
       return;
     }
 
+    if (!device.pushToken) {
+      req.log.warn(
+        { deviceId: body.deviceId },
+        "Device has no push token registered",
+      );
+      res.status(400).json({ error: "Device has no push token registered" });
+      return;
+    }
+
     // Convert HMAC keys to Uint8Array
     const subscriptions = body.topics.map((topic) => ({
       topic: topic.topic,
