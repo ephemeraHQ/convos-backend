@@ -112,8 +112,8 @@ export async function subscribe(
         id: body.clientId,
         deviceId: body.deviceId,
       },
-      // Refresh updatedAt
-      update: {},
+      // Refresh updatedAt by updating deviceId
+      update: { deviceId: body.deviceId },
     });
 
     req.log.info(
