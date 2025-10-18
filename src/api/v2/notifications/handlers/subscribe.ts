@@ -148,6 +148,7 @@ export async function subscribe(
       "Subscribed successfully",
     );
     res.status(200).send();
+    return;
   } catch (error) {
     if (error instanceof z.ZodError) {
       req.log.warn(

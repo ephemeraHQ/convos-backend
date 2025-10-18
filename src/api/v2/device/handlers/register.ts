@@ -88,19 +88,20 @@ export async function register(
             {
               oldDeviceId: existingDevice.deviceId,
               newDeviceId: body.deviceId,
-              pushToken: body.pushToken,
+              hasPushToken: !!body.pushToken,
             },
             "Push token moving from old device to new device - clearing old registration",
           );
 
-          // Clear the push token from the old device to avoid unique constraint violation
-          await tx.deviceRegistration.update({
-            where: { deviceId: existingDevice.deviceId },
-            data: {
-              pushToken: null,
-              pushTokenType: "apns",
-              apnsEnv: null,
+          // Clear the push token from all devices with the same token combination
+          await tx.deviceRegistration.updateMany({
+            where: {
+              deviceId: { not: body.deviceId },
+              pushToken: body.pushToken,
+              pushTokenType,
+              apnsEnv,
             },
+            data: { pushToken: null },
           });
         }
       }
