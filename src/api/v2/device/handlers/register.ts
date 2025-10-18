@@ -191,10 +191,16 @@ export async function register(
             });
           }
 
-          // Update this device
-          await tx.deviceRegistration.update({
+          // Upsert this device
+          await tx.deviceRegistration.upsert({
             where: { deviceId },
-            data: conflictUpdateData,
+            create: {
+              deviceId,
+              pushToken: pushToken ?? null,
+              pushTokenType: pushTokenType ?? "apns",
+              apnsEnv: apnsEnv ?? null,
+            },
+            update: conflictUpdateData,
           });
         });
 
