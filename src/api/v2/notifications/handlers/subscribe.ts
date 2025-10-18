@@ -63,15 +63,6 @@ export async function subscribe(
       return;
     }
 
-    if (!device.pushToken) {
-      req.log.warn(
-        { deviceId: body.deviceId },
-        "Device has no push token registered",
-      );
-      res.status(400).json({ error: "Device has no push token registered" });
-      return;
-    }
-
     // Convert HMAC keys to Uint8Array
     const subscriptions = body.topics.map((topic) => ({
       topic: topic.topic,
@@ -82,39 +73,46 @@ export async function subscribe(
       })),
     }));
 
-    // Register installation with notification server
-    try {
-      await notificationClient.registerInstallation({
-        installationId: body.clientId,
-        deliveryMechanism: {
-          deliveryMechanismType: {
-            case:
-              device.pushTokenType === "apns"
-                ? "apnsDeviceToken"
-                : "firebaseDeviceToken",
-            value: device.pushToken,
-          },
-        },
-      });
-
-      // Subscribe to topics
-      await notificationClient.subscribeWithMetadata({
-        installationId: body.clientId,
-        subscriptions,
-      });
-    } catch (remoteErr) {
-      // Compensate: best-effort delete installation to avoid orphaned state
+    // Register installation with notification server (only if pushToken exists)
+    if (!device.pushToken) {
+      req.log.info(
+        { deviceId: body.deviceId, clientId: body.clientId },
+        "Device has no push token yet - subscription will be activated once token is registered",
+      );
+    } else {
       try {
-        await notificationClient.deleteInstallation({
+        await notificationClient.registerInstallation({
           installationId: body.clientId,
+          deliveryMechanism: {
+            deliveryMechanismType: {
+              case:
+                device.pushTokenType === "apns"
+                  ? "apnsDeviceToken"
+                  : "firebaseDeviceToken",
+              value: device.pushToken,
+            },
+          },
         });
-      } catch (cleanupErr) {
-        req.log.warn(
-          { error: cleanupErr, installationId: body.clientId },
-          "Failed to cleanup installation after subscription failure",
-        );
+
+        // Subscribe to topics
+        await notificationClient.subscribeWithMetadata({
+          installationId: body.clientId,
+          subscriptions,
+        });
+      } catch (remoteErr) {
+        // Compensate: best-effort delete installation to avoid orphaned state
+        try {
+          await notificationClient.deleteInstallation({
+            installationId: body.clientId,
+          });
+        } catch (cleanupErr) {
+          req.log.warn(
+            { error: cleanupErr, installationId: body.clientId },
+            "Failed to cleanup installation after subscription failure",
+          );
+        }
+        throw remoteErr;
       }
-      throw remoteErr;
     }
 
     // Create or update client identifier record
@@ -129,16 +127,18 @@ export async function subscribe(
         update: { deviceId: body.deviceId },
       });
     } catch (dbErr) {
-      // Compensate: delete installation to maintain consistency
-      try {
-        await notificationClient.deleteInstallation({
-          installationId: body.clientId,
-        });
-      } catch (cleanupErr) {
-        req.log.warn(
-          { error: cleanupErr, installationId: body.clientId },
-          "Failed to cleanup installation after DB failure",
-        );
+      // Compensate: delete installation to maintain consistency (only if we created one)
+      if (device.pushToken) {
+        try {
+          await notificationClient.deleteInstallation({
+            installationId: body.clientId,
+          });
+        } catch (cleanupErr) {
+          req.log.warn(
+            { error: cleanupErr, installationId: body.clientId },
+            "Failed to cleanup installation after DB failure",
+          );
+        }
       }
       throw dbErr;
     }

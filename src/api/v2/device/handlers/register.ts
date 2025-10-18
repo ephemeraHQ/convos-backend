@@ -135,22 +135,76 @@ export async function register(
       return;
     }
 
-    // Handle unexpected Prisma unique constraint violations (should be rare due to transaction logic)
+    // Handle unique constraint violations - just update with latest data (idempotent)
     if (
       error &&
       typeof error === "object" &&
       "code" in error &&
       error.code === "P2002"
     ) {
-      req.log.error(
-        { deviceId: req.body.deviceId, error },
-        "Unexpected unique constraint violation - possible race condition",
+      const deviceId = req.body.deviceId;
+      const pushToken = req.body.pushToken;
+      const pushTokenType = req.body.pushTokenType;
+      const apnsEnv = req.body.apnsEnv;
+
+      req.log.info(
+        { deviceId, hasPushToken: !!pushToken },
+        "Conflict detected - updating device with latest data (idempotent)",
       );
-      res.status(409).json({
-        error:
-          "Push token already registered. Please retry or contact support.",
-      });
-      return;
+
+      try {
+        // Build update data from the request body
+        const conflictUpdateData: {
+          pushTokenType?: PushTokenType;
+          apnsEnv?: ApnsEnvironment | null;
+          pushToken?: string | null;
+        } = {};
+
+        if (pushToken !== undefined) {
+          conflictUpdateData.pushToken = pushToken || null;
+        }
+        if (pushTokenType !== undefined) {
+          conflictUpdateData.pushTokenType = pushTokenType;
+        }
+        if (apnsEnv !== undefined) {
+          conflictUpdateData.apnsEnv = apnsEnv;
+        }
+
+        // If pushToken conflict: clear it from other devices first
+        if (pushToken) {
+          await prisma.deviceRegistration.updateMany({
+            where: {
+              pushToken,
+              deviceId: { not: deviceId },
+            },
+            data: {
+              pushToken: null,
+              apnsEnv: null,
+            },
+          });
+        }
+
+        // Update this device
+        await prisma.deviceRegistration.update({
+          where: { deviceId },
+          data: conflictUpdateData,
+        });
+
+        req.log.info(
+          { deviceId, hasPushToken: !!pushToken },
+          "Device updated successfully",
+        );
+
+        res.status(200).send();
+        return;
+      } catch (updateError) {
+        req.log.error(
+          { error: updateError, deviceId },
+          "Failed to update device after conflict",
+        );
+        res.status(500).json({ error: "Failed to register device" });
+        return;
+      }
     }
 
     req.log.error({ error }, "Failed to register device");
