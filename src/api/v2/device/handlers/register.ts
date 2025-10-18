@@ -170,24 +170,26 @@ export async function register(
           conflictUpdateData.apnsEnv = apnsEnv;
         }
 
-        // If pushToken conflict: clear it from other devices first
-        if (pushToken) {
-          await prisma.deviceRegistration.updateMany({
-            where: {
-              pushToken,
-              deviceId: { not: deviceId },
-            },
-            data: {
-              pushToken: null,
-              apnsEnv: null,
-            },
-          });
-        }
+        await prisma.$transaction(async (tx) => {
+          // If pushToken conflict: clear it from other devices first
+          if (pushToken) {
+            await tx.deviceRegistration.updateMany({
+              where: {
+                pushToken,
+                deviceId: { not: deviceId },
+              },
+              data: {
+                pushToken: null,
+                apnsEnv: null,
+              },
+            });
+          }
 
-        // Update this device
-        await prisma.deviceRegistration.update({
-          where: { deviceId },
-          data: conflictUpdateData,
+          // Update this device
+          await tx.deviceRegistration.update({
+            where: { deviceId },
+            data: conflictUpdateData,
+          });
         });
 
         req.log.info(
