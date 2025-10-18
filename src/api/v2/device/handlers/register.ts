@@ -142,10 +142,17 @@ export async function register(
       "code" in error &&
       error.code === "P2002"
     ) {
-      const deviceId = req.body.deviceId;
-      const pushToken = req.body.pushToken;
-      const pushTokenType = req.body.pushTokenType;
-      const apnsEnv = req.body.apnsEnv;
+      // Re-parse the request body to ensure data integrity
+      const parsed = registerRequestSchema.safeParse(req.body);
+      if (!parsed.success) {
+        req.log.warn(
+          { errors: parsed.error.errors },
+          "Invalid request body during conflict path",
+        );
+        res.status(400).json({ error: "Invalid request body" });
+        return;
+      }
+      const { deviceId, pushToken, pushTokenType, apnsEnv } = parsed.data;
 
       req.log.info(
         { deviceId, hasPushToken: !!pushToken },
@@ -153,7 +160,7 @@ export async function register(
       );
 
       try {
-        // Build update data from the request body
+        // Build update data from validated request body
         const conflictUpdateData: {
           pushTokenType?: PushTokenType;
           apnsEnv?: ApnsEnvironment | null;
@@ -171,17 +178,16 @@ export async function register(
         }
 
         await prisma.$transaction(async (tx) => {
-          // If pushToken conflict: clear it from other devices first
+          // If pushToken conflict: clear it from other devices first (same type/env only)
           if (pushToken) {
             await tx.deviceRegistration.updateMany({
               where: {
-                pushToken,
                 deviceId: { not: deviceId },
+                pushToken,
+                pushTokenType: pushTokenType ?? "apns",
+                apnsEnv: apnsEnv ?? null,
               },
-              data: {
-                pushToken: null,
-                apnsEnv: null,
-              },
+              data: { pushToken: null },
             });
           }
 
