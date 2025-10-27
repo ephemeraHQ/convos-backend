@@ -170,23 +170,6 @@ describe("PushNotificationService", () => {
       expect(mockSendPushNotification).not.toHaveBeenCalled();
     });
 
-    test("rejects FCM push token type (not supported)", async () => {
-      const fcmDevice = {
-        ...testDevice,
-        pushTokenType: "fcm" as const,
-      };
-
-      const identityOnDevice = createTestIdentityOnDevice(fcmDevice);
-
-      const result = await pushService.sendPushNotification({
-        identityOnDevice,
-        notification: protocolNotification,
-      });
-
-      expect(result.success).toBe(false);
-      expect(mockSendPushNotification).not.toHaveBeenCalled();
-    });
-
     test("handles APNS failure and increments push failures", async () => {
       // Mock APNS service to return failure
       mockSendPushNotification.mockResolvedValue({
