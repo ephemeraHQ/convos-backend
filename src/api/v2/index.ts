@@ -11,12 +11,14 @@ const v2Router = Router();
 v2Router.use("/invites", invitesV2Router);
 v2Router.use("/auth", authRouter);
 v2Router.use("/device", appCheckOnlyMiddleware, deviceRouter);
-v2Router.use("/notifications", authV2Middleware, notificationsRouter);
 
-// XMTP webhook (shared with v1)
+// XMTP webhook - Must be before /notifications to avoid authV2Middleware
 v2Router.use("/notifications/xmtp", webhookRouter);
 
-// Simple auth check endpoint (AppCheck or JWT)
+// Other notification routes (require auth)
+v2Router.use("/notifications", authV2Middleware, notificationsRouter);
+
+// Auth check endpoint (AppCheck or JWT)
 v2Router.get("/auth-check", authV2Middleware, (req, res) => {
   res.status(200).json({
     success: true,

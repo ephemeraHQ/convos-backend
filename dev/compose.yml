@@ -59,8 +59,9 @@ services:
         condition: service_started
     command:
       - --xmtp-listener
+      - --xmtp-listener-tls
       - --db-connection-string=postgres://postgres:notifications@notification_db:5432/postgres?sslmode=disable
-      - --xmtp-address=dev.xmtp.network:5556 # Dev Network
+      - --xmtp-address=dev.xmtp.network:5556
       - --log-level=debug
       - --api
       - --api-port=8080
