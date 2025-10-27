@@ -27,7 +27,7 @@ services:
       - mlsdb
       - validation
     healthcheck:
-      test: ["CMD-SHELL", "sleep 5 && exit 0"]
+      test: [ "CMD-SHELL", "sleep 5 && exit 0" ]
       interval: 10s
       timeout: 30s
       retries: 3
