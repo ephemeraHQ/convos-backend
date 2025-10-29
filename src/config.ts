@@ -25,32 +25,9 @@ export const JWT_SECRET_BYTES = JWT_SECRET
   : undefined;
 
 // v2 JWT (asymmetric ECDSA ES256)
-const JWT_PRIVATE_KEY_RAW = process.env.JWT_PRIVATE_KEY;
-const JWT_PUBLIC_KEY_RAW = process.env.JWT_PUBLIC_KEY;
-
-// Validate JWT_PRIVATE_KEY is a non-empty string
-if (
-  typeof JWT_PRIVATE_KEY_RAW !== "string" ||
-  JWT_PRIVATE_KEY_RAW.trim().length === 0
-) {
-  throw new Error(
-    "Missing `JWT_PRIVATE_KEY`: set a non-empty PEM-encoded ECDSA private key in environment before starting the app",
-  );
-}
-
-// Validate JWT_PUBLIC_KEY is a non-empty string
-if (
-  typeof JWT_PUBLIC_KEY_RAW !== "string" ||
-  JWT_PUBLIC_KEY_RAW.trim().length === 0
-) {
-  throw new Error(
-    "Missing `JWT_PUBLIC_KEY`: set a non-empty PEM-encoded ECDSA public key in environment before starting the app",
-  );
-}
-
-// Export as non-null strings after validation
-export const JWT_PRIVATE_KEY: string = JWT_PRIVATE_KEY_RAW;
-export const JWT_PUBLIC_KEY: string = JWT_PUBLIC_KEY_RAW;
+// Keys are optional at config load time, but validated at server startup via validateJWTKeys()
+export const JWT_PRIVATE_KEY = process.env.JWT_PRIVATE_KEY || "";
+export const JWT_PUBLIC_KEY = process.env.JWT_PUBLIC_KEY || "";
 
 export const JWT_ISSUER = "convos.org";
 export const NOTIFICATION_SERVER_URL = process.env.NOTIFICATION_SERVER_URL;

@@ -35,6 +35,11 @@ const loadPrivateKey = async (): Promise<jose.KeyLike> => {
   if (cachedPrivateKey) {
     return cachedPrivateKey;
   }
+  if (!JWT_PRIVATE_KEY || JWT_PRIVATE_KEY.trim().length === 0) {
+    throw new Error(
+      "JWT_PRIVATE_KEY is not configured - set a valid PEM-encoded ECDSA P-256 private key",
+    );
+  }
   const key = await jose.importPKCS8(JWT_PRIVATE_KEY, "ES256");
   cachedPrivateKey = key;
   return key;
@@ -47,6 +52,11 @@ const loadPrivateKey = async (): Promise<jose.KeyLike> => {
 const loadPublicKey = async (): Promise<jose.KeyLike> => {
   if (cachedPublicKey) {
     return cachedPublicKey;
+  }
+  if (!JWT_PUBLIC_KEY || JWT_PUBLIC_KEY.trim().length === 0) {
+    throw new Error(
+      "JWT_PUBLIC_KEY is not configured - set a valid PEM-encoded ECDSA P-256 public key",
+    );
   }
   const key = await jose.importSPKI(JWT_PUBLIC_KEY, "ES256");
   cachedPublicKey = key;
