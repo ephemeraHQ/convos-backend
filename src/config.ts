@@ -10,11 +10,6 @@ if (!process.env.XMTP_NOTIFICATION_SECRET) {
   throw new Error("XMTP_NOTIFICATION_SECRET is not configured");
 }
 
-// v1 JWT (kept for backward compatibility with v1 auth endpoints)
-if (!process.env.JWT_SECRET) {
-  throw new Error("JWT_SECRET is not configured");
-}
-
 if (!process.env.JWT_PRIVATE_KEY) {
   throw new Error("JWT_PRIVATE_KEY is not configured");
 }
@@ -30,18 +25,14 @@ if (!process.env.NOTIFICATION_SERVER_URL) {
 // Cache environment variables
 export const XMTP_NOTIFICATION_SECRET = process.env.XMTP_NOTIFICATION_SECRET;
 
-// v1 JWT (legacy - symmetric HS256)
+// v1 JWT (legacy - symmetric HS256, optional for backward compatibility)
+// Only validate and encode if JWT_SECRET is provided
 export const JWT_SECRET = process.env.JWT_SECRET;
+export const JWT_SECRET_BYTES = JWT_SECRET
+  ? new TextEncoder().encode(JWT_SECRET)
+  : undefined;
 
-// Validate JWT_SECRET is a non-empty string before encoding
-if (typeof JWT_SECRET !== "string" || JWT_SECRET.trim().length === 0) {
-  throw new Error(
-    "Missing `JWT_SECRET`: set a non-empty string in environment before starting the app",
-  );
-}
-export const JWT_SECRET_BYTES = new TextEncoder().encode(JWT_SECRET);
-
-// V2 JWT (asymmetric ECDSA ES256)
+// v2 JWT (asymmetric ECDSA ES256)
 const JWT_PRIVATE_KEY_RAW = process.env.JWT_PRIVATE_KEY;
 const JWT_PUBLIC_KEY_RAW = process.env.JWT_PUBLIC_KEY;
 
