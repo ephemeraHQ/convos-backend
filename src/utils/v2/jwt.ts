@@ -24,6 +24,34 @@ const v2JWTPayloadSchema = z.object({
     .optional(),
 });
 
+/**
+ * Validate JWT keys at application startup
+ * This should be called during initialization to fail fast on misconfiguration
+ */
+export const validateJWTKeys = async () => {
+  try {
+    // Validate private key format
+    await jose.importPKCS8(JWT_PRIVATE_KEY, "ES256");
+    logger.info("JWT private key validation successful");
+  } catch (error) {
+    logger.error({ error }, "Invalid JWT_PRIVATE_KEY format");
+    throw new Error(
+      "Invalid JWT_PRIVATE_KEY: must be a valid PEM-encoded ECDSA P-256 private key",
+    );
+  }
+
+  try {
+    // Validate public key format
+    await jose.importSPKI(JWT_PUBLIC_KEY, "ES256");
+    logger.info("JWT public key validation successful");
+  } catch (error) {
+    logger.error({ error }, "Invalid JWT_PUBLIC_KEY format");
+    throw new Error(
+      "Invalid JWT_PUBLIC_KEY: must be a valid PEM-encoded ECDSA P-256 public key",
+    );
+  }
+};
+
 export const createV2JwtToken = async (args: {
   deviceId: string;
   metadata?: V2JWTMetadata;
@@ -98,6 +126,7 @@ export const verifyV2JwtToken = async (args: { token: string }) => {
   const { data: verified, error: verifyError } = await tryCatch(
     jose.jwtVerify(args.token, publicKey, {
       issuer: JWT_ISSUER,
+      algorithms: ["ES256"],
     }),
   );
 
