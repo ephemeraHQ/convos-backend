@@ -1,7 +1,7 @@
 import * as jose from "jose";
 import { z } from "zod";
 import { MAX_JWT_METADATA_SIZE } from "@/api/shared/notifications/constants";
-import { JWT_ISSUER, JWT_PRIVATE_KEY } from "@/config";
+import { JWT_ISSUER, JWT_PRIVATE_KEY, JWT_PUBLIC_KEY } from "@/config";
 import { AppError } from "@/utils/errors";
 import logger from "@/utils/logger";
 import { tryCatch } from "@/utils/try-catch";
@@ -81,22 +81,22 @@ export const createV2JwtToken = async (args: {
 };
 
 export const verifyV2JwtToken = async (args: { token: string }) => {
-  // Import ECDSA private key (we need to derive the public key for verification)
-  const { data: privateKey, error: importError } = await tryCatch(
-    jose.importPKCS8(JWT_PRIVATE_KEY, "ES256"),
+  // Import ECDSA public key for verification
+  const { data: publicKey, error: importError } = await tryCatch(
+    jose.importSPKI(JWT_PUBLIC_KEY, "ES256"),
   );
 
   if (importError) {
     logger.error(
-      "Failed to import JWT private key for verification",
+      "Failed to import JWT public key for verification",
       importError,
     );
-    throw new AppError(500, "Failed to import JWT private key", importError);
+    throw new AppError(500, "Failed to import JWT public key", importError);
   }
 
-  // Verify JWT token
+  // Verify JWT token using the public key
   const { data: verified, error: verifyError } = await tryCatch(
-    jose.jwtVerify(args.token, privateKey, {
+    jose.jwtVerify(args.token, publicKey, {
       issuer: JWT_ISSUER,
     }),
   );
