@@ -113,7 +113,7 @@ export const createV2JwtToken = async (args: {
     await tryCatch(loadPrivateKey());
 
   if (importError) {
-    logger.error("Failed to load JWT private key", importError);
+    logger.error({ error: importError }, "Failed to load JWT private key");
     throw new AppError(500, "Failed to load JWT private key", importError);
   }
 
@@ -129,7 +129,7 @@ export const createV2JwtToken = async (args: {
   );
 
   if (jwtError) {
-    logger.error("Failed to create JWT token", jwtError);
+    logger.error({ error: jwtError }, "Failed to create JWT token");
     throw new AppError(500, "Failed to create JWT token", jwtError);
   }
 
@@ -142,7 +142,10 @@ export const verifyV2JwtToken = async (args: { token: string }) => {
     await tryCatch(loadPublicKey());
 
   if (importError) {
-    logger.error("Failed to load JWT public key for verification", importError);
+    logger.error(
+      { error: importError },
+      "Failed to load JWT public key for verification",
+    );
     throw new AppError(500, "Failed to load JWT public key", importError);
   }
 
@@ -155,13 +158,13 @@ export const verifyV2JwtToken = async (args: { token: string }) => {
   );
 
   if (verifyError) {
-    logger.error("V2 JWT verification failed", verifyError);
+    logger.error({ error: verifyError }, "V2 JWT verification failed");
     throw new AppError(401, "Invalid or expired token", verifyError);
   }
 
   const parseResult = v2JWTPayloadSchema.safeParse(verified.payload);
   if (!parseResult.success) {
-    logger.error("Invalid JWT payload structure", parseResult.error);
+    logger.error({ error: parseResult.error }, "Invalid JWT payload structure");
     throw new AppError(401, "Invalid JWT payload structure");
   }
 

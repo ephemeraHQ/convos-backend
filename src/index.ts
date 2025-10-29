@@ -81,6 +81,6 @@ validateJWTKeys()
     });
   })
   .catch((error: unknown) => {
-    logger.error("Failed to validate JWT keys at startup", error);
+    logger.error({ error }, "Failed to validate JWT keys at startup");
     process.exit(1);
   });
