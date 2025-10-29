@@ -10,14 +10,6 @@ if (!process.env.XMTP_NOTIFICATION_SECRET) {
   throw new Error("XMTP_NOTIFICATION_SECRET is not configured");
 }
 
-if (!process.env.JWT_PRIVATE_KEY) {
-  throw new Error("JWT_PRIVATE_KEY is not configured");
-}
-
-if (!process.env.JWT_PUBLIC_KEY) {
-  throw new Error("JWT_PUBLIC_KEY is not configured");
-}
-
 if (!process.env.NOTIFICATION_SERVER_URL) {
   throw new Error("NOTIFICATION_SERVER_URL is not configured");
 }
