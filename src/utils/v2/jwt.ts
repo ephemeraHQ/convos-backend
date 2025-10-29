@@ -24,14 +24,43 @@ const v2JWTPayloadSchema = z.object({
     .optional(),
 });
 
+let cachedPrivateKey: jose.KeyLike | null = null;
+let cachedPublicKey: jose.KeyLike | null = null;
+
 /**
- * Validate JWT keys at application startup
+ * Lazy-load and cache the private key
+ * Safe for concurrent calls - returns the same promise while loading
+ */
+const loadPrivateKey = async (): Promise<jose.KeyLike> => {
+  if (cachedPrivateKey) {
+    return cachedPrivateKey;
+  }
+  const key = await jose.importPKCS8(JWT_PRIVATE_KEY, "ES256");
+  cachedPrivateKey = key;
+  return key;
+};
+
+/**
+ * Lazy-load and cache the public key
+ * Safe for concurrent calls - returns the same promise while loading
+ */
+const loadPublicKey = async (): Promise<jose.KeyLike> => {
+  if (cachedPublicKey) {
+    return cachedPublicKey;
+  }
+  const key = await jose.importSPKI(JWT_PUBLIC_KEY, "ES256");
+  cachedPublicKey = key;
+  return key;
+};
+
+/**
+ * Validate JWT keys at application startup and cache them
  * This should be called during initialization to fail fast on misconfiguration
  */
 export const validateJWTKeys = async () => {
   try {
-    // Validate private key format
-    await jose.importPKCS8(JWT_PRIVATE_KEY, "ES256");
+    // Validate and cache private key
+    await loadPrivateKey();
     logger.info("JWT private key validation successful");
   } catch (error) {
     logger.error({ error }, "Invalid JWT_PRIVATE_KEY format");
@@ -41,8 +70,8 @@ export const validateJWTKeys = async () => {
   }
 
   try {
-    // Validate public key format
-    await jose.importSPKI(JWT_PUBLIC_KEY, "ES256");
+    // Validate and cache public key
+    await loadPublicKey();
     logger.info("JWT public key validation successful");
   } catch (error) {
     logger.error({ error }, "Invalid JWT_PUBLIC_KEY format");
@@ -79,14 +108,13 @@ export const createV2JwtToken = async (args: {
     payload.metadata = args.metadata;
   }
 
-  // Import ECDSA private key
-  const { data: privateKey, error: importError } = await tryCatch(
-    jose.importPKCS8(JWT_PRIVATE_KEY, "ES256"),
-  );
+  // Get cached ECDSA private key
+  const { data: privateKey, error: importError } =
+    await tryCatch(loadPrivateKey());
 
   if (importError) {
-    logger.error("Failed to import JWT private key", importError);
-    throw new AppError(500, "Failed to import JWT private key", importError);
+    logger.error("Failed to load JWT private key", importError);
+    throw new AppError(500, "Failed to load JWT private key", importError);
   }
 
   // Create JWT token with ECDSA ES256
@@ -109,17 +137,13 @@ export const createV2JwtToken = async (args: {
 };
 
 export const verifyV2JwtToken = async (args: { token: string }) => {
-  // Import ECDSA public key for verification
-  const { data: publicKey, error: importError } = await tryCatch(
-    jose.importSPKI(JWT_PUBLIC_KEY, "ES256"),
-  );
+  // Get cached ECDSA public key for verification
+  const { data: publicKey, error: importError } =
+    await tryCatch(loadPublicKey());
 
   if (importError) {
-    logger.error(
-      "Failed to import JWT public key for verification",
-      importError,
-    );
-    throw new AppError(500, "Failed to import JWT public key", importError);
+    logger.error("Failed to load JWT public key for verification", importError);
+    throw new AppError(500, "Failed to load JWT public key", importError);
   }
 
   // Verify JWT token using the public key
