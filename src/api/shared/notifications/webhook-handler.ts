@@ -324,7 +324,6 @@ async function handleV2Notification(args: {
     );
   } else {
     // Increment failures and conditionally disable in production APNS
-    // Increment failures and decide auto-disable based on updated DB state within the transaction
     let autoDisabled = false;
 
     const updated = await prisma.$transaction(async (tx) => {
@@ -336,7 +335,7 @@ async function handleV2Notification(args: {
         },
       });
 
-      // Auto-disable only in production when threshold is reached, based on updated value
+      // Auto-disable only in production when threshold is reached
       if (u.apnsEnv === "production" && u.pushFailures >= MAX_PUSH_FAILURES) {
         await tx.deviceRegistration.updateMany({
           where: {
@@ -344,27 +343,8 @@ async function handleV2Notification(args: {
             disabled: false,
           },
           data: { disabled: true },
-      client.device.apnsEnv === "production" &&
-      client.device.pushFailures + 1 >= MAX_PUSH_FAILURES;
-
-    const updated = await prisma.$transaction(async (tx) => {
-      const u = await tx.deviceRegistration.update({
-        where: { deviceId: client.deviceId },
-        data: {
-          pushFailures: { increment: 1 },
-          lastFailureAt: new Date(),
-        },
-      });
-
-      // Auto-disable only in production when threshold is reached
-      if (shouldAutoDisable) {
-        await tx.deviceRegistration.updateMany({
-          where: {
-            deviceId: client.deviceId,
-            disabled: false,
-          },
-          data: { disabled: true },
         });
+        autoDisabled = true;
       }
 
       return u;
@@ -378,7 +358,7 @@ async function handleV2Notification(args: {
         failureCount: updated.pushFailures,
         apnsEnv: client.device.apnsEnv,
         lastFailureAt: updated.lastFailureAt,
-        autoDisabled: shouldAutoDisable,
+        autoDisabled,
       },
       `Failed to send v2 push notification: ${result.error}`,
     );
