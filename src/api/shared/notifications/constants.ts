@@ -1,7 +1,8 @@
 /**
- * Maximum number of consecutive push notification failures before disabling a device
+ * Maximum number of consecutive push notification failures before logging warnings
+ * Note: Does not auto-disable devices; threshold is for monitoring only
  */
-export const MAX_PUSH_FAILURES = 10;
+export const MAX_PUSH_FAILURES = 50;
 
 /**
  * Maximum size in bytes for JWT metadata to prevent token bloat
