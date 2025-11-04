@@ -324,7 +324,26 @@ async function handleV2Notification(args: {
     );
   } else {
     // Increment failures and conditionally disable in production APNS
-    const shouldAutoDisable =
+    // Increment failures and decide auto-disable based on updated DB state within the transaction
+    let autoDisabled = false;
+
+    const updated = await prisma.$transaction(async (tx) => {
+      const u = await tx.deviceRegistration.update({
+        where: { deviceId: client.deviceId },
+        data: {
+          pushFailures: { increment: 1 },
+          lastFailureAt: new Date(),
+        },
+      });
+
+      // Auto-disable only in production when threshold is reached, based on updated value
+      if (u.apnsEnv === "production" && u.pushFailures >= MAX_PUSH_FAILURES) {
+        await tx.deviceRegistration.updateMany({
+          where: {
+            deviceId: client.deviceId,
+            disabled: false,
+          },
+          data: { disabled: true },
       client.device.apnsEnv === "production" &&
       client.device.pushFailures + 1 >= MAX_PUSH_FAILURES;
 
