@@ -323,13 +323,32 @@ async function handleV2Notification(args: {
       `Successfully sent v2 push notification`,
     );
   } else {
-    // Increment failures without auto-disable
-    const updated = await prisma.deviceRegistration.update({
-      where: { deviceId: client.deviceId },
-      data: {
-        pushFailures: { increment: 1 },
-        lastFailureAt: new Date(),
-      },
+    // Increment failures and conditionally disable in production APNS
+    const shouldAutoDisable =
+      client.device.apnsEnv === "production" &&
+      client.device.pushFailures + 1 >= MAX_PUSH_FAILURES;
+
+    const updated = await prisma.$transaction(async (tx) => {
+      const u = await tx.deviceRegistration.update({
+        where: { deviceId: client.deviceId },
+        data: {
+          pushFailures: { increment: 1 },
+          lastFailureAt: new Date(),
+        },
+      });
+
+      // Auto-disable only in production when threshold is reached
+      if (shouldAutoDisable) {
+        await tx.deviceRegistration.updateMany({
+          where: {
+            deviceId: client.deviceId,
+            disabled: false,
+          },
+          data: { disabled: true },
+        });
+      }
+
+      return u;
     });
 
     // Log detailed error information
@@ -340,6 +359,7 @@ async function handleV2Notification(args: {
         failureCount: updated.pushFailures,
         apnsEnv: client.device.apnsEnv,
         lastFailureAt: updated.lastFailureAt,
+        autoDisabled: shouldAutoDisable,
       },
       `Failed to send v2 push notification: ${result.error}`,
     );
