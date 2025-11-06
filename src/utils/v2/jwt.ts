@@ -1,7 +1,7 @@
 import * as jose from "jose";
 import { z } from "zod";
 import { MAX_JWT_METADATA_SIZE } from "@/api/shared/notifications/constants";
-import { JWT_SECRET_BYTES } from "@/config";
+import { JWT_ISSUER, JWT_PRIVATE_KEY, JWT_PUBLIC_KEY } from "@/config";
 import { AppError } from "@/utils/errors";
 import logger from "@/utils/logger";
 import { tryCatch } from "@/utils/try-catch";
@@ -23,6 +23,73 @@ const v2JWTPayloadSchema = z.object({
     })
     .optional(),
 });
+
+let cachedPrivateKey: jose.KeyLike | null = null;
+let cachedPublicKey: jose.KeyLike | null = null;
+
+/**
+ * Lazy-load and cache the private key
+ * Safe for concurrent calls - returns the same promise while loading
+ */
+const loadPrivateKey = async (): Promise<jose.KeyLike> => {
+  if (cachedPrivateKey) {
+    return cachedPrivateKey;
+  }
+  if (!JWT_PRIVATE_KEY || JWT_PRIVATE_KEY.trim().length === 0) {
+    throw new Error(
+      "JWT_PRIVATE_KEY is not configured - set a valid PEM-encoded ECDSA P-256 private key",
+    );
+  }
+  const key = await jose.importPKCS8(JWT_PRIVATE_KEY, "ES256");
+  cachedPrivateKey = key;
+  return key;
+};
+
+/**
+ * Lazy-load and cache the public key
+ * Safe for concurrent calls - returns the same promise while loading
+ */
+const loadPublicKey = async (): Promise<jose.KeyLike> => {
+  if (cachedPublicKey) {
+    return cachedPublicKey;
+  }
+  if (!JWT_PUBLIC_KEY || JWT_PUBLIC_KEY.trim().length === 0) {
+    throw new Error(
+      "JWT_PUBLIC_KEY is not configured - set a valid PEM-encoded ECDSA P-256 public key",
+    );
+  }
+  const key = await jose.importSPKI(JWT_PUBLIC_KEY, "ES256");
+  cachedPublicKey = key;
+  return key;
+};
+
+/**
+ * Validate JWT keys at application startup and cache them
+ * This should be called during initialization to fail fast on misconfiguration
+ */
+export const validateJWTKeys = async () => {
+  try {
+    // Validate and cache private key
+    await loadPrivateKey();
+    logger.info("JWT private key validation successful");
+  } catch (error) {
+    logger.error({ error }, "Invalid JWT_PRIVATE_KEY format");
+    throw new Error(
+      "Invalid JWT_PRIVATE_KEY: must be a valid PEM-encoded ECDSA P-256 private key",
+    );
+  }
+
+  try {
+    // Validate and cache public key
+    await loadPublicKey();
+    logger.info("JWT public key validation successful");
+  } catch (error) {
+    logger.error({ error }, "Invalid JWT_PUBLIC_KEY format");
+    throw new Error(
+      "Invalid JWT_PUBLIC_KEY: must be a valid PEM-encoded ECDSA P-256 public key",
+    );
+  }
+};
 
 export const createV2JwtToken = async (args: {
   deviceId: string;
@@ -51,17 +118,28 @@ export const createV2JwtToken = async (args: {
     payload.metadata = args.metadata;
   }
 
-  // Create JWT token
+  // Get cached ECDSA private key
+  const { data: privateKey, error: importError } =
+    await tryCatch(loadPrivateKey());
+
+  if (importError) {
+    logger.error({ error: importError }, "Failed to load JWT private key");
+    throw new AppError(500, "Failed to load JWT private key", importError);
+  }
+
+  // Create JWT token with ECDSA ES256
   const { data: jwt, error: jwtError } = await tryCatch(
     new jose.SignJWT(payload)
-      .setProtectedHeader({ alg: "HS256" })
+      .setProtectedHeader({ alg: "ES256" })
+      .setSubject(args.deviceId) // Standard 'sub' claim for gateway
+      .setIssuer(JWT_ISSUER) // Standard 'iss' claim
       .setIssuedAt()
       .setExpirationTime(args.expirationTime ?? "15m")
-      .sign(JWT_SECRET_BYTES),
+      .sign(privateKey),
   );
 
   if (jwtError) {
-    logger.error(jwtError);
+    logger.error({ error: jwtError }, "Failed to create JWT token");
     throw new AppError(500, "Failed to create JWT token", jwtError);
   }
 
@@ -69,17 +147,34 @@ export const createV2JwtToken = async (args: {
 };
 
 export const verifyV2JwtToken = async (args: { token: string }) => {
+  // Get cached ECDSA public key for verification
+  const { data: publicKey, error: importError } =
+    await tryCatch(loadPublicKey());
+
+  if (importError) {
+    logger.error(
+      { error: importError },
+      "Failed to load JWT public key for verification",
+    );
+    throw new AppError(500, "Failed to load JWT public key", importError);
+  }
+
+  // Verify JWT token using the public key
   const { data: verified, error: verifyError } = await tryCatch(
-    jose.jwtVerify(args.token, JWT_SECRET_BYTES),
+    jose.jwtVerify(args.token, publicKey, {
+      issuer: JWT_ISSUER,
+      algorithms: ["ES256"],
+    }),
   );
 
   if (verifyError) {
-    logger.error("V2 JWT verification failed", verifyError);
+    logger.error({ error: verifyError }, "V2 JWT verification failed");
     throw new AppError(401, "Invalid or expired token", verifyError);
   }
 
   const parseResult = v2JWTPayloadSchema.safeParse(verified.payload);
   if (!parseResult.success) {
+    logger.error({ error: parseResult.error }, "Invalid JWT payload structure");
     throw new AppError(401, "Invalid JWT payload structure");
   }
 

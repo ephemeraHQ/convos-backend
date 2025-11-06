@@ -11,6 +11,7 @@ import { pinoMiddleware } from "./middleware/pino";
 import { rateLimitMiddleware } from "./middleware/rateLimit";
 import healthcheckRouter from "./routes/healthcheck";
 import logger from "./utils/logger";
+import { validateJWTKeys } from "./utils/v2/jwt";
 
 const getLocalIpAddresses = () => {
   const interfaces = os.networkInterfaces();
@@ -54,21 +55,32 @@ app.use(noRouteMiddleware);
 app.use(errorHandlerMiddleware);
 
 const port = process.env.PORT || 4000;
-const server = app.listen(port, () => {
-  logger.info(`Convos API service is running on port ${port}`);
 
-  if (IS_DEVELOPMENT) {
-    const localIps = getLocalIpAddresses();
-    logger.info(`Available at: http://localhost:${port}`);
-    localIps.forEach((ip) => {
-      logger.info(`Available at: http://${ip}:${port}`);
+// Validate JWT keys at startup before starting the server
+validateJWTKeys()
+  .then(() => {
+    logger.info("JWT key validation successful");
+
+    const server = app.listen(port, () => {
+      logger.info(`Convos API service is running on port ${port}`);
+
+      if (IS_DEVELOPMENT) {
+        const localIps = getLocalIpAddresses();
+        logger.info(`Available at: http://localhost:${port}`);
+        localIps.forEach((ip) => {
+          logger.info(`Available at: http://${ip}:${port}`);
+        });
+      }
     });
-  }
-});
 
-process.on("SIGTERM", () => {
-  logger.info("SIGTERM signal received: closing Convos API service");
-  server.close(() => {
-    logger.info("Convos API service closed");
+    process.on("SIGTERM", () => {
+      logger.info("SIGTERM signal received: closing Convos API service");
+      server.close(() => {
+        logger.info("Convos API service closed");
+      });
+    });
+  })
+  .catch((error: unknown) => {
+    logger.error({ error }, "Failed to validate JWT keys at startup");
+    process.exit(1);
   });
-});

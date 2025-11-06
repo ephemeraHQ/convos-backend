@@ -35,6 +35,14 @@ bun generate:notification-secret
 
 Add the generated value to your `.env` file.
 
+For JWT authentication, generate an ECDSA P-256 key pair:
+
+```bash
+bun run dev/scripts/generateEcdsaKeys.ts
+```
+
+Add the `JWT_PRIVATE_KEY` to your backend `.env` file and share the `JWT_PUBLIC_KEY` with the gateway service.
+
 #### Run the app locally
 
 ```bash
@@ -80,6 +88,7 @@ Adjust the `-p 4000:4000` flag to match the port in the `.env` file. The default
 - `bun format`: Run prettier format and write changes
 - `bun generate:key`: Generate a key for XMTP database encryption
 - `bun generate:notification-secret`: Generate a secure token for XMTP notification authentication
+- `bun run dev/scripts/generateEcdsaKeys.ts`: Generate ECDSA P-256 key pair for JWT authentication
 - `bun install`: Installs all dependencies
 - `bun lint`: Lint with ESLint
 - `bun migrate:dev`: Create a Prisma migration from changes in the Prisma schema, apply to the database, and generate Prisma client code
