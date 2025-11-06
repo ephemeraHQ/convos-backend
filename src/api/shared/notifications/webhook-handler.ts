@@ -221,15 +221,25 @@ async function handleV2Notification(args: {
 }) {
   const { notification, client, req } = args;
 
-  // Check if device is disabled or has too many failures
-  if (
-    client.device.disabled ||
-    client.device.pushFailures >= MAX_PUSH_FAILURES
-  ) {
+  // Only check manual disable flag (not failure count)
+  if (client.device.disabled) {
     req.log.warn(
-      `Device ${client.deviceId} is disabled or has too many failures. Skipping notification.`,
+      { deviceId: client.deviceId },
+      `Device is manually disabled. Skipping notification.`,
     );
     return { success: false };
+  }
+
+  // Log warning if high failure count but don't block
+  if (client.device.pushFailures >= MAX_PUSH_FAILURES) {
+    req.log.warn(
+      {
+        deviceId: client.deviceId,
+        failures: client.device.pushFailures,
+        lastFailureAt: client.device.lastFailureAt,
+      },
+      `Device has high failure count (${client.device.pushFailures}) but continuing`,
+    );
   }
 
   // Generate JWT for NSE to use (24h expiration for security)
@@ -309,10 +319,13 @@ async function handleV2Notification(args: {
       },
     });
     req.log.info(
-      `Successfully sent v2 push notification to ${client.deviceId}`,
+      { deviceId: client.deviceId },
+      `Successfully sent v2 push notification`,
     );
   } else {
-    // Use transaction to atomically increment failures and conditionally disable
+    // Increment failures and conditionally disable in XMTP production environment
+    let autoDisabled = false;
+
     const updated = await prisma.$transaction(async (tx) => {
       const u = await tx.deviceRegistration.update({
         where: { deviceId: client.deviceId },
@@ -322,21 +335,35 @@ async function handleV2Notification(args: {
         },
       });
 
-      // Atomic conditional disable - only disables if not already disabled and threshold reached
-      await tx.deviceRegistration.updateMany({
-        where: {
-          deviceId: client.deviceId,
-          disabled: false,
-          pushFailures: { gte: MAX_PUSH_FAILURES },
-        },
-        data: { disabled: true },
-      });
+      // Auto-disable only in XMTP production environment when threshold is reached
+      if (
+        process.env.XMTP_ENV === "production" &&
+        u.pushFailures >= MAX_PUSH_FAILURES
+      ) {
+        await tx.deviceRegistration.updateMany({
+          where: {
+            deviceId: client.deviceId,
+            disabled: false,
+          },
+          data: { disabled: true },
+        });
+        autoDisabled = true;
+      }
 
       return u;
     });
 
-    req.log.warn(
-      `Failed to send v2 push notification to ${client.deviceId}. Failure count: ${updated.pushFailures}`,
+    // Log detailed error information
+    req.log.error(
+      {
+        deviceId: client.deviceId,
+        error: result.error,
+        failureCount: updated.pushFailures,
+        apnsEnv: client.device.apnsEnv,
+        lastFailureAt: updated.lastFailureAt,
+        autoDisabled,
+      },
+      `Failed to send v2 push notification: ${result.error}`,
     );
 
     // Cleanup if unrecoverable error
@@ -345,7 +372,8 @@ async function handleV2Notification(args: {
       result.error === "BadDeviceToken"
     ) {
       req.log.info(
-        `Cleaning up v2 notification client ${client.id} due to unrecoverable error`,
+        { clientId: client.id, error: result.error },
+        `Cleaning up v2 notification client due to unrecoverable error`,
       );
       try {
         // Delete from local DB first to ensure we don't retry on failure

@@ -57,11 +57,12 @@ services:
     depends_on:
       notification_db:
         condition: service_started
+      node:
+        condition: service_healthy
     command:
       - --xmtp-listener
-      - --xmtp-listener-tls
       - --db-connection-string=postgres://postgres:notifications@notification_db:5432/postgres?sslmode=disable
-      - --xmtp-address=dev.xmtp.network:5556
+      - --xmtp-address=${XMTP_NODE_ADDRESS:-node:5556}
       - --log-level=debug
       - --api
       - --api-port=8080

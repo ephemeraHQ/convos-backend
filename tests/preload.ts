@@ -5,6 +5,11 @@ import type { SocialProfile } from "@/utils/thirdweb";
 process.env.PUBLIC_ASSETS_BUCKET = "test-public-assets-bucket";
 process.env.JWT_SECRET = "test-jwt-secret";
 process.env.FIREBASE_SERVICE_ACCOUNT = "{}";
+process.env.XMTP_ENV = "local";
+process.env.NOTIFICATION_SERVER_URL = "http://localhost:8080";
+// Only set default if not already set (CI uses GitHub secrets)
+process.env.XMTP_NOTIFICATION_SECRET =
+  process.env.XMTP_NOTIFICATION_SECRET || "test-notification-secret";
 
 // mock Firebase functions
 
