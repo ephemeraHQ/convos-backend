@@ -323,7 +323,7 @@ async function handleV2Notification(args: {
       `Successfully sent v2 push notification`,
     );
   } else {
-    // Increment failures and conditionally disable in production APNS
+    // Increment failures and conditionally disable in XMTP production environment
     let autoDisabled = false;
 
     const updated = await prisma.$transaction(async (tx) => {
@@ -335,8 +335,11 @@ async function handleV2Notification(args: {
         },
       });
 
-      // Auto-disable only in production when threshold is reached
-      if (u.apnsEnv === "production" && u.pushFailures >= MAX_PUSH_FAILURES) {
+      // Auto-disable only in XMTP production environment when threshold is reached
+      if (
+        process.env.XMTP_ENV === "production" &&
+        u.pushFailures >= MAX_PUSH_FAILURES
+      ) {
         await tx.deviceRegistration.updateMany({
           where: {
             deviceId: client.deviceId,
