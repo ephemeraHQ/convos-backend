@@ -19,8 +19,8 @@
     "migrate:deploy": "prisma migrate deploy",
     "migrate:dev": "prisma migrate dev",
     "start": "bun run --preload ./src/instrumentation.ts src/index.ts",
-    "test:local": "TEST_NOTIFICATION_DELIVERY_URL=http://host.docker.internal:8081 dev/restart-notification && bun test",
-    "test:notifications-client": "TEST_NOTIFICATION_DELIVERY_URL=http://host.docker.internal:8081 dev/restart-notification && bun test tests/notifications.client.test.ts",
+    "test:local": "TEST_NOTIFICATION_DELIVERY_URL=http://host.docker.internal:8081 XMTP_NOTIFICATION_SECRET=test-notification-secret dev/restart-notification && bun test",
+    "test:notifications-client": "TEST_NOTIFICATION_DELIVERY_URL=http://host.docker.internal:8081 XMTP_NOTIFICATION_SECRET=test-notification-secret dev/restart-notification && bun test tests/notifications.client.test.ts",
     "test:push": "bun run scripts/test-push-notification.ts",
     "test:push-simple": "bun run scripts/simple-push-test.ts",
     "typecheck": "tsc"

@@ -57,8 +57,10 @@ describe("Notifications", () => {
       server = app.listen(8081);
     });
 
-    afterEach(() => {
+    afterEach(async () => {
       server.close();
+      // Small delay to let any pending notifications drain
+      await new Promise((resolve) => setTimeout(resolve, 100));
       // clean up the test databases
       rimrafSync("tests/**/*.db3*", { glob: true });
     });
@@ -129,7 +131,7 @@ describe("Notifications", () => {
         deliveryMechanism: {
           deliveryMechanismType: {
             case: "apnsDeviceToken",
-            value: "token",
+            value: "test-token",
           },
         },
       });
@@ -163,7 +165,7 @@ describe("Notifications", () => {
           "apns",
         );
         expect(notification.installation.delivery_mechanism.token).toEqual(
-          "token",
+          "test-token",
         );
         expect(notification.message_context.message_type).toEqual("v3-welcome");
       }
@@ -186,7 +188,7 @@ describe("Notifications", () => {
         deliveryMechanism: {
           deliveryMechanismType: {
             case: "apnsDeviceToken",
-            value: "token",
+            value: "test-token",
           },
         },
       });
@@ -230,7 +232,7 @@ describe("Notifications", () => {
           "apns",
         );
         expect(notification.installation.delivery_mechanism.token).toEqual(
-          "token",
+          "test-token",
         );
         expect(notification.message_context.message_type).toEqual(
           "v3-conversation",
@@ -258,7 +260,7 @@ describe("Notifications", () => {
         deliveryMechanism: {
           deliveryMechanismType: {
             case: "apnsDeviceToken",
-            value: "token",
+            value: "test-token",
           },
         },
       });
@@ -315,7 +317,7 @@ describe("Notifications", () => {
           "apns",
         );
         expect(notification.installation.delivery_mechanism.token).toEqual(
-          "token",
+          "test-token",
         );
         expect(notification.message_context.message_type).toEqual(
           "v3-conversation",
@@ -341,7 +343,7 @@ describe("Notifications", () => {
         deliveryMechanism: {
           deliveryMechanismType: {
             case: "apnsDeviceToken",
-            value: "token",
+            value: "test-token",
           },
         },
       });
@@ -396,7 +398,7 @@ describe("Notifications", () => {
           "apns",
         );
         expect(notification.installation.delivery_mechanism.token).toEqual(
-          "token",
+          "test-token",
         );
         expect(notification.message_context.message_type).toEqual(
           "v3-conversation",
@@ -424,7 +426,7 @@ describe("Notifications", () => {
         deliveryMechanism: {
           deliveryMechanismType: {
             case: "apnsDeviceToken",
-            value: "token",
+            value: "test-token",
           },
         },
       });
@@ -496,7 +498,7 @@ describe("Notifications", () => {
           "apns",
         );
         expect(notification.installation.delivery_mechanism.token).toEqual(
-          "token",
+          "test-token",
         );
         expect(notification.message_context.message_type).toEqual(
           "v3-conversation",
@@ -522,7 +524,7 @@ describe("Notifications", () => {
         deliveryMechanism: {
           deliveryMechanismType: {
             case: "apnsDeviceToken",
-            value: "token",
+            value: "test-token",
           },
         },
       });
