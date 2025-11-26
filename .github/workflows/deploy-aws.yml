@@ -102,8 +102,8 @@ jobs:
           terraform-org: xmtp
           terraform-workspace: convos-otr-dev
           variable-name: api_image
-          variable-value: "ghcr.io/ephemerahq/convos-backend@${{ needs.push_to_registry.outputs.digest }}"
-          variable-value-required-prefix: "ghcr.io/ephemerahq/convos-backend@sha256:"
+          variable-value: "ghcr.io/xmtplabs/convos-backend@${{ needs.push_to_registry.outputs.digest }}"
+          variable-value-required-prefix: "ghcr.io/xmtplabs/convos-backend@sha256:"
 
   deploy_otr_prod:
     name: Deploy to OTR Production
@@ -124,5 +124,5 @@ jobs:
           terraform-org: xmtp
           terraform-workspace: convos-otr-prod
           variable-name: api_image
-          variable-value: "ghcr.io/ephemerahq/convos-backend@${{ needs.push_to_registry.outputs.digest }}"
-          variable-value-required-prefix: "ghcr.io/ephemerahq/convos-backend@sha256:"
+          variable-value: "ghcr.io/xmtplabs/convos-backend@${{ needs.push_to_registry.outputs.digest }}"
+          variable-value-required-prefix: "ghcr.io/xmtplabs/convos-backend@sha256:"
