@@ -8,11 +8,11 @@ Have a question about how to build with XMTP? Ask your question and learn with t
 
 ## 🐞 Bugs
 
-Report a bug using [GitHub Issues](https://github.com/ephemeraHQ/convos-backend/issues).
+Report a bug using [GitHub Issues](https://github.com/xmtplabs/convos-backend/issues).
 
 ## ✨ Feature Requests
 
-Request a feature using [GitHub Issues](https://github.com/ephemeraHQ/convos-backend/issues).
+Request a feature using [GitHub Issues](https://github.com/xmtplabs/convos-backend/issues).
 
 ## 🔀 Pull Requests
 
