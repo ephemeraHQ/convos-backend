@@ -33,38 +33,56 @@ async function performDeviceRegistration(
   logger: Request["log"],
 ) {
   await prisma.$transaction(async (tx) => {
-    // If a push token is provided, clear it from any other devices
+    // If a push token is provided, handle conflicts with other devices
+    // We check across ALL apnsEnv values because the same physical device
+    // can switch between sandbox (Xcode) and production (TestFlight) builds,
+    // and Apple may issue the same push token for both environments.
     if (pushToken) {
       const tokenType = pushTokenType ?? "apns";
-      const environment = apnsEnv ?? null;
 
-      // Find any other device with the same push token combination
-      const existingDevice = await tx.deviceRegistration.findFirst({
+      // Find any other device with the same push token (regardless of apnsEnv)
+      const existingDevices = await tx.deviceRegistration.findMany({
         where: {
           pushToken,
           pushTokenType: tokenType,
-          apnsEnv: environment,
           deviceId: { not: deviceId },
+        },
+        include: {
+          clientIdentifiers: true,
         },
       });
 
-      if (existingDevice) {
-        logger.info(
-          {
-            oldDeviceId: existingDevice.deviceId,
-            newDeviceId: deviceId,
-            hasPushToken: !!pushToken,
-          },
-          "Push token moving from old device to new device - clearing old registration",
+      if (existingDevices.length > 0) {
+        const oldDeviceIds = existingDevices.map((d) => d.deviceId);
+        const clientIdsToMigrate = existingDevices.flatMap((d) =>
+          d.clientIdentifiers.map((c) => c.id),
         );
 
-        // Clear the push token from all devices with the same token combination
+        logger.info(
+          {
+            oldDeviceIds,
+            newDeviceId: deviceId,
+            clientIdsToMigrate,
+            hasPushToken: !!pushToken,
+          },
+          "Push token moving from old device(s) to new device - migrating client identifiers and clearing old registrations",
+        );
+
+        // Migrate all ClientIdentifiers from old devices to the new device
+        // This ensures notifications for existing conversations go to the correct device
+        if (clientIdsToMigrate.length > 0) {
+          await tx.clientIdentifier.updateMany({
+            where: {
+              id: { in: clientIdsToMigrate },
+            },
+            data: { deviceId },
+          });
+        }
+
+        // Clear the push token from all old devices (any apnsEnv)
         await tx.deviceRegistration.updateMany({
           where: {
-            deviceId: { not: deviceId },
-            pushToken,
-            pushTokenType: tokenType,
-            apnsEnv: environment,
+            deviceId: { in: oldDeviceIds },
           },
           data: { pushToken: null },
         });
