@@ -33,8 +33,12 @@ async function performDeviceRegistration(
   logger: Request["log"],
 ) {
   await prisma.$transaction(async (tx) => {
+    // Track old devices and their client identifiers for migration
+    let oldDeviceIds: string[] = [];
+    let clientIdsToMigrate: string[] = [];
+
     // If a push token is provided, handle conflicts with other devices
-    // We check across ALL apnsEnv values because the same physical device
+    // We check across all apnsEnv values because the same physical device
     // can switch between sandbox (Xcode) and production (TestFlight) builds,
     // and Apple may issue the same push token for both environments.
     if (pushToken) {
@@ -53,8 +57,8 @@ async function performDeviceRegistration(
       });
 
       if (existingDevices.length > 0) {
-        const oldDeviceIds = existingDevices.map((d) => d.deviceId);
-        const clientIdsToMigrate = existingDevices.flatMap((d) =>
+        oldDeviceIds = existingDevices.map((d) => d.deviceId);
+        clientIdsToMigrate = existingDevices.flatMap((d) =>
           d.clientIdentifiers.map((c) => c.id),
         );
 
@@ -68,18 +72,7 @@ async function performDeviceRegistration(
           "Push token moving from old device(s) to new device - migrating client identifiers and clearing old registrations",
         );
 
-        // Migrate all ClientIdentifiers from old devices to the new device
-        // This ensures notifications for existing conversations go to the correct device
-        if (clientIdsToMigrate.length > 0) {
-          await tx.clientIdentifier.updateMany({
-            where: {
-              id: { in: clientIdsToMigrate },
-            },
-            data: { deviceId },
-          });
-        }
-
-        // Clear the push token from all old devices (any apnsEnv)
+        // Clear the push token from all old devices FIRST (before upsert to avoid unique constraint)
         await tx.deviceRegistration.updateMany({
           where: {
             deviceId: { in: oldDeviceIds },
@@ -89,7 +82,8 @@ async function performDeviceRegistration(
       }
     }
 
-    // Now upsert the device registration
+    // Upsert the new device registration
+    // This ensures the foreign key target exists
     await tx.deviceRegistration.upsert({
       where: { deviceId },
       create: {
@@ -100,6 +94,17 @@ async function performDeviceRegistration(
       },
       update: updateData,
     });
+
+    // Migrate ClientIdentifiers from old devices to the new device
+    // This must happen after the upsert so the FK target exists
+    if (clientIdsToMigrate.length > 0) {
+      await tx.clientIdentifier.updateMany({
+        where: {
+          id: { in: clientIdsToMigrate },
+        },
+        data: { deviceId },
+      });
+    }
   });
 }
 
