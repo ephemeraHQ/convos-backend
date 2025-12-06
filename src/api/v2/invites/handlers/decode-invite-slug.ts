@@ -1,13 +1,10 @@
-import { createHash } from "crypto";
-import { fromBinary, toBinary } from "@bufbuild/protobuf";
+import { fromBinary } from "@bufbuild/protobuf";
 import type { Request, Response } from "express";
-import * as secp256k1 from "secp256k1";
 import { z } from "zod";
 import {
   InvitePayloadSchema,
   SignedInviteSchema,
   type InvitePayload,
-  type SignedInvite,
 } from "@/gen/invite/v2/invite_pb";
 
 const paramsSchema = z.object({
@@ -34,6 +31,21 @@ type DecodedInvite = Pick<
 // Reserve some space for the rest of the URL path
 const MAX_SLUG_LENGTH = 2048;
 
+// Max valid Date in JS is 8.64e15 ms (±100 million days from epoch)
+const MAX_DATE_MS = 8.64e15;
+
+/**
+ * Safely converts a Unix timestamp (seconds) to an ISO string.
+ * Returns null for undefined, invalid, or out-of-range values.
+ */
+function unixSecondsToISOString(unixSeconds: bigint | undefined): string | null {
+  if (unixSeconds === undefined) return null;
+  const ms = Number(unixSeconds) * 1000;
+  if (!Number.isFinite(ms) || Math.abs(ms) > MAX_DATE_MS) return null;
+  const date = new Date(ms);
+  return Number.isNaN(date.getTime()) ? null : date.toISOString();
+}
+
 function base64URLDecode(slug: string): Uint8Array {
   if (slug.length > MAX_SLUG_LENGTH) {
     throw new Error("Slug too large");
@@ -49,42 +61,16 @@ function base64URLDecode(slug: string): Uint8Array {
   return new Uint8Array(buffer);
 }
 
-function sha256(data: Uint8Array): Buffer {
-  return createHash("sha256").update(data).digest();
-}
-
-function recoverPublicKey(signedInvite: SignedInvite) {
-  const payloadBytes = signedInvite.payload;
-  if (!payloadBytes || payloadBytes.length === 0) {
-    throw new Error("Missing payload");
-  }
-
-  const signature = signedInvite.signature;
-  if (signature.length !== 65) {
-    throw new Error("Invalid signature length");
-  }
-
-  const signatureData = signature.slice(0, 64);
-  const recoveryId = signature[64];
-
-  // The payload is already serialized bytes, hash them directly
-  const messageHash = sha256(payloadBytes);
-
-  const publicKey = secp256k1.ecdsaRecover(
-    signatureData,
-    recoveryId,
-    messageHash,
-    false,
-  );
-
-  return Buffer.from(publicKey);
-}
-
+/**
+ * Decodes an invite slug into its payload components.
+ *
+ * NOTE: This endpoint is for UI preview purposes only (showing invite metadata before joining).
+ */
 function decodeInviteSlug(slug: string): DecodedInvite {
   try {
     const data = base64URLDecode(slug);
 
-    // First decode the SignedInvite wrapper
+    // Decode the SignedInvite wrapper
     const signedInvite = fromBinary(SignedInviteSchema, data);
     const payloadBytes = signedInvite.payload;
 
@@ -92,10 +78,7 @@ function decodeInviteSlug(slug: string): DecodedInvite {
       throw new Error("Missing payload in signed invite");
     }
 
-    // Verify signature
-    recoverPublicKey(signedInvite);
-
-    // Now decode the InvitePayload from the payload bytes
+    // Decode the InvitePayload from the payload bytes
     const payload = fromBinary(InvitePayloadSchema, payloadBytes);
 
     return {
@@ -145,12 +128,8 @@ export async function decodeInviteSlugHandler(
         name: decoded.name ?? null,
         description: decoded.description ?? null,
         imageURL: decoded.imageURL ?? null,
-        conversationExpiresAt: decoded.conversationExpiresAtUnix
-          ? new Date(Number(decoded.conversationExpiresAtUnix) * 1000).toISOString()
-          : null,
-        expiresAt: decoded.expiresAtUnix
-          ? new Date(Number(decoded.expiresAtUnix) * 1000).toISOString()
-          : null,
+        conversationExpiresAt: unixSecondsToISOString(decoded.conversationExpiresAtUnix),
+        expiresAt: unixSecondsToISOString(decoded.expiresAtUnix),
         expiresAfterUse: decoded.expiresAfterUse,
       },
     };
