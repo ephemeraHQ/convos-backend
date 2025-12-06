@@ -41,7 +41,9 @@ const MAX_DATE_MS = 8.64e15;
  * Safely converts a Unix timestamp (seconds) to an ISO string.
  * Returns null for undefined, invalid, or out-of-range values.
  */
-function unixSecondsToISOString(unixSeconds: bigint | undefined): string | null {
+function unixSecondsToISOString(
+  unixSeconds: bigint | undefined,
+): string | null {
   if (unixSeconds === undefined) return null;
   const ms = Number(unixSeconds) * 1000;
   if (!Number.isFinite(ms) || Math.abs(ms) > MAX_DATE_MS) return null;
@@ -166,7 +168,9 @@ export async function decodeInviteSlugHandler(
         name: decoded.name ?? null,
         description: decoded.description ?? null,
         imageURL: decoded.imageURL ?? null,
-        conversationExpiresAt: unixSecondsToISOString(decoded.conversationExpiresAtUnix),
+        conversationExpiresAt: unixSecondsToISOString(
+          decoded.conversationExpiresAtUnix,
+        ),
         expiresAt: unixSecondsToISOString(decoded.expiresAtUnix),
         expiresAfterUse: decoded.expiresAfterUse,
       },
