@@ -1,6 +1,5 @@
 import { createHash } from "crypto";
 import { fromBinary, toBinary } from "@bufbuild/protobuf";
-import { timestampDate } from "@bufbuild/protobuf/wkt";
 import type { Request, Response } from "express";
 import * as secp256k1 from "secp256k1";
 import { z } from "zod";
@@ -26,8 +25,8 @@ type DecodedInvite = Pick<
   | "name"
   | "description"
   | "imageURL"
-  | "conversationExpiresAt"
-  | "expiresAt"
+  | "conversationExpiresAtUnix"
+  | "expiresAtUnix"
   | "expiresAfterUse"
 >;
 
@@ -55,8 +54,8 @@ function sha256(data: Uint8Array): Buffer {
 }
 
 function recoverPublicKey(signedInvite: SignedInvite) {
-  const payload = signedInvite.payload;
-  if (!payload) {
+  const payloadBytes = signedInvite.payload;
+  if (!payloadBytes || payloadBytes.length === 0) {
     throw new Error("Missing payload");
   }
 
@@ -68,7 +67,7 @@ function recoverPublicKey(signedInvite: SignedInvite) {
   const signatureData = signature.slice(0, 64);
   const recoveryId = signature[64];
 
-  const payloadBytes = toBinary(InvitePayloadSchema, payload);
+  // The payload is already serialized bytes, hash them directly
   const messageHash = sha256(payloadBytes);
 
   const publicKey = secp256k1.ecdsaRecover(
@@ -85,14 +84,19 @@ function decodeInviteSlug(slug: string): DecodedInvite {
   try {
     const data = base64URLDecode(slug);
 
+    // First decode the SignedInvite wrapper
     const signedInvite = fromBinary(SignedInviteSchema, data);
-    const payload = signedInvite.payload;
+    const payloadBytes = signedInvite.payload;
 
-    if (!payload) {
+    if (!payloadBytes || payloadBytes.length === 0) {
       throw new Error("Missing payload in signed invite");
     }
 
+    // Verify signature
     recoverPublicKey(signedInvite);
+
+    // Now decode the InvitePayload from the payload bytes
+    const payload = fromBinary(InvitePayloadSchema, payloadBytes);
 
     return {
       conversationToken: payload.conversationToken,
@@ -101,8 +105,8 @@ function decodeInviteSlug(slug: string): DecodedInvite {
       name: payload.name,
       description: payload.description,
       imageURL: payload.imageURL,
-      conversationExpiresAt: payload.conversationExpiresAt,
-      expiresAt: payload.expiresAt,
+      conversationExpiresAtUnix: payload.conversationExpiresAtUnix,
+      expiresAtUnix: payload.expiresAtUnix,
       expiresAfterUse: payload.expiresAfterUse,
     };
   } catch (error) {
@@ -141,11 +145,11 @@ export async function decodeInviteSlugHandler(
         name: decoded.name ?? null,
         description: decoded.description ?? null,
         imageURL: decoded.imageURL ?? null,
-        conversationExpiresAt: decoded.conversationExpiresAt
-          ? timestampDate(decoded.conversationExpiresAt).toISOString()
+        conversationExpiresAt: decoded.conversationExpiresAtUnix
+          ? new Date(Number(decoded.conversationExpiresAtUnix) * 1000).toISOString()
           : null,
-        expiresAt: decoded.expiresAt
-          ? timestampDate(decoded.expiresAt).toISOString()
+        expiresAt: decoded.expiresAtUnix
+          ? new Date(Number(decoded.expiresAtUnix) * 1000).toISOString()
           : null,
         expiresAfterUse: decoded.expiresAfterUse,
       },
