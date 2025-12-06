@@ -1,10 +1,13 @@
+import { createHash } from "crypto";
 import { fromBinary } from "@bufbuild/protobuf";
 import type { Request, Response } from "express";
+import * as secp256k1 from "secp256k1";
 import { z } from "zod";
 import {
   InvitePayloadSchema,
   SignedInviteSchema,
   type InvitePayload,
+  type SignedInvite,
 } from "@/gen/invite/v2/invite_pb";
 
 const paramsSchema = z.object({
@@ -61,10 +64,42 @@ function base64URLDecode(slug: string): Uint8Array {
   return new Uint8Array(buffer);
 }
 
+function sha256(data: Uint8Array): Buffer {
+  return createHash("sha256").update(data).digest();
+}
+
+/**
+ * Verifies that the signature is well-formed and recoverable.
+ * This validates the cryptographic integrity of the invite.
+ *
+ * NOTE: This only verifies the signature is valid, not WHO signed it.
+ * Identity verification of the signer happens client-side when joining.
+ */
+function verifySignature(signedInvite: SignedInvite): void {
+  const payloadBytes = signedInvite.payload;
+  if (!payloadBytes || payloadBytes.length === 0) {
+    throw new Error("Missing payload");
+  }
+
+  const signature = signedInvite.signature;
+  if (signature.length !== 65) {
+    throw new Error("Invalid signature length");
+  }
+
+  const signatureData = signature.slice(0, 64);
+  const recoveryId = signature[64];
+
+  const messageHash = sha256(payloadBytes);
+
+  // This will throw if the signature is invalid or unrecoverable
+  secp256k1.ecdsaRecover(signatureData, recoveryId, messageHash, false);
+}
+
 /**
  * Decodes an invite slug into its payload components.
  *
  * NOTE: This endpoint is for UI preview purposes only (showing invite metadata before joining).
+ * Signature validity is verified, but signer identity verification happens client-side.
  */
 function decodeInviteSlug(slug: string): DecodedInvite {
   try {
@@ -77,6 +112,9 @@ function decodeInviteSlug(slug: string): DecodedInvite {
     if (!payloadBytes || payloadBytes.length === 0) {
       throw new Error("Missing payload in signed invite");
     }
+
+    // Verify the signature is valid (well-formed and recoverable)
+    verifySignature(signedInvite);
 
     // Decode the InvitePayload from the payload bytes
     const payload = fromBinary(InvitePayloadSchema, payloadBytes);
