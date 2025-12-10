@@ -114,7 +114,7 @@ function decodeInviteSlug(slug: string): DecodedInvite {
     const signedInvite = fromBinary(SignedInviteSchema, data);
     const payloadBytes = signedInvite.payload;
 
-    if (!payloadBytes || payloadBytes.length === 0) {
+    if (payloadBytes.length === 0) {
       throw new Error("Missing payload in signed invite");
     }
 
