@@ -82,7 +82,7 @@ function sha256(data: Uint8Array): Buffer {
  */
 function verifySignature(signedInvite: SignedInvite): void {
   const payloadBytes = signedInvite.payload;
-  if (!payloadBytes || payloadBytes.length === 0) {
+  if (payloadBytes.length === 0) {
     throw new Error("Missing payload");
   }
 
