@@ -56,7 +56,10 @@ function base64URLDecode(slug: string): Uint8Array {
     throw new Error("Slug too large");
   }
 
-  let base64 = slug.replace(/-/g, "+").replace(/_/g, "/");
+  // Remove "*" separators inserted for iMessage compatibility
+  // as iMessage breaks URLs with Base64 sections longer than 301 characters
+  // Convert URL-safe base64 back to standard base64 for Buffer.from()
+  let base64 = slug.replace(/\*/g, "").replace(/-/g, "+").replace(/_/g, "/");
 
   while (base64.length % 4 !== 0) {
     base64 += "=";
