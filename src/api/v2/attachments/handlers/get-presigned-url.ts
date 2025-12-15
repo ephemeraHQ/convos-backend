@@ -9,12 +9,14 @@ import { AppError } from "@/utils/errors";
 const envSchema = z.object({
   PUBLIC_ASSETS_BUCKET: z.string().min(1).optional(),
   AWS_REGION: z.string().optional(),
+  CDN_BASE_URL: z.string().url().optional(),
 });
 
 // Validate environment variables at startup
 const env = envSchema.parse({
   PUBLIC_ASSETS_BUCKET: process.env.PUBLIC_ASSETS_BUCKET,
   AWS_REGION: process.env.AWS_REGION,
+  CDN_BASE_URL: process.env.CDN_BASE_URL,
 });
 
 // Create S3 client only if bucket is configured
@@ -25,20 +27,22 @@ const getPresignedURL = async (contentType?: string) => {
     throw new AppError(503, "File uploads not available - S3 not configured");
   }
 
-  const objectKey = uuidv4();
-  let extension: string | undefined;
-  if (contentType && mime.extension(contentType)) {
-    extension = mime.extension(contentType) as string;
-  }
+  const baseKey = uuidv4();
+  const extension = contentType ? mime.extension(contentType) : false;
+  const objectKey = `${baseKey}${extension ? `.${extension}` : ""}`;
 
   const command = new PutObjectCommand({
     Bucket: env.PUBLIC_ASSETS_BUCKET,
-    Key: `${objectKey}${extension ? `.${extension}` : ""}`,
+    Key: objectKey,
     ContentType: contentType,
   });
 
-  const url = await getSignedUrl(s3Client, command, { expiresIn: 3600 });
-  return { objectKey, url };
+  const uploadUrl = await getSignedUrl(s3Client, command, { expiresIn: 3600 });
+  const assetUrl = env.CDN_BASE_URL
+    ? `${env.CDN_BASE_URL.replace(/\/+$/, "")}/${objectKey}`
+    : null;
+
+  return { objectKey, uploadUrl, assetUrl };
 };
 
 export async function getPresignedUrlHandler(req: Request, res: Response) {
@@ -52,12 +56,18 @@ export async function getPresignedUrlHandler(req: Request, res: Response) {
         contentType,
         hasJwtMetadata: !!res.locals.jwtMetadata,
       },
-      "V2 attachments presigned URL request",
+      "v2 attachments presigned URL request",
     );
 
-    const { objectKey, url } = await getPresignedURL(contentType);
+    const { objectKey, uploadUrl, assetUrl } =
+      await getPresignedURL(contentType);
 
-    res.json({ objectKey, url });
+    res.json({
+      objectKey,
+      url: uploadUrl, // @deprecated - use uploadUrl instead
+      uploadUrl,
+      assetUrl,
+    });
     return;
   } catch (error) {
     req.log.error({ error }, "Error generating presigned URL");
