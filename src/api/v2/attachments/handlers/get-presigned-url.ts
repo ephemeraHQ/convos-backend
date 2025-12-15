@@ -27,20 +27,22 @@ const getPresignedURL = async (contentType?: string) => {
     throw new AppError(503, "File uploads not available - S3 not configured");
   }
 
-  const objectKey = uuidv4();
+  const baseKey = uuidv4();
   const extension = contentType ? mime.extension(contentType) : false;
-  const key = `${objectKey}${extension ? `.${extension}` : ""}`;
+  const objectKey = `${baseKey}${extension ? `.${extension}` : ""}`;
 
   const command = new PutObjectCommand({
     Bucket: env.PUBLIC_ASSETS_BUCKET,
-    Key: key,
+    Key: objectKey,
     ContentType: contentType,
   });
 
   const uploadUrl = await getSignedUrl(s3Client, command, { expiresIn: 3600 });
-  const assetUrl = env.CDN_BASE_URL ? `${env.CDN_BASE_URL}/${key}` : null;
+  const assetUrl = env.CDN_BASE_URL
+    ? `${env.CDN_BASE_URL.replace(/\/+$/, "")}/${objectKey}`
+    : null;
 
-  return { objectKey: key, uploadUrl, assetUrl };
+  return { objectKey, uploadUrl, assetUrl };
 };
 
 export async function getPresignedUrlHandler(req: Request, res: Response) {
