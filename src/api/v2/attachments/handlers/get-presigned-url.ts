@@ -60,7 +60,12 @@ export async function getPresignedUrlHandler(req: Request, res: Response) {
     const { objectKey, uploadUrl, assetUrl } =
       await getPresignedURL(contentType);
 
-    res.json({ objectKey, uploadUrl, assetUrl });
+    res.json({
+      objectKey,
+      url: uploadUrl, // @deprecated - use uploadUrl instead
+      uploadUrl,
+      assetUrl,
+    });
     return;
   } catch (error) {
     req.log.error({ error }, "Error generating presigned URL");
