@@ -168,14 +168,25 @@ export const verifyV2JwtToken = async (args: { token: string }) => {
   );
 
   if (verifyError) {
-    logger.error({ error: verifyError }, "V2 JWT verification failed");
-    throw new AppError(401, "Invalid or expired token", verifyError);
+    if (verifyError instanceof jose.errors.JWTExpired) {
+      logger.info({ error: verifyError }, "JWT token expired");
+      throw new AppError(401, "Token expired", verifyError);
+    }
+
+    logger.warn(
+      { error: verifyError },
+      "JWT verification failed: Invalid token",
+    );
+    throw new AppError(401, "Invalid token", verifyError);
   }
 
   const parseResult = v2JWTPayloadSchema.safeParse(verified.payload);
   if (!parseResult.success) {
-    logger.error({ error: parseResult.error }, "Invalid JWT payload structure");
-    throw new AppError(401, "Invalid JWT payload structure");
+    logger.error(
+      { error: parseResult.error },
+      "JWT verification failed: Invalid payload structure",
+    );
+    throw new AppError(401, "Invalid payload structure");
   }
 
   return parseResult.data;
