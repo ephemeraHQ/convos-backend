@@ -9,23 +9,9 @@ import {
   verifyV2JwtToken,
 } from "@/utils/v2/jwt";
 
-// Pre-generated ECDSA P-256 test keys (for testing only)
-const TEST_PRIVATE_KEY = `-----BEGIN PRIVATE KEY-----
-MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgN0N6LqJKwJpVvbxV
-ZV0cA6xBdPQvEh+p0YYLjGkf8sKhRANCAAQvqC/R6n8cLwzNsVTQgQ1c8JCYQe/j
-LQs0E8yKdZ9DflF8zS7VPeZCmZvJxzPVB8xDH0+L/lh8vLhvIKJz8kFx
------END PRIVATE KEY-----`;
-
-const TEST_PUBLIC_KEY = `-----BEGIN PUBLIC KEY-----
-MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEL6gv0ep/HC8MzbFU0IENXPCQmEHv
-4y0LNBPMinWfQ35RfM0u1T3mQpmbyccz1QfMQx9Pi/5YfLy4byCic/JBcQ==
------END PUBLIC KEY-----`;
+// JWT tests keys are set in tests/preload.ts before config.ts loads
 
 beforeAll(async () => {
-  process.env.JWT_PRIVATE_KEY = TEST_PRIVATE_KEY;
-  process.env.JWT_PUBLIC_KEY = TEST_PUBLIC_KEY;
-
-  // Validate and cache the keys
   await validateJWTKeys();
 });
 
