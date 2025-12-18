@@ -170,14 +170,14 @@ export const verifyV2JwtToken = async (args: { token: string }) => {
   if (verifyError) {
     if (verifyError instanceof jose.errors.JWTExpired) {
       logger.info({ error: verifyError }, "JWT token expired");
-      throw new AppError(401, "Token expired", verifyError);
+      throw new AppError(401, "Token expired");
     }
 
     logger.warn(
       { error: verifyError },
       "JWT verification failed: Invalid token",
     );
-    throw new AppError(401, "Invalid token", verifyError);
+    throw new AppError(401, "Invalid token");
   }
 
   const parseResult = v2JWTPayloadSchema.safeParse(verified.payload);
