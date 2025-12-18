@@ -195,3 +195,22 @@ export const verifyV2JwtToken = async (args: { token: string }) => {
 export const isNotificationExtensionOnlyToken = (payload: V2JWTPayload) => {
   return payload.metadata?.notificationExtensionOnly === true;
 };
+
+/**
+ * Create a JWT with a custom payload - This is for testing only
+ * Allows testing invalid payload structures
+ */
+export const createTestJwtWithPayload = async (args: {
+  payload: Record<string, unknown>;
+  expirationTime?: string;
+}) => {
+  const privateKey = await loadPrivateKey();
+
+  return new jose.SignJWT(args.payload)
+    .setProtectedHeader({ alg: "ES256" })
+    .setSubject("test")
+    .setIssuer(JWT_ISSUER)
+    .setIssuedAt()
+    .setExpirationTime(args.expirationTime ?? "15m")
+    .sign(privateKey);
+};
