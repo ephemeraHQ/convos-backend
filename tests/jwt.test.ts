@@ -7,7 +7,7 @@ import {
   createV2JwtToken,
   validateJWTKeys,
   verifyV2JwtToken,
-} from "@/utils/v2/jwt";
+} from "@/utils/jwt";
 
 // JWT tests keys are set in tests/preload.ts before config.ts loads
 

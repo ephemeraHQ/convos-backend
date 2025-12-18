@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { xmtpWebhookAuthMiddleware } from "@/middleware/xmtpWebhookAuth";
+import { webhookAuthMiddleware } from "@/middleware/webhookAuth";
 import { handleXmtpNotification } from "./webhook-handler";
 
 const webhookRouter = Router();
@@ -7,7 +7,7 @@ const webhookRouter = Router();
 // XMTP webhook handler (shared between v1 and v2)
 webhookRouter.post(
   "/handle-notification",
-  xmtpWebhookAuthMiddleware,
+  webhookAuthMiddleware,
   handleXmtpNotification,
 );
 

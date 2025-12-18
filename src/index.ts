@@ -10,8 +10,8 @@ import { noRouteMiddleware } from "./middleware/noRoute";
 import { pinoMiddleware } from "./middleware/pino";
 import { rateLimitMiddleware } from "./middleware/rateLimit";
 import healthcheckRouter from "./routes/healthcheck";
+import { validateJWTKeys } from "./utils/jwt";
 import logger from "./utils/logger";
-import { validateJWTKeys } from "./utils/v2/jwt";
 
 const getLocalIpAddresses = () => {
   const interfaces = os.networkInterfaces();

@@ -1,7 +1,7 @@
 import type { Request, Response } from "express";
 import { z } from "zod";
 import { prisma } from "@/utils/prisma";
-import { createV2JwtToken } from "@/utils/v2/jwt";
+import { createV2JwtToken } from "@/utils/jwt";
 
 /**
  * Token Generation Security Model

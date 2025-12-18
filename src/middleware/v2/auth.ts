@@ -1,6 +1,6 @@
 import type { NextFunction, Request, Response } from "express";
 import { verifyAppCheckToken } from "@/utils/firebase";
-import { verifyV2JwtToken } from "@/utils/v2/jwt";
+import { verifyV2JwtToken } from "@/utils/jwt";
 
 export const AUTH_HEADER = "X-Convos-AuthToken";
 export const APPCHECK_HEADER = "X-Firebase-AppCheck";
