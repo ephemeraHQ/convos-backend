@@ -1,7 +1,7 @@
 import type { ClientIdentifier, DeviceRegistration } from "@prisma/client";
 import type { Request, Response } from "express";
-import { createApnsService } from "@/api/shared/notifications/services/apns-push.service";
-import type { V2NotificationPayload } from "@/api/shared/notifications/services/notifications-types";
+import { createApnsService } from "@/api/v2/notifications/apns-push.service";
+import type { V2NotificationPayload } from "@/api/v2/notifications/types";
 import {
   createNotificationClient,
   webhookNotificationBodySchema,
@@ -9,7 +9,7 @@ import {
 } from "@/notifications/client";
 import { createJwtToken } from "@/utils/jwt";
 import { prisma } from "@/utils/prisma";
-import { MAX_PUSH_FAILURES } from "./constants";
+import { MAX_PUSH_FAILURES } from "../constants";
 
 const notificationClient = createNotificationClient();
 

@@ -11,7 +11,7 @@ app.use(pinoMiddleware);
 app.use(jsonMiddleware);
 app.use("/api/v2/invites", invitesV2Router);
 
-describe("V2 Invite API Tests", () => {
+describe("Invites API Tests", () => {
   let server: Server;
   const baseURL = "http://localhost:4001";
 

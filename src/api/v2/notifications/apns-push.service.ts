@@ -5,7 +5,7 @@ import logger from "@/utils/logger";
 import type {
   AnyNotificationPayloadWithJWT,
   NotificationPayload,
-} from "./notifications-types";
+} from "./types";
 
 export interface ApnsConfig {
   teamId: string;

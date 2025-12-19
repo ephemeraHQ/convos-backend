@@ -1,6 +1,6 @@
 import * as jose from "jose";
 import { z } from "zod";
-import { MAX_JWT_METADATA_SIZE } from "@/api/shared/notifications/constants";
+import { MAX_JWT_METADATA_SIZE } from "@/api/v2/notifications/constants";
 import { JWT_ISSUER, JWT_PRIVATE_KEY, JWT_PUBLIC_KEY } from "@/config";
 import { AppError } from "@/utils/errors";
 import logger from "@/utils/logger";

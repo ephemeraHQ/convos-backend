@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-import { createApnsService } from "@/api/shared/notifications/services/apns-push.service";
+import { createApnsService } from "@/api/v2/notifications/apns-push.service";
 import { prisma } from "@/utils/prisma";
 
 interface TestPushArgs {
