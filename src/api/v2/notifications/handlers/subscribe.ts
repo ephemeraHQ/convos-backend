@@ -43,6 +43,17 @@ export async function subscribe(
       "Subscribing to topics",
     );
 
+    // For JWT auth, verify the token's deviceId matches the request's deviceId
+    const jwtDeviceId = res.locals.deviceId as string | undefined;
+    if (jwtDeviceId && jwtDeviceId !== body.deviceId) {
+      req.log.warn(
+        { jwtDeviceId, requestDeviceId: body.deviceId },
+        "JWT deviceId mismatch - possible token misuse",
+      );
+      res.status(403).json({ error: "Device ID mismatch" });
+      return;
+    }
+
     // Verify device exists and is not disabled
     const device = await prisma.deviceRegistration.findUnique({
       where: { deviceId: body.deviceId },

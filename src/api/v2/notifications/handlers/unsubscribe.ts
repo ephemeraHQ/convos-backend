@@ -38,6 +38,17 @@ export async function unsubscribe(
       return;
     }
 
+    // For JWT auth, verify the token's deviceId owns this client
+    const jwtDeviceId = res.locals.deviceId as string | undefined;
+    if (jwtDeviceId && jwtDeviceId !== client.deviceId) {
+      req.log.warn(
+        { jwtDeviceId, clientDeviceId: client.deviceId },
+        "JWT deviceId mismatch - possible token misuse",
+      );
+      res.status(403).json({ error: "Device ID mismatch" });
+      return;
+    }
+
     // Unsubscribe from topics
     await notificationClient.unsubscribe({
       installationId: body.clientId,
