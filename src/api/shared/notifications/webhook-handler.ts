@@ -2,18 +2,16 @@ import type { ClientIdentifier, DeviceRegistration } from "@prisma/client";
 import type { Request, Response } from "express";
 import { createApnsService } from "@/api/shared/notifications/services/apns-push.service";
 import type { V2NotificationPayload } from "@/api/shared/notifications/services/notifications-types";
-import { getPushNotificationService } from "@/api/shared/notifications/services/push-notification.service";
 import {
   createNotificationClient,
   webhookNotificationBodySchema,
   type WebhookNotificationBody,
 } from "@/notifications/client";
-import { createV2JwtToken } from "@/utils/jwt";
+import { createJwtToken } from "@/utils/jwt";
 import { prisma } from "@/utils/prisma";
 import { MAX_PUSH_FAILURES } from "./constants";
 
 const notificationClient = createNotificationClient();
-const pushNotificationService = getPushNotificationService();
 
 /**
  * Detect if a message is a welcome message (XMTP MLS protocol message for group joins)
@@ -31,17 +29,12 @@ function isWelcomeMessage(args: {
 }
 
 /**
- * Webhook handler for XMTP notifications
+ * Notifications webhook handler
  *
  * Authentication is handled by webhookAuthMiddleware which validates the
  * XMTP_NOTIFICATION_SECRET header to verify the request is from the authorized XMTP server.
  */
 export async function handleXmtpNotification(req: Request, res: Response) {
-  const identityOnDeviceToCleanup: {
-    xmtpInstallationId: string | null;
-    deviceId: string;
-  } | null = null;
-
   try {
     // Validate webhook body structure
     const parseResult = webhookNotificationBodySchema.safeParse(req.body);
@@ -124,8 +117,8 @@ async function handleV2Notification(args: {
     );
   }
 
-  // Generate JWT for NSE to use (24h expiration for security)
-  const apiJWT = await createV2JwtToken({
+  // Generate JWT for NSE to use
+  const apiJWT = await createJwtToken({
     deviceId: client.deviceId,
     expirationTime: "24h",
     metadata: {

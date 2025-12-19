@@ -91,7 +91,7 @@ export const validateJWTKeys = async () => {
   }
 };
 
-export const createV2JwtToken = async (args: {
+export const createJwtToken = async (args: {
   deviceId: string;
   metadata?: V2JWTMetadata;
   expirationTime?: string;

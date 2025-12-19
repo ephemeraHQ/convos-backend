@@ -3,8 +3,8 @@ import * as jose from "jose";
 import { JWT_ISSUER } from "@/config";
 import { AppError } from "@/utils/errors";
 import {
+  createJwtToken,
   createTestJwtWithPayload,
-  createV2JwtToken,
   validateJWTKeys,
   verifyV2JwtToken,
 } from "@/utils/jwt";
@@ -18,7 +18,7 @@ beforeAll(async () => {
 describe("verifyV2JwtToken", () => {
   test("should verify a valid token and return payload", async () => {
     const deviceId = "test-device-123";
-    const token = await createV2JwtToken({ deviceId });
+    const token = await createJwtToken({ deviceId });
 
     const payload = await verifyV2JwtToken({ token });
 
@@ -28,7 +28,7 @@ describe("verifyV2JwtToken", () => {
   test("should verify token with metadata", async () => {
     const deviceId = "test-device-456";
     const metadata = { notificationExtensionOnly: true };
-    const token = await createV2JwtToken({ deviceId, metadata });
+    const token = await createJwtToken({ deviceId, metadata });
 
     const payload = await verifyV2JwtToken({ token });
 
@@ -39,7 +39,7 @@ describe("verifyV2JwtToken", () => {
   test("should throw 'Token expired' for expired tokens", async () => {
     const deviceId = "test-device-expired";
     // Create token that expires immediately
-    const token = await createV2JwtToken({
+    const token = await createJwtToken({
       deviceId,
       expirationTime: "0s",
     });
@@ -62,7 +62,7 @@ describe("verifyV2JwtToken", () => {
 
   test("should throw 'Invalid token' for tampered signature", async () => {
     const deviceId = "test-device-tampered";
-    const token = await createV2JwtToken({ deviceId });
+    const token = await createJwtToken({ deviceId });
 
     // Tamper with the signature (last part of JWT)
     const parts = token.split(".");
@@ -136,10 +136,10 @@ describe("verifyV2JwtToken", () => {
   });
 });
 
-describe("createV2JwtToken", () => {
+describe("createJwtToken", () => {
   test("should create a valid token", async () => {
     const deviceId = "test-device-create";
-    const token = await createV2JwtToken({ deviceId });
+    const token = await createJwtToken({ deviceId });
 
     expect(token).toBeDefined();
     expect(typeof token).toBe("string");
@@ -149,7 +149,7 @@ describe("createV2JwtToken", () => {
   test("should include metadata in token", async () => {
     const deviceId = "test-device-metadata";
     const metadata = { notificationExtensionOnly: true };
-    const token = await createV2JwtToken({ deviceId, metadata });
+    const token = await createJwtToken({ deviceId, metadata });
 
     // Decode and verify payload contains metadata
     const payload = await verifyV2JwtToken({ token });
@@ -158,7 +158,7 @@ describe("createV2JwtToken", () => {
 
   test("should respect custom expiration time", async () => {
     const deviceId = "test-device-expiry";
-    const token = await createV2JwtToken({
+    const token = await createJwtToken({
       deviceId,
       expirationTime: "1h",
     });

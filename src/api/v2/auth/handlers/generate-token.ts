@@ -1,14 +1,14 @@
 import type { Request, Response } from "express";
 import { z } from "zod";
+import { createJwtToken } from "@/utils/jwt";
 import { prisma } from "@/utils/prisma";
-import { createV2JwtToken } from "@/utils/jwt";
 
 /**
  * Token Generation Security Model
  *
  * This endpoint generates short-lived JWT tokens for NSE/Gateway authentication:
  *
- * 1. The outer authV2Middleware validates the request using Firebase AppCheck,
+ * 1. The outer authMiddleware validates the request using Firebase AppCheck,
  *    which verifies the request originates from a legitimate app instance.
  * 2. AppCheck validation is sufficient to prove device ownership.
  * 3. Device does NOT need to be registered yet - token generation works independently.
@@ -47,7 +47,7 @@ export async function generateToken(
     }
 
     // Generate JWT, this works even if device not registered yet
-    const token = await createV2JwtToken({
+    const token = await createJwtToken({
       deviceId: body.deviceId,
       expirationTime: "15m",
     });
