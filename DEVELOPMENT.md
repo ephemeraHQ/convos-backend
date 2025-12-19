@@ -61,12 +61,12 @@ PORT=4000
 
 The `dev/compose.yml` runs:
 
-| Service | Port | Description |
-|---------|------|-------------|
-| `convos_db` | 5432 | PostgreSQL for backend |
-| `node` | 5555, 5556 | XMTP node |
-| `notification_server` | 8080 | XMTP push notification server |
-| `notification_db` | - | PostgreSQL for notification server |
+| Service               | Port       | Description                        |
+| --------------------- | ---------- | ---------------------------------- |
+| `convos_db`           | 5432       | PostgreSQL for backend             |
+| `node`                | 5555, 5556 | XMTP node                          |
+| `notification_server` | 8080       | XMTP push notification server      |
+| `notification_db`     | -          | PostgreSQL for notification server |
 
 The backend connects to `convos_db` and `notification_server`. It does not connect directly to the XMTP node.
 
@@ -90,4 +90,3 @@ curl http://localhost:4000/healthcheck
 
 - [XMTP Push Notifications Guide](https://docs.xmtp.org/inboxes/push-notifs/pn-server)
 - [Docker Networking Guide](https://docs.docker.com/network/)
-

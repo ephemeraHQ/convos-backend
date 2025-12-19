@@ -30,8 +30,8 @@ let cachedPrivateKey: jose.KeyLike | null = null;
 let cachedPublicKey: jose.KeyLike | null = null;
 
 /**
- * Lazy-load and cache the private key
- * Safe for concurrent calls - returns the same promise while loading
+ * Lazy-load and cache the private key.
+ * validateJWTKeys() runs at startup before requests.
  */
 const loadPrivateKey = async (): Promise<jose.KeyLike> => {
   if (cachedPrivateKey) {
@@ -48,8 +48,8 @@ const loadPrivateKey = async (): Promise<jose.KeyLike> => {
 };
 
 /**
- * Lazy-load and cache the public key
- * Safe for concurrent calls - returns the same promise while loading
+ * Lazy-load and cache the public key.
+ * validateJWTKeys() runs at startup before requests.
  */
 const loadPublicKey = async (): Promise<jose.KeyLike> => {
   if (cachedPublicKey) {
@@ -66,14 +66,13 @@ const loadPublicKey = async (): Promise<jose.KeyLike> => {
 };
 
 /**
- * Validate JWT keys at application startup and cache them
- * This should be called during initialization to fail fast on misconfiguration
+ * Validate JWT keys at application startup and cache them.
+ * Performs a test sign/verify to ensure the key pair is valid and matches.
  */
 export const validateJWTKeys = async () => {
   try {
-    // Validate and cache private key
     await loadPrivateKey();
-    logger.info("JWT private key validation successful");
+    logger.info("JWT private key loaded");
   } catch (error) {
     logger.error({ error }, "Invalid JWT_PRIVATE_KEY format");
     throw new Error(
@@ -82,13 +81,24 @@ export const validateJWTKeys = async () => {
   }
 
   try {
-    // Validate and cache public key
     await loadPublicKey();
-    logger.info("JWT public key validation successful");
+    logger.info("JWT public key loaded");
   } catch (error) {
     logger.error({ error }, "Invalid JWT_PUBLIC_KEY format");
     throw new Error(
       "Invalid JWT_PUBLIC_KEY: must be a valid PEM-encoded ECDSA P-256 public key",
+    );
+  }
+
+  // Verify the key pair works together by signing and verifying a test token
+  try {
+    const testToken = await createJwtToken({ deviceId: "startup-validation" });
+    await verifyJwtToken({ token: testToken });
+    logger.info("JWT key pair validation successful");
+  } catch (error) {
+    logger.error({ error }, "JWT key pair mismatch");
+    throw new Error(
+      "JWT key pair validation failed: private and public keys do not match",
     );
   }
 };
