@@ -1,18 +1,20 @@
 import * as jose from "jose";
 import { z } from "zod";
-import { MAX_JWT_METADATA_SIZE } from "@/api/v2/notifications/constants";
 import { JWT_ISSUER, JWT_PRIVATE_KEY, JWT_PUBLIC_KEY } from "@/config";
 import { AppError } from "@/utils/errors";
 import logger from "@/utils/logger";
 import { tryCatch } from "@/utils/try-catch";
 
-export type V2JWTMetadata = {
+// Maximum size in bytes for JWT metadata to prevent token bloat
+const MAX_JWT_METADATA_SIZE = 1024;
+
+export type v2JWTMetadata = {
   notificationExtensionOnly?: boolean;
 };
 
 export type V2JWTPayload = {
   deviceId: string;
-  metadata?: V2JWTMetadata;
+  metadata?: v2JWTMetadata;
 };
 
 const v2JWTPayloadSchema = z.object({
@@ -93,7 +95,7 @@ export const validateJWTKeys = async () => {
 
 export const createJwtToken = async (args: {
   deviceId: string;
-  metadata?: V2JWTMetadata;
+  metadata?: v2JWTMetadata;
   expirationTime?: string;
 }) => {
   // Validate metadata size to prevent JWT bloat
