@@ -23,13 +23,19 @@
    bun run dev/scripts/generateNotificationSecret.ts
    ```
 
-3. **Start the backend:**
+3. **Initialize the database:**
+
+   ```bash
+   bun run migrate:dev
+   ```
+
+4. **Start the backend:**
 
    ```bash
    bun run dev
    ```
 
-4. **Verify setup:**
+5. **Verify setup:**
 
    ```bash
    curl http://localhost:4000/healthcheck
@@ -72,8 +78,16 @@ The backend connects to `convos_db` and `notification_server`. It does not conne
 
 ## Health Check
 
+Basic health check (returns `OK`):
+
 ```bash
 curl http://localhost:4000/healthcheck
+```
+
+Detailed health check with service status:
+
+```bash
+curl http://localhost:4000/healthcheck/details
 ```
 
 ```json
