@@ -1,6 +1,6 @@
 import type { NextFunction, Request, Response } from "express";
 import { verifyAppCheckToken } from "@/utils/firebase";
-import { verifyV2JwtToken } from "@/utils/jwt";
+import { verifyJwtToken } from "@/utils/jwt";
 
 export const AUTH_HEADER = "X-Convos-AuthToken";
 export const APPCHECK_HEADER = "X-Firebase-AppCheck";
@@ -52,7 +52,7 @@ export const authMiddleware = async (
       hasAppCheck: !!appCheckToken,
       hasAuthToken: !!authToken,
     },
-    "V2 auth middleware - incoming request",
+    "Auth middleware - incoming request",
   );
 
   // Try AppCheck first (main app)
@@ -72,7 +72,7 @@ export const authMiddleware = async (
   // Try JWT (NSE or Gateway)
   if (authToken) {
     try {
-      const payload = await verifyV2JwtToken({ token: authToken });
+      const payload = await verifyJwtToken({ token: authToken });
       // Store payload for handlers if needed
       res.locals.deviceId = payload.deviceId;
       res.locals.jwtMetadata = payload.metadata;

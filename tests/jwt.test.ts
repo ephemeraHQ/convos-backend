@@ -6,7 +6,7 @@ import {
   createJwtToken,
   createTestJwtWithPayload,
   validateJWTKeys,
-  verifyV2JwtToken,
+  verifyJwtToken,
 } from "@/utils/jwt";
 
 // JWT tests keys are set in tests/preload.ts before config.ts loads
@@ -15,12 +15,12 @@ beforeAll(async () => {
   await validateJWTKeys();
 });
 
-describe("verifyV2JwtToken", () => {
+describe("verifyJwtToken", () => {
   test("should verify a valid token and return payload", async () => {
     const deviceId = "test-device-123";
     const token = await createJwtToken({ deviceId });
 
-    const payload = await verifyV2JwtToken({ token });
+    const payload = await verifyJwtToken({ token });
 
     expect(payload.deviceId).toBe(deviceId);
   });
@@ -30,7 +30,7 @@ describe("verifyV2JwtToken", () => {
     const metadata = { notificationExtensionOnly: true };
     const token = await createJwtToken({ deviceId, metadata });
 
-    const payload = await verifyV2JwtToken({ token });
+    const payload = await verifyJwtToken({ token });
 
     expect(payload.deviceId).toBe(deviceId);
     expect(payload.metadata?.notificationExtensionOnly).toBe(true);
@@ -48,7 +48,7 @@ describe("verifyV2JwtToken", () => {
     await new Promise((resolve) => setTimeout(resolve, 10));
 
     try {
-      await verifyV2JwtToken({ token });
+      await verifyJwtToken({ token });
       expect.unreachable("Should have thrown an error");
     } catch (error) {
       expect(error).toBeInstanceOf(AppError);
@@ -70,7 +70,7 @@ describe("verifyV2JwtToken", () => {
     const tamperedToken = parts.join(".");
 
     try {
-      await verifyV2JwtToken({ token: tamperedToken });
+      await verifyJwtToken({ token: tamperedToken });
       expect.unreachable("Should have thrown an error");
     } catch (error) {
       expect(error).toBeInstanceOf(AppError);
@@ -93,7 +93,7 @@ describe("verifyV2JwtToken", () => {
       .sign(differentKeyPair.privateKey);
 
     try {
-      await verifyV2JwtToken({ token });
+      await verifyJwtToken({ token });
       expect.unreachable("Should have thrown an error");
     } catch (error) {
       expect(error).toBeInstanceOf(AppError);
@@ -111,7 +111,7 @@ describe("verifyV2JwtToken", () => {
     });
 
     try {
-      await verifyV2JwtToken({ token });
+      await verifyJwtToken({ token });
       expect.unreachable("Should have thrown an error");
     } catch (error) {
       expect(error).toBeInstanceOf(AppError);
@@ -124,7 +124,7 @@ describe("verifyV2JwtToken", () => {
 
   test("should throw 'Invalid token' for malformed JWT", async () => {
     try {
-      await verifyV2JwtToken({ token: "not-a-valid-jwt" });
+      await verifyJwtToken({ token: "not-a-valid-jwt" });
       expect.unreachable("Should have thrown an error");
     } catch (error) {
       expect(error).toBeInstanceOf(AppError);
@@ -152,7 +152,7 @@ describe("createJwtToken", () => {
     const token = await createJwtToken({ deviceId, metadata });
 
     // Decode and verify payload contains metadata
-    const payload = await verifyV2JwtToken({ token });
+    const payload = await verifyJwtToken({ token });
     expect(payload.metadata).toEqual(metadata);
   });
 

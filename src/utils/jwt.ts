@@ -146,7 +146,7 @@ export const createJwtToken = async (args: {
   return jwt;
 };
 
-export const verifyV2JwtToken = async (args: { token: string }) => {
+export const verifyJwtToken = async (args: { token: string }) => {
   // Get cached ECDSA public key for verification
   const { data: publicKey, error: importError } =
     await tryCatch(loadPublicKey());
