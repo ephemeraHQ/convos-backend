@@ -1,11 +1,19 @@
 import http2 from "node:http2";
-import type { Device } from "@prisma/client";
+import type { ApnsEnvironment, PushTokenType } from "@prisma/client";
 import jwt from "jsonwebtoken";
 import logger from "@/utils/logger";
 import type {
   AnyNotificationPayloadWithJWT,
   NotificationPayload,
 } from "./types";
+
+// Device-like interface for APNS service (compatible with DeviceRegistration)
+export interface ApnsDevice {
+  id: string;
+  pushToken: string | null;
+  pushTokenType: PushTokenType;
+  apnsEnv: ApnsEnvironment | null;
+}
 
 export interface ApnsConfig {
   teamId: string;
@@ -65,7 +73,7 @@ export class ApnsPushService {
     return this.jwtToken;
   }
 
-  private getApnsUrl(device: Device): string {
+  private getApnsUrl(device: ApnsDevice): string {
     const hostname =
       device.apnsEnv === "sandbox"
         ? "api.sandbox.push.apple.com"
@@ -74,7 +82,7 @@ export class ApnsPushService {
   }
 
   async sendPushNotification(args: {
-    device: Device;
+    device: ApnsDevice;
     notification: AnyNotificationPayloadWithJWT;
     isSilent?: boolean;
   }): Promise<{ success: boolean; error?: string }> {
