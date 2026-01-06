@@ -44,7 +44,7 @@ export async function subscribe(
     );
 
     // For JWT auth, verify the token's deviceId matches the request's deviceId
-    const jwtDeviceId = res.locals.deviceId as string | undefined;
+    const jwtDeviceId = res.locals.deviceId;
     if (jwtDeviceId && jwtDeviceId !== body.deviceId) {
       req.log.warn(
         { jwtDeviceId, requestDeviceId: body.deviceId },

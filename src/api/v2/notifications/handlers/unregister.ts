@@ -35,7 +35,7 @@ export async function unregister(
     }
 
     // For JWT auth, verify the token's deviceId owns this client
-    const jwtDeviceId = res.locals.deviceId as string | undefined;
+    const jwtDeviceId = res.locals.deviceId;
     if (jwtDeviceId && jwtDeviceId !== client.deviceId) {
       req.log.warn(
         { jwtDeviceId, clientDeviceId: client.deviceId },
