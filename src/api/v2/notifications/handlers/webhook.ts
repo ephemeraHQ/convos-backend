@@ -117,7 +117,9 @@ async function handleV2Notification(args: {
     );
   }
 
-  // Generate JWT for NSE to use
+  // Generate JWT for NSE (Notification Service Extension) to use.
+  // NSE cannot generate App Attest tokens, so we issue a longer-lived JWT (24h)
+  // that allows the extension to make API calls for notification content.
   const apiJWT = await createJwtToken({
     deviceId: client.deviceId,
     expirationTime: "24h",
@@ -210,7 +212,7 @@ async function handleV2Notification(args: {
         },
       });
 
-      // Auto-disable only in XMTP production environment when threshold is reached
+      // Auto-disable in XMTP production only to preserve test devices in dev/staging for debugging
       if (
         process.env.XMTP_ENV === "production" &&
         u.pushFailures >= MAX_PUSH_FAILURES
