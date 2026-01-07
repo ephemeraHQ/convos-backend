@@ -16,7 +16,7 @@ v2Router.use("/attachments", authMiddleware, attachmentsRouter);
 v2Router.use("/notifications/xmtp", webhookRouter);
 v2Router.use("/notifications", authMiddleware, notificationsRouter);
 
-// Auth check endpoint (AppCheck or JWT)
+// Auth check endpoint (JWT)
 v2Router.get("/auth-check", authMiddleware, (req, res) => {
   res.status(200).json({
     success: true,
