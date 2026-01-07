@@ -76,6 +76,30 @@ The `dev/compose.yml` runs:
 
 The backend connects to `convos_db` and `notification_server`. It does not connect directly to the XMTP node.
 
+## Authentication Model
+
+The API uses two authentication methods:
+
+| Middleware               | Description                                   |
+| ------------------------ | --------------------------------------------- |
+| `appCheckOnlyMiddleware` | Firebase App Check (app attestation)          |
+| `authMiddleware`         | JWT with ES256 signature, rejects NSE tokens  |
+| `authMiddlewareAllowNSE` | JWT that allows NSE tokens (diagnostics only) |
+
+### Endpoint Authentication
+
+| Endpoint            | Auth Method       | Notes                        |
+| ------------------- | ----------------- | ---------------------------- |
+| `/v2/device`        | AppCheck          | Device registration          |
+| `/v2/auth/token`    | AppCheck          | JWT token exchange           |
+| `/v2/attachments`   | JWT               | Presigned URLs for uploads   |
+| `/v2/notifications` | JWT               | Push notification management |
+| `/v2/auth-check`    | JWT (NSE allowed) | Diagnostic endpoint          |
+
+### NSE Tokens
+
+Notification Service Extension (NSE) tokens are issued with `notificationExtensionOnly: true` metadata and 12h expiry. They are used by iOS NSE to authenticate with the Payer Gateway when connecting to the XMTP d14n network. NSE tokens are restricted to the `/v2/auth-check` endpoint only.
+
 ## Health Check
 
 Basic health check (returns `OK`):

@@ -1,5 +1,9 @@
 import { Router } from "express";
-import { appCheckOnlyMiddleware, authMiddleware } from "@/middleware/auth";
+import {
+  appCheckOnlyMiddleware,
+  authMiddleware,
+  authMiddlewareAllowNSE,
+} from "@/middleware/auth";
 import { attachmentsRouter } from "./attachments/attachments.router";
 import { authRouter } from "./auth/auth.router";
 import { deviceRouter } from "./device/device.router";
@@ -16,8 +20,8 @@ v2Router.use("/attachments", authMiddleware, attachmentsRouter);
 v2Router.use("/notifications/xmtp", webhookRouter);
 v2Router.use("/notifications", authMiddleware, notificationsRouter);
 
-// Auth check endpoint (JWT)
-v2Router.get("/auth-check", authMiddleware, (req, res) => {
+// Auth check endpoint - allows NSE tokens for diagnostics
+v2Router.get("/auth-check", authMiddlewareAllowNSE, (_req, res) => {
   res.status(200).json({
     success: true,
   });
