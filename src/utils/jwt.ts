@@ -5,16 +5,18 @@ import { AppError } from "@/utils/errors";
 import logger from "@/utils/logger";
 import { tryCatch } from "@/utils/try-catch";
 
-// Maximum size in bytes for JWT metadata to prevent token bloat
+// Maximum size in bytes for JWT metadata to prevent token bloat.
+// 1KB is generous for current needs (just boolean flags) while leaving headroom
+// for HTTP header limits (~8KB) and APNS payload limits (4KB).
 const MAX_JWT_METADATA_SIZE = 1024;
 
-export type v2JWTMetadata = {
+export type V2JWTMetadata = {
   notificationExtensionOnly?: boolean;
 };
 
 export type V2JWTPayload = {
   deviceId: string;
-  metadata?: v2JWTMetadata;
+  metadata?: V2JWTMetadata;
 };
 
 const v2JWTPayloadSchema = z.object({
@@ -105,7 +107,7 @@ export const validateJWTKeys = async () => {
 
 export const createJwtToken = async (args: {
   deviceId: string;
-  metadata?: v2JWTMetadata;
+  metadata?: V2JWTMetadata;
   expirationTime?: string;
 }) => {
   // Validate metadata size to prevent JWT bloat
