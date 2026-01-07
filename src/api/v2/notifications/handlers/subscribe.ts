@@ -2,6 +2,7 @@ import type { Request, Response } from "express";
 import { hexToUint8Array } from "uint8array-extras";
 import { z } from "zod";
 import { createNotificationClient } from "@/notifications/client";
+import { verifyDeviceOwnership } from "@/utils/auth-guards";
 import { prisma } from "@/utils/prisma";
 
 const subscribeRequestSchema = z.object({
@@ -43,14 +44,15 @@ export async function subscribe(
       "Subscribing to topics",
     );
 
-    // For JWT auth, verify the token's deviceId matches the request's deviceId
-    const jwtDeviceId = res.locals.deviceId;
-    if (jwtDeviceId && jwtDeviceId !== body.deviceId) {
-      req.log.warn(
-        { jwtDeviceId, requestDeviceId: body.deviceId },
-        "JWT deviceId mismatch - possible token misuse",
-      );
-      res.status(403).json({ error: "Device ID mismatch" });
+    // Verify the JWT token's deviceId matches the request's deviceId
+    if (
+      !verifyDeviceOwnership({
+        req,
+        res,
+        jwtDeviceId: res.locals.deviceId,
+        expectedDeviceId: body.deviceId,
+      })
+    ) {
       return;
     }
 

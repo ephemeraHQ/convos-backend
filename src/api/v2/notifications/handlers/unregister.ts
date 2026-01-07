@@ -1,6 +1,7 @@
 import type { Request, Response } from "express";
 import { z } from "zod";
 import { createNotificationClient } from "@/notifications/client";
+import { verifyDeviceOwnership } from "@/utils/auth-guards";
 import { prisma } from "@/utils/prisma";
 
 const unregisterParamsSchema = z.object({
@@ -34,14 +35,15 @@ export async function unregister(
       return;
     }
 
-    // For JWT auth, verify the token's deviceId owns this client
-    const jwtDeviceId = res.locals.deviceId;
-    if (jwtDeviceId && jwtDeviceId !== client.deviceId) {
-      req.log.warn(
-        { jwtDeviceId, clientDeviceId: client.deviceId },
-        "JWT deviceId mismatch - possible token misuse",
-      );
-      res.status(403).json({ error: "Device ID mismatch" });
+    // Verify the JWT token's deviceId owns this client
+    if (
+      !verifyDeviceOwnership({
+        req,
+        res,
+        jwtDeviceId: res.locals.deviceId,
+        expectedDeviceId: client.deviceId,
+      })
+    ) {
       return;
     }
 
