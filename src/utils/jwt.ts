@@ -70,6 +70,11 @@ const loadPublicKey = (): Promise<jose.KeyLike> => {
 /**
  * Validate JWT keys at application startup and cache them.
  * Performs a test sign/verify to ensure the key pair is valid and matches.
+ * Should be called during server initialization to fail fast on misconfiguration.
+ *
+ * @throws {Error} If private key is invalid or missing
+ * @throws {Error} If public key is invalid or missing
+ * @throws {Error} If key pair doesn't match (sign/verify test fails)
  */
 export const validateJWTKeys = async () => {
   try {
@@ -105,6 +110,16 @@ export const validateJWTKeys = async () => {
   }
 };
 
+/**
+ * Create a JWT token with ES256 signature.
+ *
+ * @param args.deviceId - The device identifier to include in the token
+ * @param args.metadata - Optional metadata (limited to 1KB)
+ * @param args.expirationTime - Optional expiration time (default: "15m")
+ * @returns The signed JWT string
+ * @throws {AppError} 400 if metadata exceeds size limit
+ * @throws {AppError} 500 if key loading or signing fails
+ */
 export const createJwtToken = async (args: {
   deviceId: string;
   metadata?: V2JWTMetadata;
@@ -160,6 +175,16 @@ export const createJwtToken = async (args: {
   return jwt;
 };
 
+/**
+ * Verify a JWT token and extract the payload.
+ *
+ * @param args.token - The JWT string to verify
+ * @returns The verified payload containing deviceId and optional metadata
+ * @throws {AppError} 401 "Token expired" if the token has expired
+ * @throws {AppError} 401 "Invalid token" if signature verification fails
+ * @throws {AppError} 401 "Invalid payload structure" if payload doesn't match schema
+ * @throws {AppError} 500 if public key loading fails
+ */
 export const verifyJwtToken = async (args: { token: string }) => {
   // Get cached ECDSA public key for verification
   const { data: publicKey, error: importError } =
@@ -206,6 +231,13 @@ export const verifyJwtToken = async (args: { token: string }) => {
   return parseResult.data;
 };
 
+/**
+ * Check if a JWT payload indicates a notification extension only token.
+ * NSE tokens have restricted permissions compared to full app tokens.
+ *
+ * @param payload - The verified JWT payload
+ * @returns true if this is an NSE-only token
+ */
 export const isNotificationExtensionOnlyToken = (payload: V2JWTPayload) => {
   return payload.metadata?.notificationExtensionOnly === true;
 };
