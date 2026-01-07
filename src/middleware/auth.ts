@@ -94,7 +94,8 @@ export const authMiddleware = async (
 };
 
 // Defense in depth: NSE tokens can only access these paths even if middleware is misapplied
-const NSE_ALLOWED_PATHS = ["/v2/auth-check"];
+// Uses full path (baseUrl + path) to avoid matching relative paths on other mounts
+const NSE_ALLOWED_PATHS = ["/api/v2/auth-check"];
 
 /**
  * JWT authentication middleware that allows NSE tokens.
@@ -131,9 +132,10 @@ export const authMiddlewareAllowNSE = async (
 
     // Defense in depth: restrict NSE tokens to whitelisted paths
     if (isNotificationExtensionOnlyToken(payload)) {
-      if (!NSE_ALLOWED_PATHS.includes(req.path)) {
+      const fullPath = req.baseUrl + req.path;
+      if (!NSE_ALLOWED_PATHS.includes(fullPath)) {
         req.log.warn(
-          { deviceId: payload.deviceId, path: req.path },
+          { deviceId: payload.deviceId, path: fullPath },
           "NSE token rejected - path not in allowlist",
         );
         res.status(403).json({ error: "NSE tokens not allowed on this route" });
