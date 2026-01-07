@@ -2,9 +2,12 @@ import type { Request, Response } from "express";
 
 /**
  * Verifies that the JWT token's deviceId matches the expected deviceId.
- * Sends a 403 response and returns false if there's a mismatch.
+ * Sends an error response and returns false if verification fails.
  *
- * @returns true if ownership is valid (or no JWT auth), false if mismatch (response sent)
+ * IMPORTANT: This guard fails closed - if jwtDeviceId is undefined, it rejects.
+ * Only use on routes that require JWT authentication (authMiddleware).
+ *
+ * @returns true if ownership is valid, false if mismatch or missing (response sent)
  */
 export function verifyDeviceOwnership(args: {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -15,7 +18,17 @@ export function verifyDeviceOwnership(args: {
 }): boolean {
   const { req, res, jwtDeviceId, expectedDeviceId } = args;
 
-  if (jwtDeviceId && jwtDeviceId !== expectedDeviceId) {
+  // Fail closed: require jwtDeviceId to be present
+  // This should never happen if authMiddleware is applied, but guard against misconfiguration
+  if (!jwtDeviceId) {
+    req.log.error(
+      "verifyDeviceOwnership called without jwtDeviceId - possible middleware misconfiguration",
+    );
+    res.status(500).json({ error: "Internal server error" });
+    return false;
+  }
+
+  if (jwtDeviceId !== expectedDeviceId) {
     req.log.warn(
       { jwtDeviceId, expectedDeviceId },
       "JWT deviceId mismatch - possible token misuse",
