@@ -117,12 +117,12 @@ async function handleV2Notification(args: {
     );
   }
 
-  // Generate JWT for NSE (Notification Service Extension) to use.
-  // NSE cannot generate App Attest tokens, so we issue a longer-lived JWT (24h)
-  // that allows the extension to make API calls for notification content.
+  // Generate JWT for NSE (Notification Service Extension) to use
+  // 12h expiry because NSE cannot generate App Attest tokens and needs a valid JWT
+  // to authenticate with the Payer Gateway when connecting to the XMTP d14n network
   const apiJWT = await createJwtToken({
     deviceId: client.deviceId,
-    expirationTime: "24h",
+    expirationTime: "12h",
     metadata: {
       notificationExtensionOnly: true,
     },
