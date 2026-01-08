@@ -54,7 +54,7 @@ Push notification tokens are **optional**:
 
 The backend integrates with [xmtp/example-notification-server-go](https://github.com/xmtp/example-notification-server-go):
 
-```
+```text
 ┌─────────────┐     ┌──────────────────────┐     ┌────────────────┐
 │ XMTP Network│────▶│ Go Notification      │────▶│ Convos Backend │
 │             │     │ Server               │     │ (webhook)      │
@@ -111,7 +111,7 @@ The v1 and v2 models are **fundamentally incompatible** - you cannot have privac
 
 **Pros**:
 
-- Lower risk approach
+- Lower-risk approach
 - Time for any missed dependencies to surface
 
 **Cons**:

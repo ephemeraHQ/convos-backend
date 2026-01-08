@@ -4,11 +4,11 @@ This directory contains project documentation, feature plans, and architecture d
 
 ## Structure
 
-```
+```text
 docs/
 ├── README.md           # This file
-├── TEMPLATE_PRD.md     # Template for new feature PRDs
-├── TEMPLATE_ADR.md     # Template for Architecture Decision Records
+├── template-prd.md     # Template for new feature PRDs
+├── template-adr.md     # Template for Architecture Decision Records
 ├── plans/              # Feature PRDs and implementation plans
 └── architecture/       # Architecture Decision Records (ADRs)
 ```
@@ -17,7 +17,7 @@ docs/
 
 ### Creating a New Feature PRD
 
-1. Copy `TEMPLATE_PRD.md` to `plans/[feature-name].md`
+1. Copy `template-prd.md` to `plans/[feature-name].md`
 2. Fill in all sections
 3. Review with team
 4. Update status as work progresses
@@ -57,7 +57,7 @@ Create an ADR when:
 
 ### Creating a New ADR
 
-1. Copy `TEMPLATE_ADR.md` to `architecture/adr-[number]-[short-title].md`
+1. Copy `template-adr.md` to `architecture/adr-[number]-[short-title].md`
 2. Use the next sequential number (check existing ADRs)
 3. Fill in all sections, especially the alternatives considered
 4. Set status to "Proposed" for team review
