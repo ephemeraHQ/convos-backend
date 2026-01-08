@@ -25,6 +25,7 @@ v2Router.get("/auth-check", authMiddlewareAllowNSE, (_req, res) => {
   res.status(200).json({
     success: true,
   });
+  return;
 });
 
 export default v2Router;
