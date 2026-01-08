@@ -15,11 +15,10 @@ The v1 API was built for the original Convos React Native app with a traditional
 - **Backend-stored profiles**: User profiles, usernames, and metadata stored in PostgreSQL
 - **XMTP identity tracking**: Backend stored XMTP inbox IDs and managed device-identity relationships
 - **Server-side invites**: Invite codes, usage tracking, and notification targets stored in database
-- **Thirdweb integration**: Wallet creation and SubOrg management for embedded wallets
 
 This model leaked user identity through the backend - the server knew which XMTP identities belonged to which devices, enabling correlation of users across conversations.
 
-### New V2 Privacy-Preserving Architecture
+### New v2 Privacy-Preserving Architecture
 
 The v2 API, built for the iOS rewrite, uses a **privacy-preserving architecture** where the backend cannot identify users:
 
@@ -88,11 +87,11 @@ The v1 and v2 models are **fundamentally incompatible** - you cannot have privac
 
 ## Decision Drivers
 
-- [x] **Privacy model change**: V2's core design requires the backend to be identity-blind
-- [x] **Dead code elimination**: V1 unused since iOS app launch
-- [x] **Security surface reduction**: Fewer endpoints = fewer attack vectors
-- [x] **Maintainability**: One API version, one auth model, one way to do things
-- [x] **Database simplification**: 72% schema reduction
+- **Privacy model change**: v2's core design requires the backend to be identity-blind
+- **Dead code elimination**: v1 unused since iOS app launch
+- **Security surface reduction**: Fewer endpoints = fewer attack vectors
+- **Maintainability**: One API version, one auth model, one way to do things
+- **Database simplification**: 72% schema reduction
 
 ## Considered Options
 
@@ -165,7 +164,7 @@ We chose **Complete Removal** because the privacy model change makes v1 fundamen
 | `src/utils/xmtp.ts`      | XMTP client (backend no longer connects) | 154    |
 | `src/utils/thirdweb.ts`  | Wallet creation                          | 88     |
 | `src/utils/namestone.ts` | ENS resolution                           | 165    |
-| `tests/*`                | V1 test suites                           | ~1,200 |
+| `tests/*`                | v1 test suites                           | ~1,200 |
 
 **Total**: 6,938 lines deleted, 722 added
 
@@ -217,5 +216,5 @@ SELECT * FROM "ClientIdentifier";   -- id (random UUID), deviceId
 - [PR #157](https://github.com/xmtplabs/convos-backend/pull/157): api/v1 cleanup and api/v2 refactor
 - [Apple identifierForVendor](https://developer.apple.com/documentation/uikit/uidevice/identifierforvendor)
 - [XMTP Push Notification Server](https://github.com/xmtp/example-notification-server-go)
-- [XMTP Push Notifications Guide](https://docs.xmtp.org/inboxes/push-notifs/pn-server)
+- [XMTP Push Notifications Guide](https://docs.xmtp.org/chat-apps/push-notifs/pn-server)
 - [Firebase App Check](https://firebase.google.com/docs/app-check)
