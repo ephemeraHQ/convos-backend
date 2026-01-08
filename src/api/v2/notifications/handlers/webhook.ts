@@ -1,19 +1,17 @@
 import type { ClientIdentifier, DeviceRegistration } from "@prisma/client";
 import type { Request, Response } from "express";
-import { createApnsService } from "@/api/shared/notifications/services/apns-push.service";
-import type { V2NotificationPayload } from "@/api/shared/notifications/services/notifications-types";
-import { getPushNotificationService } from "@/api/shared/notifications/services/push-notification.service";
+import { createApnsService } from "@/api/v2/notifications/apns-push.service";
+import type { V2NotificationPayload } from "@/api/v2/notifications/types";
 import {
   createNotificationClient,
   webhookNotificationBodySchema,
   type WebhookNotificationBody,
 } from "@/notifications/client";
+import { createJwtToken } from "@/utils/jwt";
 import { prisma } from "@/utils/prisma";
-import { createV2JwtToken } from "@/utils/v2/jwt";
-import { MAX_PUSH_FAILURES } from "./constants";
+import { MAX_PUSH_FAILURES } from "../constants";
 
 const notificationClient = createNotificationClient();
-const pushNotificationService = getPushNotificationService();
 
 /**
  * Detect if a message is a welcome message (XMTP MLS protocol message for group joins)
@@ -31,17 +29,12 @@ function isWelcomeMessage(args: {
 }
 
 /**
- * Webhook handler for XMTP notifications
+ * Notifications webhook handler
  *
- * Authentication is handled by xmtpWebhookAuthMiddleware which validates the
+ * Authentication is handled by webhookAuthMiddleware which validates the
  * XMTP_NOTIFICATION_SECRET header to verify the request is from the authorized XMTP server.
  */
 export async function handleXmtpNotification(req: Request, res: Response) {
-  let identityOnDeviceToCleanup: {
-    xmtpInstallationId: string | null;
-    deviceId: string;
-  } | null = null;
-
   try {
     // Validate webhook body structure
     const parseResult = webhookNotificationBodySchema.safeParse(req.body);
@@ -68,7 +61,7 @@ export async function handleXmtpNotification(req: Request, res: Response) {
       "received notification",
     );
 
-    // Try v2 first (clientId lookup)
+    // Process v2 notifications (clientId lookup)
     const v2Client = await prisma.clientIdentifier.findUnique({
       where: { id: notification.installation.id },
       include: { device: true },
@@ -88,129 +81,11 @@ export async function handleXmtpNotification(req: Request, res: Response) {
       return;
     }
 
-    // FALLBACK TO V1 (xmtpInstallationId lookup)
-    const identityOnDevice = await prisma.identitiesOnDevice.findUnique({
-      where: {
-        xmtpInstallationId: notification.installation.id,
-      },
-      include: {
-        device: true,
-        identity: true,
-      },
-    });
-
-    if (!identityOnDevice || !identityOnDevice.xmtpInstallationId) {
-      req.log.error(
-        `Installation not found for installationId ${notification.installation.id}`,
-      );
-      res.status(400).json({
-        error: `Installation not found for installationId ${notification.installation.id}`,
-      });
-      return;
-    }
-
-    req.log.info(
-      { installationId: notification.installation.id },
-      "Processing v1 notification",
-    );
-
-    identityOnDeviceToCleanup = {
-      xmtpInstallationId: identityOnDevice.xmtpInstallationId,
-      deviceId: identityOnDevice.deviceId,
-    };
-
-    const { device, identity } = identityOnDevice;
-
-    const isWelcome = isWelcomeMessage({
-      contentTopic: notification.message.content_topic,
-      messageType: notification.message_context.message_type,
-    });
-
-    if (isWelcome) {
-      req.log.info(
-        { contentTopic: notification.message.content_topic },
-        "Detected welcome message - omitting encrypted content to avoid APNS payload limit",
-      );
-    }
-
-    const result = await pushNotificationService.sendPushNotification({
-      identityOnDevice,
-      notification: {
-        inboxId: identity.xmtpId,
-        notificationType: "Protocol",
-        notificationData: {
-          contentTopic: notification.message.content_topic,
-          messageType: notification.message_context.message_type,
-          // Omit encryptedMessage for welcome messages (too large for APNS 4KB limit)
-          // iOS NSE will handle notification display; app syncs from XMTP network
-          ...(isWelcome
-            ? {}
-            : { encryptedMessage: notification.message.message }),
-          timestamp: notification.message.timestamp_ns,
-        },
-      },
-    });
-
-    if (!result.success && result.shouldCleanup) {
-      req.log.info(
-        `Push notification failed with unrecoverable error for device ${device.id}. Initiating cleanup.`,
-      );
-      if (identityOnDeviceToCleanup.xmtpInstallationId) {
-        await cleanupFailedInstallation({
-          xmtpInstallationId: identityOnDeviceToCleanup.xmtpInstallationId,
-          deviceId: identityOnDeviceToCleanup.deviceId,
-          req,
-        });
-      }
-    }
-
     res.status(200).end();
     return;
   } catch (error) {
     req.log.error({ error }, "Outer error processing notification");
     res.status(500).json({ error: "Internal server error" });
-  }
-}
-
-async function cleanupFailedInstallation(args: {
-  xmtpInstallationId: string;
-  deviceId: string;
-  req: Request;
-}) {
-  const { xmtpInstallationId, deviceId, req } = args;
-
-  try {
-    req.log.info(
-      `Cleaning up installation: ${xmtpInstallationId} for device: ${deviceId}`,
-    );
-    await prisma.$transaction([
-      prisma.identitiesOnDevice.updateMany({
-        where: { xmtpInstallationId: xmtpInstallationId },
-        data: { xmtpInstallationId: null },
-      }),
-      prisma.device.update({
-        where: { id: deviceId },
-        data: {
-          pushToken: null,
-          pushFailures: { increment: 1 },
-        },
-      }),
-    ]);
-    req.log.info(
-      `Successfully cleaned xmtpInstallationId ${xmtpInstallationId} and tokens for device ${deviceId} from local DB.`,
-    );
-
-    await notificationClient.deleteInstallation({
-      installationId: xmtpInstallationId,
-    });
-    req.log.info(
-      `Successfully requested deletion of xmtpInstallationId ${xmtpInstallationId} from XMTP server.`,
-    );
-  } catch (cleanupError) {
-    req.log.error(
-      { error: cleanupError, xmtpInstallationId, deviceId },
-      "Failed during cleanup of installation",
-    );
   }
 }
 
@@ -242,10 +117,12 @@ async function handleV2Notification(args: {
     );
   }
 
-  // Generate JWT for NSE to use (24h expiration for security)
-  const apiJWT = await createV2JwtToken({
+  // Generate JWT for NSE (Notification Service Extension) to use
+  // 12h expiry because NSE cannot generate App Attest tokens and needs a valid JWT
+  // to authenticate with the Payer Gateway when connecting to the XMTP d14n network
+  const apiJWT = await createJwtToken({
     deviceId: client.deviceId,
-    expirationTime: "24h",
+    expirationTime: "12h",
     metadata: {
       notificationExtensionOnly: true,
     },
@@ -335,7 +212,7 @@ async function handleV2Notification(args: {
         },
       });
 
-      // Auto-disable only in XMTP production environment when threshold is reached
+      // Auto-disable in XMTP production only to preserve test devices in dev/staging for debugging
       if (
         process.env.XMTP_ENV === "production" &&
         u.pushFailures >= MAX_PUSH_FAILURES

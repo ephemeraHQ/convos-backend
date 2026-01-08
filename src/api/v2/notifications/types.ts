@@ -59,7 +59,7 @@ export type NotificationPayloadWithJWTToken = NotificationPayload & {
   apiJWT: string;
 };
 
-// V2 notification types (structurally compatible with v2 branch of NotificationPayloadWithJWTToken)
+// v2 notification types (structurally compatible with v2 branch of NotificationPayloadWithJWTToken)
 export type V2NotificationPayload = {
   clientId: string;
   apiJWT: string;

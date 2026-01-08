@@ -2,6 +2,7 @@ import type { Request, Response } from "express";
 import { hexToUint8Array } from "uint8array-extras";
 import { z } from "zod";
 import { createNotificationClient } from "@/notifications/client";
+import { verifyDeviceOwnership } from "@/utils/auth-guards";
 import { prisma } from "@/utils/prisma";
 
 const subscribeRequestSchema = z.object({
@@ -42,6 +43,18 @@ export async function subscribe(
       },
       "Subscribing to topics",
     );
+
+    // Verify the JWT token's deviceId matches the request's deviceId
+    if (
+      !verifyDeviceOwnership({
+        req,
+        res,
+        jwtDeviceId: res.locals.deviceId,
+        expectedDeviceId: body.deviceId,
+      })
+    ) {
+      return;
+    }
 
     // Verify device exists and is not disabled
     const device = await prisma.deviceRegistration.findUnique({

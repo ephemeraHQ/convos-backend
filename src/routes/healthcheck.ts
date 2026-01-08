@@ -1,8 +1,6 @@
 import { Router, type Request, type Response } from "express";
 import { createNotificationClient } from "../notifications/client";
-import logger from "../utils/logger";
 import { prisma } from "../utils/prisma";
-import { testXmtpConnection } from "../utils/xmtp";
 
 const router = Router();
 
@@ -18,13 +16,6 @@ router.get("/details", async (req: Request, res: Response): Promise<void> => {
     timestamp: new Date().toISOString(),
     services: {
       database: { status: "unknown", error: null as string | null },
-      xmtp: {
-        status: "unknown",
-        error: null as string | null,
-        environment: null as string | null,
-        inboxId: null as string | null,
-        customHost: null as string | null,
-      },
       notifications: { status: "unknown", error: null as string | null },
     },
   };
@@ -40,22 +31,6 @@ router.get("/details", async (req: Request, res: Response): Promise<void> => {
     checks.services.database.error =
       error instanceof Error ? error.message : "Unknown database error";
     overallStatus = 503;
-  }
-
-  // Check XMTP connectivity
-  const xmtpHealth = await testXmtpConnection();
-  if (xmtpHealth.healthy) {
-    checks.services.xmtp.status = "healthy";
-    checks.services.xmtp.environment = xmtpHealth.environment || null;
-    checks.services.xmtp.inboxId = xmtpHealth.inboxId || null;
-    checks.services.xmtp.customHost = xmtpHealth.customHost || null;
-  } else {
-    checks.services.xmtp.status = "unhealthy";
-    checks.services.xmtp.error = xmtpHealth.error || "Unknown XMTP error";
-    checks.services.xmtp.environment = xmtpHealth.environment || null;
-    checks.services.xmtp.customHost = xmtpHealth.customHost || null;
-    overallStatus = 503;
-    logger.error("XMTP health check failed:", xmtpHealth.error);
   }
 
   // Check notification service connectivity

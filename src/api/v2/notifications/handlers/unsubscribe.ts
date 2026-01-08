@@ -1,6 +1,7 @@
 import type { Request, Response } from "express";
 import { z } from "zod";
 import { createNotificationClient } from "@/notifications/client";
+import { verifyDeviceOwnership } from "@/utils/auth-guards";
 import { prisma } from "@/utils/prisma";
 
 const unsubscribeRequestSchema = z.object({
@@ -35,6 +36,18 @@ export async function unsubscribe(
         "Client not found for unsubscribe",
       );
       res.status(404).json({ error: "Client not found" });
+      return;
+    }
+
+    // Verify the JWT token's deviceId owns this client
+    if (
+      !verifyDeviceOwnership({
+        req,
+        res,
+        jwtDeviceId: res.locals.deviceId,
+        expectedDeviceId: client.deviceId,
+      })
+    ) {
       return;
     }
 

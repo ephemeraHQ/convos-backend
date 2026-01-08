@@ -3,10 +3,9 @@ import type { NextFunction, Request, Response } from "express";
 import { getHttpDeliveryNotificationAuthHeader } from "@/notifications/utils";
 
 /**
- * Middleware to verify XMTP webhook authorization header
  * Validates that the request comes from the authorized XMTP notification server
  */
-export const xmtpWebhookAuthMiddleware = (
+export const webhookAuthMiddleware = (
   req: Request,
   res: Response,
   next: NextFunction,

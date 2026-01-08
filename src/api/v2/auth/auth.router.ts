@@ -1,6 +1,6 @@
 import { Router } from "express";
+import { appCheckOnlyMiddleware } from "@/middleware/auth";
 import { authRateLimitMiddleware } from "@/middleware/rateLimit";
-import { appCheckOnlyMiddleware } from "@/middleware/v2/auth";
 import { generateToken } from "./handlers/generate-token";
 
 const authRouter = Router();

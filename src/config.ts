@@ -17,13 +17,6 @@ if (!process.env.NOTIFICATION_SERVER_URL) {
 // Cache environment variables
 export const XMTP_NOTIFICATION_SECRET = process.env.XMTP_NOTIFICATION_SECRET;
 
-// v1 JWT (legacy - symmetric HS256, optional for backward compatibility)
-// Only validate and encode if JWT_SECRET is provided
-export const JWT_SECRET = process.env.JWT_SECRET;
-export const JWT_SECRET_BYTES = JWT_SECRET
-  ? new TextEncoder().encode(JWT_SECRET)
-  : undefined;
-
 // v2 JWT (asymmetric ECDSA ES256)
 // Keys are optional at config load time, but validated at server startup via validateJWTKeys()
 export const JWT_PRIVATE_KEY = process.env.JWT_PRIVATE_KEY || "";
