@@ -35,3 +35,4 @@ jobs:
           NOTIFICATION_SERVER_URL: ${{ secrets.NOTIFICATION_SERVER_URL }}
           XMTP_NOTIFICATION_SECRET: ${{ secrets.XMTP_NOTIFICATION_SECRET }}
           FIREBASE_SERVICE_ACCOUNT: "{}"
+          LOG_FORMAT: json # Disable pino-pretty to avoid worker thread hanging tests
