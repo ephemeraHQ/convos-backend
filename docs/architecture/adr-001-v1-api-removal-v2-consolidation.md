@@ -40,6 +40,16 @@ The v2 API, built for the iOS rewrite, uses a **privacy-preserving architecture*
 - Backend stores `ClientIdentifier(id, deviceId)` - just the UUID and which device owns it
 - Backend never stores XMTP identities
 
+#### Optional Push Tokens
+
+Push notification tokens are **optional**:
+
+- If a user declines push permissions, the device registers without a `pushToken`
+- The backend stores `DeviceRegistration(deviceId, pushToken: null, ...)`
+- Users can use the app fully without enabling push notifications
+- This means the backend has **no Apple/Google push identifier** for privacy-conscious users
+- Even with push enabled, the token is device-specific and rotates, it cannot identify the user across apps or reinstalls
+
 #### Push Notification Flow
 
 The backend integrates with [xmtp/example-notification-server-go](https://github.com/xmtp/example-notification-server-go):
