@@ -13,7 +13,7 @@ This endpoint is part of the broader asset lifecycle management system documente
 
 ## Problem Statement
 
-Profile and group images need to persist indefinitely as long as users actively use the app, while chat images should naturally expire after 30 days. With a single S3 lifecycle rule that expires all objects after 30 days of inactivity, we need a mechanism for clients to periodically "renew" important assets by resetting their `LastModified` date.
+Profile and group images need to persist as long as users actively use the app, while chat images should naturally expire after 30 days. With a single S3 lifecycle rule that expires all objects after 30 days of inactivity, we need a mechanism for clients to periodically "renew" important assets by resetting their `LastModified` date.
 
 The S3 copy-to-self operation is the standard pattern for this, but it requires server-side execution since clients cannot directly invoke S3 CopyObject operations on objects they've already uploaded.
 
@@ -23,9 +23,9 @@ The S3 copy-to-self operation is the standard pattern for this, but it requires 
 - Process renewals in parallel for performance
 - Return granular per-asset results (success/failure) without failing the entire batch
 - Implement proper rate limiting to prevent abuse
-- Support up to 100 URLs per batch request
+- Support up to 100 keys per batch request
 - Allow any authenticated user to renew any asset (intentional - no per-asset authorization)
-- Handle edge cases gracefully (404s, invalid URLs, S3 errors)
+- Handle edge cases gracefully (404s, invalid keys, S3 errors)
 
 ## Non-Goals
 
@@ -34,7 +34,7 @@ The S3 copy-to-self operation is the standard pattern for this, but it requires 
 - Automatic renewal scheduling (client responsibility)
 - Asset metadata modification beyond resetting `LastModified`
 - Migration of existing assets
-- Support for non-CDN URL formats
+- URL parsing on backend (clients send keys directly)
 
 ## User Stories
 
@@ -42,10 +42,10 @@ The S3 copy-to-self operation is the standard pattern for this, but it requires 
 
 Acceptance criteria:
 
-- I can POST to `/v2/assets/renew-batch` with an array of up to 100 asset URLs
-- I receive a response with counts of renewed/failed assets plus per-URL details
-- The endpoint processes all URLs even if some fail
-- Failed renewals include error codes (`not_found`, `invalid_url`, `internal_error`)
+- I can POST to `/v2/assets/renew-batch` with an array of up to 100 asset keys
+- I receive a response with counts of renewed/failed assets plus per-key details
+- The endpoint processes all keys even if some fail
+- Failed renewals include error codes (`not_found`, `invalid_key`, `internal_error`)
 - The request completes within reasonable time (<5s for 100 assets)
 
 ### As a backend developer, I want to prevent renewal endpoint abuse
@@ -53,7 +53,7 @@ Acceptance criteria:
 Acceptance criteria:
 
 - Rate limiting is enforced per device (10 batch requests per hour)
-- Batch size is capped at 100 URLs per request
+- Batch size is capped at 100 keys per request
 - Authentication is required (JWT via `authMiddleware`)
 - Invalid requests return appropriate 400/401 status codes
 
@@ -74,23 +74,30 @@ Client Request Flow:
 ┌────────────────────────────────────────────────────────────┐
 │ iOS: POST /v2/assets/renew-batch                           │
 │   Headers: X-Convos-AuthToken: <jwt>                       │
-│   Body: { assetUrls: ["https://assets.convos.xyz/a.bin"] } │
+│   Body: { assetKeys: ["abc123.bin", "def456.png"] }        │
 │     ↓                                                       │
 │ Backend: authMiddleware validates JWT                      │
 │     ↓                                                       │
-│ Backend: assetRenewalLimiter (10 req/hr per user)          │
+│ Backend: assetRenewalLimiter (10 req/hr per device)        │
 │     ↓                                                       │
 │ Backend: Validate request body (Zod)                       │
-│     ↓                                                       │
-│ Backend: Extract S3 keys from CDN URLs                     │
 │     ↓                                                       │
 │ Backend: Promise.all → S3 CopyObjectCommand (parallel)     │
 │     ↓                                                       │
 │ S3: Copy each object to itself (resets LastModified)       │
 │     ↓                                                       │
-│ Backend: Aggregate results (renewed, failed, per-URL)      │
+│ Backend: Aggregate results (renewed, failed, per-key)      │
 │     ↓                                                       │
 │ Client: Process response, handle 404s → re-upload          │
+└────────────────────────────────────────────────────────────┘
+
+iOS Key Extraction (client-side):
+┌────────────────────────────────────────────────────────────┐
+│ Profile.avatar = "https://assets.convos.xyz/abc123.bin"    │
+│     ↓                                                       │
+│ URL(string: avatar)?.path.dropFirst()                      │
+│     ↓                                                       │
+│ key = "abc123.bin"                                         │
 └────────────────────────────────────────────────────────────┘
 ```
 
@@ -104,18 +111,18 @@ Content-Type: application/json
 X-Convos-AuthToken: <jwt>
 
 {
-  "assetUrls": [
-    "https://assets.convos.xyz/abc123.bin",
-    "https://assets.convos.xyz/def456.png",
-    "https://assets.convos.xyz/ghi789.jpg"
+  "assetKeys": [
+    "abc123.bin",
+    "def456.png",
+    "ghi789.jpg"
   ]
 }
 ```
 
 **Validation:**
-- `assetUrls`: Required, array of strings, 1-100 URLs
-- Each URL must be a valid URL string
-- URLs should match CDN base URL from `CDN_BASE_URL` env var (though not strictly enforced)
+- `assetKeys`: Required, array of strings, 1-100 keys
+- Each key must be a non-empty string
+- Keys are S3 object keys (filename portion of the CDN URL)
 
 #### Success Response (200 OK)
 
@@ -125,15 +132,15 @@ X-Convos-AuthToken: <jwt>
   "failed": 1,
   "results": [
     {
-      "url": "https://assets.convos.xyz/abc123.bin",
+      "key": "abc123.bin",
       "success": true
     },
     {
-      "url": "https://assets.convos.xyz/def456.png",
+      "key": "def456.png",
       "success": true
     },
     {
-      "url": "https://assets.convos.xyz/ghi789.jpg",
+      "key": "ghi789.jpg",
       "success": false,
       "error": "not_found"
     }
@@ -143,7 +150,7 @@ X-Convos-AuthToken: <jwt>
 
 **Error Types:**
 - `not_found` - S3 object doesn't exist (expired or never uploaded)
-- `invalid_url` - Cannot extract object key from URL
+- `invalid_key` - Key is empty or malformed
 - `internal_error` - Unexpected S3 error
 
 #### Error Responses
@@ -151,14 +158,14 @@ X-Convos-AuthToken: <jwt>
 **400 Bad Request** - Invalid request body
 ```json
 {
-  "error": "assetUrls must be a non-empty array"
+  "error": "assetKeys must be a non-empty array"
 }
 ```
 
 **400 Bad Request** - Batch size exceeded
 ```json
 {
-  "error": "Maximum 100 URLs per request"
+  "error": "Maximum 100 keys per request"
 }
 ```
 
@@ -229,27 +236,20 @@ src/api/v2/
 
 #### Key Functions
 
-**URL Parsing:**
+**Key Validation:**
 ```typescript
-function extractKeyFromUrl(url: string, cdnBaseUrl?: string): string | null {
-  try {
-    const parsed = new URL(url);
-    // Remove leading slash from pathname
-    const key = parsed.pathname.replace(/^\//, "");
-    return key.length > 0 ? key : null;
-  } catch {
-    return null;
-  }
+function isValidKey(key: string): boolean {
+  // Keys should be non-empty and not contain path traversal
+  return key.length > 0 && !key.includes("..") && !key.startsWith("/");
 }
 ```
 
 **Batch Processing:**
 ```typescript
 const results = await Promise.all(
-  assetUrls.map(async (url): Promise<RenewResult> => {
-    const key = extractKeyFromUrl(url, env.CDN_BASE_URL);
-    if (!key) {
-      return { url, success: false, error: "invalid_url" };
+  assetKeys.map(async (key): Promise<RenewResult> => {
+    if (!isValidKey(key)) {
+      return { key, success: false, error: "invalid_key" };
     }
 
     try {
@@ -260,13 +260,13 @@ const results = await Promise.all(
         MetadataDirective: "COPY"
       }));
 
-      return { url, success: true };
+      return { key, success: true };
     } catch (error: any) {
       if (error.name === "NoSuchKey" || error.name === "NotFound") {
-        return { url, success: false, error: "not_found" };
+        return { key, success: false, error: "not_found" };
       }
-      req.log.error({ error, url, key }, "Unexpected S3 error during renewal");
-      return { url, success: false, error: "internal_error" };
+      req.log.error({ error, key }, "Unexpected S3 error during renewal");
+      return { key, success: false, error: "internal_error" };
     }
   })
 );
@@ -278,7 +278,6 @@ Reuses existing variables from attachment uploads:
 
 - `PUBLIC_ASSETS_BUCKET` - S3 bucket name
 - `AWS_REGION` - AWS region (optional, defaults to SDK config)
-- `CDN_BASE_URL` - CDN base URL for URL validation (optional)
 
 ### Security Considerations
 
@@ -295,15 +294,15 @@ Reuses existing variables from attachment uploads:
 **Rationale:**
 1. Users renew their own profile images
 2. Users renew group images for groups they're in
-3. Client is trusted to only send relevant URLs
+3. Client is trusted to only send relevant keys
 4. Worst case: unnecessary renewal (no data access, just S3 ops)
-5. No privacy risk - URL alone reveals no information about content
+5. No privacy risk - key alone reveals no information about content
 
 **What this means:**
 - No check for "does this user own this asset"
 - No check for "is this user in this group"
-- Client-side logic determines which URLs to send
-- Backend blindly processes all URLs in batch
+- Client-side logic determines which keys to send
+- Backend blindly processes all keys in batch
 
 #### Rate Limiting
 
@@ -329,8 +328,8 @@ export const assetRenewalLimiter = rateLimit({
 
 #### Input Validation
 
-- Max batch size: 100 URLs (prevents DoS)
-- URL format validation (basic URL parsing)
+- Max batch size: 100 keys (prevents DoS)
+- Key format validation (non-empty, no path traversal)
 - S3 client timeout: 30s per operation (SDK default)
 - Overall request timeout: 30s (Express default)
 
@@ -338,12 +337,12 @@ export const assetRenewalLimiter = rateLimit({
 
 **Graceful degradation:**
 - Individual asset failures don't fail the batch
-- All errors logged with context (URL, key, error type)
-- Per-URL error codes help client take appropriate action
+- All errors logged with context (key, error type)
+- Per-key error codes help client take appropriate action
 
 **Error classification:**
 - `NoSuchKey` / `NotFound` → `not_found` (client can re-upload)
-- Invalid URL → `invalid_url` (client bug or URL corruption)
+- Invalid key → `invalid_key` (client bug or key corruption)
 - Other S3 errors → `internal_error` (retry or investigate)
 
 ### Logging
@@ -354,7 +353,7 @@ export const assetRenewalLimiter = rateLimit({
 req.log.info(
   {
     deviceId: res.locals.deviceId,
-    urlCount: assetUrls.length,
+    keyCount: assetKeys.length,
     renewed,
     failed
   },
@@ -364,7 +363,6 @@ req.log.info(
 req.log.error(
   {
     error,
-    url,
     key,
     errorName: error.name
   },
@@ -392,7 +390,7 @@ req.log.error(
 2. **`src/api/v2/assets/handlers/renew-batch.ts`**
    - Import S3Client, CopyObjectCommand
    - Define Zod schemas for request validation
-   - Implement `extractKeyFromUrl()` helper
+   - Implement `isValidKey()` helper
    - Implement batch processing with Promise.all
    - Export `renewBatchHandler`
 
@@ -409,7 +407,7 @@ req.log.error(
 - [ ] Create assets router module
 - [ ] Implement renew-batch handler with Zod validation
 - [ ] Add S3 CopyObjectCommand integration
-- [ ] Implement URL-to-key extraction logic
+- [ ] Implement key validation logic
 - [ ] Add rate limiter middleware
 - [ ] Wire up routes in v2 index
 - [ ] Add structured logging
@@ -417,8 +415,8 @@ req.log.error(
 ### Phase 2: Testing
 
 **Unit Tests:**
-- [ ] URL parsing (valid CDN URLs, S3 URLs, invalid URLs)
-- [ ] Batch size validation (0, 1, 100, 101 URLs)
+- [ ] Key validation (valid keys, empty keys, path traversal attempts)
+- [ ] Batch size validation (0, 1, 100, 101 keys)
 - [ ] Error classification (NoSuchKey → not_found)
 - [ ] Result aggregation (mix of success/failure)
 
@@ -454,19 +452,23 @@ req.log.error(
 **File:** `src/api/v2/assets/handlers/renew-batch.test.ts`
 
 ```typescript
-describe('extractKeyFromUrl', () => {
-  it('should extract key from CDN URL', () => {
-    expect(extractKeyFromUrl('https://assets.convos.xyz/abc123.bin'))
-      .toBe('abc123.bin');
+describe('isValidKey', () => {
+  it('should accept valid keys', () => {
+    expect(isValidKey('abc123.bin')).toBe(true);
+    expect(isValidKey('image.png')).toBe(true);
   });
 
-  it('should return null for invalid URL', () => {
-    expect(extractKeyFromUrl('not-a-url')).toBe(null);
+  it('should reject empty keys', () => {
+    expect(isValidKey('')).toBe(false);
   });
 
-  it('should handle URLs with path segments', () => {
-    expect(extractKeyFromUrl('https://cdn.example.com/path/to/file.bin'))
-      .toBe('path/to/file.bin');
+  it('should reject path traversal attempts', () => {
+    expect(isValidKey('../secret.bin')).toBe(false);
+    expect(isValidKey('foo/../bar.bin')).toBe(false);
+  });
+
+  it('should reject keys starting with slash', () => {
+    expect(isValidKey('/abc123.bin')).toBe(false);
   });
 });
 
@@ -474,16 +476,16 @@ describe('POST /v2/assets/renew-batch', () => {
   it('should require authentication', async () => {
     const res = await request(app)
       .post('/api/v2/assets/renew-batch')
-      .send({ assetUrls: ['https://assets.convos.xyz/test.bin'] });
+      .send({ assetKeys: ['test.bin'] });
 
     expect(res.status).toBe(401);
   });
 
   it('should reject batch size > 100', async () => {
-    const urls = Array(101).fill('https://assets.convos.xyz/test.bin');
+    const keys = Array(101).fill('test.bin');
     const res = await authenticatedRequest()
       .post('/api/v2/assets/renew-batch')
-      .send({ assetUrls: urls });
+      .send({ assetKeys: keys });
 
     expect(res.status).toBe(400);
     expect(res.body.error).toContain('Maximum 100');
@@ -494,10 +496,7 @@ describe('POST /v2/assets/renew-batch', () => {
     const res = await authenticatedRequest()
       .post('/api/v2/assets/renew-batch')
       .send({
-        assetUrls: [
-          'https://assets.convos.xyz/exists.bin',
-          'https://assets.convos.xyz/missing.bin'
-        ]
+        assetKeys: ['exists.bin', 'missing.bin']
       });
 
     expect(res.status).toBe(200);
@@ -534,18 +533,18 @@ describe('POST /v2/assets/renew-batch', () => {
 ### Manual Testing Scenarios
 
 1. **Happy path:**
-   - Upload profile image → get CDN URL
-   - Renew via batch endpoint
+   - Upload profile image → get CDN URL → extract key
+   - Renew via batch endpoint with key
    - Verify 200 response, renewed: 1, failed: 0
 
 2. **404 handling:**
-   - Request renewal for non-existent URL
+   - Request renewal for non-existent key
    - Verify response includes `not_found` error
    - Client should re-upload from cache
 
-3. **Invalid URL:**
-   - Send malformed URL
-   - Verify `invalid_url` error returned
+3. **Invalid key:**
+   - Send empty key or path traversal attempt
+   - Verify `invalid_key` error returned
 
 4. **Rate limiting:**
    - Send 11 batch requests in 1 hour
@@ -556,21 +555,20 @@ describe('POST /v2/assets/renew-batch', () => {
 | Risk | Impact | Mitigation |
 |------|--------|------------|
 | S3 costs from abuse | Medium | Rate limiting (10 req/hr = max 1000 assets/hr per device) |
-| Renewal endpoint overload | Medium | Rate limiting + batch size cap (100 URLs) |
-| Client sends wrong URLs | Low | Worst case: unnecessary renewal (no data leak) |
-| S3 copy fails silently | Medium | Structured logging + per-URL error reporting |
-| URL format changes | Low | Flexible URL parsing (pathname extraction) |
+| Renewal endpoint overload | Medium | Rate limiting + batch size cap (100 keys) |
+| Client sends wrong keys | Low | Worst case: unnecessary renewal (no data leak) |
+| S3 copy fails silently | Medium | Structured logging + per-key error reporting |
+| Path traversal attempt | Medium | Key validation rejects `..` and leading `/` |
 | Expired assets not detected | Low | Clear `not_found` error code for client handling |
 | NSE tokens accessing endpoint | Medium | `authMiddleware` rejects NSE tokens by default |
 
 ## Open Questions
 
-- [x] Should we validate that URLs belong to the requesting user? **No** - intentionally permissive
-- [x] Should we support non-CDN S3 URLs? **Yes** - flexible URL parsing
+- [x] Should we validate that keys belong to the requesting user? **No** - intentionally permissive
+- [x] Should we accept full URLs or just keys? **Keys** - simpler, decoupled from CDN
 - [x] What rate limit is appropriate? **10 batch requests per hour per device**
 - [x] Should we batch responses (partial success)? **Yes** - all-or-nothing would be poor UX
-- [ ] Should we add metrics (renewed count, failed count) to monitoring? **Recommended for Phase 3**
-- [ ] Should we add a dry-run mode for testing? **Optional - could be useful**
+- [x] Should we add metrics (renewed count, failed count) to monitoring? **No** - no tracking
 
 ## Performance Considerations
 
@@ -583,9 +581,9 @@ describe('POST /v2/assets/renew-batch', () => {
 
 ### Endpoint Performance
 
-- Request size: ~5KB for 100 URLs (50 bytes per URL avg)
-- Response size: ~10KB (includes per-URL results)
-- Total latency target: <5s for 100 URLs
+- Request size: ~2KB for 100 keys (20 bytes per key avg)
+- Response size: ~5KB (includes per-key results)
+- Total latency target: <5s for 100 keys
 - Memory: Minimal (streaming JSON, no buffering)
 
 ### Scalability
