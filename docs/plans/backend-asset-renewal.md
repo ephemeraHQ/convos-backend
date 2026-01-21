@@ -75,28 +75,28 @@ Client Request Flow:
 │ iOS: POST /v2/assets/renew-batch                           │
 │   Headers: X-Convos-AuthToken: <jwt>                       │
 │   Body: { assetKeys: ["abc123.bin", "def456.png"] }        │
-│     ↓                                                       │
+│     ↓                                                      │
 │ Backend: authMiddleware validates JWT                      │
-│     ↓                                                       │
+│     ↓                                                      │
 │ Backend: assetRenewalLimiter (10 req/hr per device)        │
-│     ↓                                                       │
+│     ↓                                                      │
 │ Backend: Validate request body (Zod)                       │
-│     ↓                                                       │
+│     ↓                                                      │
 │ Backend: Promise.all → S3 CopyObjectCommand (parallel)     │
-│     ↓                                                       │
+│     ↓                                                      │
 │ S3: Copy each object to itself (resets LastModified)       │
-│     ↓                                                       │
+│     ↓                                                      │
 │ Backend: Aggregate results (renewed, failed, per-key)      │
-│     ↓                                                       │
+│     ↓                                                      │
 │ Client: Process response, handle 404s → re-upload          │
 └────────────────────────────────────────────────────────────┘
 
 iOS Key Extraction (client-side):
 ┌────────────────────────────────────────────────────────────┐
 │ Profile.avatar = "https://assets.convos.xyz/abc123.bin"    │
-│     ↓                                                       │
+│     ↓                                                      │
 │ URL(string: avatar)?.path.dropFirst()                      │
-│     ↓                                                       │
+│     ↓                                                      │
 │ key = "abc123.bin"                                         │
 └────────────────────────────────────────────────────────────┘
 ```
@@ -595,8 +595,8 @@ describe('POST /v2/assets/renew-batch', () => {
 
 ## References
 
-- Parent PRD: [`docs/plans/asset-uploads.md`](./asset-uploads.md)
+- Parent PRD (iOS): https://github.com/xmtplabs/convos-ios/blob/asset-lifecycle-prd/docs/plans/asset-uploads.md
 - S3 CopyObject: https://docs.aws.amazon.com/AmazonS3/latest/API/API_CopyObject.html
 - S3 Lifecycle: https://docs.aws.amazon.com/AmazonS3/latest/userguide/object-lifecycle-mgmt.html
 - Express Rate Limit: https://www.npmjs.com/package/express-rate-limit
-- iOS Implementation: See Appendix A in `docs/plans/asset-uploads.md`
+
