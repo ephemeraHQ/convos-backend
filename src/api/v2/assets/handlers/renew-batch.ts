@@ -32,7 +32,11 @@ interface RenewResult {
 
 /**
  * Validates that a key is safe to use with S3.
- * Rejects empty keys, path traversal attempts, and leading slashes.
+ *
+ * Keys are backend-generated (UUIDs), so they won't contain special
+ * characters in practice. This is defense-in-depth against malformed requests.
+ * URL-encoded variants (e.g. %2e%2e) don't need checking — S3 keys are
+ * opaque byte sequences with no path resolution.
  */
 function isValidKey(key: string): boolean {
   return (
