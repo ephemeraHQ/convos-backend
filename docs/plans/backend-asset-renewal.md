@@ -626,7 +626,7 @@ describe("POST /v2/assets/renew-batch", () => {
 
 ## References
 
-- Parent PRD (iOS): https://github.com/xmtplabs/convos-ios/blob/asset-lifecycle-prd/docs/plans/asset-uploads.md
+- [Parent PRD (iOS)](https://github.com/xmtplabs/convos-ios/blob/dev/docs/plans/asset-uploads.md)
 - S3 CopyObject: [AWS CopyObject API](https://docs.aws.amazon.com/AmazonS3/latest/API/API_CopyObject.html)
 - S3 Lifecycle: [S3 lifecycle management](https://docs.aws.amazon.com/AmazonS3/latest/userguide/object-lifecycle-mgmt.html)
 - Express Rate Limit: [express-rate-limit](https://www.npmjs.com/package/express-rate-limit)
