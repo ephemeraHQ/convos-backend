@@ -69,7 +69,7 @@ Acceptance criteria:
 
 ### Architecture
 
-```
+```text
 Client Request Flow:
 ┌────────────────────────────────────────────────────────────┐
 │ iOS: POST /v2/assets/renew-batch                           │
@@ -105,7 +105,7 @@ iOS Key Extraction (client-side):
 
 #### Request
 
-```
+```http
 POST /v2/assets/renew-batch
 Content-Type: application/json
 X-Convos-AuthToken: <jwt>
@@ -204,14 +204,14 @@ await s3Client.send(new CopyObjectCommand({
 ```
 
 **Before renewal:**
-```
+```text
 Object: abc123.bin
 LastModified: 2026-01-01T00:00:00Z
 → Will expire: 2026-01-31T00:00:00Z (30 days later)
 ```
 
 **After renewal (on 2026-01-15):**
-```
+```text
 Object: abc123.bin
 LastModified: 2026-01-15T00:00:00Z  ← Reset!
 → Will expire: 2026-02-14T00:00:00Z (30 days from renewal)
@@ -221,7 +221,7 @@ LastModified: 2026-01-15T00:00:00Z  ← Reset!
 
 #### File Structure
 
-```
+```text
 src/api/v2/assets/
 ├── assets.router.ts              # Router setup (new)
 └── handlers/
@@ -596,7 +596,7 @@ describe('POST /v2/assets/renew-batch', () => {
 ## References
 
 - Parent PRD (iOS): https://github.com/xmtplabs/convos-ios/blob/asset-lifecycle-prd/docs/plans/asset-uploads.md
-- S3 CopyObject: https://docs.aws.amazon.com/AmazonS3/latest/API/API_CopyObject.html
-- S3 Lifecycle: https://docs.aws.amazon.com/AmazonS3/latest/userguide/object-lifecycle-mgmt.html
-- Express Rate Limit: https://www.npmjs.com/package/express-rate-limit
+- S3 CopyObject: [AWS CopyObject API](https://docs.aws.amazon.com/AmazonS3/latest/API/API_CopyObject.html)
+- S3 Lifecycle: [S3 lifecycle management](https://docs.aws.amazon.com/AmazonS3/latest/userguide/object-lifecycle-mgmt.html)
+- Express Rate Limit: [express-rate-limit](https://www.npmjs.com/package/express-rate-limit)
 
