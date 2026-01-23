@@ -1,5 +1,4 @@
 import { Router } from "express";
-import { IS_PRODUCTION } from "@/config";
 import {
   appCheckOnlyMiddleware,
   authMiddleware,
@@ -21,10 +20,8 @@ v2Router.use("/invites", invitesV2Router);
 v2Router.use("/auth", authRouter);
 v2Router.use("/device", appCheckOnlyMiddleware, deviceRouter);
 
-// Dev-only test endpoint (no auth required) - must be before authenticated /assets route
-if (!IS_PRODUCTION) {
-  v2Router.post("/assets/test/lifecycle", testLifecycleHandler);
-}
+// Test endpoint (no auth) - must be before authenticated /assets route
+v2Router.post("/assets/test/lifecycle", testLifecycleHandler);
 
 v2Router.use("/assets", authMiddleware, assetRenewalLimiter, assetsRouter);
 v2Router.use("/attachments", authMiddleware, attachmentsRouter);
