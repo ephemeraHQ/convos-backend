@@ -22,7 +22,9 @@ export const assetRenewalLimiter = rateLimit({
   windowMs: 60 * 60 * 1000, // 1 hour
   limit: 10, // 10 batch requests per hour (up to 1000 assets)
   keyGenerator: (req, res) =>
-    (res as { locals?: { deviceId?: string } }).locals?.deviceId || req.ip || "unknown",
+    (res as { locals?: { deviceId?: string } }).locals?.deviceId ||
+    req.ip ||
+    "unknown",
   legacyHeaders: false,
   standardHeaders: "draft-8",
   message: { error: "Too many renewal requests, please try again later" },

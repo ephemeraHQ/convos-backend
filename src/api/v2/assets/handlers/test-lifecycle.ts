@@ -10,7 +10,7 @@ import { v4 as uuidv4 } from "uuid";
 import { z } from "zod";
 
 const envSchema = z.object({
-  LIFECYCLE_TEST_BUCKET: z.string().min(1).optional(),
+  LIFECYCLE_TEST_BUCKET: z.string().optional(),
 });
 
 const env = envSchema.parse({
@@ -34,7 +34,8 @@ const s3Client = env.LIFECYCLE_TEST_BUCKET ? new S3Client({}) : null;
 export async function testLifecycleHandler(req: Request, res: Response) {
   if (!env.LIFECYCLE_TEST_BUCKET || !s3Client) {
     res.status(503).json({
-      error: "Lifecycle test not available - LIFECYCLE_TEST_BUCKET not configured",
+      error:
+        "Lifecycle test not available - LIFECYCLE_TEST_BUCKET not configured",
     });
     return;
   }
@@ -72,7 +73,7 @@ export async function testLifecycleHandler(req: Request, res: Response) {
     await s3Client.send(
       new CopyObjectCommand({
         Bucket: env.LIFECYCLE_TEST_BUCKET,
-        CopySource: `${env.LIFECYCLE_TEST_BUCKET}/${testKey}`,
+        CopySource: `${env.LIFECYCLE_TEST_BUCKET}/${encodeURIComponent(testKey)}`,
         Key: testKey,
         MetadataDirective: "COPY",
       }),

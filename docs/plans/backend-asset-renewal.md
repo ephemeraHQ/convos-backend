@@ -120,6 +120,7 @@ X-Convos-AuthToken: <jwt>
 ```
 
 **Validation:**
+
 - `assetKeys`: Required, array of strings, 1-100 keys
 - Each key must be a non-empty string
 - Keys are S3 object keys (filename portion of the CDN URL)
@@ -149,6 +150,7 @@ X-Convos-AuthToken: <jwt>
 ```
 
 **Error Types:**
+
 - `not_found` - S3 object doesn't exist (expired or never uploaded)
 - `invalid_key` - Key is empty or malformed
 - `internal_error` - Unexpected S3 error
@@ -156,6 +158,7 @@ X-Convos-AuthToken: <jwt>
 #### Error Responses
 
 **400 Bad Request** - Invalid request body
+
 ```json
 {
   "error": "assetKeys must be a non-empty array"
@@ -163,6 +166,7 @@ X-Convos-AuthToken: <jwt>
 ```
 
 **400 Bad Request** - Batch size exceeded
+
 ```json
 {
   "error": "Maximum 100 keys per request"
@@ -170,6 +174,7 @@ X-Convos-AuthToken: <jwt>
 ```
 
 **401 Unauthorized** - Missing or invalid JWT
+
 ```json
 {
   "error": "Invalid auth token"
@@ -177,6 +182,7 @@ X-Convos-AuthToken: <jwt>
 ```
 
 **429 Too Many Requests** - Rate limit exceeded
+
 ```json
 {
   "error": "Too many renewal requests, please try again later"
@@ -184,6 +190,7 @@ X-Convos-AuthToken: <jwt>
 ```
 
 **503 Service Unavailable** - S3 not configured
+
 ```json
 {
   "error": "Asset renewal not available - S3 not configured"
@@ -193,17 +200,21 @@ X-Convos-AuthToken: <jwt>
 ### Data Flow
 
 **S3 Copy-to-Self Operation:**
+
 ```typescript
 // This is the core operation that resets LastModified
-await s3Client.send(new CopyObjectCommand({
-  Bucket: bucket,
-  CopySource: `${bucket}/${objectKey}`,
-  Key: objectKey,
-  MetadataDirective: "COPY"  // Preserve existing metadata
-}));
+await s3Client.send(
+  new CopyObjectCommand({
+    Bucket: bucket,
+    CopySource: `${bucket}/${objectKey}`,
+    Key: objectKey,
+    MetadataDirective: "COPY", // Preserve existing metadata
+  }),
+);
 ```
 
 **Before renewal:**
+
 ```text
 Object: abc123.bin
 LastModified: 2026-01-01T00:00:00Z
@@ -211,6 +222,7 @@ LastModified: 2026-01-01T00:00:00Z
 ```
 
 **After renewal (on 2026-01-15):**
+
 ```text
 Object: abc123.bin
 LastModified: 2026-01-15T00:00:00Z  ← Reset!
@@ -237,6 +249,7 @@ src/api/v2/
 #### Key Functions
 
 **Key Validation:**
+
 ```typescript
 function isValidKey(key: string): boolean {
   // Keys should be non-empty and not contain path traversal
@@ -245,6 +258,7 @@ function isValidKey(key: string): boolean {
 ```
 
 **Batch Processing:**
+
 ```typescript
 const results = await Promise.all(
   assetKeys.map(async (key): Promise<RenewResult> => {
@@ -253,12 +267,14 @@ const results = await Promise.all(
     }
 
     try {
-      await s3Client.send(new CopyObjectCommand({
-        Bucket: env.PUBLIC_ASSETS_BUCKET,
-        CopySource: `${env.PUBLIC_ASSETS_BUCKET}/${key}`,
-        Key: key,
-        MetadataDirective: "COPY"
-      }));
+      await s3Client.send(
+        new CopyObjectCommand({
+          Bucket: env.PUBLIC_ASSETS_BUCKET,
+          CopySource: `${env.PUBLIC_ASSETS_BUCKET}/${key}`,
+          Key: key,
+          MetadataDirective: "COPY",
+        }),
+      );
 
       return { key, success: true };
     } catch (error: any) {
@@ -268,7 +284,7 @@ const results = await Promise.all(
       req.log.error({ error, key }, "Unexpected S3 error during renewal");
       return { key, success: false, error: "internal_error" };
     }
-  })
+  }),
 );
 ```
 
@@ -292,6 +308,7 @@ Reuses existing variables from attachment uploads:
 **Intentionally permissive** - any authenticated user can renew any asset:
 
 **Rationale:**
+
 1. Users renew their own profile images
 2. Users renew group images for groups they're in
 3. Client is trusted to only send relevant keys
@@ -299,6 +316,7 @@ Reuses existing variables from attachment uploads:
 5. No privacy risk - key alone reveals no information about content
 
 **What this means:**
+
 - No check for "does this user own this asset"
 - No check for "is this user in this group"
 - Client-side logic determines which keys to send
@@ -310,16 +328,17 @@ Reuses existing variables from attachment uploads:
 
 ```typescript
 export const assetRenewalLimiter = rateLimit({
-  windowMs: 60 * 60 * 1000,  // 1 hour
-  limit: 10,  // 10 batch requests per hour
+  windowMs: 60 * 60 * 1000, // 1 hour
+  limit: 10, // 10 batch requests per hour
   keyGenerator: (req, res) => res.locals.deviceId || req.ip,
   legacyHeaders: false,
   standardHeaders: "draft-8",
-  message: "Too many renewal requests, please try again later"
+  message: "Too many renewal requests, please try again later",
 });
 ```
 
 **Reasoning:**
+
 - 10 batches/hour per device = 1000 potential assets/hour per device
 - Active device triggers renewal every ~15 days (once every ~360 hours)
 - 10/hour is comfortable buffer for legitimate use
@@ -336,11 +355,13 @@ export const assetRenewalLimiter = rateLimit({
 ### Error Handling
 
 **Graceful degradation:**
+
 - Individual asset failures don't fail the batch
 - All errors logged with context (key, error type)
 - Per-key error codes help client take appropriate action
 
 **Error classification:**
+
 - `NoSuchKey` / `NotFound` → `not_found` (client can re-upload)
 - Invalid key → `invalid_key` (client bug or key corruption)
 - Other S3 errors → `internal_error` (retry or investigate)
@@ -355,22 +376,23 @@ req.log.info(
     deviceId: res.locals.deviceId,
     keyCount: assetKeys.length,
     renewed,
-    failed
+    failed,
   },
-  "Asset batch renewal completed"
+  "Asset batch renewal completed",
 );
 
 req.log.error(
   {
     error,
     key,
-    errorName: error.name
+    errorName: error.name,
   },
-  "S3 renewal operation failed"
+  "S3 renewal operation failed",
 );
 ```
 
 **Log on:**
+
 - Batch request received (info)
 - Batch completed with summary (info)
 - Individual S3 errors (error)
@@ -383,6 +405,7 @@ req.log.error(
 **Files to create:**
 
 1. **`src/api/v2/assets/assets.router.ts`**
+
    - Import Express Router
    - Import `renewBatchHandler`
    - Create router with POST `/renew-batch` route
@@ -397,6 +420,7 @@ req.log.error(
 **Files to modify:**
 
 3. **`src/api/v2/index.ts`**
+
    - Import `assetsRouter`
    - Add route: `v2Router.use("/assets", authMiddleware, assetRenewalLimiter, assetsRouter)`
 
@@ -404,6 +428,7 @@ req.log.error(
    - Add `assetRenewalLimiter` export (10 req/hr per device)
 
 **Tasks:**
+
 - [ ] Create assets router module
 - [ ] Implement renew-batch handler with Zod validation
 - [ ] Add S3 CopyObjectCommand integration
@@ -415,12 +440,14 @@ req.log.error(
 ### Phase 2: Testing
 
 **Unit Tests:**
+
 - [ ] Key validation (valid keys, empty keys, path traversal attempts)
 - [ ] Batch size validation (0, 1, 100, 101 keys)
 - [ ] Error classification (NoSuchKey → not_found)
 - [ ] Result aggregation (mix of success/failure)
 
 **Integration Tests:**
+
 - [ ] End-to-end with real S3 (test bucket)
 - [ ] Verify `LastModified` actually changes
 - [ ] Verify lifecycle respects new timestamp
@@ -428,6 +455,7 @@ req.log.error(
 - [ ] Test rate limiting enforcement
 
 **Manual Testing:**
+
 - [ ] Upload test asset via presigned URL
 - [ ] Note `LastModified` timestamp
 - [ ] Call renewal endpoint
@@ -452,51 +480,51 @@ req.log.error(
 **File:** `src/api/v2/assets/handlers/renew-batch.test.ts`
 
 ```typescript
-describe('isValidKey', () => {
-  it('should accept valid keys', () => {
-    expect(isValidKey('abc123.bin')).toBe(true);
-    expect(isValidKey('image.png')).toBe(true);
+describe("isValidKey", () => {
+  it("should accept valid keys", () => {
+    expect(isValidKey("abc123.bin")).toBe(true);
+    expect(isValidKey("image.png")).toBe(true);
   });
 
-  it('should reject empty keys', () => {
-    expect(isValidKey('')).toBe(false);
+  it("should reject empty keys", () => {
+    expect(isValidKey("")).toBe(false);
   });
 
-  it('should reject path traversal attempts', () => {
-    expect(isValidKey('../secret.bin')).toBe(false);
-    expect(isValidKey('foo/../bar.bin')).toBe(false);
+  it("should reject path traversal attempts", () => {
+    expect(isValidKey("../secret.bin")).toBe(false);
+    expect(isValidKey("foo/../bar.bin")).toBe(false);
   });
 
-  it('should reject keys starting with slash', () => {
-    expect(isValidKey('/abc123.bin')).toBe(false);
+  it("should reject keys starting with slash", () => {
+    expect(isValidKey("/abc123.bin")).toBe(false);
   });
 });
 
-describe('POST /v2/assets/renew-batch', () => {
-  it('should require authentication', async () => {
+describe("POST /v2/assets/renew-batch", () => {
+  it("should require authentication", async () => {
     const res = await request(app)
-      .post('/api/v2/assets/renew-batch')
-      .send({ assetKeys: ['test.bin'] });
+      .post("/api/v2/assets/renew-batch")
+      .send({ assetKeys: ["test.bin"] });
 
     expect(res.status).toBe(401);
   });
 
-  it('should reject batch size > 100', async () => {
-    const keys = Array(101).fill('test.bin');
+  it("should reject batch size > 100", async () => {
+    const keys = Array(101).fill("test.bin");
     const res = await authenticatedRequest()
-      .post('/api/v2/assets/renew-batch')
+      .post("/api/v2/assets/renew-batch")
       .send({ assetKeys: keys });
 
     expect(res.status).toBe(400);
-    expect(res.body.error).toContain('Maximum 100');
+    expect(res.body.error).toContain("Maximum 100");
   });
 
-  it('should handle mixed success/failure', async () => {
+  it("should handle mixed success/failure", async () => {
     // Mock S3: first succeeds, second returns NoSuchKey
     const res = await authenticatedRequest()
-      .post('/api/v2/assets/renew-batch')
+      .post("/api/v2/assets/renew-batch")
       .send({
-        assetKeys: ['exists.bin', 'missing.bin']
+        assetKeys: ["exists.bin", "missing.bin"],
       });
 
     expect(res.status).toBe(200);
@@ -504,7 +532,7 @@ describe('POST /v2/assets/renew-batch', () => {
     expect(res.body.failed).toBe(1);
     expect(res.body.results[0].success).toBe(true);
     expect(res.body.results[1].success).toBe(false);
-    expect(res.body.results[1].error).toBe('not_found');
+    expect(res.body.results[1].error).toBe("not_found");
   });
 });
 ```
@@ -533,16 +561,19 @@ describe('POST /v2/assets/renew-batch', () => {
 ### Manual Testing Scenarios
 
 1. **Happy path:**
+
    - Upload profile image → get CDN URL → extract key
    - Renew via batch endpoint with key
    - Verify 200 response, renewed: 1, failed: 0
 
 2. **404 handling:**
+
    - Request renewal for non-existent key
    - Verify response includes `not_found` error
    - Client should re-upload from cache
 
 3. **Invalid key:**
+
    - Send empty key or path traversal attempt
    - Verify `invalid_key` error returned
 
@@ -552,15 +583,15 @@ describe('POST /v2/assets/renew-batch', () => {
 
 ## Risks & Mitigations
 
-| Risk | Impact | Mitigation |
-|------|--------|------------|
-| S3 costs from abuse | Medium | Rate limiting (10 req/hr = max 1000 assets/hr per device) |
-| Renewal endpoint overload | Medium | Rate limiting + batch size cap (100 keys) |
-| Client sends wrong keys | Low | Worst case: unnecessary renewal (no data leak) |
-| S3 copy fails silently | Medium | Structured logging + per-key error reporting |
-| Path traversal attempt | Medium | Key validation rejects `..` and leading `/` |
-| Expired assets not detected | Low | Clear `not_found` error code for client handling |
-| NSE tokens accessing endpoint | Medium | `authMiddleware` rejects NSE tokens by default |
+| Risk                          | Impact | Mitigation                                                |
+| ----------------------------- | ------ | --------------------------------------------------------- |
+| S3 costs from abuse           | Medium | Rate limiting (10 req/hr = max 1000 assets/hr per device) |
+| Renewal endpoint overload     | Medium | Rate limiting + batch size cap (100 keys)                 |
+| Client sends wrong keys       | Low    | Worst case: unnecessary renewal (no data leak)            |
+| S3 copy fails silently        | Medium | Structured logging + per-key error reporting              |
+| Path traversal attempt        | Medium | Key validation rejects `..` and leading `/`               |
+| Expired assets not detected   | Low    | Clear `not_found` error code for client handling          |
+| NSE tokens accessing endpoint | Medium | `authMiddleware` rejects NSE tokens by default            |
 
 ## Open Questions
 
@@ -599,4 +630,3 @@ describe('POST /v2/assets/renew-batch', () => {
 - S3 CopyObject: [AWS CopyObject API](https://docs.aws.amazon.com/AmazonS3/latest/API/API_CopyObject.html)
 - S3 Lifecycle: [S3 lifecycle management](https://docs.aws.amazon.com/AmazonS3/latest/userguide/object-lifecycle-mgmt.html)
 - Express Rate Limit: [express-rate-limit](https://www.npmjs.com/package/express-rate-limit)
-

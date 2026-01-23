@@ -1,10 +1,10 @@
 import { Router } from "express";
+import { IS_PRODUCTION } from "@/config";
 import {
   appCheckOnlyMiddleware,
   authMiddleware,
   authMiddlewareAllowNSE,
 } from "@/middleware/auth";
-import { IS_PRODUCTION } from "@/config";
 import { assetRenewalLimiter } from "@/middleware/rateLimit";
 import { assetsRouter } from "./assets/assets.router";
 import { testLifecycleHandler } from "./assets/handlers/test-lifecycle";

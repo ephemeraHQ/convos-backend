@@ -35,7 +35,12 @@ interface RenewResult {
  * Rejects empty keys, path traversal attempts, and leading slashes.
  */
 function isValidKey(key: string): boolean {
-  return key.length > 0 && !key.includes("..") && !key.startsWith("/");
+  return (
+    key.length > 0 &&
+    key.length <= 1024 &&
+    !key.includes("..") &&
+    !key.startsWith("/")
+  );
 }
 
 /**
@@ -80,7 +85,7 @@ export async function renewBatchHandler(req: Request, res: Response) {
           await s3Client.send(
             new CopyObjectCommand({
               Bucket: env.PUBLIC_ASSETS_BUCKET,
-              CopySource: `${env.PUBLIC_ASSETS_BUCKET}/${key}`,
+              CopySource: `${env.PUBLIC_ASSETS_BUCKET}/${encodeURIComponent(key)}`,
               Key: key,
               MetadataDirective: "COPY",
             }),
