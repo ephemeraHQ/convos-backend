@@ -1,5 +1,6 @@
 import {
   CopyObjectCommand,
+  DeleteObjectCommand,
   HeadObjectCommand,
   ListObjectsV2Command,
   PutObjectCommand,
@@ -30,11 +31,11 @@ function formatDate(date: Date): string {
 }
 
 /**
- * Get a date N days ago
+ * Get a date N days ago (using UTC to match formatDate)
  */
 function daysAgo(days: number): Date {
   const date = new Date();
-  date.setDate(date.getDate() - days);
+  date.setUTCDate(date.getUTCDate() - days);
   return date;
 }
 
@@ -91,6 +92,7 @@ interface LifecycleStatusResult {
     deletedAsExpected: string[];
     existsAsExpected: string[];
   };
+  cleaned: string[];
   errors: string[];
 }
 
@@ -134,6 +136,7 @@ export async function lifecycleStatusHandler(req: Request, res: Response) {
       deletedAsExpected: [],
       existsAsExpected: [],
     },
+    cleaned: [],
     errors: [],
   };
 
@@ -248,10 +251,49 @@ export async function lifecycleStatusHandler(req: Request, res: Response) {
       }
     }
 
+    // Step 4: Clean up old canaries to prevent accumulation
+    // Delete keep canaries older than MAX_VERIFICATION_DAYS (they've been verified)
+    const cutoffDate = formatDate(daysAgo(MAX_VERIFICATION_DAYS));
+    const oldKeepCanaries = keepCanaries.filter((key) => {
+      // Extract date from key like "canary-keep-2026-01-20.txt"
+      const match = key.match(/canary-keep-(\d{4}-\d{2}-\d{2})\.txt/);
+      if (!match) return false;
+      const canaryDate = match[1];
+      return canaryDate < cutoffDate; // String comparison works for YYYY-MM-DD format
+    });
+
+    // Delete old canaries in parallel
+    const cleanupResults = await Promise.allSettled(
+      oldKeepCanaries.map(async (key) => {
+        await s3Client.send(
+          new DeleteObjectCommand({
+            Bucket: env.LIFECYCLE_TEST_BUCKET,
+            Key: key,
+          }),
+        );
+        return key;
+      }),
+    );
+
+    for (const [index, settledResult] of cleanupResults.entries()) {
+      const key = oldKeepCanaries[index];
+      if (settledResult.status === "fulfilled") {
+        result.cleaned.push(key);
+        req.log.info({ key }, "Cleaned up old keep canary");
+      } else {
+        const error = settledResult.reason;
+        req.log.warn(
+          { key, error },
+          "Failed to clean up old keep canary (non-critical)",
+        );
+      }
+    }
+
     req.log.info(
       {
         status: result.status,
         renewed: result.renewed.length,
+        cleaned: result.cleaned.length,
         errors: result.errors.length,
       },
       "Lifecycle status check completed",
