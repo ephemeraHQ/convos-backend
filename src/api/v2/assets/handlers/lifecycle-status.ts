@@ -218,8 +218,16 @@ export async function lifecycleStatusHandler(req: Request, res: Response) {
     const verificationTasks = daysToCheck.flatMap((daysBack) => {
       const checkDate = formatDate(daysAgo(daysBack));
       return [
-        { type: "delete" as const, daysBack, key: `canary-delete-${checkDate}.txt` },
-        { type: "keep" as const, daysBack, key: `canary-keep-${checkDate}.txt` },
+        {
+          type: "delete" as const,
+          daysBack,
+          key: `canary-delete-${checkDate}.txt`,
+        },
+        {
+          type: "keep" as const,
+          daysBack,
+          key: `canary-keep-${checkDate}.txt`,
+        },
       ];
     });
 
@@ -252,7 +260,10 @@ export async function lifecycleStatusHandler(req: Request, res: Response) {
         } else {
           // During cold start (first week), missing keep canaries are expected
           // Log as info rather than marking unhealthy - don't add to errors
-          req.log.info({ key }, "Keep canary not found (expected during cold start)");
+          req.log.info(
+            { key },
+            "Keep canary not found (expected during cold start)",
+          );
         }
       }
     }
