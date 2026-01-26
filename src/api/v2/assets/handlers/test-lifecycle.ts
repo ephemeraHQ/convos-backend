@@ -70,14 +70,13 @@ export async function testLifecycleHandler(req: Request, res: Response) {
     // Using 10s for more realistic lifecycle test timing
     await new Promise((resolve) => setTimeout(resolve, 10000));
 
-    // Step 3: Copy-to-self (renewal)
-    // Use REPLACE to force S3 to update LastModified when copying to self
+    // Step 3: Copy-to-self (renewal) - matches renew-batch.ts implementation
     await s3Client.send(
       new CopyObjectCommand({
         Bucket: env.LIFECYCLE_TEST_BUCKET,
         CopySource: `${env.LIFECYCLE_TEST_BUCKET}/${encodeURIComponent(testKey)}`,
         Key: testKey,
-        MetadataDirective: "REPLACE",
+        MetadataDirective: "COPY",
       }),
     );
 
