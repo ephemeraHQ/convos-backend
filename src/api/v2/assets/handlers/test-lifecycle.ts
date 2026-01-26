@@ -66,8 +66,8 @@ export async function testLifecycleHandler(req: Request, res: Response) {
     );
     const initialLastModified = initialHead.LastModified;
 
-    // Delay to ensure timestamp difference is visible
-    await new Promise((resolve) => setTimeout(resolve, 10000));
+    // Delay to ensure timestamp difference is visible (S3 has 1-second granularity)
+    await new Promise((resolve) => setTimeout(resolve, 2000));
 
     // Step 3: Copy-to-self (renewal)
     await s3Client.send(

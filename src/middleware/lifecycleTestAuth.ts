@@ -10,10 +10,12 @@ export const lifecycleTestAuthMiddleware = (
   res: Response,
   next: NextFunction,
 ) => {
-  // Fail closed: reject if token is not configured
+  // Fail closed: reject if token is not configured or too short
   const expectedToken = process.env.LIFECYCLE_TEST_TOKEN?.trim();
-  if (!expectedToken || expectedToken.length === 0) {
-    req.log.error("LIFECYCLE_TEST_TOKEN not configured - rejecting request");
+  if (!expectedToken || expectedToken.length < 32) {
+    req.log.error(
+      "LIFECYCLE_TEST_TOKEN not configured or too short (min 32 chars) - rejecting request",
+    );
     res.status(500).json({
       error: "Server configuration error",
     });

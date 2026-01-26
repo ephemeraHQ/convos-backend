@@ -132,8 +132,19 @@ jobs:
     runs-on: ubuntu-latest
     needs: deploy_otr_dev
     steps:
-      - name: Wait for deployment to stabilize
-        run: sleep 30
+      - name: Wait for deployment and verify health
+        run: |
+          echo "Waiting for deployment to stabilize..."
+          for i in {1..10}; do
+            sleep 10
+            if curl -sf "${{ secrets.OTR_DEV_API_URL }}/health" > /dev/null 2>&1; then
+              echo "Service is healthy after $((i * 10)) seconds"
+              exit 0
+            fi
+            echo "Waiting for service to be ready (attempt $i/10)..."
+          done
+          echo "::error::Service did not become healthy after 100s"
+          exit 1
 
       - name: Test lifecycle renewal endpoint
         run: |
@@ -143,7 +154,7 @@ jobs:
           http_code=$(echo "$response" | tail -1)
           body=$(echo "$response" | head -n -1)
           echo "$body"
-          if [ "$http_code" != "200" ] || ! echo "$body" | grep -q '"success":true'; then
+          if [ "$http_code" != "200" ] || ! echo "$body" | jq -e '.success == true' > /dev/null 2>&1; then
             echo "::error::Lifecycle test failed!"
             exit 1
           fi
@@ -154,8 +165,19 @@ jobs:
     runs-on: ubuntu-latest
     needs: deploy_otr_prod
     steps:
-      - name: Wait for deployment to stabilize
-        run: sleep 30
+      - name: Wait for deployment and verify health
+        run: |
+          echo "Waiting for deployment to stabilize..."
+          for i in {1..10}; do
+            sleep 10
+            if curl -sf "${{ secrets.OTR_PROD_API_URL }}/health" > /dev/null 2>&1; then
+              echo "Service is healthy after $((i * 10)) seconds"
+              exit 0
+            fi
+            echo "Waiting for service to be ready (attempt $i/10)..."
+          done
+          echo "::error::Service did not become healthy after 100s"
+          exit 1
 
       - name: Test lifecycle renewal endpoint
         run: |
@@ -165,7 +187,7 @@ jobs:
           http_code=$(echo "$response" | tail -1)
           body=$(echo "$response" | head -n -1)
           echo "$body"
-          if [ "$http_code" != "200" ] || ! echo "$body" | grep -q '"success":true'; then
+          if [ "$http_code" != "200" ] || ! echo "$body" | jq -e '.success == true' > /dev/null 2>&1; then
             echo "::error::Lifecycle test failed!"
             exit 1
           fi
