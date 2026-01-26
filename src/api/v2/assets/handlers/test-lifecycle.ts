@@ -67,15 +67,17 @@ export async function testLifecycleHandler(req: Request, res: Response) {
     const initialLastModified = initialHead.LastModified;
 
     // Delay to ensure timestamp difference is visible (S3 has 1-second granularity)
-    await new Promise((resolve) => setTimeout(resolve, 2000));
+    // Using 10s for more realistic lifecycle test timing
+    await new Promise((resolve) => setTimeout(resolve, 10000));
 
     // Step 3: Copy-to-self (renewal)
+    // Use REPLACE to force S3 to update LastModified when copying to self
     await s3Client.send(
       new CopyObjectCommand({
         Bucket: env.LIFECYCLE_TEST_BUCKET,
         CopySource: `${env.LIFECYCLE_TEST_BUCKET}/${encodeURIComponent(testKey)}`,
         Key: testKey,
-        MetadataDirective: "COPY",
+        MetadataDirective: "REPLACE",
       }),
     );
 
