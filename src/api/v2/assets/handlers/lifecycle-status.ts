@@ -120,6 +120,11 @@ export async function lifecycleStatusHandler(req: Request, res: Response) {
     return;
   }
 
+  // Capture narrowed values for use in async callbacks
+  // (TypeScript's control flow analysis doesn't maintain narrowing inside .map() callbacks)
+  const bucket = env.LIFECYCLE_TEST_BUCKET;
+  const client = s3Client;
+
   const today = formatDate(new Date());
   const deleteCanaryKey = `canary-delete-${today}.txt`;
   const keepCanaryKey = `canary-keep-${today}.txt`;
@@ -147,9 +152,9 @@ export async function lifecycleStatusHandler(req: Request, res: Response) {
     const canaryContent = `Canary file created at ${new Date().toISOString()}`;
 
     // Create delete canary (will NOT be renewed, should expire after 24h)
-    await s3Client.send(
+    await client.send(
       new PutObjectCommand({
-        Bucket: env.LIFECYCLE_TEST_BUCKET,
+        Bucket: bucket,
         Key: deleteCanaryKey,
         Body: canaryContent,
         ContentType: "text/plain",
@@ -158,9 +163,9 @@ export async function lifecycleStatusHandler(req: Request, res: Response) {
     req.log.info({ key: deleteCanaryKey }, "Created delete canary");
 
     // Create keep canary (will be renewed daily)
-    await s3Client.send(
+    await client.send(
       new PutObjectCommand({
-        Bucket: env.LIFECYCLE_TEST_BUCKET,
+        Bucket: bucket,
         Key: keepCanaryKey,
         Body: canaryContent,
         ContentType: "text/plain",
@@ -169,9 +174,10 @@ export async function lifecycleStatusHandler(req: Request, res: Response) {
     req.log.info({ key: keepCanaryKey }, "Created keep canary");
 
     // Step 2: List and renew all existing "keep" canaries (in parallel)
-    const listResponse = await s3Client.send(
+    // Note: Pagination not needed - cleanup step keeps total canaries under 20
+    const listResponse = await client.send(
       new ListObjectsV2Command({
-        Bucket: env.LIFECYCLE_TEST_BUCKET,
+        Bucket: bucket,
         Prefix: "canary-keep-",
       }),
     );
@@ -183,7 +189,7 @@ export async function lifecycleStatusHandler(req: Request, res: Response) {
     // Parallel renewal for better performance
     const renewalResults = await Promise.allSettled(
       keepCanaries.map(async (key) => {
-        await renewObject(s3Client, env.LIFECYCLE_TEST_BUCKET, key);
+        await renewObject(client, bucket, key);
         return key;
       }),
     );
@@ -221,7 +227,7 @@ export async function lifecycleStatusHandler(req: Request, res: Response) {
     const existenceResults = await Promise.all(
       verificationTasks.map(async (task) => ({
         ...task,
-        exists: await objectExists(s3Client, env.LIFECYCLE_TEST_BUCKET, task.key),
+        exists: await objectExists(client, bucket, task.key),
       })),
     );
 
@@ -265,9 +271,9 @@ export async function lifecycleStatusHandler(req: Request, res: Response) {
     // Delete old canaries in parallel
     const cleanupResults = await Promise.allSettled(
       oldKeepCanaries.map(async (key) => {
-        await s3Client.send(
+        await client.send(
           new DeleteObjectCommand({
-            Bucket: env.LIFECYCLE_TEST_BUCKET,
+            Bucket: bucket,
             Key: key,
           }),
         );
