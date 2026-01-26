@@ -69,13 +69,13 @@ async function renewObject(
   bucket: string,
   key: string,
 ): Promise<void> {
-  // Use REPLACE to force S3 to update LastModified when copying to self
+  // Matches renew-batch.ts implementation - COPY preserves metadata
   await client.send(
     new CopyObjectCommand({
       Bucket: bucket,
       CopySource: `${bucket}/${encodeURIComponent(key)}`,
       Key: key,
-      MetadataDirective: "REPLACE",
+      MetadataDirective: "COPY",
     }),
   );
 }
