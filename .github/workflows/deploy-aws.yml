@@ -126,3 +126,47 @@ jobs:
           variable-name: api_image
           variable-value: "ghcr.io/xmtplabs/convos-backend@${{ needs.push_to_registry.outputs.digest }}"
           variable-value-required-prefix: "ghcr.io/xmtplabs/convos-backend@sha256:"
+
+  test_lifecycle_dev:
+    name: Test S3 Lifecycle Renewal (Dev)
+    runs-on: ubuntu-latest
+    needs: deploy_otr_dev
+    steps:
+      - name: Wait for deployment to stabilize
+        run: sleep 30
+
+      - name: Test lifecycle renewal endpoint
+        run: |
+          response=$(curl -s -w "\n%{http_code}" \
+            -X POST "${{ secrets.OTR_DEV_API_URL }}/v2/assets/test/lifecycle" \
+            -H "Authorization: Bearer ${{ secrets.LIFECYCLE_TEST_TOKEN }}")
+          http_code=$(echo "$response" | tail -1)
+          body=$(echo "$response" | head -n -1)
+          echo "$body"
+          if [ "$http_code" != "200" ] || ! echo "$body" | grep -q '"success":true'; then
+            echo "::error::Lifecycle test failed!"
+            exit 1
+          fi
+          echo "✅ Lifecycle renewal test passed (dev)" >> $GITHUB_STEP_SUMMARY
+
+  test_lifecycle_prod:
+    name: Test S3 Lifecycle Renewal (Prod)
+    runs-on: ubuntu-latest
+    needs: deploy_otr_prod
+    steps:
+      - name: Wait for deployment to stabilize
+        run: sleep 30
+
+      - name: Test lifecycle renewal endpoint
+        run: |
+          response=$(curl -s -w "\n%{http_code}" \
+            -X POST "${{ secrets.OTR_PROD_API_URL }}/v2/assets/test/lifecycle" \
+            -H "Authorization: Bearer ${{ secrets.LIFECYCLE_TEST_TOKEN }}")
+          http_code=$(echo "$response" | tail -1)
+          body=$(echo "$response" | head -n -1)
+          echo "$body"
+          if [ "$http_code" != "200" ] || ! echo "$body" | grep -q '"success":true'; then
+            echo "::error::Lifecycle test failed!"
+            exit 1
+          fi
+          echo "✅ Lifecycle renewal test passed (prod)" >> $GITHUB_STEP_SUMMARY
