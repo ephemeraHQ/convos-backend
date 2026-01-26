@@ -102,6 +102,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.environment || github.event_name == 'workflow_call' && inputs.ref || github.ref }}
       - name: Deploy to OTR Dev Environment
         uses: xmtp-labs/terraform-deployer@v1
         timeout-minutes: 20
@@ -123,7 +125,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event_name == 'repository_dispatch' && github.event.client_payload.ref || github.ref }}
+          ref: ${{ github.event_name == 'repository_dispatch' && github.event.client_payload.ref || github.event_name == 'workflow_dispatch' && inputs.environment || github.event_name == 'workflow_call' && inputs.ref || github.ref }}
       - name: Deploy to OTR Production Environment
         uses: xmtp-labs/terraform-deployer@v1
         timeout-minutes: 20
