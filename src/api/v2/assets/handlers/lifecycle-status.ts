@@ -200,7 +200,7 @@ export async function lifecycleStatusHandler(req: Request, res: Response) {
         result.renewed.push(key);
         req.log.info({ key }, "Renewed keep canary");
       } else {
-        const error = settledResult.reason;
+        const error: unknown = settledResult.reason;
         const message = `Failed to renew ${key}: ${error instanceof Error ? error.message : "Unknown error"}`;
         result.errors.push(message);
         req.log.error({ key, error }, "Failed to renew keep canary");
@@ -298,7 +298,7 @@ export async function lifecycleStatusHandler(req: Request, res: Response) {
         result.cleaned.push(key);
         req.log.info({ key }, "Cleaned up old keep canary");
       } else {
-        const error = settledResult.reason;
+        const error: unknown = settledResult.reason;
         req.log.warn(
           { key, error },
           "Failed to clean up old keep canary (non-critical)",
