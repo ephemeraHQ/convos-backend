@@ -33,6 +33,8 @@ jobs:
             echo "Errors: $errors"
             exit 1
           fi
+
+          # Build summary
           echo "## Lifecycle Verification (Dev)" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "Date: $(echo "$body" | jq -r '.date')" >> $GITHUB_STEP_SUMMARY
@@ -41,15 +43,30 @@ jobs:
           echo "- Delete canary: \`$(echo "$body" | jq -r '.created.deleteCanary')\`" >> $GITHUB_STEP_SUMMARY
           echo "- Keep canary: \`$(echo "$body" | jq -r '.created.keepCanary')\`" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
+
           echo "### Renewed" >> $GITHUB_STEP_SUMMARY
-          echo "$body" | jq -r '.renewed[]' | while read -r key; do echo "- \`$key\`"; done >> $GITHUB_STEP_SUMMARY
+          if [ "$(echo "$body" | jq '.renewed | length')" -eq 0 ]; then
+            echo "- _(none)_" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "$body" | jq -r '.renewed[]' | while read -r key; do echo "- \`$key\`"; done >> $GITHUB_STEP_SUMMARY
+          fi
           echo "" >> $GITHUB_STEP_SUMMARY
+
           echo "### Verified" >> $GITHUB_STEP_SUMMARY
           echo "**Deleted as expected:**" >> $GITHUB_STEP_SUMMARY
-          echo "$body" | jq -r '.verified.deletedAsExpected[]' | while read -r key; do echo "- \`$key\`"; done >> $GITHUB_STEP_SUMMARY
+          if [ "$(echo "$body" | jq '.verified.deletedAsExpected | length')" -eq 0 ]; then
+            echo "- _(none yet - first week of operation)_" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "$body" | jq -r '.verified.deletedAsExpected[]' | while read -r key; do echo "- \`$key\`"; done >> $GITHUB_STEP_SUMMARY
+          fi
           echo "" >> $GITHUB_STEP_SUMMARY
+
           echo "**Exists as expected:**" >> $GITHUB_STEP_SUMMARY
-          echo "$body" | jq -r '.verified.existsAsExpected[]' | while read -r key; do echo "- \`$key\`"; done >> $GITHUB_STEP_SUMMARY
+          if [ "$(echo "$body" | jq '.verified.existsAsExpected | length')" -eq 0 ]; then
+            echo "- _(none yet - first week of operation)_" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "$body" | jq -r '.verified.existsAsExpected[]' | while read -r key; do echo "- \`$key\`"; done >> $GITHUB_STEP_SUMMARY
+          fi
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "Status: **healthy**" >> $GITHUB_STEP_SUMMARY
 
@@ -79,6 +96,8 @@ jobs:
             echo "Errors: $errors"
             exit 1
           fi
+
+          # Build summary
           echo "## Lifecycle Verification (Prod)" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "Date: $(echo "$body" | jq -r '.date')" >> $GITHUB_STEP_SUMMARY
@@ -87,14 +106,29 @@ jobs:
           echo "- Delete canary: \`$(echo "$body" | jq -r '.created.deleteCanary')\`" >> $GITHUB_STEP_SUMMARY
           echo "- Keep canary: \`$(echo "$body" | jq -r '.created.keepCanary')\`" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
+
           echo "### Renewed" >> $GITHUB_STEP_SUMMARY
-          echo "$body" | jq -r '.renewed[]' | while read -r key; do echo "- \`$key\`"; done >> $GITHUB_STEP_SUMMARY
+          if [ "$(echo "$body" | jq '.renewed | length')" -eq 0 ]; then
+            echo "- _(none)_" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "$body" | jq -r '.renewed[]' | while read -r key; do echo "- \`$key\`"; done >> $GITHUB_STEP_SUMMARY
+          fi
           echo "" >> $GITHUB_STEP_SUMMARY
+
           echo "### Verified" >> $GITHUB_STEP_SUMMARY
           echo "**Deleted as expected:**" >> $GITHUB_STEP_SUMMARY
-          echo "$body" | jq -r '.verified.deletedAsExpected[]' | while read -r key; do echo "- \`$key\`"; done >> $GITHUB_STEP_SUMMARY
+          if [ "$(echo "$body" | jq '.verified.deletedAsExpected | length')" -eq 0 ]; then
+            echo "- _(none yet - first week of operation)_" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "$body" | jq -r '.verified.deletedAsExpected[]' | while read -r key; do echo "- \`$key\`"; done >> $GITHUB_STEP_SUMMARY
+          fi
           echo "" >> $GITHUB_STEP_SUMMARY
+
           echo "**Exists as expected:**" >> $GITHUB_STEP_SUMMARY
-          echo "$body" | jq -r '.verified.existsAsExpected[]' | while read -r key; do echo "- \`$key\`"; done >> $GITHUB_STEP_SUMMARY
+          if [ "$(echo "$body" | jq '.verified.existsAsExpected | length')" -eq 0 ]; then
+            echo "- _(none yet - first week of operation)_" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "$body" | jq -r '.verified.existsAsExpected[]' | while read -r key; do echo "- \`$key\`"; done >> $GITHUB_STEP_SUMMARY
+          fi
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "Status: **healthy**" >> $GITHUB_STEP_SUMMARY
