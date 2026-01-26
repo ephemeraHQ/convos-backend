@@ -149,6 +149,9 @@ jobs:
       - name: Test lifecycle renewal endpoint
         run: |
           response=$(curl -s -w "\n%{http_code}" \
+            --max-time 30 \
+            --retry 3 \
+            --retry-all-errors \
             -X POST "${{ secrets.OTR_DEV_API_URL }}/v2/assets/test/lifecycle" \
             -H "Authorization: Bearer ${{ secrets.LIFECYCLE_TEST_TOKEN }}")
           http_code=$(echo "$response" | tail -1)
@@ -182,6 +185,9 @@ jobs:
       - name: Test lifecycle renewal endpoint
         run: |
           response=$(curl -s -w "\n%{http_code}" \
+            --max-time 30 \
+            --retry 3 \
+            --retry-all-errors \
             -X POST "${{ secrets.OTR_PROD_API_URL }}/v2/assets/test/lifecycle" \
             -H "Authorization: Bearer ${{ secrets.LIFECYCLE_TEST_TOKEN }}")
           http_code=$(echo "$response" | tail -1)
