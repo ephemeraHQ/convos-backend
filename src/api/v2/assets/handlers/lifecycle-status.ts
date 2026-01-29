@@ -31,10 +31,10 @@ function formatDate(date: Date): string {
 }
 
 /**
- * Get a date N days ago (using UTC to match formatDate)
+ * Get a date N days ago from a reference date (using UTC to match formatDate)
  */
-function daysAgo(days: number): Date {
-  const date = new Date();
+function daysAgo(days: number, from: Date): Date {
+  const date = new Date(from);
   date.setUTCDate(date.getUTCDate() - days);
   return date;
 }
@@ -125,7 +125,8 @@ export async function lifecycleStatusHandler(req: Request, res: Response) {
   const bucket = env.LIFECYCLE_TEST_BUCKET;
   const client = s3Client;
 
-  const today = formatDate(new Date());
+  const now = new Date();
+  const today = formatDate(now);
   const deleteCanaryKey = `canary-delete-${today}.txt`;
   const keepCanaryKey = `canary-keep-${today}.txt`;
 
@@ -149,7 +150,7 @@ export async function lifecycleStatusHandler(req: Request, res: Response) {
     req.log.info({ today }, "Starting lifecycle status check");
 
     // Step 1: Create today's canary files
-    const canaryContent = `Canary file created at ${new Date().toISOString()}`;
+    const canaryContent = `Canary file created at ${now.toISOString()}`;
 
     // Create delete canary (will NOT be renewed, should expire after 24h)
     await client.send(
@@ -216,7 +217,7 @@ export async function lifecycleStatusHandler(req: Request, res: Response) {
 
     // Build verification tasks
     const verificationTasks = daysToCheck.flatMap((daysBack) => {
-      const checkDate = formatDate(daysAgo(daysBack));
+      const checkDate = formatDate(daysAgo(daysBack, now));
       return [
         {
           type: "delete" as const,
@@ -270,7 +271,7 @@ export async function lifecycleStatusHandler(req: Request, res: Response) {
 
     // Step 4: Clean up old canaries to prevent accumulation
     // Delete keep canaries older than MAX_VERIFICATION_DAYS (they've been verified)
-    const cutoffDate = formatDate(daysAgo(MAX_VERIFICATION_DAYS));
+    const cutoffDate = formatDate(daysAgo(MAX_VERIFICATION_DAYS, now));
     const oldKeepCanaries = keepCanaries.filter((key) => {
       // Extract date from key like "canary-keep-2026-01-20.txt"
       const match = key.match(/canary-keep-(\d{4}-\d{2}-\d{2})\.txt/);
