@@ -122,6 +122,52 @@ describe("Invites API Tests", () => {
       expect(data.data.expiresAt).toBeNull();
       expect(data.data.expiresAfterUse).toBe(false);
     });
+
+    test("should decode compressed invite slug from iOS", async () => {
+      // iOS app compresses invites using raw DEFLATE with a 5-byte header:
+      // [0x1F marker][4-byte BE original size][compressed data]
+      const compressedSlug =
+        "HwAAAb4lj09IVFEUxplJ0GZhZK2m0Q5GECkjuNEYRJxJZEiISInJ1Z13D3bk3Xuf7947DGqrWoiJBTqDSbRw4ywCN7Xq36KFDLYRJYSgP0QFLhQJI3DjnWZ3Duc7v-_7Yv-isf5I_Nyr1p-5_KW95pdH0YuRjStr60MNnztyc21vl-JdD6eL2cTdppWxaHT5y7vHZ3ZkqXzt68LZbOOj131_5ystUK2O_Dm1mHt_79NBZb9ns-Pj7evF84dvvMaJrfRaYW82HqOsSN8IM5l0sb01o2RBaRhBbSCjRBCi1sgh*Kwtk8OrvyLAKUQAF2grgylchaDLABJpO8JTU6Bk0NgTGKSDtkRwH9MkdaxSuAMlqoTgYFIF7JukRJ26lAWvAZ3mHBzR1NIJg45IB82nSsiSMGkBJwrFBUG0ouJWJTpi0pEEqbULLAYsYemSYISXB-j4TnqqTayLSVHP6j6TAiQGZCy5cJlUv4KxMsmVg9XR19cLcrxLHXUhsv3iQenq_3y7dHPwGz55M5S-33-re-t5bGUssHt-Z_bGb-tB14KdWSs-DzaTqLrOZcuQE";
+
+      const response = await fetch(
+        `${baseURL}/api/v2/invites/${compressedSlug}`,
+        {
+          method: "GET",
+        },
+      );
+
+      expect(response.status).toBe(200);
+      const data = (await response.json()) as {
+        success: boolean;
+        data: {
+          name: string | null;
+          description: string | null;
+          imageURL: string | null;
+          conversationExpiresAt: string | null;
+          expiresAt: string | null;
+          expiresAfterUse: boolean;
+        };
+      };
+      expect(data.success).toBe(true);
+      expect(data.data).toBeDefined();
+    });
+
+    test("should reject decompression bombs (oversized originalSize)", async () => {
+      // Create payload with 0x1F marker + huge size (1GB) + minimal data
+      const marker = Buffer.from([0x1f]);
+      const hugeSize = Buffer.from([0x40, 0x00, 0x00, 0x00]); // 1GB in big-endian
+      const minimalData = Buffer.from([0x00]);
+      const maliciousPayload = Buffer.concat([marker, hugeSize, minimalData]);
+      const slug = maliciousPayload.toString("base64url");
+
+      const response = await fetch(`${baseURL}/api/v2/invites/${slug}`, {
+        method: "GET",
+      });
+
+      expect(response.status).toBe(400);
+      const data = (await response.json()) as { success: boolean };
+      expect(data.success).toBe(false);
+    });
   });
 
   describe("Response format validation", () => {

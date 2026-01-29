@@ -1,4 +1,5 @@
 import { createHash } from "crypto";
+import { inflateRawSync } from "zlib";
 import { fromBinary } from "@bufbuild/protobuf";
 import type { Request, Response } from "express";
 import * as secp256k1 from "secp256k1";
@@ -34,6 +35,11 @@ type DecodedInvite = Pick<
 // Reserve some space for the rest of the URL path
 const MAX_SLUG_LENGTH = 2048;
 
+// iOS compression format: [0x1F marker][4-byte BE size][raw DEFLATE data]
+const COMPRESSION_MARKER = 0x1f;
+const COMPRESSION_HEADER_SIZE = 5; // 1 byte marker + 4 bytes size
+const MAX_DECOMPRESSED_SIZE = 64 * 1024; // 64KB - prevent decompression bombs
+
 // Max valid Date in JS is 8.64e15 ms (±100 million days from epoch)
 const MAX_DATE_MS = 8.64e15;
 
@@ -49,6 +55,42 @@ function unixSecondsToISOString(
   if (!Number.isFinite(ms) || Math.abs(ms) > MAX_DATE_MS) return null;
   const date = new Date(ms);
   return Number.isNaN(date.getTime()) ? null : date.toISOString();
+}
+
+/**
+ * Decompresses data if it has the iOS compression marker.
+ * iOS format: [0x1F marker][4-byte BE original size][raw DEFLATE data]
+ * Returns original data if not compressed.
+ */
+function maybeDecompress(data: Uint8Array): Uint8Array {
+  if (data.length < COMPRESSION_HEADER_SIZE || data[0] !== COMPRESSION_MARKER) {
+    return data;
+  }
+
+  // Read 4-byte big-endian original size (for validation)
+  // Use >>> 0 to coerce to unsigned 32-bit (bitwise ops are signed in JS)
+  const originalSize =
+    ((data[1] << 24) | (data[2] << 16) | (data[3] << 8) | data[4]) >>> 0;
+
+  // Validate size BEFORE decompression to prevent decompression bombs
+  if (originalSize > MAX_DECOMPRESSED_SIZE) {
+    throw new Error(
+      `Decompressed size ${originalSize} exceeds maximum allowed ${MAX_DECOMPRESSED_SIZE}`,
+    );
+  }
+
+  // Decompress the raw DEFLATE data (after 5-byte header)
+  const compressedData = data.slice(COMPRESSION_HEADER_SIZE);
+  const decompressed = inflateRawSync(Buffer.from(compressedData));
+
+  // Validate decompressed size matches header
+  if (decompressed.length !== originalSize) {
+    throw new Error(
+      `Decompressed size mismatch: expected ${originalSize}, got ${decompressed.length}`,
+    );
+  }
+
+  return new Uint8Array(decompressed);
 }
 
 function base64URLDecode(slug: string): Uint8Array {
@@ -109,9 +151,10 @@ function verifySignature(signedInvite: SignedInvite): void {
 function decodeInviteSlug(slug: string): DecodedInvite {
   try {
     const data = base64URLDecode(slug);
+    const decompressed = maybeDecompress(data);
 
     // Decode the SignedInvite wrapper
-    const signedInvite = fromBinary(SignedInviteSchema, data);
+    const signedInvite = fromBinary(SignedInviteSchema, decompressed);
     const payloadBytes = signedInvite.payload;
 
     if (payloadBytes.length === 0) {
