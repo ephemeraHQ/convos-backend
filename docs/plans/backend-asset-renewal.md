@@ -485,36 +485,76 @@ Enabling a 30-day expiration rule on an existing bucket causes S3 to evaluate al
 
 A one-time migration script resets all object timestamps to "now" before the rule is enabled. Every object gets a fresh 30-day window from enablement day. No need for a 60-day initial rule or any postponement.
 
-#### Step 1: One-Time Migration Script
+#### Step 1: One-Time Migration Endpoint
 
-Copy-to-self all existing objects in `PUBLIC_ASSETS_BUCKET` to reset `LastModified` timestamps. This is the same `CopyObjectCommand` operation the renewal endpoint uses.
+Copy-to-self all existing objects in `PUBLIC_ASSETS_BUCKET` to reset `LastModified` timestamps. Only the backend has IAM access to S3, so this runs as a token-protected endpoint (same pattern as `lifecycle-status.ts`).
 
-```bash
-# Conceptual script — list all objects, copy each to itself
-aws s3api list-objects-v2 --bucket $BUCKET --output json | \
-  jq -r '.Contents[] | select(
-    (.LastModified | fromdateiso8601) < (now - 25*86400)
-  ) | .Key' | \
-  xargs -P 50 -I {} aws s3api copy-object \
-    --bucket $BUCKET \
-    --copy-source "$BUCKET/{}" \
-    --key "{}" \
-    --metadata-directive COPY
+**New endpoint:** `POST /v2/assets/test/migrate-timestamps`
+
+- Protected by `lifecycleTestAuthMiddleware` (same `LIFECYCLE_TEST_TOKEN` used by canary system)
+- No rate limiter (one-off operation, token-protected)
+
+**Implementation:** `src/api/v2/assets/handlers/migrate-timestamps.ts`
+
+```typescript
+// Handler: POST /v2/assets/test/migrate-timestamps
+// Query params:
+//   ?dryRun=true   — list objects and report counts without copying (default: true)
+//   ?olderThanDays=25 — only touch objects with LastModified > N days ago (default: 25)
+//   ?concurrency=50   — parallel copy operations (default: 50, max: 200)
+
+// 1. Validate S3 access: HeadBucket on PUBLIC_ASSETS_BUCKET
+// 2. List all objects with paginated ListObjectsV2 (handle ContinuationToken)
+// 3. Filter to objects where LastModified < (now - olderThanDays)
+// 4. If dryRun: return { total, eligible, skipped } without copying
+// 5. If !dryRun: copy-to-self each eligible object in parallel (p-limit concurrency)
+//    - Track: renewed[], failed[] (key + error), skipped[]
+// 6. After completion: sample 5 renewed keys, HeadObject to verify LastModified updated
+// 7. Return detailed report:
+
+interface MigrateResponse {
+  dryRun: boolean;
+  bucket: string;
+  olderThanDays: number;
+  total: number;       // all objects in bucket
+  eligible: number;    // objects older than threshold
+  skipped: number;     // objects newer than threshold
+  renewed: number;     // successfully copied
+  failed: number;      // copy errors
+  failedKeys: { key: string; error: string }[]; // failed key details
+  verified: number;    // spot-check HeadObject confirmations
+  durationMs: number;  // wall-clock time
+}
 ```
 
-**Details:**
+**Key design decisions:**
 
-- Filter to objects older than 25 days (5-day buffer — skip recent objects)
-- Parallelism: 50-100 concurrent copies (S3 supports 3,500 PUT/s per prefix)
-- Estimated time: ~100-200ms per object, 10k objects < 2 minutes at 100 concurrency
-- Idempotent — safe to re-run
+- **Defaults to dry-run** — calling without `?dryRun=false` is safe, only reports counts
+- **Idempotent** — copy-to-self on an already-fresh object just resets the timestamp again
+- **Paginated listing** — handles buckets with >1000 objects via ContinuationToken loop
+- **Bounded concurrency** — uses `p-limit` (already available in Node) or manual semaphore to avoid overwhelming S3
+- **Post-copy verification** — HeadObject on a sample of renewed keys confirms LastModified changed
+- **Failed key tracking** — every failure is captured with key + error for debugging
+
+**Route registration** in `src/api/v2/index.ts`:
+
+```typescript
+v2Router.post(
+  "/assets/test/migrate-timestamps",
+  lifecycleTestAuthMiddleware,
+  migrateTimestampsHandler,
+);
+```
 
 **Run order:**
 
-- [ ] Dry-run on dev, review object count and output
-- [ ] Execute on dev
-- [ ] Dry-run on prod, review object count and output
-- [ ] Execute on prod
+- [ ] Deploy endpoint to dev and prod
+- [ ] Dry-run on dev: `curl -X POST -H "Authorization: Bearer $TOKEN" "$DEV_URL/api/v2/assets/test/migrate-timestamps?dryRun=true"`
+- [ ] Review report (total, eligible, skipped counts)
+- [ ] Execute on dev: `curl -X POST -H "Authorization: Bearer $TOKEN" "$DEV_URL/api/v2/assets/test/migrate-timestamps?dryRun=false"`
+- [ ] Verify report (renewed, failed, verified counts)
+- [ ] Dry-run on prod, review report
+- [ ] Execute on prod, verify report
 
 #### Step 2: Enable 30-Day Lifecycle Rule on Dev
 
