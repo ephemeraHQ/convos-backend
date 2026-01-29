@@ -258,9 +258,14 @@ export async function lifecycleStatusHandler(req: Request, res: Response) {
         if (exists) {
           result.verified.existsAsExpected.push(key);
           req.log.info({ key }, "Keep canary correctly persisted");
+        } else if (keepCanaries.length >= MIN_VERIFICATION_DAYS) {
+          // Past cold start: enough keep canaries exist to prove system is running
+          const message = `Keep canary ${key} missing (renewal may be broken)`;
+          result.errors.push(message);
+          result.status = "unhealthy";
+          req.log.error({ key }, "Keep canary missing after cold start period");
         } else {
-          // During cold start (first week), missing keep canaries are expected
-          // Log as info rather than marking unhealthy - don't add to errors
+          // Cold start: not enough keep canaries yet, missing ones are expected
           req.log.info(
             { key },
             "Keep canary not found (expected during cold start)",
