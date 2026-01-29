@@ -429,49 +429,150 @@ req.log.error(
 
 **Tasks:**
 
-- [ ] Create assets router module
-- [ ] Implement renew-batch handler with Zod validation
-- [ ] Add S3 CopyObjectCommand integration
-- [ ] Implement key validation logic
-- [ ] Add rate limiter middleware
-- [ ] Wire up routes in v2 index
-- [ ] Add structured logging
+- [x] Create assets router module
+- [x] Implement renew-batch handler with Zod validation
+- [x] Add S3 CopyObjectCommand integration
+- [x] Implement key validation logic
+- [x] Add rate limiter middleware
+- [x] Wire up routes in v2 index
+- [x] Add structured logging
 
 ### Phase 2: Testing
 
 **Unit Tests:**
 
-- [ ] Key validation (valid keys, empty keys, path traversal attempts)
-- [ ] Batch size validation (0, 1, 100, 101 keys)
-- [ ] Error classification (NoSuchKey → not_found)
-- [ ] Result aggregation (mix of success/failure)
+- [x] Key validation (valid keys, empty keys, path traversal attempts)
+- [x] Batch size validation (0, 1, 100, 101 keys)
+- [x] Error classification (NoSuchKey → not_found)
+- [x] Result aggregation (mix of success/failure)
 
 **Integration Tests:**
 
-- [ ] End-to-end with real S3 (test bucket)
-- [ ] Verify `LastModified` actually changes
-- [ ] Verify lifecycle respects new timestamp
-- [ ] Test parallel processing (100 URLs)
-- [ ] Test rate limiting enforcement
+- [x] End-to-end with real S3 (test bucket)
+- [x] Verify `LastModified` actually changes
+- [x] Verify lifecycle respects new timestamp
+- [x] Test parallel processing (100 URLs)
+- [x] Test rate limiting enforcement
 
 **Manual Testing:**
 
-- [ ] Upload test asset via presigned URL
-- [ ] Note `LastModified` timestamp
-- [ ] Call renewal endpoint
-- [ ] Verify `LastModified` updated
-- [ ] Wait for expiration (use 1-day lifecycle test bucket)
-- [ ] Verify renewed objects survive past original expiration
+- [x] Upload test asset via presigned URL
+- [x] Note `LastModified` timestamp
+- [x] Call renewal endpoint
+- [x] Verify `LastModified` updated
+- [x] Wait for expiration (use 1-day lifecycle test bucket)
+- [x] Verify renewed objects survive past original expiration
 
 ### Phase 3: Documentation & Deployment
 
-- [ ] Update API documentation
-- [ ] Add endpoint to Postman collection
-- [ ] Add monitoring/alerting for renewal failures
-- [ ] Deploy to staging environment
-- [ ] Validate with iOS app in staging
-- [ ] Deploy to production
-- [ ] Monitor renewal traffic patterns
+- [x] Update API documentation
+- [x] Add endpoint to Postman collection
+- [x] Add monitoring/alerting for renewal failures
+- [x] Deploy to staging environment
+- [x] Validate with iOS app in staging
+- [x] Deploy to production
+- [x] Monitor renewal traffic patterns
+
+### Phase 4: Infrastructure Rollout (S3 Lifecycle Rule)
+
+Enable the 30-day expiration lifecycle rule on `PUBLIC_ASSETS_BUCKET` for dev and prod. The canary verification system is already running on `LIFECYCLE_TEST_BUCKET` (24h lifecycle) and confirms the renewal mechanism works. This phase applies the real rule to the real buckets.
+
+#### The Problem
+
+Enabling a 30-day expiration rule on an existing bucket causes S3 to evaluate all objects immediately. Any object with `LastModified` older than 30 days gets deleted in the next nightly sweep (~midnight UTC). Profile and group images uploaded >30 days ago would be lost.
+
+#### Why No +30 Day Postponement Is Needed
+
+A one-time migration script resets all object timestamps to "now" before the rule is enabled. Every object gets a fresh 30-day window from enablement day. No need for a 60-day initial rule or any postponement.
+
+#### Step 1: One-Time Migration Script
+
+Copy-to-self all existing objects in `PUBLIC_ASSETS_BUCKET` to reset `LastModified` timestamps. This is the same `CopyObjectCommand` operation the renewal endpoint uses.
+
+```bash
+# Conceptual script — list all objects, copy each to itself
+aws s3api list-objects-v2 --bucket $BUCKET --output json | \
+  jq -r '.Contents[] | select(
+    (.LastModified | fromdateiso8601) < (now - 25*86400)
+  ) | .Key' | \
+  xargs -P 50 -I {} aws s3api copy-object \
+    --bucket $BUCKET \
+    --copy-source "$BUCKET/{}" \
+    --key "{}" \
+    --metadata-directive COPY
+```
+
+**Details:**
+
+- Filter to objects older than 25 days (5-day buffer — skip recent objects)
+- Parallelism: 50-100 concurrent copies (S3 supports 3,500 PUT/s per prefix)
+- Estimated time: ~100-200ms per object, 10k objects < 2 minutes at 100 concurrency
+- Idempotent — safe to re-run
+
+**Run order:**
+
+- [ ] Dry-run on dev, review object count and output
+- [ ] Execute on dev
+- [ ] Dry-run on prod, review object count and output
+- [ ] Execute on prod
+
+#### Step 2: Enable 30-Day Lifecycle Rule on Dev
+
+**Timing:** Same day as Step 1 dev migration.
+
+**Terraform change** (infrastructure repo, workspace `convos-otr-dev`):
+
+```hcl
+resource "aws_s3_bucket_lifecycle_configuration" "public_assets" {
+  bucket = aws_s3_bucket.public_assets.id
+
+  rule {
+    id     = "expire-after-30-days"
+    status = "Enabled"
+
+    expiration {
+      days = 30
+    }
+
+    filter {} # Applies to all objects
+  }
+}
+```
+
+**Verification:**
+
+- [ ] Canary system on `LIFECYCLE_TEST_BUCKET` stays healthy
+- [ ] Manually check known profile image URLs still resolve after 48h
+- [ ] Monitor for 7 days before proceeding to prod
+
+#### Step 3: Enable 30-Day Lifecycle Rule on Prod
+
+**Timing:** After 7 days of stable dev monitoring.
+
+**Pre-requisite:** iOS app with renewal logic should ideally be in the App Store before this step. If not available, accept that users inactive for 30+ days will see missing images on return (the app handles `not_found` by re-uploading from local cache).
+
+**Same Terraform change** in workspace `convos-otr-prod`.
+
+**Verification:**
+
+- [ ] Monitor daily canary workflow for 30 days
+- [ ] Track iOS renewal endpoint success/failure rates
+- [ ] Watch for user reports of missing images
+- [ ] At Day 31, first un-renewed objects expire — confirm expected behavior
+
+#### iOS App Timing
+
+- **Ideal:** iOS app ships before prod lifecycle rule is enabled
+- **Fallback:** Users who return after 30 days of inactivity get `not_found` from renewal endpoint, triggering re-upload from local cache. Brief gap of missing images between expiration and next app launch — acceptable for inactive users.
+
+#### Rollback
+
+| Step | Rollback | Notes |
+| --- | --- | --- |
+| Migration script | None needed | Copy-to-self is idempotent and harmless |
+| Lifecycle rule | Terraform: set `status = "Disabled"` | Stops future deletions; already-deleted objects are gone |
+
+S3 deletion is irreversible. The migration script must run before enabling the lifecycle rule.
 
 ## Testing Strategy
 
