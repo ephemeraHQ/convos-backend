@@ -1,5 +1,8 @@
 import { mock } from "bun:test";
 
+// Disable pino-pretty worker threads to prevent Bun segfaults during tests
+process.env.LOG_FORMAT = "json";
+
 // Set required environment variables for tests
 process.env.PUBLIC_ASSETS_BUCKET = "test-public-assets-bucket";
 process.env.JWT_SECRET = "test-jwt-secret";
