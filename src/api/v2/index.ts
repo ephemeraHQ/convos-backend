@@ -26,11 +26,13 @@ v2Router.use("/device", appCheckOnlyMiddleware, deviceRouter);
 v2Router.post(
   "/assets/test/lifecycle",
   lifecycleTestAuthMiddleware,
+  assetRenewalLimiter,
   testLifecycleHandler,
 );
 v2Router.post(
   "/assets/test/lifecycle-status",
   lifecycleTestAuthMiddleware,
+  assetRenewalLimiter,
   lifecycleStatusHandler,
 );
 
