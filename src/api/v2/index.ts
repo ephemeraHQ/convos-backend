@@ -4,8 +4,10 @@ import {
   authMiddleware,
   authMiddlewareAllowNSE,
 } from "@/middleware/auth";
+import { lifecycleTestAuthMiddleware } from "@/middleware/lifecycleTestAuth";
 import { assetRenewalLimiter } from "@/middleware/rateLimit";
 import { assetsRouter } from "./assets/assets.router";
+import { lifecycleStatusHandler } from "./assets/handlers/lifecycle-status";
 import { testLifecycleHandler } from "./assets/handlers/test-lifecycle";
 import { attachmentsRouter } from "./attachments/attachments.router";
 import { authRouter } from "./auth/auth.router";
@@ -20,8 +22,19 @@ v2Router.use("/invites", invitesV2Router);
 v2Router.use("/auth", authRouter);
 v2Router.use("/device", appCheckOnlyMiddleware, deviceRouter);
 
-// Test endpoint (no auth) - must be before authenticated /assets route
-v2Router.post("/assets/test/lifecycle", testLifecycleHandler);
+// Lifecycle test endpoints - protected by token auth, must be before authenticated /assets route
+v2Router.post(
+  "/assets/test/lifecycle",
+  lifecycleTestAuthMiddleware,
+  assetRenewalLimiter,
+  testLifecycleHandler,
+);
+v2Router.post(
+  "/assets/test/lifecycle-status",
+  lifecycleTestAuthMiddleware,
+  assetRenewalLimiter,
+  lifecycleStatusHandler,
+);
 
 v2Router.use("/assets", authMiddleware, assetRenewalLimiter, assetsRouter);
 v2Router.use("/attachments", authMiddleware, attachmentsRouter);

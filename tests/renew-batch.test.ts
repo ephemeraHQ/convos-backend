@@ -1,12 +1,28 @@
 import type { Server } from "node:http";
-import { afterAll, beforeAll, beforeEach, describe, expect, mock, test } from "bun:test";
+import {
+  afterAll,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  mock,
+  test,
+} from "bun:test";
 import express from "express";
 import { jsonMiddleware } from "@/middleware/json";
 import { pinoMiddleware } from "@/middleware/pino";
 
 // Track S3 send calls
+interface MockS3Command {
+  input: {
+    Bucket?: string;
+    Key?: string;
+    CopySource?: string;
+    MetadataDirective?: string;
+  };
+}
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-let mockS3Send = mock(async (_cmd: any) => ({}));
+let mockS3Send = mock((_cmd: any) => Promise.resolve({}));
 
 // Mock S3 before handler module loads
 void mock.module("@aws-sdk/client-s3", () => ({
@@ -21,6 +37,7 @@ void mock.module("@aws-sdk/client-s3", () => ({
     input: any;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     constructor(input: any) {
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
       this.input = input;
     }
   },
@@ -71,9 +88,7 @@ describe("POST /api/v2/assets/renew-batch", () => {
   beforeEach(() => {
     // Default: mock REJECTS so tests only pass if the handler
     // actually calls S3 and handles the response correctly.
-    mockS3Send = mock(async () => {
-      throw new Error("unmocked S3 call");
-    });
+    mockS3Send = mock(() => Promise.reject(new Error("unmocked S3 call")));
   });
 
   const post = (body: unknown, headers?: Record<string, string>) =>
@@ -137,7 +152,7 @@ describe("POST /api/v2/assets/renew-batch", () => {
   // --- S3 interaction ---
 
   test("should pass correct parameters to CopyObjectCommand", async () => {
-    mockS3Send = mock(async () => ({}));
+    mockS3Send = mock(() => Promise.resolve({}));
 
     const res = await post({ assetKeys: ["abc123.bin"] });
 
@@ -152,7 +167,7 @@ describe("POST /api/v2/assets/renew-batch", () => {
 
     // Verify CopyObjectCommand was constructed correctly
     expect(mockS3Send).toHaveBeenCalledTimes(1);
-    const cmd = mockS3Send.mock.calls[0][0];
+    const cmd = mockS3Send.mock.calls[0][0] as MockS3Command;
     expect(cmd.input.Bucket).toBe("test-public-assets-bucket");
     expect(cmd.input.Key).toBe("abc123.bin");
     expect(cmd.input.CopySource).toBe("test-public-assets-bucket/abc123.bin");
@@ -160,13 +175,13 @@ describe("POST /api/v2/assets/renew-batch", () => {
   });
 
   test("should URL-encode the key in CopySource", async () => {
-    mockS3Send = mock(async () => ({}));
+    mockS3Send = mock(() => Promise.resolve({}));
 
     const res = await post({ assetKeys: ["file with spaces.bin"] });
 
     expect(res.status).toBe(200);
     expect(mockS3Send).toHaveBeenCalledTimes(1);
-    const cmd = mockS3Send.mock.calls[0][0];
+    const cmd = mockS3Send.mock.calls[0][0] as MockS3Command;
     expect(cmd.input.Key).toBe("file with spaces.bin");
     expect(cmd.input.CopySource).toBe(
       "test-public-assets-bucket/file%20with%20spaces.bin",
@@ -174,7 +189,7 @@ describe("POST /api/v2/assets/renew-batch", () => {
   });
 
   test("should call S3 once per valid key", async () => {
-    mockS3Send = mock(async () => ({}));
+    mockS3Send = mock(() => Promise.resolve({}));
 
     const res = await post({ assetKeys: ["a.bin", "b.bin", "c.bin"] });
 
@@ -188,10 +203,10 @@ describe("POST /api/v2/assets/renew-batch", () => {
   // --- S3 error classification ---
 
   test("should classify NoSuchKey as not_found", async () => {
-    mockS3Send = mock(async () => {
+    mockS3Send = mock(() => {
       const err = new Error("NoSuchKey");
       err.name = "NoSuchKey";
-      throw err;
+      return Promise.reject(err);
     });
 
     const res = await post({ assetKeys: ["missing.bin"] });
@@ -209,10 +224,10 @@ describe("POST /api/v2/assets/renew-batch", () => {
   });
 
   test("should classify NotFound as not_found", async () => {
-    mockS3Send = mock(async () => {
+    mockS3Send = mock(() => {
       const err = new Error("NotFound");
       err.name = "NotFound";
-      throw err;
+      return Promise.reject(err);
     });
 
     const res = await post({ assetKeys: ["missing.bin"] });
@@ -241,13 +256,13 @@ describe("POST /api/v2/assets/renew-batch", () => {
   });
 
   test("should handle mixed success and failure per key", async () => {
-    mockS3Send = mock(async (cmd) => {
+    mockS3Send = mock((cmd: MockS3Command) => {
       if (cmd.input.Key === "missing.bin") {
         const err = new Error("NoSuchKey");
         err.name = "NoSuchKey";
-        throw err;
+        return Promise.reject(err);
       }
-      return {};
+      return Promise.resolve({});
     });
 
     const res = await post({
@@ -320,7 +335,7 @@ describe("POST /api/v2/assets/renew-batch", () => {
   });
 
   test("should skip invalid keys but still call S3 for valid ones", async () => {
-    mockS3Send = mock(async () => ({}));
+    mockS3Send = mock(() => Promise.resolve({}));
 
     const res = await post({
       assetKeys: ["valid.bin", "../traversal.bin", "also-valid.bin"],
@@ -346,7 +361,7 @@ describe("POST /api/v2/assets/renew-batch", () => {
   // --- Batch size boundary ---
 
   test("should accept exactly 100 keys", async () => {
-    mockS3Send = mock(async () => ({}));
+    mockS3Send = mock(() => Promise.resolve({}));
     const keys = Array.from({ length: 100 }, (_, i) => `key-${i}.bin`);
 
     const res = await post({ assetKeys: keys });
