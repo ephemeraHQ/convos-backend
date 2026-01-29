@@ -148,7 +148,7 @@ jobs:
           echo "Waiting for deployment to stabilize..."
           for i in {1..10}; do
             sleep 10
-            if curl -sf "${{ secrets.OTR_DEV_API_URL }}/health" > /dev/null 2>&1; then
+            if curl -sf "${{ vars.DEV_API_URL }}/health" > /dev/null 2>&1; then
               echo "Service is healthy after $((i * 10)) seconds"
               exit 0
             fi
@@ -163,7 +163,7 @@ jobs:
             --max-time 30 \
             --retry 3 \
             --retry-connrefused \
-            -X POST "${{ secrets.OTR_DEV_API_URL }}/v2/assets/test/lifecycle" \
+            -X POST "${{ vars.DEV_API_URL }}/v2/assets/test/lifecycle" \
             -H "Authorization: Bearer ${{ secrets.LIFECYCLE_TEST_TOKEN }}")
           http_code=$(echo "$response" | tail -1)
           body=$(echo "$response" | head -n -1)
@@ -184,7 +184,7 @@ jobs:
           echo "Waiting for deployment to stabilize..."
           for i in {1..10}; do
             sleep 10
-            if curl -sf "${{ secrets.OTR_PROD_API_URL }}/health" > /dev/null 2>&1; then
+            if curl -sf "${{ vars.PROD_API_URL }}/health" > /dev/null 2>&1; then
               echo "Service is healthy after $((i * 10)) seconds"
               exit 0
             fi
@@ -199,7 +199,7 @@ jobs:
             --max-time 30 \
             --retry 3 \
             --retry-connrefused \
-            -X POST "${{ secrets.OTR_PROD_API_URL }}/v2/assets/test/lifecycle" \
+            -X POST "${{ vars.PROD_API_URL }}/v2/assets/test/lifecycle" \
             -H "Authorization: Bearer ${{ secrets.LIFECYCLE_TEST_TOKEN }}")
           http_code=$(echo "$response" | tail -1)
           body=$(echo "$response" | head -n -1)
