@@ -516,14 +516,14 @@ interface MigrateResponse {
   dryRun: boolean;
   bucket: string;
   olderThanDays: number;
-  total: number;       // all objects in bucket
-  eligible: number;    // objects older than threshold
-  skipped: number;     // objects newer than threshold
-  renewed: number;     // successfully copied
-  failed: number;      // copy errors
+  total: number; // all objects in bucket
+  eligible: number; // objects older than threshold
+  skipped: number; // objects newer than threshold
+  renewed: number; // successfully copied
+  failed: number; // copy errors
   failedKeys: { key: string; error: string }[]; // failed key details
-  verified: number;    // spot-check HeadObject confirmations
-  durationMs: number;  // wall-clock time
+  verified: number; // spot-check HeadObject confirmations
+  durationMs: number; // wall-clock time
 }
 ```
 
@@ -607,10 +607,10 @@ resource "aws_s3_bucket_lifecycle_configuration" "public_assets" {
 
 #### Rollback
 
-| Step | Rollback | Notes |
-| --- | --- | --- |
-| Migration script | None needed | Copy-to-self is idempotent and harmless |
-| Lifecycle rule | Terraform: set `status = "Disabled"` | Stops future deletions; already-deleted objects are gone |
+| Step             | Rollback                             | Notes                                                    |
+| ---------------- | ------------------------------------ | -------------------------------------------------------- |
+| Migration script | None needed                          | Copy-to-self is idempotent and harmless                  |
+| Lifecycle rule   | Terraform: set `status = "Disabled"` | Stops future deletions; already-deleted objects are gone |
 
 S3 deletion is irreversible. The migration script must run before enabling the lifecycle rule.
 
