@@ -148,7 +148,7 @@ jobs:
           echo "Waiting for deployment to stabilize..."
           for i in {1..10}; do
             sleep 10
-            if curl -sf "${{ vars.DEV_API_URL }}/health" > /dev/null 2>&1; then
+            if curl -sf "${{ vars.DEV_API_URL }}/healthcheck" > /dev/null 2>&1; then
               echo "Service is healthy after $((i * 10)) seconds"
               exit 0
             fi
@@ -184,7 +184,7 @@ jobs:
           echo "Waiting for deployment to stabilize..."
           for i in {1..10}; do
             sleep 10
-            if curl -sf "${{ vars.PROD_API_URL }}/health" > /dev/null 2>&1; then
+            if curl -sf "${{ vars.PROD_API_URL }}/healthcheck" > /dev/null 2>&1; then
               echo "Service is healthy after $((i * 10)) seconds"
               exit 0
             fi
