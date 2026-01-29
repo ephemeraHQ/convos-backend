@@ -208,6 +208,15 @@ export async function lifecycleStatusHandler(req: Request, res: Response) {
       }
     }
 
+    // Determine oldest keep canary date for cold-start detection
+    // Keys are like "canary-keep-2026-01-20.txt", sorted lexicographically = chronologically
+    const oldestKeepDate = keepCanaries.reduce<string | null>((oldest, key) => {
+      const match = key.match(/canary-keep-(\d{4}-\d{2}-\d{2})\.txt/);
+      if (!match) return oldest;
+      const date = match[1];
+      return oldest === null || date < oldest ? date : oldest;
+    }, null);
+
     // Step 3: Verify files from 2+ days ago (in parallel)
     // Check days MIN_VERIFICATION_DAYS to MAX_VERIFICATION_DAYS to catch any issues
     const daysToCheck: number[] = [];
@@ -222,11 +231,13 @@ export async function lifecycleStatusHandler(req: Request, res: Response) {
         {
           type: "delete" as const,
           daysBack,
+          checkDate,
           key: `canary-delete-${checkDate}.txt`,
         },
         {
           type: "keep" as const,
           daysBack,
+          checkDate,
           key: `canary-keep-${checkDate}.txt`,
         },
       ];
@@ -241,7 +252,7 @@ export async function lifecycleStatusHandler(req: Request, res: Response) {
     );
 
     // Process results
-    for (const { type, key, exists } of existenceResults) {
+    for (const { type, key, checkDate, exists } of existenceResults) {
       if (type === "delete") {
         // Delete canary should NOT exist (expired)
         if (!exists) {
@@ -258,14 +269,15 @@ export async function lifecycleStatusHandler(req: Request, res: Response) {
         if (exists) {
           result.verified.existsAsExpected.push(key);
           req.log.info({ key }, "Keep canary correctly persisted");
-        } else if (keepCanaries.length >= MIN_VERIFICATION_DAYS) {
-          // Past cold start: enough keep canaries exist to prove system is running
+        } else if (oldestKeepDate !== null && checkDate >= oldestKeepDate) {
+          // System was running on this date (we have a canary from the same
+          // day or earlier), so a missing keep canary is a real failure
           const message = `Keep canary ${key} missing (renewal may be broken)`;
           result.errors.push(message);
           result.status = "unhealthy";
           req.log.error({ key }, "Keep canary missing after cold start period");
         } else {
-          // Cold start: not enough keep canaries yet, missing ones are expected
+          // Cold start: this date is before the oldest canary, system wasn't running yet
           req.log.info(
             { key },
             "Keep canary not found (expected during cold start)",
