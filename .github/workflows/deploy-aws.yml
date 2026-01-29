@@ -160,10 +160,10 @@ jobs:
       - name: Test lifecycle renewal endpoint
         run: |
           response=$(curl -s -w "\n%{http_code}" \
-            --max-time 30 \
+            --max-time 60 \
             --retry 3 \
             --retry-connrefused \
-            -X POST "${{ vars.DEV_API_URL }}/v2/assets/test/lifecycle" \
+            -X POST "${{ vars.DEV_API_URL }}/api/v2/assets/test/lifecycle" \
             -H "Authorization: Bearer ${{ secrets.LIFECYCLE_TEST_TOKEN }}")
           http_code=$(echo "$response" | tail -1)
           body=$(echo "$response" | head -n -1)
@@ -196,10 +196,10 @@ jobs:
       - name: Test lifecycle renewal endpoint
         run: |
           response=$(curl -s -w "\n%{http_code}" \
-            --max-time 30 \
+            --max-time 60 \
             --retry 3 \
             --retry-connrefused \
-            -X POST "${{ vars.PROD_API_URL }}/v2/assets/test/lifecycle" \
+            -X POST "${{ vars.PROD_API_URL }}/api/v2/assets/test/lifecycle" \
             -H "Authorization: Bearer ${{ secrets.LIFECYCLE_TEST_TOKEN }}")
           http_code=$(echo "$response" | tail -1)
           body=$(echo "$response" | head -n -1)
