@@ -20,7 +20,7 @@ const env = envSchema.parse({
 const s3Client = env.LIFECYCLE_TEST_BUCKET ? new S3Client({}) : null;
 
 // Verification window constants
-const MIN_VERIFICATION_DAYS = 2; // S3 lifecycle grace period (files need 24h+ to expire)
+const MIN_VERIFICATION_DAYS = 3; // S3 lifecycle needs 2+ full days: creation + Days rounds to next midnight, then batch-processes
 const MAX_VERIFICATION_DAYS = 7; // Window for historical verification
 
 /**
