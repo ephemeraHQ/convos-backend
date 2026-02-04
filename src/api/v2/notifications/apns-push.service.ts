@@ -295,7 +295,9 @@ export function createApnsService(): ApnsPushService | null {
   const bundleId = process.env.APNS_BUNDLE_ID;
 
   if (!teamId || !keyId || !privateKey || !bundleId) {
-    logger.warn("APNS configuration incomplete, APNS push notifications disabled");
+    logger.warn(
+      "APNS configuration incomplete, APNS push notifications disabled",
+    );
     return null;
   }
 

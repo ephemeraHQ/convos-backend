@@ -117,7 +117,9 @@ export function createFcmService(): FcmPushService | null {
   fcmServiceInitialized = true;
 
   if (!process.env.FIREBASE_SERVICE_ACCOUNT) {
-    logger.warn("FIREBASE_SERVICE_ACCOUNT not set, FCM push notifications disabled");
+    logger.warn(
+      "FIREBASE_SERVICE_ACCOUNT not set, FCM push notifications disabled",
+    );
     return null;
   }
 
