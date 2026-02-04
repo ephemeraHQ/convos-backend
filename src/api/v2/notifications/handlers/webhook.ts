@@ -1,6 +1,7 @@
 import type { ClientIdentifier, DeviceRegistration } from "@prisma/client";
 import type { Request, Response } from "express";
 import { createApnsService } from "@/api/v2/notifications/apns-push.service";
+import { createFcmService } from "@/api/v2/notifications/fcm-push.service";
 import type { V2NotificationPayload } from "@/api/v2/notifications/types";
 import {
   createNotificationClient,
@@ -128,16 +129,8 @@ async function handleV2Notification(args: {
     },
   });
 
-  // NOTE: v2 only supports APNS/iOS push notifications
-  // We do not support FCM/Android
-  const apnsService = createApnsService();
-
-  if (!apnsService) {
-    req.log.error("APNS service not configured");
-    return { success: false };
-  }
-
-  // Check if this is a welcome message (too large for APNS)
+  // Check if this is a welcome message (too large for push payload limit)
+  // Both APNS and FCM have a 4KB limit
   const isWelcome = isWelcomeMessage({
     contentTopic: notification.message.content_topic,
     messageType: notification.message_context.message_type,
@@ -146,11 +139,11 @@ async function handleV2Notification(args: {
   if (isWelcome) {
     req.log.info(
       { contentTopic: notification.message.content_topic },
-      "Detected welcome message - omitting encrypted content to avoid APNS payload limit",
+      "Detected welcome message - omitting encrypted content to avoid payload limit",
     );
   }
 
-  // Send push notification with v2 types
+  // Build notification payload (same for both APNS and FCM)
   const v2Notification: V2NotificationPayload = {
     clientId: notification.installation.id,
     apiJWT,
@@ -158,33 +151,49 @@ async function handleV2Notification(args: {
     notificationData: {
       contentTopic: notification.message.content_topic,
       messageType: notification.message_context.message_type,
-      // Omit encryptedMessage for welcome messages (too large for APNS 4KB limit)
+      // Omit encryptedMessage for welcome messages (too large for 4KB limit)
       ...(isWelcome ? {} : { encryptedMessage: notification.message.message }),
       timestamp: notification.message.timestamp_ns,
     },
   };
 
-  // Create a device-like object for APNS service
-  // NOTE: os is hardcoded to "ios" since v2 only supports APNS (no FCM/Android support)
-  const deviceForApns = {
-    id: client.deviceId,
-    pushToken: client.device.pushToken,
-    pushTokenType: client.device.pushTokenType,
-    apnsEnv: client.device.apnsEnv,
-    pushFailures: client.device.pushFailures,
-    name: null,
-    os: "ios" as const,
-    appVersion: null,
-    appBuildNumber: null,
-    createdAt: client.device.addedAt,
-    updatedAt: client.device.updatedAt,
-    lastPushSuccessAt: client.device.lastSentAt,
-  };
+  // Route to appropriate push service based on token type
+  let result: { success: boolean; error?: string };
 
-  const result = await apnsService.sendPushNotification({
-    device: deviceForApns,
-    notification: v2Notification,
-  });
+  if (client.device.pushTokenType === "fcm") {
+    // Android/FCM push notification
+    const fcmService = createFcmService();
+    if (!fcmService) {
+      req.log.error("FCM service not configured");
+      return { success: false };
+    }
+
+    result = await fcmService.sendPushNotification({
+      device: {
+        id: client.deviceId,
+        pushToken: client.device.pushToken,
+        pushTokenType: client.device.pushTokenType,
+      },
+      notification: v2Notification,
+    });
+  } else {
+    // iOS/APNS push notification
+    const apnsService = createApnsService();
+    if (!apnsService) {
+      req.log.error("APNS service not configured");
+      return { success: false };
+    }
+
+    result = await apnsService.sendPushNotification({
+      device: {
+        id: client.deviceId,
+        pushToken: client.device.pushToken,
+        pushTokenType: client.device.pushTokenType,
+        apnsEnv: client.device.apnsEnv,
+      },
+      notification: v2Notification,
+    });
+  }
 
   // Track success/failure using atomic operations to prevent race conditions
   if (result.success) {
@@ -236,6 +245,7 @@ async function handleV2Notification(args: {
         deviceId: client.deviceId,
         error: result.error,
         failureCount: updated.pushFailures,
+        pushTokenType: client.device.pushTokenType,
         apnsEnv: client.device.apnsEnv,
         lastFailureAt: updated.lastFailureAt,
         autoDisabled,

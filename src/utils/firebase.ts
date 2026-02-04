@@ -10,7 +10,7 @@ import logger from "./logger";
 
 let cachedFirebaseApp: App | undefined;
 
-const getFirebaseApp = () => {
+export const getFirebaseApp = () => {
   if (cachedFirebaseApp) {
     return cachedFirebaseApp;
   }

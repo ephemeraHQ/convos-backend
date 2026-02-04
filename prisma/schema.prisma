@@ -17,10 +17,9 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-// NOTE: Only APNS is supported. FCM is not supported.
 enum PushTokenType {
   apns
-  fcm // Not supported - kept for database compatibility only
+  fcm
 }
 
 enum ApnsEnvironment {
