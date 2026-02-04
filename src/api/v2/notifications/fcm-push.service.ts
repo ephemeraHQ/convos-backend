@@ -104,19 +104,28 @@ export class FcmPushService {
   }
 }
 
-// Factory function to create FCM service
+// Cached FCM service instance
+let cachedFcmService: FcmPushService | null = null;
+let fcmServiceInitialized = false;
+
+// Factory function to create or return cached FCM service
 export function createFcmService(): FcmPushService | null {
+  if (fcmServiceInitialized) {
+    return cachedFcmService;
+  }
+
+  fcmServiceInitialized = true;
+
   if (!process.env.FIREBASE_SERVICE_ACCOUNT) {
-    console.warn(
-      "FIREBASE_SERVICE_ACCOUNT not set, FCM push notifications disabled",
-    );
+    logger.warn("FIREBASE_SERVICE_ACCOUNT not set, FCM push notifications disabled");
     return null;
   }
 
   try {
-    return new FcmPushService();
+    cachedFcmService = new FcmPushService();
+    return cachedFcmService;
   } catch (error) {
-    console.warn("Failed to initialize FCM service:", error);
+    logger.warn({ error }, "Failed to initialize FCM service");
     return null;
   }
 }
