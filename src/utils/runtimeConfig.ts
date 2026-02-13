@@ -1,5 +1,5 @@
-import { prisma } from "./prisma";
 import logger from "./logger";
+import { prisma } from "./prisma";
 
 const CACHE_TTL_MS = 30_000;
 
