@@ -2,6 +2,7 @@ import type { NextFunction, Request, Response } from "express";
 import { AppError } from "@/utils/errors";
 import { verifyAppCheckToken } from "@/utils/firebase";
 import { isNotificationExtensionOnlyToken, verifyJwtToken } from "@/utils/jwt";
+import { getRuntimeConfig } from "@/utils/runtimeConfig";
 
 export const AUTH_HEADER = "X-Convos-AuthToken";
 export const APPCHECK_HEADER = "X-Firebase-AppCheck";
@@ -11,6 +12,15 @@ export const appCheckOnlyMiddleware = async (
   res: Response,
   next: NextFunction,
 ) => {
+  const appAttestEnabled =
+    (await getRuntimeConfig("app_attest_enabled", "true")) === "true";
+
+  if (!appAttestEnabled) {
+    req.log.warn("AppCheck bypassed - disabled via runtime config");
+    next();
+    return;
+  }
+
   const appCheckToken = req.header(APPCHECK_HEADER);
 
   req.log.info(
