@@ -116,5 +116,25 @@ describe("FcmPushService", () => {
 
       expect(result.success).toBe(true);
     });
+
+    test("should return error when notification data cannot be serialized", async () => {
+      const service = createFcmService();
+      expect(service).not.toBeNull();
+
+      const result = await service!.sendPushNotification({
+        device: {
+          id: "device-123",
+          pushToken: "valid-fcm-token",
+          pushTokenType: "fcm",
+        },
+        notification: {
+          ...mockNotification,
+          notificationData: { bad: BigInt(1) } as never,
+        },
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.error).toBe("Invalid notification data");
+    });
   });
 });

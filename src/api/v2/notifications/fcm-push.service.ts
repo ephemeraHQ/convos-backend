@@ -33,13 +33,28 @@ export class FcmPushService {
       return { success: false, error: "Device is not configured for FCM" };
     }
 
+    let notificationData: string;
+    try {
+      notificationData = JSON.stringify(notification.notificationData);
+    } catch (error) {
+      logger.error(
+        {
+          deviceId: device.id,
+          error,
+          verbose: true,
+        },
+        "[VERBOSE] Failed to serialize notification data",
+      );
+      return { success: false, error: "Invalid notification data" };
+    }
+
     // FCM data messages - all values must be strings
     // Data-only messages are always delivered to onMessageReceived() on Android
     // even when the app is in background, allowing proper handling
     const data: Record<string, string> = {
       apiJWT: notification.apiJWT,
       notificationType: notification.notificationType,
-      notificationData: JSON.stringify(notification.notificationData),
+      notificationData,
     };
 
     // Add clientId or inboxId depending on which is present
