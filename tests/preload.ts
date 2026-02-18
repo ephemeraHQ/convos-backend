@@ -47,3 +47,17 @@ void mock.module("firebase-admin/app", () => ({
   initializeApp: () => {},
   cert: () => {},
 }));
+
+void mock.module("firebase-admin/messaging", () => ({
+  getMessaging: () => ({
+    send: (message: { token?: string }) => {
+      if (message.token === "valid-fcm-token") {
+        return Promise.resolve("mock-message-id");
+      }
+      const error = new Error("Invalid registration token");
+      (error as Error & { code: string }).code =
+        "messaging/invalid-registration-token";
+      return Promise.reject(error);
+    },
+  }),
+}));

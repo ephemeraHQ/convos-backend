@@ -115,19 +115,6 @@ export async function register(
   try {
     const body = registerRequestSchema.parse(req.body);
 
-    // Reject FCM as it is not supported
-    if (body.pushTokenType === "fcm") {
-      req.log.warn(
-        { deviceId: body.deviceId },
-        "FCM push token type is not supported",
-      );
-      res.status(400).json({
-        error:
-          "FCM push notifications are not supported. Only APNS is supported.",
-      });
-      return;
-    }
-
     req.log.info(
       {
         deviceId: body.deviceId,

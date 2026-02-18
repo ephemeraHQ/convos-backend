@@ -277,15 +277,25 @@ export class ApnsPushService {
   }
 }
 
-// Factory function to create APNS service from environment variables
+// Cached APNS service instance
+let cachedApnsService: ApnsPushService | null = null;
+let apnsServiceInitialized = false;
+
+// Factory function to create or return cached APNS service
 export function createApnsService(): ApnsPushService | null {
+  if (apnsServiceInitialized) {
+    return cachedApnsService;
+  }
+
+  apnsServiceInitialized = true;
+
   const teamId = process.env.APNS_TEAM_ID;
   const keyId = process.env.APNS_KEY_ID;
   const privateKey = process.env.APNS_PRIVATE_KEY;
   const bundleId = process.env.APNS_BUNDLE_ID;
 
   if (!teamId || !keyId || !privateKey || !bundleId) {
-    console.warn(
+    logger.warn(
       "APNS configuration incomplete, APNS push notifications disabled",
     );
     return null;
@@ -294,10 +304,12 @@ export function createApnsService(): ApnsPushService | null {
   // Convert \n escape sequences to actual newlines
   const formattedPrivateKey = privateKey.replace(/\\n/g, "\n");
 
-  return new ApnsPushService({
+  cachedApnsService = new ApnsPushService({
     teamId,
     keyId,
     privateKey: formattedPrivateKey,
     bundleId,
   });
+
+  return cachedApnsService;
 }
