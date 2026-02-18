@@ -34,5 +34,5 @@ export async function setRuntimeConfig(
     create: { key, value },
     update: { value },
   });
-  cache.set(key, { value, expiresAt: Date.now() + CACHE_TTL_MS });
+  cache.delete(key);
 }
