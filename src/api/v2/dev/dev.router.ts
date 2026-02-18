@@ -1,8 +1,5 @@
 import { Router } from "express";
-import {
-  getRuntimeConfig,
-  setRuntimeConfig,
-} from "@/utils/runtimeConfig";
+import { getRuntimeConfig, setRuntimeConfig } from "@/utils/runtimeConfig";
 
 const devRouter = Router();
 
@@ -15,7 +12,9 @@ devRouter.post("/app-attest", async (req, res) => {
   const { enabled } = req.body;
 
   if (typeof enabled !== "boolean") {
-    res.status(400).json({ error: "Request body must include 'enabled' (boolean)" });
+    res
+      .status(400)
+      .json({ error: "Request body must include 'enabled' (boolean)" });
     return;
   }
 
