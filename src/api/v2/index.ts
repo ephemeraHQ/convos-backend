@@ -4,6 +4,7 @@ import {
   authMiddleware,
   authMiddlewareAllowNSE,
 } from "@/middleware/auth";
+import { devAuthMiddleware } from "@/middleware/devAuth";
 import { lifecycleTestAuthMiddleware } from "@/middleware/lifecycleTestAuth";
 import { assetRenewalLimiter } from "@/middleware/rateLimit";
 import { assetsRouter } from "./assets/assets.router";
@@ -11,12 +12,17 @@ import { lifecycleStatusHandler } from "./assets/handlers/lifecycle-status";
 import { testLifecycleHandler } from "./assets/handlers/test-lifecycle";
 import { attachmentsRouter } from "./attachments/attachments.router";
 import { authRouter } from "./auth/auth.router";
+import { devRouter } from "./dev/dev.router";
 import { deviceRouter } from "./device/device.router";
 import invitesV2Router from "./invites/invites.router";
 import { notificationsRouter } from "./notifications/notifications.router";
 import { webhookRouter } from "./notifications/webhook.router";
 
 const v2Router = Router();
+
+if (process.env.XMTP_ENV !== "production") {
+  v2Router.use("/dev", devAuthMiddleware, devRouter);
+}
 
 v2Router.use("/invites", invitesV2Router);
 v2Router.use("/auth", authRouter);
