@@ -50,12 +50,12 @@ POST /api/v2/agents/join
 ```
 
 - Protected by `authMiddleware` (JWT from iOS app — same auth as notifications, assets, etc.)
-- Request body: `{ slug: string }`
+- Request body: `{ slug: string, instructions?: string }`
 - Constructs the full invite URL from the slug (using the correct domain based on `XMTP_ENV`)
 - Calls `POST <AGENT_POOL_URL>/api/pool/claim` with:
   - `joinUrl` — the full invite URL
-  - `agentName` — a default like `"convos-agent"` (or from client if we want)
-  - `instructions` — default agent instructions (empty string or a sensible default)
+  - `agentName` — `"convos-agent"`
+  - `instructions` — from client if provided, otherwise defaults to `"You are a helpful assistant."`
 - Returns result to iOS client
 
 ### 3. New handler: `src/api/v2/agents/handlers/join.ts`
@@ -64,7 +64,8 @@ Request validation (zod):
 
 ```typescript
 {
-  slug: z.string().min(1).max(2048);
+  slug: z.string().min(1).max(2048),
+  instructions: z.string().optional(),
 }
 ```
 
@@ -145,8 +146,8 @@ These are things worth noting but **not part of this initial implementation**:
 
 1. **Request status monitoring** — An endpoint to check if the agent has successfully joined (the pool claim is synchronous and waits up to 60s, so the initial response already tells you)
 2. **Queuing** — If pool has no idle instances, queue the request and fulfill when one becomes available (currently returns 503)
-3. **Custom agent instructions** — Let the iOS client specify what kind of agent to summon (trip planner, translator, etc.)
-4. **Rate limiting** — Per-device rate limiting to prevent a single device from exhausting the pool
+3. **Custom agent instructions** — The iOS client can already pass `instructions` to customize the agent (trip planner, translator, etc.)
+4. **Per-device rate limiting** — More granular rate limiting keyed by device ID (currently uses IP-based rate limiting)
 5. **Agent name from conversation** — Extract the conversation name from the invite slug to use as agent name
 
 ---

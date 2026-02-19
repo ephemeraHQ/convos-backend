@@ -10,7 +10,7 @@ const bodySchema = z.object({
 function buildInviteUrl(slug: string): string {
   const domain =
     XMTP_ENV === "production" ? "popup.convos.org" : "dev.convos.org";
-  return `https://${domain}/v2?i=${slug}`;
+  return `https://${domain}/v2?i=${encodeURIComponent(slug)}`;
 }
 
 export async function joinHandler(req: Request, res: Response) {
@@ -24,8 +24,6 @@ export async function joinHandler(req: Request, res: Response) {
     return;
   }
 
-  req.log.info({ body: req.body }, "Agent join request received");
-
   const parsed = bodySchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({
@@ -37,6 +35,7 @@ export async function joinHandler(req: Request, res: Response) {
   }
 
   const { slug, instructions } = parsed.data;
+  req.log.info({ slug }, "Agent join request received");
   const joinUrl = buildInviteUrl(slug);
 
   try {

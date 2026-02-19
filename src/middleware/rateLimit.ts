@@ -17,6 +17,15 @@ export const authRateLimitMiddleware = rateLimit({
   message: "Too many authentication requests, please try again later",
 });
 
+// Rate limiting for agent join endpoint (10 requests per 5 minutes per IP)
+export const agentJoinLimiter = rateLimit({
+  windowMs: 5 * 60 * 1000, // 5 minutes
+  limit: 10,
+  legacyHeaders: false,
+  standardHeaders: "draft-8",
+  message: { error: "Too many agent join requests, please try again later" },
+});
+
 // Rate limiting for asset renewal endpoint (10 batch requests per hour per device)
 export const assetRenewalLimiter = rateLimit({
   windowMs: 60 * 60 * 1000, // 1 hour
