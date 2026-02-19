@@ -4,6 +4,7 @@ import { AGENT_POOL_API_KEY, AGENT_POOL_URL, XMTP_ENV } from "@/config";
 
 const bodySchema = z.object({
   slug: z.string().min(1, "Slug is required").max(2048),
+  instructions: z.string().optional(),
 });
 
 function buildInviteUrl(slug: string): string {
@@ -23,6 +24,8 @@ export async function joinHandler(req: Request, res: Response) {
     return;
   }
 
+  req.log.info({ body: req.body }, "Agent join request received");
+
   const parsed = bodySchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({
@@ -33,7 +36,7 @@ export async function joinHandler(req: Request, res: Response) {
     return;
   }
 
-  const { slug } = parsed.data;
+  const { slug, instructions } = parsed.data;
   const joinUrl = buildInviteUrl(slug);
 
   try {
@@ -46,7 +49,7 @@ export async function joinHandler(req: Request, res: Response) {
       signal: AbortSignal.timeout(30_000),
       body: JSON.stringify({
         agentName: "convos-agent",
-        instructions: "",
+        instructions: instructions || "You are a helpful assistant.",
         joinUrl,
       }),
     });
