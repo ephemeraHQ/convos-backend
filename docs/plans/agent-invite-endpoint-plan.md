@@ -36,10 +36,10 @@ iOS App                    convos-backend                 convos-agents pool
 
 Add two optional env vars (optional so existing deployments don't break):
 
-| Variable | Description | Example |
-|---|---|---|
-| `AGENT_POOL_URL` | Base URL of the convos-agents pool manager | `https://convos-agents-pool.up.railway.app` |
-| `AGENT_POOL_API_KEY` | Shared secret for authenticating with the pool | `sk-pool-...` |
+| Variable             | Description                                    | Example                                     |
+| -------------------- | ---------------------------------------------- | ------------------------------------------- |
+| `AGENT_POOL_URL`     | Base URL of the convos-agents pool manager     | `https://convos-agents-pool.up.railway.app` |
+| `AGENT_POOL_API_KEY` | Shared secret for authenticating with the pool | `sk-pool-...`                               |
 
 These are **not** validated at startup (unlike `XMTP_NOTIFICATION_SECRET`). The endpoint itself returns 503 if they're missing.
 
@@ -61,13 +61,15 @@ POST /api/v2/agents/join
 ### 3. New handler: `src/api/v2/agents/handlers/join.ts`
 
 Request validation (zod):
+
 ```typescript
 {
-  slug: z.string().min(1).max(2048)
+  slug: z.string().min(1).max(2048);
 }
 ```
 
 Response shape:
+
 ```typescript
 // Success
 { success: true, joined: boolean }
@@ -77,6 +79,7 @@ Response shape:
 ```
 
 Invite URL construction based on `XMTP_ENV`:
+
 - `production` → `https://popup.convos.org/v2?i=<slug>`
 - anything else → `https://dev.convos.org/v2?i=<slug>`
 
@@ -84,28 +87,29 @@ Invite URL construction based on `XMTP_ENV`:
 
 ```typescript
 import { agentsRouter } from "./agents/agents.router";
+
 // ...
 v2Router.use("/agents", authMiddleware, agentsRouter);
 ```
 
 ### Files to create/modify
 
-| File | Action |
-|---|---|
-| `src/config.ts` | Add `AGENT_POOL_URL` and `AGENT_POOL_API_KEY` exports |
-| `src/api/v2/agents/agents.router.ts` | **Create** — router with `POST /join` |
-| `src/api/v2/agents/handlers/join.ts` | **Create** — handler logic |
-| `src/api/v2/index.ts` | Add agents router mount |
+| File                                 | Action                                                |
+| ------------------------------------ | ----------------------------------------------------- |
+| `src/config.ts`                      | Add `AGENT_POOL_URL` and `AGENT_POOL_API_KEY` exports |
+| `src/api/v2/agents/agents.router.ts` | **Create** — router with `POST /join`                 |
+| `src/api/v2/agents/handlers/join.ts` | **Create** — handler logic                            |
+| `src/api/v2/index.ts`                | Add agents router mount                               |
 
 ### Error handling
 
-| Scenario | HTTP Status | Error Code |
-|---|---|---|
-| Missing slug | 400 | `INVALID_REQUEST` |
-| Agent pool not configured | 503 | `AGENT_POOL_UNAVAILABLE` |
-| No idle instances in pool | 503 | `NO_AGENTS_AVAILABLE` |
-| Pool claim failed | 502 | `AGENT_PROVISION_FAILED` |
-| Pool request timeout (30s) | 504 | `AGENT_POOL_TIMEOUT` |
+| Scenario                   | HTTP Status | Error Code               |
+| -------------------------- | ----------- | ------------------------ |
+| Missing slug               | 400         | `INVALID_REQUEST`        |
+| Agent pool not configured  | 503         | `AGENT_POOL_UNAVAILABLE` |
+| No idle instances in pool  | 503         | `NO_AGENTS_AVAILABLE`    |
+| Pool claim failed          | 502         | `AGENT_PROVISION_FAILED` |
+| Pool request timeout (30s) | 504         | `AGENT_POOL_TIMEOUT`     |
 
 ---
 
@@ -120,12 +124,14 @@ If later you want a dedicated lightweight endpoint (e.g., `POST /api/pool/join` 
 ## Environment / Deployment
 
 Both services need to share the `AGENT_POOL_API_KEY` secret:
+
 - `convos-backend` uses it as an outbound auth token
 - `convos-agents` already has it as `POOL_API_KEY`
 
 Set `AGENT_POOL_API_KEY` in convos-backend's deployment to the same value as `POOL_API_KEY` in convos-agents.
 
 Add to convos-backend deployment env:
+
 ```
 AGENT_POOL_URL=<pool manager URL>
 AGENT_POOL_API_KEY=<same as POOL_API_KEY in convos-agents>

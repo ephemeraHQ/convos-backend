@@ -7,6 +7,7 @@ import {
 import { devAuthMiddleware } from "@/middleware/devAuth";
 import { lifecycleTestAuthMiddleware } from "@/middleware/lifecycleTestAuth";
 import { assetRenewalLimiter } from "@/middleware/rateLimit";
+import { agentsRouter } from "./agents/agents.router";
 import { assetsRouter } from "./assets/assets.router";
 import { lifecycleStatusHandler } from "./assets/handlers/lifecycle-status";
 import { testLifecycleHandler } from "./assets/handlers/test-lifecycle";
@@ -43,6 +44,7 @@ v2Router.post(
 );
 
 v2Router.use("/assets", authMiddleware, assetRenewalLimiter, assetsRouter);
+v2Router.use("/agents", authMiddleware, agentsRouter);
 v2Router.use("/attachments", authMiddleware, attachmentsRouter);
 v2Router.use("/notifications/xmtp", webhookRouter);
 v2Router.use("/notifications", authMiddleware, notificationsRouter);

@@ -27,3 +27,8 @@ export const NOTIFICATION_SERVER_URL = process.env.NOTIFICATION_SERVER_URL;
 export const NODE_ENV = process.env.NODE_ENV || "development";
 export const IS_PRODUCTION = process.env.NODE_ENV === "production";
 export const IS_DEVELOPMENT = process.env.NODE_ENV === "development";
+
+// Agent pool (optional — endpoint returns 503 if not configured)
+export const AGENT_POOL_URL = process.env.AGENT_POOL_URL || "";
+export const AGENT_POOL_API_KEY = process.env.AGENT_POOL_API_KEY || "";
+export const XMTP_ENV = process.env.XMTP_ENV || "development";
