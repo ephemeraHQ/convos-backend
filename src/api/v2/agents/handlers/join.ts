@@ -36,9 +36,10 @@ export async function joinHandler(req: Request, res: Response) {
 
   const { slug, instructions } = parsed.data;
   req.log.info({ slug }, "Agent join request received");
-  const joinUrl = buildInviteUrl(slug);
 
   try {
+    const joinUrl = buildInviteUrl(slug);
+
     const poolRes = await fetch(`${AGENT_POOL_URL}/api/pool/claim`, {
       method: "POST",
       headers: {
