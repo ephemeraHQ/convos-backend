@@ -84,6 +84,7 @@ export async function joinHandler(req: Request, res: Response) {
       success: true,
       joined: result.joined ?? false,
     });
+    return;
   } catch (error) {
     if (error instanceof DOMException && error.name === "TimeoutError") {
       req.log.error("Agent pool request timed out");
@@ -104,5 +105,6 @@ export async function joinHandler(req: Request, res: Response) {
       error: "AGENT_PROVISION_FAILED",
       message: "Failed to provision agent",
     });
+    return;
   }
 }
