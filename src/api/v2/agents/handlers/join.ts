@@ -4,7 +4,7 @@ import { AGENT_POOL_API_KEY, AGENT_POOL_URL, XMTP_ENV } from "@/config";
 
 const bodySchema = z.object({
   slug: z.string().min(1, "Slug is required").max(2048),
-  instructions: z.string().optional(),
+  instructions: z.string().max(4096, "Instructions too long").optional(),
 });
 
 function buildInviteUrl(slug: string): string {
@@ -39,8 +39,9 @@ export async function joinHandler(req: Request, res: Response) {
 
   try {
     const joinUrl = buildInviteUrl(slug);
+    const agentPoolBaseUrl = AGENT_POOL_URL.replace(/\/+$/, "");
 
-    const poolRes = await fetch(`${AGENT_POOL_URL}/api/pool/claim`, {
+    const poolRes = await fetch(`${agentPoolBaseUrl}/api/pool/claim`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
