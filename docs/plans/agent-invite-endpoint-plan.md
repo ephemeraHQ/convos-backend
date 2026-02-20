@@ -87,10 +87,11 @@ Invite URL construction based on `XMTP_ENV`:
 ### 4. Register the route in `src/api/v2/index.ts`
 
 ```typescript
+import { agentJoinLimiter } from "@/middleware/rateLimit";
 import { agentsRouter } from "./agents/agents.router";
 
 // ...
-v2Router.use("/agents", authMiddleware, agentsRouter);
+v2Router.use("/agents", agentJoinLimiter, authMiddleware, agentsRouter);
 ```
 
 ### Files to create/modify

@@ -44,7 +44,7 @@ v2Router.post(
 );
 
 v2Router.use("/assets", authMiddleware, assetRenewalLimiter, assetsRouter);
-v2Router.use("/agents", authMiddleware, agentJoinLimiter, agentsRouter);
+v2Router.use("/agents", agentJoinLimiter, authMiddleware, agentsRouter);
 v2Router.use("/attachments", authMiddleware, attachmentsRouter);
 v2Router.use("/notifications/xmtp", webhookRouter);
 v2Router.use("/notifications", authMiddleware, notificationsRouter);
