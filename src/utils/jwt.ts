@@ -126,6 +126,13 @@ export const createJwtToken = async (args: {
   metadata?: V2JWTMetadata;
   expirationTime?: string;
 }) => {
+  // Validate and normalize deviceId to match verification semantics.
+  const deviceIdParseResult = deviceIdSchema.safeParse(args.deviceId);
+  if (!deviceIdParseResult.success) {
+    throw new AppError(400, "Invalid deviceId");
+  }
+  const deviceId = deviceIdParseResult.data;
+
   // Validate metadata size to prevent JWT bloat
   if (args.metadata) {
     const metadataSize = new TextEncoder().encode(
@@ -140,7 +147,7 @@ export const createJwtToken = async (args: {
   }
 
   const payload: V2JWTPayload = {
-    deviceId: args.deviceId,
+    deviceId,
   };
 
   // Add metadata if provided
@@ -161,7 +168,7 @@ export const createJwtToken = async (args: {
   const { data: jwt, error: jwtError } = await tryCatch(
     new jose.SignJWT(payload)
       .setProtectedHeader({ alg: "ES256" })
-      .setSubject(args.deviceId) // Standard 'sub' claim for gateway
+      .setSubject(deviceId) // Standard 'sub' claim for gateway
       .setIssuer(JWT_ISSUER) // Standard 'iss' claim
       .setIssuedAt()
       .setExpirationTime(args.expirationTime ?? "15m")

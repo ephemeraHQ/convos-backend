@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+/** Maximum allowed length for device identifiers (iOS UUID, Android FID, etc.). */
 export const DEVICE_ID_MAX_LENGTH = 128;
 
 /**
