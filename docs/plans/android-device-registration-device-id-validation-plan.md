@@ -5,6 +5,7 @@
 Current backend request schemas validate `deviceId` as a UUID. This works for iOS (`identifierForVendor`) but fails for Android values such as `ANDROID_ID` (64-bit hex string) and would also reject Firebase Installation ID (FID) values.
 
 Engineering discussion aligned on:
+
 - Backend should become more permissive for `deviceId`.
 - Android should move from `ANDROID_ID` to Firebase Installation ID (FID) for better privacy properties.
 - App Check remains the primary app authenticity control.
@@ -18,10 +19,13 @@ Engineering discussion aligned on:
 ## Backend Changes
 
 ### Validation
+
 Use a shared schema for `deviceId`:
+
 - `z.string().trim().min(1).max(128)`
 
 Apply it in:
+
 - `src/api/v2/device/handlers/register.ts`
 - `src/api/v2/auth/handlers/generate-token.ts`
 - `src/api/v2/notifications/handlers/subscribe.ts`
@@ -30,10 +34,13 @@ Apply it in:
 `clientId` remains UUID-validated.
 
 ### Data Layer
+
 No DB migration required now:
+
 - Prisma stores `deviceId` as `String`/`TEXT`.
 
 Optional hardening follow-up:
+
 - Add DB check constraint for max length (e.g. `char_length(deviceId) <= 128`).
 
 ## Android Changes
@@ -62,6 +69,7 @@ Optional hardening follow-up:
 ## Observability
 
 Track:
+
 - 400 rate for device-related endpoints.
 - Device register success rate.
 - Token generation success rate.
@@ -70,5 +78,6 @@ Track:
 ## Follow-up
 
 After Android migration stabilizes, decide whether to:
+
 - support legacy Android IDs indefinitely, or
 - tighten accepted patterns/charset once all active clients use FID.
