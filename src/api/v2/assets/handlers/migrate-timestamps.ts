@@ -4,6 +4,7 @@ import {
   HeadObjectCommand,
   ListObjectsV2Command,
   S3Client,
+  type HeadObjectCommandOutput,
 } from "@aws-sdk/client-s3";
 import type { Request, Response } from "express";
 import { z } from "zod";
@@ -21,6 +22,21 @@ const s3Client = env.PUBLIC_ASSETS_BUCKET ? new S3Client({}) : null;
 const MAX_CONCURRENCY = 200;
 const DEFAULT_CONCURRENCY = 50;
 const DEFAULT_OLDER_THAN_DAYS = 25;
+const MIN_VERIFICATION_SAMPLE = 5;
+const MAX_VERIFICATION_SAMPLE = 100;
+const MAX_RETRY_ATTEMPTS = 4;
+const BASE_RETRY_DELAY_MS = 200;
+const MAX_RETRY_DELAY_MS = 4000;
+const MAX_RETRY_JITTER_MS = 200;
+
+const RETRYABLE_S3_ERROR_NAMES = new Set([
+  "SlowDown",
+  "Throttling",
+  "ThrottlingException",
+  "RequestTimeout",
+  "ServiceUnavailable",
+  "InternalError",
+]);
 
 const querySchema = z.object({
   dryRun: z
@@ -59,39 +75,168 @@ interface MigrateResponse {
 /**
  * Process items with bounded concurrency using a simple semaphore.
  */
-async function mapWithConcurrency<T, R>(
+async function forEachWithConcurrency<T>(
   items: T[],
   concurrency: number,
-  fn: (item: T) => Promise<R>,
-): Promise<R[]> {
-  const results: R[] = new Array<R>(items.length);
+  fn: (item: T) => Promise<void>,
+): Promise<void> {
   let running = 0;
   let index = 0;
 
   return new Promise((resolve, reject) => {
     function next() {
+      if (index >= items.length && running === 0) {
+        resolve();
+        return;
+      }
+
       while (running < concurrency && index < items.length) {
         const i = index++;
         running++;
         fn(items[i])
-          .then((result) => {
-            results[i] = result;
+          .then(() => {
             running--;
-            if (index >= items.length && running === 0) {
-              resolve(results);
-            } else {
-              next();
-            }
+            next();
           })
           .catch(reject);
       }
     }
-    if (items.length === 0) {
-      resolve(results);
-    } else {
-      next();
-    }
+
+    next();
   });
+}
+
+/**
+ * Sleep helper for retry backoff.
+ */
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
+function getErrorName(error: unknown): string {
+  return error instanceof Error ? error.name : "UnknownError";
+}
+
+function getErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : "Unknown error";
+}
+
+/**
+ * Detect retryable S3 errors (throttling/transient service failures).
+ */
+function isRetryableS3Error(error: unknown): boolean {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+
+  const httpStatusCode = (
+    error as {
+      $metadata?: {
+        httpStatusCode?: number;
+      };
+    }
+  ).$metadata?.httpStatusCode;
+
+  return (
+    RETRYABLE_S3_ERROR_NAMES.has(error.name) ||
+    httpStatusCode === 429 ||
+    httpStatusCode === 500 ||
+    httpStatusCode === 503
+  );
+}
+
+/**
+ * Run an S3 operation with bounded exponential backoff on retryable errors.
+ */
+async function sendWithRetry<T>(
+  req: Request,
+  operation: string,
+  key: string,
+  fn: () => Promise<T>,
+): Promise<T> {
+  for (let attempt = 1; attempt <= MAX_RETRY_ATTEMPTS; attempt++) {
+    try {
+      return await fn();
+    } catch (error) {
+      const isRetryable = isRetryableS3Error(error);
+      if (!isRetryable || attempt === MAX_RETRY_ATTEMPTS) {
+        throw error;
+      }
+
+      const backoffMs = Math.min(
+        MAX_RETRY_DELAY_MS,
+        BASE_RETRY_DELAY_MS * 2 ** (attempt - 1),
+      );
+      const jitterMs = Math.floor(Math.random() * MAX_RETRY_JITTER_MS);
+      const delayMs = backoffMs + jitterMs;
+
+      req.log.warn(
+        { operation, key, attempt, delayMs, errorName: getErrorName(error) },
+        "Retrying S3 operation after transient error",
+      );
+      await sleep(delayMs);
+    }
+  }
+
+  throw new Error(
+    "Retry loop exhausted without returning or throwing (unexpected state)",
+  );
+}
+
+/**
+ * Preserve object metadata when using copy-to-self with MetadataDirective=REPLACE.
+ */
+function copyMetadataFromHead(head: HeadObjectCommandOutput) {
+  return {
+    CacheControl: head.CacheControl,
+    ContentDisposition: head.ContentDisposition,
+    ContentEncoding: head.ContentEncoding,
+    ContentLanguage: head.ContentLanguage,
+    ContentType: head.ContentType,
+    Metadata: head.Metadata ?? {},
+    ServerSideEncryption: head.ServerSideEncryption,
+    SSEKMSKeyId: head.SSEKMSKeyId,
+    StorageClass: head.StorageClass,
+    WebsiteRedirectLocation: head.WebsiteRedirectLocation,
+  };
+}
+
+/**
+ * Keep a bounded random sample with reservoir sampling.
+ */
+function addReservoirSample(
+  samples: string[],
+  maxSize: number,
+  seenCount: number,
+  key: string,
+) {
+  if (samples.length < maxSize) {
+    samples.push(key);
+    return;
+  }
+
+  const replacementIndex = Math.floor(Math.random() * seenCount);
+  if (replacementIndex < maxSize) {
+    samples[replacementIndex] = key;
+  }
+}
+
+/**
+ * Pick up to sampleSize random items without mutating the input array.
+ */
+function pickRandomSamples<T>(items: T[], sampleSize: number): T[] {
+  if (sampleSize >= items.length) {
+    return [...items];
+  }
+
+  const copy = [...items];
+  for (let i = copy.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [copy[i], copy[j]] = [copy[j], copy[i]];
+  }
+  return copy.slice(0, sampleSize);
 }
 
 /**
@@ -151,11 +296,18 @@ export async function migrateTimestampsHandler(req: Request, res: Response) {
     const cutoff = new Date();
     cutoff.setUTCDate(cutoff.getUTCDate() - olderThanDays);
 
-    const allKeys: string[] = [];
-    const eligibleKeys: string[] = [];
+    let total = 0;
+    let eligible = 0;
+    let skipped = 0;
+    let renewed = 0;
+    let renewedSeenCount = 0;
+    const verificationCandidates: string[] = [];
     let continuationToken: string | undefined;
+    const failedKeys: { key: string; error: string }[] = [];
+    let page = 0;
 
     do {
+      page++;
       const listResponse = await client.send(
         new ListObjectsV2Command({
           Bucket: bucket,
@@ -163,24 +315,92 @@ export async function migrateTimestampsHandler(req: Request, res: Response) {
         }),
       );
 
+      const pageEligibleKeys: string[] = [];
       for (const obj of listResponse.Contents ?? []) {
         if (!obj.Key) continue;
-        allKeys.push(obj.Key);
+
+        total++;
         if (obj.LastModified && obj.LastModified < cutoff) {
-          eligibleKeys.push(obj.Key);
+          eligible++;
+          if (!dryRun) {
+            pageEligibleKeys.push(obj.Key);
+          }
+        } else {
+          skipped++;
         }
+      }
+
+      if (!dryRun && pageEligibleKeys.length > 0) {
+        await forEachWithConcurrency(
+          pageEligibleKeys,
+          concurrency,
+          async (key) => {
+            try {
+              const sourceHead = await sendWithRetry(
+                req,
+                "HeadObject",
+                key,
+                async () =>
+                  client.send(
+                    new HeadObjectCommand({ Bucket: bucket, Key: key }),
+                  ),
+              );
+
+              await sendWithRetry(req, "CopyObject", key, async () =>
+                client.send(
+                  new CopyObjectCommand({
+                    Bucket: bucket,
+                    CopySource: `${bucket}/${encodeURIComponent(key)}`,
+                    Key: key,
+                    MetadataDirective: "REPLACE",
+                    ...copyMetadataFromHead(sourceHead),
+                  }),
+                ),
+              );
+
+              renewed++;
+              renewedSeenCount++;
+              addReservoirSample(
+                verificationCandidates,
+                MAX_VERIFICATION_SAMPLE,
+                renewedSeenCount,
+                key,
+              );
+            } catch (error: unknown) {
+              failedKeys.push({
+                key,
+                error: `${getErrorName(error)}: ${getErrorMessage(error)}`,
+              });
+              req.log.error({ key, error }, "Failed to renew object");
+            }
+          },
+        );
       }
 
       continuationToken = listResponse.IsTruncated
         ? listResponse.NextContinuationToken
         : undefined;
+
+      req.log.info(
+        {
+          page,
+          pageObjects: listResponse.Contents?.length ?? 0,
+          total,
+          eligible,
+          skipped,
+          renewed,
+          failed: failedKeys.length,
+          hasMorePages: Boolean(continuationToken),
+        },
+        "Processed migration listing page",
+      );
     } while (continuationToken);
 
     req.log.info(
       {
-        total: allKeys.length,
-        eligible: eligibleKeys.length,
-        skipped: allKeys.length - eligibleKeys.length,
+        total,
+        eligible,
+        skipped,
         cutoff: cutoff.toISOString(),
       },
       "Object listing complete",
@@ -193,9 +413,9 @@ export async function migrateTimestampsHandler(req: Request, res: Response) {
         bucket,
         olderThanDays,
         concurrency,
-        total: allKeys.length,
-        eligible: eligibleKeys.length,
-        skipped: allKeys.length - eligibleKeys.length,
+        total,
+        eligible,
+        skipped,
         renewed: 0,
         failed: 0,
         failedKeys: [],
@@ -208,41 +428,24 @@ export async function migrateTimestampsHandler(req: Request, res: Response) {
       return;
     }
 
-    // Step 4: Copy-to-self with bounded concurrency
-    const failedKeys: { key: string; error: string }[] = [];
-    let renewed = 0;
-
-    await mapWithConcurrency(eligibleKeys, concurrency, async (key) => {
-      try {
-        await client.send(
-          new CopyObjectCommand({
-            Bucket: bucket,
-            CopySource: `${bucket}/${encodeURIComponent(key)}`,
-            Key: key,
-            MetadataDirective: "COPY",
-          }),
-        );
-        renewed++;
-      } catch (error: unknown) {
-        const message =
-          error instanceof Error ? error.message : "Unknown error";
-        const errorName = error instanceof Error ? error.name : "UnknownError";
-        failedKeys.push({ key, error: `${errorName}: ${message}` });
-        req.log.error({ key, error }, "Failed to renew object");
-      }
-    });
-
-    // Step 5: Verify a sample of renewed keys
-    const sampleSize = Math.min(5, renewed);
-    const sampleKeys = eligibleKeys
-      .filter((k) => !failedKeys.some((f) => f.key === k))
-      .slice(0, sampleSize);
+    // Step 4: Verify a sample of renewed keys
+    const desiredSampleSize =
+      renewed === 0
+        ? 0
+        : Math.max(
+            MIN_VERIFICATION_SAMPLE,
+            Math.min(MAX_VERIFICATION_SAMPLE, Math.floor(renewed * 0.01)),
+          );
+    const sampleKeys = pickRandomSamples(
+      verificationCandidates,
+      Math.min(desiredSampleSize, verificationCandidates.length),
+    );
 
     const verified: { key: string; lastModified: string }[] = [];
     for (const key of sampleKeys) {
       try {
-        const head = await client.send(
-          new HeadObjectCommand({ Bucket: bucket, Key: key }),
+        const head = await sendWithRetry(req, "HeadObject", key, async () =>
+          client.send(new HeadObjectCommand({ Bucket: bucket, Key: key })),
         );
         if (head.LastModified) {
           verified.push({
@@ -260,9 +463,9 @@ export async function migrateTimestampsHandler(req: Request, res: Response) {
       bucket,
       olderThanDays,
       concurrency,
-      total: allKeys.length,
-      eligible: eligibleKeys.length,
-      skipped: allKeys.length - eligibleKeys.length,
+      total,
+      eligible,
+      skipped,
       renewed,
       failed: failedKeys.length,
       failedKeys,

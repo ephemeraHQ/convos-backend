@@ -500,39 +500,53 @@ Copy-to-self all existing objects in `PUBLIC_ASSETS_BUCKET` to reset `LastModifi
 // Handler: POST /v2/assets/test/migrate-timestamps
 // Query params:
 //   ?dryRun=true   — list objects and report counts without copying (default: true)
-//   ?olderThanDays=25 — only touch objects with LastModified > N days ago (default: 25)
+//   ?olderThanDays=25 — only touch objects with LastModified older than N days (default: 25)
 //   ?concurrency=50   — parallel copy operations (default: 50, max: 200)
 
 // 1. Validate S3 access: HeadBucket on PUBLIC_ASSETS_BUCKET
 // 2. List all objects with paginated ListObjectsV2 (handle ContinuationToken)
 // 3. Filter to objects where LastModified < (now - olderThanDays)
 // 4. If dryRun: return { total, eligible, skipped } without copying
-// 5. If !dryRun: copy-to-self each eligible object in parallel (p-limit concurrency)
-//    - Track: renewed[], failed[] (key + error), skipped[]
-// 6. After completion: sample 5 renewed keys, HeadObject to verify LastModified updated
+// 5. If !dryRun:
+//    - process keys page-by-page (no full in-memory key list)
+//    - HeadObject + CopyObject(copy-to-self, MetadataDirective=REPLACE) for each eligible key
+//    - preserve metadata/content headers on copy
+//    - retry transient throttling errors with exponential backoff
+//    - track failed keys with error detail
+// 6. After completion: sample renewed keys (min 5, max 100), HeadObject verify LastModified updated
 // 7. Return detailed report:
 
 interface MigrateResponse {
   dryRun: boolean;
   bucket: string;
   olderThanDays: number;
+  concurrency: number;
   total: number; // all objects in bucket
   eligible: number; // objects older than threshold
   skipped: number; // objects newer than threshold
   renewed: number; // successfully copied
   failed: number; // copy errors
   failedKeys: { key: string; error: string }[]; // failed key details
-  verified: number; // spot-check HeadObject confirmations
+  verified: { key: string; lastModified: string }[]; // spot-check confirmations
   durationMs: number; // wall-clock time
 }
 ```
+
+**IAM requirements for backend runtime role:**
+
+- `s3:ListBucket` on `PUBLIC_ASSETS_BUCKET`
+- `s3:GetObject` on `PUBLIC_ASSETS_BUCKET/*`
+- `s3:PutObject` on `PUBLIC_ASSETS_BUCKET/*`
 
 **Key design decisions:**
 
 - **Defaults to dry-run** — calling without `?dryRun=false` is safe, only reports counts
 - **Idempotent** — copy-to-self on an already-fresh object just resets the timestamp again
 - **Paginated listing** — handles buckets with >1000 objects via ContinuationToken loop
-- **Bounded concurrency** — uses `p-limit` (already available in Node) or manual semaphore to avoid overwhelming S3
+- **Streaming processing** — processes page-by-page so memory does not grow with bucket size
+- **Bounded concurrency** — custom semaphore limits in-flight S3 operations
+- **Throttling resilience** — retries transient S3 errors with exponential backoff
+- **Operational guidance** — start with default `concurrency=50`; increase only if no throttling
 - **Post-copy verification** — HeadObject on a sample of renewed keys confirms LastModified changed
 - **Failed key tracking** — every failure is captured with key + error for debugging
 
