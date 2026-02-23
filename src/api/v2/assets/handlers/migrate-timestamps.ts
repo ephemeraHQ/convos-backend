@@ -352,7 +352,7 @@ export async function migrateTimestampsHandler(req: Request, res: Response) {
                     Bucket: bucket,
                     CopySource: `${bucket}/${encodeURIComponent(key)}`,
                     Key: key,
-                    MetadataDirective: "REPLACE",
+                    MetadataDirective: "COPY",
                     ...copyMetadataFromHead(sourceHead),
                   }),
                 ),

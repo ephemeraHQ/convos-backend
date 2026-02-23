@@ -199,7 +199,7 @@ describe("POST /api/v2/assets/test/migrate-timestamps", () => {
     expect(mockS3Send).not.toHaveBeenCalled();
   });
 
-  test("copies eligible objects and preserves metadata with REPLACE", async () => {
+  test("copies eligible objects with COPY metadata directive", async () => {
     mockS3Send = mock((command: MockCommand) => {
       if (commandName(command) === "HeadBucketCommand") {
         return Promise.resolve({});
@@ -259,7 +259,7 @@ describe("POST /api/v2/assets/test/migrate-timestamps", () => {
     expect(copyCall).toBeDefined();
 
     const copyCommand = copyCall?.[0] as MockCommand;
-    expect(copyCommand.input.MetadataDirective).toBe("REPLACE");
+    expect(copyCommand.input.MetadataDirective).toBe("COPY");
     expect(copyCommand.input.Metadata).toEqual({ source: "test" });
     expect(copyCommand.input.ContentType).toBe("application/octet-stream");
   });
