@@ -429,49 +429,204 @@ req.log.error(
 
 **Tasks:**
 
-- [ ] Create assets router module
-- [ ] Implement renew-batch handler with Zod validation
-- [ ] Add S3 CopyObjectCommand integration
-- [ ] Implement key validation logic
-- [ ] Add rate limiter middleware
-- [ ] Wire up routes in v2 index
-- [ ] Add structured logging
+- [x] Create assets router module
+- [x] Implement renew-batch handler with Zod validation
+- [x] Add S3 CopyObjectCommand integration
+- [x] Implement key validation logic
+- [x] Add rate limiter middleware
+- [x] Wire up routes in v2 index
+- [x] Add structured logging
 
 ### Phase 2: Testing
 
 **Unit Tests:**
 
-- [ ] Key validation (valid keys, empty keys, path traversal attempts)
-- [ ] Batch size validation (0, 1, 100, 101 keys)
-- [ ] Error classification (NoSuchKey → not_found)
-- [ ] Result aggregation (mix of success/failure)
+- [x] Key validation (valid keys, empty keys, path traversal attempts)
+- [x] Batch size validation (0, 1, 100, 101 keys)
+- [x] Error classification (NoSuchKey → not_found)
+- [x] Result aggregation (mix of success/failure)
 
 **Integration Tests:**
 
-- [ ] End-to-end with real S3 (test bucket)
-- [ ] Verify `LastModified` actually changes
-- [ ] Verify lifecycle respects new timestamp
-- [ ] Test parallel processing (100 URLs)
-- [ ] Test rate limiting enforcement
+- [x] End-to-end with real S3 (test bucket)
+- [x] Verify `LastModified` actually changes
+- [x] Verify lifecycle respects new timestamp
+- [x] Test parallel processing (100 URLs)
+- [x] Test rate limiting enforcement
 
 **Manual Testing:**
 
-- [ ] Upload test asset via presigned URL
-- [ ] Note `LastModified` timestamp
-- [ ] Call renewal endpoint
-- [ ] Verify `LastModified` updated
-- [ ] Wait for expiration (use 1-day lifecycle test bucket)
-- [ ] Verify renewed objects survive past original expiration
+- [x] Upload test asset via presigned URL
+- [x] Note `LastModified` timestamp
+- [x] Call renewal endpoint
+- [x] Verify `LastModified` updated
+- [x] Wait for expiration (use 1-day lifecycle test bucket)
+- [x] Verify renewed objects survive past original expiration
 
 ### Phase 3: Documentation & Deployment
 
-- [ ] Update API documentation
-- [ ] Add endpoint to Postman collection
-- [ ] Add monitoring/alerting for renewal failures
-- [ ] Deploy to staging environment
-- [ ] Validate with iOS app in staging
-- [ ] Deploy to production
-- [ ] Monitor renewal traffic patterns
+- [x] Update API documentation
+- [x] Add endpoint to Postman collection
+- [x] Add monitoring/alerting for renewal failures
+- [x] Deploy to staging environment
+- [x] Validate with iOS app in staging
+- [x] Deploy to production
+- [x] Monitor renewal traffic patterns
+
+### Phase 4: Infrastructure Rollout (S3 Lifecycle Rule)
+
+Enable the 30-day expiration lifecycle rule on `PUBLIC_ASSETS_BUCKET` for dev and prod. The canary verification system is already running on `LIFECYCLE_TEST_BUCKET` (24h lifecycle) and confirms the renewal mechanism works. This phase applies the real rule to the real buckets.
+
+#### The Problem
+
+Enabling a 30-day expiration rule on an existing bucket causes S3 to evaluate all objects immediately. Any object with `LastModified` older than 30 days gets deleted in the next nightly sweep (~midnight UTC). Profile and group images uploaded >30 days ago would be lost.
+
+#### Why No +30 Day Postponement Is Needed
+
+A one-time migration script resets all object timestamps to "now" before the rule is enabled. Every object gets a fresh 30-day window from enablement day. No need for a 60-day initial rule or any postponement.
+
+#### Step 1: One-Time Migration Endpoint
+
+Copy-to-self all existing objects in `PUBLIC_ASSETS_BUCKET` to reset `LastModified` timestamps. Only the backend has IAM access to S3, so this runs as a token-protected endpoint (same pattern as `lifecycle-status.ts`).
+
+**New endpoint:** `POST /v2/assets/test/migrate-timestamps`
+
+- Protected by `lifecycleTestAuthMiddleware` (same `LIFECYCLE_TEST_TOKEN` used by canary system)
+- No rate limiter (one-off operation, token-protected)
+
+**Implementation:** `src/api/v2/assets/handlers/migrate-timestamps.ts`
+
+```typescript
+// Handler: POST /v2/assets/test/migrate-timestamps
+// Query params:
+//   ?dryRun=true   — list objects and report counts without copying (default: true)
+//   ?olderThanDays=25 — only touch objects with LastModified older than N days (default: 25)
+//   ?concurrency=50   — parallel copy operations (default: 50, max: 200)
+
+// 1. Validate S3 access: HeadBucket on PUBLIC_ASSETS_BUCKET
+// 2. List all objects with paginated ListObjectsV2 (handle ContinuationToken)
+// 3. Filter to objects where LastModified < (now - olderThanDays)
+// 4. If dryRun: return { total, eligible, skipped } without copying
+// 5. If !dryRun:
+//    - process keys page-by-page (no full in-memory key list)
+//    - HeadObject + CopyObject(copy-to-self, MetadataDirective=REPLACE) for each eligible key
+//    - preserve metadata/content headers on copy
+//    - retry transient throttling errors with exponential backoff
+//    - track failed keys with error detail
+// 6. After completion: sample renewed keys (min 5, max 100), HeadObject verify LastModified updated
+// 7. Return detailed report:
+
+interface MigrateResponse {
+  dryRun: boolean;
+  bucket: string;
+  olderThanDays: number;
+  concurrency: number;
+  total: number; // all objects in bucket
+  eligible: number; // objects older than threshold
+  skipped: number; // objects newer than threshold
+  renewed: number; // successfully copied
+  failed: number; // copy errors
+  failedKeys: { key: string; error: string }[]; // failed key details
+  verified: { key: string; lastModified: string }[]; // spot-check confirmations
+  durationMs: number; // wall-clock time
+}
+```
+
+**IAM requirements for backend runtime role:**
+
+- `s3:ListBucket` on `PUBLIC_ASSETS_BUCKET`
+- `s3:GetObject` on `PUBLIC_ASSETS_BUCKET/*`
+- `s3:PutObject` on `PUBLIC_ASSETS_BUCKET/*`
+
+**Key design decisions:**
+
+- **Defaults to dry-run** — calling without `?dryRun=false` is safe, only reports counts
+- **Idempotent** — copy-to-self on an already-fresh object just resets the timestamp again
+- **Paginated listing** — handles buckets with >1000 objects via ContinuationToken loop
+- **Streaming processing** — processes page-by-page so memory does not grow with bucket size
+- **Bounded concurrency** — custom semaphore limits in-flight S3 operations
+- **Throttling resilience** — retries transient S3 errors with exponential backoff
+- **Operational guidance** — start with default `concurrency=50`; increase only if no throttling
+- **Post-copy verification** — HeadObject on a sample of renewed keys confirms LastModified changed
+- **Failed key tracking** — every failure is captured with key + error for debugging
+
+**Route registration** in `src/api/v2/index.ts`:
+
+```typescript
+v2Router.post(
+  "/assets/test/migrate-timestamps",
+  lifecycleTestAuthMiddleware,
+  migrateTimestampsHandler,
+);
+```
+
+**Run order:**
+
+- [ ] Deploy endpoint to dev and prod
+- [ ] Dry-run on dev: `curl -X POST -H "Authorization: Bearer $TOKEN" "$DEV_URL/api/v2/assets/test/migrate-timestamps?dryRun=true"`
+- [ ] Review report (total, eligible, skipped counts)
+- [ ] Execute on dev: `curl -X POST -H "Authorization: Bearer $TOKEN" "$DEV_URL/api/v2/assets/test/migrate-timestamps?dryRun=false"`
+- [ ] Verify report (renewed, failed, verified counts)
+- [ ] Dry-run on prod, review report
+- [ ] Execute on prod, verify report
+
+#### Step 2: Enable 30-Day Lifecycle Rule on Dev
+
+**Timing:** Same day as Step 1 dev migration.
+
+**Terraform change** (infrastructure repo, workspace `convos-otr-dev`):
+
+```hcl
+resource "aws_s3_bucket_lifecycle_configuration" "public_assets" {
+  bucket = aws_s3_bucket.public_assets.id
+
+  rule {
+    id     = "expire-after-30-days"
+    status = "Enabled"
+
+    expiration {
+      days = 30
+    }
+
+    filter {} # Applies to all objects
+  }
+}
+```
+
+**Verification:**
+
+- [ ] Canary system on `LIFECYCLE_TEST_BUCKET` stays healthy
+- [ ] Manually check known profile image URLs still resolve after 48h
+- [ ] Monitor for 7 days before proceeding to prod
+
+#### Step 3: Enable 30-Day Lifecycle Rule on Prod
+
+**Timing:** After 7 days of stable dev monitoring.
+
+**Pre-requisite:** iOS app with renewal logic should ideally be in the App Store before this step. If not available, accept that users inactive for 30+ days will see missing images on return (the app handles `not_found` by re-uploading from local cache).
+
+**Same Terraform change** in workspace `convos-otr-prod`.
+
+**Verification:**
+
+- [ ] Monitor daily canary workflow for 30 days
+- [ ] Track iOS renewal endpoint success/failure rates
+- [ ] Watch for user reports of missing images
+- [ ] At Day 31, first un-renewed objects expire — confirm expected behavior
+
+#### iOS App Timing
+
+- **Ideal:** iOS app ships before prod lifecycle rule is enabled
+- **Fallback:** Users who return after 30 days of inactivity get `not_found` from renewal endpoint, triggering re-upload from local cache. Brief gap of missing images between expiration and next app launch — acceptable for inactive users.
+
+#### Rollback
+
+| Step             | Rollback                             | Notes                                                    |
+| ---------------- | ------------------------------------ | -------------------------------------------------------- |
+| Migration script | None needed                          | Copy-to-self is idempotent and harmless                  |
+| Lifecycle rule   | Terraform: set `status = "Disabled"` | Stops future deletions; already-deleted objects are gone |
+
+S3 deletion is irreversible. The migration script must run before enabling the lifecycle rule.
 
 ## Testing Strategy
 

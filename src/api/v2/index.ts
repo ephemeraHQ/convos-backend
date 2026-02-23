@@ -10,6 +10,7 @@ import { agentJoinLimiter, assetRenewalLimiter } from "@/middleware/rateLimit";
 import { agentsRouter } from "./agents/agents.router";
 import { assetsRouter } from "./assets/assets.router";
 import { lifecycleStatusHandler } from "./assets/handlers/lifecycle-status";
+import { migrateTimestampsHandler } from "./assets/handlers/migrate-timestamps";
 import { testLifecycleHandler } from "./assets/handlers/test-lifecycle";
 import { attachmentsRouter } from "./attachments/attachments.router";
 import { authRouter } from "./auth/auth.router";
@@ -41,6 +42,12 @@ v2Router.post(
   lifecycleTestAuthMiddleware,
   assetRenewalLimiter,
   lifecycleStatusHandler,
+);
+// One-time migration endpoint - remove after lifecycle rule is enabled
+v2Router.post(
+  "/assets/test/migrate-timestamps",
+  lifecycleTestAuthMiddleware,
+  migrateTimestampsHandler,
 );
 
 v2Router.use("/assets", authMiddleware, assetRenewalLimiter, assetsRouter);
