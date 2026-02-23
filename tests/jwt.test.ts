@@ -1,6 +1,7 @@
 import { beforeAll, describe, expect, test } from "bun:test";
 import * as jose from "jose";
 import { JWT_ISSUER } from "@/config";
+import { DEVICE_ID_MAX_LENGTH } from "@/utils/device-id";
 import { AppError } from "@/utils/errors";
 import {
   createJwtToken,
@@ -156,8 +157,8 @@ describe("createJwtToken", () => {
     expect(payload.metadata).toEqual(metadata);
   });
 
-  test("JWT with max length deviceId stays under size limits", async () => {
-    const maxDeviceId = "a".repeat(128);
+  test("should stay under size limits with max-length deviceId", async () => {
+    const maxDeviceId = "a".repeat(DEVICE_ID_MAX_LENGTH);
     const token = await createJwtToken({ deviceId: maxDeviceId });
 
     // Conservative upper bound to keep healthy margin against header limits.

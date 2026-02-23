@@ -17,6 +17,15 @@ describe("deviceIdSchema", () => {
     expect(deviceIdSchema.parse(value)).toBe(value);
   });
 
+  test("accepts single character (min length)", () => {
+    expect(deviceIdSchema.parse("x")).toBe("x");
+  });
+
+  test("accepts exactly max length", () => {
+    const value = "a".repeat(DEVICE_ID_MAX_LENGTH);
+    expect(deviceIdSchema.parse(value)).toBe(value);
+  });
+
   test("trims leading/trailing whitespace", () => {
     expect(deviceIdSchema.parse("  test-id  ")).toBe("test-id");
   });
