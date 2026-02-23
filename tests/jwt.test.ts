@@ -156,6 +156,14 @@ describe("createJwtToken", () => {
     expect(payload.metadata).toEqual(metadata);
   });
 
+  test("JWT with max length deviceId stays under size limits", async () => {
+    const maxDeviceId = "a".repeat(128);
+    const token = await createJwtToken({ deviceId: maxDeviceId });
+
+    // Conservative upper bound to keep healthy margin against header limits.
+    expect(token.length).toBeLessThan(2000);
+  });
+
   test("should respect custom expiration time", async () => {
     const deviceId = "test-device-expiry";
     const token = await createJwtToken({
