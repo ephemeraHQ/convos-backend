@@ -3,10 +3,11 @@ import { hexToUint8Array } from "uint8array-extras";
 import { z } from "zod";
 import { createNotificationClient } from "@/notifications/client";
 import { verifyDeviceOwnership } from "@/utils/auth-guards";
+import { deviceIdSchema } from "@/utils/device-id";
 import { prisma } from "@/utils/prisma";
 
 const subscribeRequestSchema = z.object({
-  deviceId: z.string().uuid(),
+  deviceId: deviceIdSchema,
   clientId: z.string().uuid(),
   topics: z
     .array(

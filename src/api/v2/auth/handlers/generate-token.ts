@@ -1,5 +1,6 @@
 import type { Request, Response } from "express";
 import { z } from "zod";
+import { deviceIdSchema } from "@/utils/device-id";
 import { createJwtToken } from "@/utils/jwt";
 import { prisma } from "@/utils/prisma";
 
@@ -19,7 +20,7 @@ import { prisma } from "@/utils/prisma";
  */
 
 const generateTokenRequestSchema = z.object({
-  deviceId: z.string().uuid(),
+  deviceId: deviceIdSchema,
 });
 
 export type IGenerateTokenRequestBody = z.infer<
