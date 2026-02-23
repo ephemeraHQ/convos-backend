@@ -26,6 +26,8 @@ describe("deviceIdSchema", () => {
   });
 
   test("rejects over max length", () => {
-    expect(() => deviceIdSchema.parse("a".repeat(DEVICE_ID_MAX_LENGTH + 1))).toThrow();
+    expect(() =>
+      deviceIdSchema.parse("a".repeat(DEVICE_ID_MAX_LENGTH + 1)),
+    ).toThrow();
   });
 });
