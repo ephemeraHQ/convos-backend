@@ -279,7 +279,7 @@ describe("POST /api/v2/assets/test/migrate-timestamps", () => {
     expect(copyCommand.input.ContentType).toBe("application/octet-stream");
     expect(copyCommand.input.Key).toBe("folder with space/file+name.bin");
     expect(copyCommand.input.CopySource).toBe(
-      "test-public-assets-bucket/folder%20with%20space/file%2Bname.bin",
+      "test-public-assets-bucket/folder with space/file+name.bin",
     );
   });
 
