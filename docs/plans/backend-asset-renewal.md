@@ -502,6 +502,9 @@ Copy-to-self all existing objects in `PUBLIC_ASSETS_BUCKET` to reset `LastModifi
 //   ?dryRun=true   — list objects and report counts without copying (default: true)
 //   ?olderThanDays=25 — only touch objects with LastModified older than N days (default: 25)
 //   ?concurrency=50   — parallel copy operations (default: 50, max: 200)
+//   ?maxPages=5       — maximum ListObjects pages to process in this request (default: 5, max: 50)
+//   ?continuationToken=... — resume from previous response token
+//   ?verbose=true     — log each successfully renewed key
 
 // 1. Validate S3 access: HeadBucket on PUBLIC_ASSETS_BUCKET
 // 2. List all objects with paginated ListObjectsV2 (handle ContinuationToken)
@@ -509,18 +512,22 @@ Copy-to-self all existing objects in `PUBLIC_ASSETS_BUCKET` to reset `LastModifi
 // 4. If dryRun: return { total, eligible, skipped } without copying
 // 5. If !dryRun:
 //    - process keys page-by-page (no full in-memory key list)
-//    - HeadObject + CopyObject(copy-to-self, MetadataDirective=REPLACE) for each eligible key
+//    - HeadObject + CopyObject(copy-to-self, MetadataDirective=COPY) for each eligible key
 //    - preserve metadata/content headers on copy
 //    - retry transient throttling errors with exponential backoff
 //    - track failed keys with error detail
 // 6. After completion: sample renewed keys (min 5, max 100), HeadObject verify LastModified updated
-// 7. Return detailed report:
+// 7. Return detailed report and continuation state for next request:
 
 interface MigrateResponse {
   dryRun: boolean;
   bucket: string;
   olderThanDays: number;
   concurrency: number;
+  maxPages: number;
+  processedPages: number; // pages processed in this request
+  nextContinuationToken: string | null; // pass back in next call
+  done: boolean; // true when full bucket scan is complete
   total: number; // all objects in bucket
   eligible: number; // objects older than threshold
   skipped: number; // objects newer than threshold
@@ -565,10 +572,10 @@ v2Router.post(
 - [ ] Deploy endpoint to dev and prod
 - [ ] Dry-run on dev: `curl -X POST -H "Authorization: Bearer $TOKEN" "$DEV_URL/api/v2/assets/test/migrate-timestamps?dryRun=true"`
 - [ ] Review report (total, eligible, skipped counts)
-- [ ] Execute on dev: `curl -X POST -H "Authorization: Bearer $TOKEN" "$DEV_URL/api/v2/assets/test/migrate-timestamps?dryRun=false"`
-- [ ] Verify report (renewed, failed, verified counts)
+- [ ] Execute on dev in chunks (set `maxPages`, loop using `nextContinuationToken` until `done=true`)
+- [ ] Verify per-chunk report (renewed, failed, verified counts)
 - [ ] Dry-run on prod, review report
-- [ ] Execute on prod, verify report
+- [ ] Execute on prod in chunks, verify report
 
 #### Step 2: Enable 30-Day Lifecycle Rule on Dev
 

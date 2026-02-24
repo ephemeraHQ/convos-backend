@@ -170,6 +170,9 @@ describe("POST /api/v2/assets/test/migrate-timestamps", () => {
     expect(res.status).toBe(200);
     const data = (await res.json()) as {
       dryRun: boolean;
+      processedPages: number;
+      nextContinuationToken: string | null;
+      done: boolean;
       total: number;
       eligible: number;
       skipped: number;
@@ -184,6 +187,9 @@ describe("POST /api/v2/assets/test/migrate-timestamps", () => {
     expect(data.renewed).toBe(0);
     expect(data.failed).toBe(0);
     expect(data.verified).toEqual([]);
+    expect(data.processedPages).toBe(1);
+    expect(data.nextContinuationToken).toBeNull();
+    expect(data.done).toBe(true);
 
     const commands = mockS3Send.mock.calls.map((call) => commandName(call[0]));
     expect(commands).not.toContain("CopyObjectCommand");
@@ -209,7 +215,10 @@ describe("POST /api/v2/assets/test/migrate-timestamps", () => {
         return Promise.resolve({
           IsTruncated: false,
           Contents: [
-            { Key: "needs-refresh.bin", LastModified: daysAgo(60) },
+            {
+              Key: "folder with space/file+name.bin",
+              LastModified: daysAgo(60),
+            },
             { Key: "new.bin", LastModified: daysAgo(1) },
           ],
         });
@@ -238,6 +247,9 @@ describe("POST /api/v2/assets/test/migrate-timestamps", () => {
     expect(res.status).toBe(200);
     const data = (await res.json()) as {
       dryRun: boolean;
+      processedPages: number;
+      nextContinuationToken: string | null;
+      done: boolean;
       total: number;
       eligible: number;
       skipped: number;
@@ -252,6 +264,9 @@ describe("POST /api/v2/assets/test/migrate-timestamps", () => {
     expect(data.renewed).toBe(1);
     expect(data.failed).toBe(0);
     expect(data.verified.length).toBe(1);
+    expect(data.processedPages).toBe(1);
+    expect(data.nextContinuationToken).toBeNull();
+    expect(data.done).toBe(true);
 
     const copyCall = mockS3Send.mock.calls.find(
       (call) => commandName(call[0]) === "CopyObjectCommand",
@@ -262,6 +277,10 @@ describe("POST /api/v2/assets/test/migrate-timestamps", () => {
     expect(copyCommand.input.MetadataDirective).toBe("COPY");
     expect(copyCommand.input.Metadata).toEqual({ source: "test" });
     expect(copyCommand.input.ContentType).toBe("application/octet-stream");
+    expect(copyCommand.input.Key).toBe("folder with space/file+name.bin");
+    expect(copyCommand.input.CopySource).toBe(
+      "test-public-assets-bucket/folder with space/file+name.bin",
+    );
   });
 
   test("handles paginated listing and continues after individual copy failures", async () => {
@@ -318,6 +337,9 @@ describe("POST /api/v2/assets/test/migrate-timestamps", () => {
 
     expect(res.status).toBe(200);
     const data = (await res.json()) as {
+      processedPages: number;
+      nextContinuationToken: string | null;
+      done: boolean;
       total: number;
       eligible: number;
       skipped: number;
@@ -330,6 +352,9 @@ describe("POST /api/v2/assets/test/migrate-timestamps", () => {
     expect(data.skipped).toBe(1);
     expect(data.renewed).toBe(1);
     expect(data.failed).toBe(1);
+    expect(data.processedPages).toBe(2);
+    expect(data.nextContinuationToken).toBeNull();
+    expect(data.done).toBe(true);
     expect(data.failedKeys[0]?.key).toBe("fails.bin");
     expect(data.failedKeys[0]?.error).toContain("AccessDenied");
 
@@ -340,6 +365,82 @@ describe("POST /api/v2/assets/test/migrate-timestamps", () => {
     expect((listCalls[1][0] as MockCommand).input.ContinuationToken).toBe(
       "page-2-token",
     );
+  });
+
+  test("returns nextContinuationToken when maxPages limit is reached", async () => {
+    mockS3Send = mock((command: MockCommand) => {
+      if (commandName(command) === "HeadBucketCommand") {
+        return Promise.resolve({});
+      }
+      if (commandName(command) === "ListObjectsV2Command") {
+        if (!command.input.ContinuationToken) {
+          return Promise.resolve({
+            IsTruncated: true,
+            NextContinuationToken: "next-page",
+            Contents: [{ Key: "old-1.bin", LastModified: daysAgo(40) }],
+          });
+        }
+        throw new Error("should only read one page when maxPages=1");
+      }
+      throw new Error(`unexpected command: ${commandName(command)}`);
+    });
+
+    const res = await post(
+      "?dryRun=true&maxPages=1",
+      "test-secret-token-for-lifecycle-testing-minimum-32-chars",
+    );
+
+    expect(res.status).toBe(200);
+    const data = (await res.json()) as {
+      processedPages: number;
+      nextContinuationToken: string | null;
+      done: boolean;
+      total: number;
+      eligible: number;
+    };
+    expect(data.processedPages).toBe(1);
+    expect(data.nextContinuationToken).toBe("next-page");
+    expect(data.done).toBe(false);
+    expect(data.total).toBe(1);
+    expect(data.eligible).toBe(1);
+
+    const listCalls = mockS3Send.mock.calls.filter(
+      (call) => commandName(call[0]) === "ListObjectsV2Command",
+    );
+    expect(listCalls.length).toBe(1);
+  });
+
+  test("starts listing from provided continuationToken", async () => {
+    mockS3Send = mock((command: MockCommand) => {
+      if (commandName(command) === "HeadBucketCommand") {
+        return Promise.resolve({});
+      }
+      if (commandName(command) === "ListObjectsV2Command") {
+        expect(command.input.ContinuationToken).toBe("resume-token");
+        return Promise.resolve({
+          IsTruncated: false,
+          Contents: [{ Key: "old-2.bin", LastModified: daysAgo(40) }],
+        });
+      }
+      throw new Error(`unexpected command: ${commandName(command)}`);
+    });
+
+    const res = await post(
+      "?dryRun=true&continuationToken=resume-token",
+      "test-secret-token-for-lifecycle-testing-minimum-32-chars",
+    );
+
+    expect(res.status).toBe(200);
+    const data = (await res.json()) as {
+      processedPages: number;
+      nextContinuationToken: string | null;
+      done: boolean;
+      total: number;
+    };
+    expect(data.processedPages).toBe(1);
+    expect(data.nextContinuationToken).toBeNull();
+    expect(data.done).toBe(true);
+    expect(data.total).toBe(1);
   });
 
   test("returns 500 when bucket access check fails", async () => {
