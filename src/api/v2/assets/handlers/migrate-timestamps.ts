@@ -24,6 +24,8 @@ const DEFAULT_CONCURRENCY = 50;
 const DEFAULT_OLDER_THAN_DAYS = 25;
 const MAX_PAGES_PER_REQUEST = 50;
 const DEFAULT_MAX_PAGES = 5;
+const MAX_S3_LIST_KEYS = 1000;
+const DEFAULT_MAX_KEYS = 1000;
 const MIN_VERIFICATION_SAMPLE = 5;
 const MAX_VERIFICATION_SAMPLE = 100;
 const MAX_RETRY_ATTEMPTS = 4;
@@ -63,6 +65,12 @@ const querySchema = z.object({
     .min(1)
     .max(MAX_PAGES_PER_REQUEST)
     .default(DEFAULT_MAX_PAGES),
+  maxKeys: z.coerce
+    .number()
+    .int()
+    .min(1)
+    .max(MAX_S3_LIST_KEYS)
+    .default(DEFAULT_MAX_KEYS),
   continuationToken: z.preprocess((value) => {
     if (typeof value !== "string") {
       return value;
@@ -82,6 +90,7 @@ interface MigrateResponse {
   olderThanDays: number;
   concurrency: number;
   maxPages: number;
+  maxKeys: number;
   processedPages: number;
   nextContinuationToken: string | null;
   done: boolean;
@@ -275,6 +284,7 @@ function pickRandomSamples<T>(items: T[], sampleSize: number): T[] {
  *   olderThanDays=N     (default: 25) — only touch objects older than N days
  *   concurrency=N         (default: 50, max: 200) — parallel copy operations
  *   maxPages=N            (default: 5, max: 50) — pages to process per request
+ *   maxKeys=N             (default: 1000, max: 1000) — keys per listed page
  *   continuationToken=T   (optional) — resume listing from prior chunk token
  *   verbose=true|false    (default: false) — log every successfully renewed key
  *
@@ -305,7 +315,8 @@ export async function migrateTimestampsHandler(req: Request, res: Response) {
     throw error;
   }
 
-  const { dryRun, olderThanDays, concurrency, maxPages, verbose } = params;
+  const { dryRun, olderThanDays, concurrency, maxPages, maxKeys, verbose } =
+    params;
   const startTime = Date.now();
   const startContinuationToken = params.continuationToken;
 
@@ -316,6 +327,7 @@ export async function migrateTimestampsHandler(req: Request, res: Response) {
       olderThanDays,
       concurrency,
       maxPages,
+      maxKeys,
       continuationTokenProvided: Boolean(startContinuationToken),
       verbose,
     },
@@ -345,6 +357,7 @@ export async function migrateTimestampsHandler(req: Request, res: Response) {
       const listResponse = await client.send(
         new ListObjectsV2Command({
           Bucket: bucket,
+          MaxKeys: maxKeys,
           ContinuationToken: continuationToken,
         }),
       );
@@ -431,6 +444,7 @@ export async function migrateTimestampsHandler(req: Request, res: Response) {
           hasMorePages: Boolean(continuationToken),
           processedPages,
           maxPages,
+          maxKeys,
         },
         "Processed migration listing page",
       );
@@ -448,6 +462,7 @@ export async function migrateTimestampsHandler(req: Request, res: Response) {
         skipped,
         processedPages,
         maxPages,
+        maxKeys,
         done,
         hasNextContinuationToken: Boolean(nextContinuationToken),
         cutoff: cutoff.toISOString(),
@@ -463,6 +478,7 @@ export async function migrateTimestampsHandler(req: Request, res: Response) {
         olderThanDays,
         concurrency,
         maxPages,
+        maxKeys,
         processedPages,
         nextContinuationToken,
         done,
@@ -517,6 +533,7 @@ export async function migrateTimestampsHandler(req: Request, res: Response) {
       olderThanDays,
       concurrency,
       maxPages,
+      maxKeys,
       processedPages,
       nextContinuationToken,
       done,

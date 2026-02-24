@@ -15,6 +15,7 @@ import { pinoMiddleware } from "@/middleware/pino";
 
 interface MockCommandInput {
   Bucket?: string;
+  MaxKeys?: number;
   ContinuationToken?: string;
   CopySource?: string;
   Key?: string;
@@ -197,7 +198,7 @@ describe("POST /api/v2/assets/test/migrate-timestamps", () => {
 
   test("rejects invalid query parameters", async () => {
     const res = await post(
-      "?concurrency=999&olderThanDays=366",
+      "?concurrency=999&olderThanDays=366&maxKeys=1001",
       "test-secret-token-for-lifecycle-testing-minimum-32-chars",
     );
 
@@ -386,18 +387,20 @@ describe("POST /api/v2/assets/test/migrate-timestamps", () => {
     });
 
     const res = await post(
-      "?dryRun=true&maxPages=1",
+      "?dryRun=true&maxPages=1&maxKeys=42",
       "test-secret-token-for-lifecycle-testing-minimum-32-chars",
     );
 
     expect(res.status).toBe(200);
     const data = (await res.json()) as {
+      maxKeys: number;
       processedPages: number;
       nextContinuationToken: string | null;
       done: boolean;
       total: number;
       eligible: number;
     };
+    expect(data.maxKeys).toBe(42);
     expect(data.processedPages).toBe(1);
     expect(data.nextContinuationToken).toBe("next-page");
     expect(data.done).toBe(false);
@@ -408,6 +411,7 @@ describe("POST /api/v2/assets/test/migrate-timestamps", () => {
       (call) => commandName(call[0]) === "ListObjectsV2Command",
     );
     expect(listCalls.length).toBe(1);
+    expect((listCalls[0][0] as MockCommand).input.MaxKeys).toBe(42);
   });
 
   test("starts listing from provided continuationToken", async () => {
