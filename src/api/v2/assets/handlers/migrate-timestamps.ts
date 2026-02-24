@@ -263,6 +263,15 @@ function pickRandomSamples<T>(items: T[], sampleSize: number): T[] {
 }
 
 /**
+ * S3 requires URL-encoded source key in CopySource header.
+ * Preserve "/" so object keys with path-like prefixes remain readable.
+ */
+function buildCopySource(bucket: string, key: string): string {
+  const encodedKey = encodeURIComponent(key).replace(/%2F/g, "/");
+  return `${bucket}/${encodedKey}`;
+}
+
+/**
  * POST /v2/assets/test/migrate-timestamps
  *
  * One-time migration endpoint that copies all objects in PUBLIC_ASSETS_BUCKET
@@ -384,7 +393,7 @@ export async function migrateTimestampsHandler(req: Request, res: Response) {
                 client.send(
                   new CopyObjectCommand({
                     Bucket: bucket,
-                    CopySource: `${bucket}/${encodeURIComponent(key)}`,
+                    CopySource: buildCopySource(bucket, key),
                     Key: key,
                     MetadataDirective: "COPY",
                     ...copyMetadataFromHead(sourceHead),

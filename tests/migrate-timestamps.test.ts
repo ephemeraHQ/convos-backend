@@ -215,7 +215,10 @@ describe("POST /api/v2/assets/test/migrate-timestamps", () => {
         return Promise.resolve({
           IsTruncated: false,
           Contents: [
-            { Key: "needs-refresh.bin", LastModified: daysAgo(60) },
+            {
+              Key: "folder with space/file+name.bin",
+              LastModified: daysAgo(60),
+            },
             { Key: "new.bin", LastModified: daysAgo(1) },
           ],
         });
@@ -274,6 +277,10 @@ describe("POST /api/v2/assets/test/migrate-timestamps", () => {
     expect(copyCommand.input.MetadataDirective).toBe("COPY");
     expect(copyCommand.input.Metadata).toEqual({ source: "test" });
     expect(copyCommand.input.ContentType).toBe("application/octet-stream");
+    expect(copyCommand.input.Key).toBe("folder with space/file+name.bin");
+    expect(copyCommand.input.CopySource).toBe(
+      "test-public-assets-bucket/folder%20with%20space/file%2Bname.bin",
+    );
   });
 
   test("handles paginated listing and continues after individual copy failures", async () => {
