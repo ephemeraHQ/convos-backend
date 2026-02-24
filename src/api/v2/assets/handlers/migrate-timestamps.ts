@@ -22,6 +22,8 @@ const s3Client = env.PUBLIC_ASSETS_BUCKET ? new S3Client({}) : null;
 const MAX_CONCURRENCY = 200;
 const DEFAULT_CONCURRENCY = 50;
 const DEFAULT_OLDER_THAN_DAYS = 25;
+const MAX_PAGES_PER_REQUEST = 50;
+const DEFAULT_MAX_PAGES = 5;
 const MIN_VERIFICATION_SAMPLE = 5;
 const MAX_VERIFICATION_SAMPLE = 100;
 const MAX_RETRY_ATTEMPTS = 4;
@@ -55,6 +57,23 @@ const querySchema = z.object({
     .min(1)
     .max(MAX_CONCURRENCY)
     .default(DEFAULT_CONCURRENCY),
+  maxPages: z.coerce
+    .number()
+    .int()
+    .min(1)
+    .max(MAX_PAGES_PER_REQUEST)
+    .default(DEFAULT_MAX_PAGES),
+  continuationToken: z.preprocess((value) => {
+    if (typeof value !== "string") {
+      return value;
+    }
+    const trimmed = value.trim();
+    return trimmed.length === 0 ? undefined : trimmed;
+  }, z.string().max(2048).optional()),
+  verbose: z
+    .enum(["true", "false"])
+    .default("false")
+    .transform((v) => v === "true"),
 });
 
 interface MigrateResponse {
@@ -62,6 +81,10 @@ interface MigrateResponse {
   bucket: string;
   olderThanDays: number;
   concurrency: number;
+  maxPages: number;
+  processedPages: number;
+  nextContinuationToken: string | null;
+  done: boolean;
   total: number;
   eligible: number;
   skipped: number;
@@ -186,7 +209,7 @@ async function sendWithRetry<T>(
 }
 
 /**
- * Preserve object metadata when using copy-to-self with MetadataDirective=REPLACE.
+ * Preserve selected object headers/metadata during copy-to-self operations.
  */
 function copyMetadataFromHead(head: HeadObjectCommandOutput) {
   return {
@@ -250,7 +273,10 @@ function pickRandomSamples<T>(items: T[], sampleSize: number): T[] {
  * Query params:
  *   dryRun=true|false   (default: true) — report counts without copying
  *   olderThanDays=N     (default: 25) — only touch objects older than N days
- *   concurrency=N       (default: 50, max: 200) — parallel copy operations
+ *   concurrency=N         (default: 50, max: 200) — parallel copy operations
+ *   maxPages=N            (default: 5, max: 50) — pages to process per request
+ *   continuationToken=T   (optional) — resume listing from prior chunk token
+ *   verbose=true|false    (default: false) — log every successfully renewed key
  *
  * Protected by lifecycleTestAuthMiddleware. Remove after migration is complete.
  */
@@ -279,11 +305,20 @@ export async function migrateTimestampsHandler(req: Request, res: Response) {
     throw error;
   }
 
-  const { dryRun, olderThanDays, concurrency } = params;
+  const { dryRun, olderThanDays, concurrency, maxPages, verbose } = params;
   const startTime = Date.now();
+  const startContinuationToken = params.continuationToken;
 
   req.log.info(
-    { bucket, dryRun, olderThanDays, concurrency },
+    {
+      bucket,
+      dryRun,
+      olderThanDays,
+      concurrency,
+      maxPages,
+      continuationTokenProvided: Boolean(startContinuationToken),
+      verbose,
+    },
     "Starting timestamp migration",
   );
 
@@ -302,12 +337,11 @@ export async function migrateTimestampsHandler(req: Request, res: Response) {
     let renewed = 0;
     let renewedSeenCount = 0;
     const verificationCandidates: string[] = [];
-    let continuationToken: string | undefined;
+    let continuationToken: string | undefined = startContinuationToken;
     const failedKeys: { key: string; error: string }[] = [];
-    let page = 0;
+    let processedPages = 0;
 
-    do {
-      page++;
+    while (processedPages < maxPages) {
       const listResponse = await client.send(
         new ListObjectsV2Command({
           Bucket: bucket,
@@ -359,6 +393,9 @@ export async function migrateTimestampsHandler(req: Request, res: Response) {
               );
 
               renewed++;
+              if (verbose) {
+                req.log.info({ key }, "Renewed object");
+              }
               renewedSeenCount++;
               addReservoirSample(
                 verificationCandidates,
@@ -380,10 +417,11 @@ export async function migrateTimestampsHandler(req: Request, res: Response) {
       continuationToken = listResponse.IsTruncated
         ? listResponse.NextContinuationToken
         : undefined;
+      processedPages++;
 
       req.log.info(
         {
-          page,
+          page: processedPages,
           pageObjects: listResponse.Contents?.length ?? 0,
           total,
           eligible,
@@ -391,16 +429,27 @@ export async function migrateTimestampsHandler(req: Request, res: Response) {
           renewed,
           failed: failedKeys.length,
           hasMorePages: Boolean(continuationToken),
+          processedPages,
+          maxPages,
         },
         "Processed migration listing page",
       );
-    } while (continuationToken);
+      if (!continuationToken) {
+        break;
+      }
+    }
+    const nextContinuationToken = continuationToken ?? null;
+    const done = nextContinuationToken === null;
 
     req.log.info(
       {
         total,
         eligible,
         skipped,
+        processedPages,
+        maxPages,
+        done,
+        hasNextContinuationToken: Boolean(nextContinuationToken),
         cutoff: cutoff.toISOString(),
       },
       "Object listing complete",
@@ -413,6 +462,10 @@ export async function migrateTimestampsHandler(req: Request, res: Response) {
         bucket,
         olderThanDays,
         concurrency,
+        maxPages,
+        processedPages,
+        nextContinuationToken,
+        done,
         total,
         eligible,
         skipped,
@@ -463,6 +516,10 @@ export async function migrateTimestampsHandler(req: Request, res: Response) {
       bucket,
       olderThanDays,
       concurrency,
+      maxPages,
+      processedPages,
+      nextContinuationToken,
+      done,
       total,
       eligible,
       skipped,
