@@ -503,6 +503,7 @@ Copy-to-self all existing objects in `PUBLIC_ASSETS_BUCKET` to reset `LastModifi
 //   ?olderThanDays=25 — only touch objects with LastModified older than N days (default: 25)
 //   ?concurrency=50   — parallel copy operations (default: 50, max: 200)
 //   ?maxPages=5       — maximum ListObjects pages to process in this request (default: 5, max: 50)
+//   ?maxKeys=1000     — max keys returned per ListObjectsV2 page (default: 1000, max: 1000)
 //   ?continuationToken=... — resume from previous response token
 //   ?verbose=true     — log each successfully renewed key
 
@@ -525,6 +526,7 @@ interface MigrateResponse {
   olderThanDays: number;
   concurrency: number;
   maxPages: number;
+  maxKeys: number;
   processedPages: number; // pages processed in this request
   nextContinuationToken: string | null; // pass back in next call
   done: boolean; // true when full bucket scan is complete
@@ -572,7 +574,7 @@ v2Router.post(
 - [ ] Deploy endpoint to dev and prod
 - [ ] Dry-run on dev: `curl -X POST -H "Authorization: Bearer $TOKEN" "$DEV_URL/api/v2/assets/test/migrate-timestamps?dryRun=true"`
 - [ ] Review report (total, eligible, skipped counts)
-- [ ] Execute on dev in chunks (set `maxPages`, loop using `nextContinuationToken` until `done=true`)
+- [ ] Execute on dev in chunks (set `maxPages` and `maxKeys`, loop using `nextContinuationToken` until `done=true`)
 - [ ] Verify per-chunk report (renewed, failed, verified counts)
 - [ ] Dry-run on prod, review report
 - [ ] Execute on prod in chunks, verify report
