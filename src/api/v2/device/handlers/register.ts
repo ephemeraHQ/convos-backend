@@ -2,10 +2,11 @@ import { ApnsEnvironmentSchema, PushTokenTypeSchema } from "@prisma-zod/index";
 import type { ApnsEnvironment, PushTokenType } from "@prisma/client";
 import type { Request, Response } from "express";
 import { z } from "zod";
+import { deviceIdSchema } from "@/utils/device-id";
 import { prisma } from "@/utils/prisma";
 
 const registerRequestSchema = z.object({
-  deviceId: z.string().uuid(),
+  deviceId: deviceIdSchema,
   pushToken: z
     .string()
     .optional()

@@ -1,6 +1,7 @@
 import { beforeAll, describe, expect, test } from "bun:test";
 import * as jose from "jose";
 import { JWT_ISSUER } from "@/config";
+import { DEVICE_ID_MAX_LENGTH } from "@/utils/device-id";
 import { AppError } from "@/utils/errors";
 import {
   createJwtToken,
@@ -156,6 +157,23 @@ describe("createJwtToken", () => {
     expect(payload.metadata).toEqual(metadata);
   });
 
+  test("should stay under size limits with max-length deviceId", async () => {
+    const maxDeviceId = "a".repeat(DEVICE_ID_MAX_LENGTH);
+    const token = await createJwtToken({ deviceId: maxDeviceId });
+
+    // Conservative upper bound to keep healthy margin against header limits.
+    expect(token.length).toBeLessThan(2000);
+  });
+
+  test("should normalize deviceId by trimming whitespace", async () => {
+    const token = await createJwtToken({ deviceId: "  test-device-trim  " });
+    const payload = await verifyJwtToken({ token });
+    const decoded = jose.decodeJwt(token);
+
+    expect(payload.deviceId).toBe("test-device-trim");
+    expect(decoded.sub).toBe("test-device-trim");
+  });
+
   test("should respect custom expiration time", async () => {
     const deviceId = "test-device-expiry";
     const token = await createJwtToken({
@@ -171,5 +189,17 @@ describe("createJwtToken", () => {
     // Allow 5 second tolerance
     expect(decoded.exp).toBeGreaterThan(expectedExp - 5);
     expect(decoded.exp).toBeLessThan(expectedExp + 5);
+  });
+
+  test("should throw for invalid deviceId", async () => {
+    try {
+      await createJwtToken({ deviceId: "   " });
+      expect.unreachable("Should have thrown an error");
+    } catch (error) {
+      expect(error).toBeInstanceOf(AppError);
+      const appError = error as AppError;
+      expect(appError.statusCode).toBe(400);
+      expect(appError.message).toBe("Invalid deviceId");
+    }
   });
 });

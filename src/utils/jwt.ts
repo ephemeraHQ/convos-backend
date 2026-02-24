@@ -1,6 +1,7 @@
 import * as jose from "jose";
 import { z } from "zod";
 import { JWT_ISSUER, JWT_PRIVATE_KEY, JWT_PUBLIC_KEY } from "@/config";
+import { deviceIdSchema } from "@/utils/device-id";
 import { AppError } from "@/utils/errors";
 import logger from "@/utils/logger";
 import { tryCatch } from "@/utils/try-catch";
@@ -20,7 +21,7 @@ export type V2JWTPayload = {
 };
 
 const v2JWTPayloadSchema = z.object({
-  deviceId: z.string(),
+  deviceId: deviceIdSchema,
   metadata: z
     .object({
       notificationExtensionOnly: z.boolean().optional(),
@@ -125,6 +126,13 @@ export const createJwtToken = async (args: {
   metadata?: V2JWTMetadata;
   expirationTime?: string;
 }) => {
+  // Validate and normalize deviceId to match verification semantics.
+  const deviceIdParseResult = deviceIdSchema.safeParse(args.deviceId);
+  if (!deviceIdParseResult.success) {
+    throw new AppError(400, "Invalid deviceId");
+  }
+  const deviceId = deviceIdParseResult.data;
+
   // Validate metadata size to prevent JWT bloat
   if (args.metadata) {
     const metadataSize = new TextEncoder().encode(
@@ -139,7 +147,7 @@ export const createJwtToken = async (args: {
   }
 
   const payload: V2JWTPayload = {
-    deviceId: args.deviceId,
+    deviceId,
   };
 
   // Add metadata if provided
@@ -160,7 +168,7 @@ export const createJwtToken = async (args: {
   const { data: jwt, error: jwtError } = await tryCatch(
     new jose.SignJWT(payload)
       .setProtectedHeader({ alg: "ES256" })
-      .setSubject(args.deviceId) // Standard 'sub' claim for gateway
+      .setSubject(deviceId) // Standard 'sub' claim for gateway
       .setIssuer(JWT_ISSUER) // Standard 'iss' claim
       .setIssuedAt()
       .setExpirationTime(args.expirationTime ?? "15m")
