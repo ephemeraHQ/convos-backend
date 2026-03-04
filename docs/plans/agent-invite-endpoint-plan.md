@@ -54,7 +54,7 @@ POST /api/v2/agents/join
 - Constructs the full invite URL from the slug (using the correct domain based on `XMTP_ENV`)
 - Calls `POST <AGENT_POOL_URL>/api/pool/claim` with:
   - `joinUrl` — the full invite URL
-  - `agentName` — `"convos-agent"`
+  - `agentName` — `"Assistant"`
   - `instructions` — from client if provided, otherwise defaults to `"You are a helpful assistant."`
 - Returns result to iOS client
 
