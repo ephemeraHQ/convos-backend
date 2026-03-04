@@ -49,7 +49,7 @@ export async function joinHandler(req: Request, res: Response) {
       },
       signal: AbortSignal.timeout(30_000),
       body: JSON.stringify({
-        agentName: "convos-agent",
+        agentName: "Assistant",
         instructions: instructions || "You are a helpful assistant.",
         joinUrl,
       }),
