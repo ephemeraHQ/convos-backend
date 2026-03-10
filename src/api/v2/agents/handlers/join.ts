@@ -7,13 +7,78 @@ const bodySchema = z.object({
   instructions: z.string().max(4096, "Instructions too long").optional(),
 });
 
+const FORCE_ERROR_DELAY_MS = 5_000;
+
+const ERRORS = {
+  AGENT_PROVISION_FAILED: {
+    status: 502,
+    error: "AGENT_PROVISION_FAILED",
+    message: "Failed to provision agent",
+  },
+  NO_AGENTS_AVAILABLE: {
+    status: 503,
+    error: "NO_AGENTS_AVAILABLE",
+    message: "No agents are currently available",
+  },
+  AGENT_POOL_TIMEOUT: {
+    status: 504,
+    error: "AGENT_POOL_TIMEOUT",
+    message: "Agent pool request timed out",
+  },
+} as const;
+
 function buildInviteUrl(slug: string): string {
   const domain =
     XMTP_ENV === "production" ? "popup.convos.org" : "dev.convos.org";
   return `https://${domain}/v2?i=${encodeURIComponent(slug)}`;
 }
 
+/**
+ * Handler for POST /api/v2/agents/join
+ *
+ * Requests an AI agent to join a conversation by claiming an idle instance
+ * from the agent pool and directing it to the conversation's invite URL.
+ *
+ * ## Testing with forced errors
+ *
+ * Send the `X-Force-Error` header to simulate error responses without
+ * hitting the real agent pool. The response is delayed by 5 seconds to
+ * mimic real-world latency. Only available when `XMTP_ENV` is not `"production"`.
+ * In production, the `X-Force-Error` header is silently ignored and normal
+ * logic proceeds.
+ *
+ * | Header value       | Simulated response                  |
+ * |--------------------|-------------------------------------|
+ * | `X-Force-Error: 502` | 502 AGENT_PROVISION_FAILED        |
+ * | `X-Force-Error: 503` | 503 NO_AGENTS_AVAILABLE           |
+ * | `X-Force-Error: 504` | 504 AGENT_POOL_TIMEOUT            |
+ *
+ * Example:
+ * ```
+ * curl -X POST https://api.convos.org/api/v2/agents/join \
+ *   -H "Authorization: Bearer <jwt>" \
+ *   -H "Content-Type: application/json" \
+ *   -H "X-Force-Error: 502" \
+ *   -d '{"slug": "test-slug"}'
+ * ```
+ */
 export async function joinHandler(req: Request, res: Response) {
+  // Force error responses for testing (non-production XMTP env only) — see JSDoc above for usage
+  const forceError =
+    XMTP_ENV !== "production" ? req.headers["x-force-error"] : undefined;
+  const forcedError = Object.values(ERRORS).find(
+    (e) => String(e.status) === forceError,
+  );
+  if (forcedError) {
+    req.log.warn(
+      `Forcing ${forcedError.status} ${forcedError.error} for testing (${FORCE_ERROR_DELAY_MS}ms delay)`,
+    );
+    await new Promise((resolve) => setTimeout(resolve, FORCE_ERROR_DELAY_MS));
+    const { status, ...body } = forcedError;
+    res.status(status).json({ success: false, ...body });
+    return;
+  }
+
   if (!AGENT_POOL_URL || !AGENT_POOL_API_KEY) {
     req.log.error("Agent pool not configured");
     res.status(503).json({
@@ -63,19 +128,13 @@ export async function joinHandler(req: Request, res: Response) {
       );
 
       if (poolRes.status === 503 || poolRes.status === 404) {
-        res.status(503).json({
-          success: false,
-          error: "NO_AGENTS_AVAILABLE",
-          message: "No agents are currently available",
-        });
+        const { status, ...body } = ERRORS.NO_AGENTS_AVAILABLE;
+        res.status(status).json({ success: false, ...body });
         return;
       }
 
-      res.status(502).json({
-        success: false,
-        error: "AGENT_PROVISION_FAILED",
-        message: "Failed to provision agent",
-      });
+      const { status, ...body } = ERRORS.AGENT_PROVISION_FAILED;
+      res.status(status).json({ success: false, ...body });
       return;
     }
 
@@ -89,11 +148,8 @@ export async function joinHandler(req: Request, res: Response) {
   } catch (error) {
     if (error instanceof DOMException && error.name === "TimeoutError") {
       req.log.error("Agent pool request timed out");
-      res.status(504).json({
-        success: false,
-        error: "AGENT_POOL_TIMEOUT",
-        message: "Agent pool request timed out",
-      });
+      const { status, ...body } = ERRORS.AGENT_POOL_TIMEOUT;
+      res.status(status).json({ success: false, ...body });
       return;
     }
 
@@ -101,11 +157,8 @@ export async function joinHandler(req: Request, res: Response) {
       { error, stack: error instanceof Error ? error.stack : undefined },
       "Agent pool request failed",
     );
-    res.status(502).json({
-      success: false,
-      error: "AGENT_PROVISION_FAILED",
-      message: "Failed to provision agent",
-    });
+    const { status, ...body } = ERRORS.AGENT_PROVISION_FAILED;
+    res.status(status).json({ success: false, ...body });
     return;
   }
 }
