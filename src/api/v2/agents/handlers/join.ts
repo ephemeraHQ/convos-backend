@@ -7,6 +7,14 @@ const bodySchema = z.object({
   instructions: z.string().max(4096, "Instructions too long").optional(),
 });
 
+const FORCE_ERROR_DELAY_MS = 5_000;
+
+const ERRORS = {
+  AGENT_PROVISION_FAILED: { status: 502, error: "AGENT_PROVISION_FAILED", message: "Failed to provision agent" },
+  NO_AGENTS_AVAILABLE: { status: 503, error: "NO_AGENTS_AVAILABLE", message: "No agents are currently available" },
+  AGENT_POOL_TIMEOUT: { status: 504, error: "AGENT_POOL_TIMEOUT", message: "Agent pool request timed out" },
+} as const;
+
 function buildInviteUrl(slug: string): string {
   const domain =
     XMTP_ENV === "production" ? "popup.convos.org" : "dev.convos.org";
@@ -43,16 +51,12 @@ function buildInviteUrl(slug: string): string {
 export async function joinHandler(req: Request, res: Response) {
   // Force error responses for testing — see JSDoc above for usage
   const forceError = req.headers["x-force-error"];
-  if (forceError === "502" || forceError === "503" || forceError === "504") {
-    const status = Number(forceError);
-    const errorMap: Record<number, { error: string; message: string }> = {
-      502: { error: "AGENT_PROVISION_FAILED", message: "Failed to provision agent" },
-      503: { error: "NO_AGENTS_AVAILABLE", message: "No agents are currently available" },
-      504: { error: "AGENT_POOL_TIMEOUT", message: "Agent pool request timed out" },
-    };
-    req.log.warn(`Forcing ${status} ${errorMap[status].error} for testing (5s delay)`);
-    await new Promise((resolve) => setTimeout(resolve, 5000));
-    res.status(status).json({ success: false, ...errorMap[status] });
+  const forcedError = Object.values(ERRORS).find((e) => String(e.status) === forceError);
+  if (forcedError) {
+    req.log.warn(`Forcing ${forcedError.status} ${forcedError.error} for testing (${FORCE_ERROR_DELAY_MS}ms delay)`);
+    await new Promise((resolve) => setTimeout(resolve, FORCE_ERROR_DELAY_MS));
+    const { status, ...body } = forcedError;
+    res.status(status).json({ success: false, ...body });
     return;
   }
 
@@ -105,19 +109,13 @@ export async function joinHandler(req: Request, res: Response) {
       );
 
       if (poolRes.status === 503 || poolRes.status === 404) {
-        res.status(503).json({
-          success: false,
-          error: "NO_AGENTS_AVAILABLE",
-          message: "No agents are currently available",
-        });
+        const { status, ...body } = ERRORS.NO_AGENTS_AVAILABLE;
+        res.status(status).json({ success: false, ...body });
         return;
       }
 
-      res.status(502).json({
-        success: false,
-        error: "AGENT_PROVISION_FAILED",
-        message: "Failed to provision agent",
-      });
+      const { status, ...body } = ERRORS.AGENT_PROVISION_FAILED;
+      res.status(status).json({ success: false, ...body });
       return;
     }
 
@@ -131,11 +129,8 @@ export async function joinHandler(req: Request, res: Response) {
   } catch (error) {
     if (error instanceof DOMException && error.name === "TimeoutError") {
       req.log.error("Agent pool request timed out");
-      res.status(504).json({
-        success: false,
-        error: "AGENT_POOL_TIMEOUT",
-        message: "Agent pool request timed out",
-      });
+      const { status, ...body } = ERRORS.AGENT_POOL_TIMEOUT;
+      res.status(status).json({ success: false, ...body });
       return;
     }
 
@@ -143,11 +138,8 @@ export async function joinHandler(req: Request, res: Response) {
       { error, stack: error instanceof Error ? error.stack : undefined },
       "Agent pool request failed",
     );
-    res.status(502).json({
-      success: false,
-      error: "AGENT_PROVISION_FAILED",
-      message: "Failed to provision agent",
-    });
+    const { status, ...body } = ERRORS.AGENT_PROVISION_FAILED;
+    res.status(status).json({ success: false, ...body });
     return;
   }
 }
