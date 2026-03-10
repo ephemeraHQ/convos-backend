@@ -13,7 +13,49 @@ function buildInviteUrl(slug: string): string {
   return `https://${domain}/v2?i=${encodeURIComponent(slug)}`;
 }
 
+/**
+ * Handler for POST /api/v2/agents/join
+ *
+ * Requests an AI agent to join a conversation by claiming an idle instance
+ * from the agent pool and directing it to the conversation's invite URL.
+ *
+ * ## Testing with forced errors
+ *
+ * Send the `X-Force-Error` header to simulate error responses without
+ * hitting the real agent pool. The response is delayed by 5 seconds to
+ * mimic real-world latency. Works in all environments (dev & production).
+ *
+ * | Header value       | Simulated response                  |
+ * |--------------------|-------------------------------------|
+ * | `X-Force-Error: 502` | 502 AGENT_PROVISION_FAILED        |
+ * | `X-Force-Error: 503` | 503 NO_AGENTS_AVAILABLE           |
+ * | `X-Force-Error: 504` | 504 AGENT_POOL_TIMEOUT            |
+ *
+ * Example:
+ * ```
+ * curl -X POST https://api.convos.org/api/v2/agents/join \
+ *   -H "Authorization: Bearer <jwt>" \
+ *   -H "Content-Type: application/json" \
+ *   -H "X-Force-Error: 502" \
+ *   -d '{"slug": "test-slug"}'
+ * ```
+ */
 export async function joinHandler(req: Request, res: Response) {
+  // Force error responses for testing — see JSDoc above for usage
+  const forceError = req.headers["x-force-error"];
+  if (forceError === "502" || forceError === "503" || forceError === "504") {
+    const status = Number(forceError);
+    const errorMap: Record<number, { error: string; message: string }> = {
+      502: { error: "AGENT_PROVISION_FAILED", message: "Failed to provision agent" },
+      503: { error: "NO_AGENTS_AVAILABLE", message: "No agents are currently available" },
+      504: { error: "AGENT_POOL_TIMEOUT", message: "Agent pool request timed out" },
+    };
+    req.log.warn(`Forcing ${status} ${errorMap[status].error} for testing (5s delay)`);
+    await new Promise((resolve) => setTimeout(resolve, 5000));
+    res.status(status).json({ success: false, ...errorMap[status] });
+    return;
+  }
+
   if (!AGENT_POOL_URL || !AGENT_POOL_API_KEY) {
     req.log.error("Agent pool not configured");
     res.status(503).json({
