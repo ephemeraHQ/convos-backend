@@ -1,6 +1,6 @@
 import type { Request, Response } from "express";
 import { z } from "zod";
-import { AGENT_POOL_API_KEY, AGENT_POOL_URL, IS_DEVELOPMENT, XMTP_ENV } from "@/config";
+import { AGENT_POOL_API_KEY, AGENT_POOL_URL, XMTP_ENV } from "@/config";
 
 const bodySchema = z.object({
   slug: z.string().min(1, "Slug is required").max(2048),
@@ -31,7 +31,7 @@ function buildInviteUrl(slug: string): string {
  *
  * Send the `X-Force-Error` header to simulate error responses without
  * hitting the real agent pool. The response is delayed by 5 seconds to
- * mimic real-world latency. Only available in development (`IS_DEVELOPMENT`).
+ * mimic real-world latency. Only available when `XMTP_ENV` is not `"production"`.
  * In production, the `X-Force-Error` header is silently ignored and normal
  * logic proceeds.
  *
@@ -51,8 +51,8 @@ function buildInviteUrl(slug: string): string {
  * ```
  */
 export async function joinHandler(req: Request, res: Response) {
-  // Force error responses for testing (development only) — see JSDoc above for usage
-  const forceError = IS_DEVELOPMENT ? req.headers["x-force-error"] : undefined;
+  // Force error responses for testing (non-production XMTP env only) — see JSDoc above for usage
+  const forceError = XMTP_ENV !== "production" ? req.headers["x-force-error"] : undefined;
   const forcedError = Object.values(ERRORS).find((e) => String(e.status) === forceError);
   if (forcedError) {
     req.log.warn(`Forcing ${forcedError.status} ${forcedError.error} for testing (${FORCE_ERROR_DELAY_MS}ms delay)`);
