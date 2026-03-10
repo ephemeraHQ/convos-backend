@@ -10,9 +10,21 @@ const bodySchema = z.object({
 const FORCE_ERROR_DELAY_MS = 5_000;
 
 const ERRORS = {
-  AGENT_PROVISION_FAILED: { status: 502, error: "AGENT_PROVISION_FAILED", message: "Failed to provision agent" },
-  NO_AGENTS_AVAILABLE: { status: 503, error: "NO_AGENTS_AVAILABLE", message: "No agents are currently available" },
-  AGENT_POOL_TIMEOUT: { status: 504, error: "AGENT_POOL_TIMEOUT", message: "Agent pool request timed out" },
+  AGENT_PROVISION_FAILED: {
+    status: 502,
+    error: "AGENT_PROVISION_FAILED",
+    message: "Failed to provision agent",
+  },
+  NO_AGENTS_AVAILABLE: {
+    status: 503,
+    error: "NO_AGENTS_AVAILABLE",
+    message: "No agents are currently available",
+  },
+  AGENT_POOL_TIMEOUT: {
+    status: 504,
+    error: "AGENT_POOL_TIMEOUT",
+    message: "Agent pool request timed out",
+  },
 } as const;
 
 function buildInviteUrl(slug: string): string {
@@ -52,10 +64,15 @@ function buildInviteUrl(slug: string): string {
  */
 export async function joinHandler(req: Request, res: Response) {
   // Force error responses for testing (non-production XMTP env only) — see JSDoc above for usage
-  const forceError = XMTP_ENV !== "production" ? req.headers["x-force-error"] : undefined;
-  const forcedError = Object.values(ERRORS).find((e) => String(e.status) === forceError);
+  const forceError =
+    XMTP_ENV !== "production" ? req.headers["x-force-error"] : undefined;
+  const forcedError = Object.values(ERRORS).find(
+    (e) => String(e.status) === forceError,
+  );
   if (forcedError) {
-    req.log.warn(`Forcing ${forcedError.status} ${forcedError.error} for testing (${FORCE_ERROR_DELAY_MS}ms delay)`);
+    req.log.warn(
+      `Forcing ${forcedError.status} ${forcedError.error} for testing (${FORCE_ERROR_DELAY_MS}ms delay)`,
+    );
     await new Promise((resolve) => setTimeout(resolve, FORCE_ERROR_DELAY_MS));
     const { status, ...body } = forcedError;
     res.status(status).json({ success: false, ...body });
