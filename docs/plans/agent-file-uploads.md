@@ -103,8 +103,11 @@ const command = new PutObjectCommand({
   Bucket: env.PUBLIC_ASSETS_BUCKET,
   Key: objectKey,
   ContentType: "application/octet-stream",
+  ContentLengthRange: [1, 20 * 1024 * 1024], // 1 byte – 20 MB
 });
 ```
+
+The 20 MB cap is enforced by S3 via the presigned URL conditions — the PUT will be rejected by S3 if the uploaded payload exceeds it, no backend validation needed.
 
 ### 4. Wire up in router
 
@@ -117,16 +120,9 @@ v2Router.use("/agents/assets", agentApiKeyAuth, agentAssetsRouter);
 v2Router.use("/agents", agentJoinLimiter, authMiddleware, agentsRouter);
 ```
 
-### 5. Renewal — who renews agent assets?
+### 5. Renewal
 
-Agent-uploaded assets follow the same 30-day lifecycle. However, **iOS currently only renews its own PFP and the group image** — it does not renew other members' PFPs or images sent in chat. This means agent profile pictures and any files agents share in messages would expire after 30 days with no one renewing them.
-
-**Decision:** Agents renew their own assets. Two strategies:
-
-1. **On activity** — when an agent becomes active (sends/receives a message), it renews its assets
-2. **Scheduled** — agent pool runs a cron job around the 30-day mark, renews assets for agents that have had recent group activity
-
-Agents need access to `POST /api/v2/assets/renew-batch` using the same `AGENT_ASSETS_API_KEY` auth. This endpoint currently uses JWT auth — needs to also accept agent API key auth.
+Agents renew their own assets. They have access to `POST /api/v2/assets/renew-batch` using `AGENT_ASSETS_API_KEY` auth. This endpoint currently uses JWT auth — needs to also accept agent API key auth.
 
 ---
 
@@ -194,6 +190,7 @@ export const agentAssetLimiter = rateLimit({
 - **Key rotation** — if compromised, rotate the env var and redeploy. No device re-registration needed
 - **No AppCheck** — agents can't do device attestation. The API key is the trust boundary
 - **S3 prefix isolation** — `a/` prefix lets us audit/delete agent files independently if needed
+- **20 MB size cap** — enforced via presigned URL conditions (`ContentLengthRange`); S3 rejects oversized PUTs without the backend ever seeing the payload
 
 ---
 
