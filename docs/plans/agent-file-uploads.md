@@ -210,10 +210,10 @@ The encryption materials (key) are already stored in `appData` and implemented o
 | File                                                     | Change                                                                                               |
 | -------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
 | `src/config.ts`                                          | Add `AGENT_ASSETS_API_KEY` export                                                                    |
-| `src/middleware/agentAuth.ts`                            | **New** — `agentApiKeyAuth` + `authOrAgentApiKeyAuth` (constant-time key comparison)               |
+| `src/middleware/agentAuth.ts`                            | **New** — `agentApiKeyAuth` + `authOrAgentApiKeyAuth` (constant-time key comparison)                 |
 | `src/api/v2/agents/assets/agent-assets.router.ts`        | **New** — router with presigned URL endpoint                                                         |
-| `src/api/v2/agents/assets/handlers/get-presigned-url.ts` | **New** — handler (mirrors existing, `a/` prefix, hardcoded octet-stream)                           |
-| `src/api/v2/index.ts`                                    | Mount agent assets router **before** `/agents`; wire `/assets/renew-batch` with `authOr...` auth   |
+| `src/api/v2/agents/assets/handlers/get-presigned-url.ts` | **New** — handler (mirrors existing, `a/` prefix, hardcoded octet-stream)                            |
+| `src/api/v2/index.ts`                                    | Mount agent assets router **before** `/agents`; wire `/assets/renew-batch` with `authOr...` auth     |
 | `src/api/v2/assets/assets.router.ts`                     | Remove `/renew-batch` from JWT-only assets router if renew-batch is mounted explicitly in `index.ts` |
 
 ---
