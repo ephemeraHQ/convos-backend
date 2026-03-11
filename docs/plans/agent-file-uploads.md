@@ -14,14 +14,14 @@ PR [convos-cli#11](https://github.com/xmtplabs/convos-cli/pull/11) migrated conv
 
 ### Decisions from team discussion (2026-03-10)
 
-| Decision | Outcome |
-|----------|---------|
-| **Bucket** | Same `PUBLIC_ASSETS_BUCKET`, dedicated route/directory: assistant/* |
-| **Retention** | Same 30-day rolling policy (same as user PFPs and group images) |
-| **Auth** | Dedicated auth mechanism — shared API key between agent pool and backend (like existing `AGENT_POOL_API_KEY`) |
-| **Endpoint** | New dedicated upload route for agents |
-| **Encryption** | Agents should encrypt profile photos same as users (encryption materials are in `appData`, can be replicated in CLI) |
-| **Infrastructure** | Keep everything in one AWS account, Terraform-managed |
+| Decision           | Outcome                                                                                                              |
+| ------------------ | -------------------------------------------------------------------------------------------------------------------- |
+| **Bucket**         | Same `PUBLIC_ASSETS_BUCKET`, dedicated route/directory: assistant/\*                                                 |
+| **Retention**      | Same 30-day rolling policy (same as user PFPs and group images)                                                      |
+| **Auth**           | Dedicated auth mechanism — shared API key between agent pool and backend (like existing `AGENT_POOL_API_KEY`)        |
+| **Endpoint**       | New dedicated upload route for agents                                                                                |
+| **Encryption**     | Agents should encrypt profile photos same as users (encryption materials are in `appData`, can be replicated in CLI) |
+| **Infrastructure** | Keep everything in one AWS account, Terraform-managed                                                                |
 
 ---
 
@@ -69,7 +69,11 @@ Simple API key check — no AppCheck, no JWT, no device registration.
 
 ```typescript
 // src/middleware/agentAuth.ts
-export const agentApiKeyAuth = (req: Request, res: Response, next: NextFunction) => {
+export const agentApiKeyAuth = (
+  req: Request,
+  res: Response,
+  next: NextFunction,
+) => {
   const apiKey = req.header("X-Agent-API-Key");
   if (!AGENT_ASSETS_API_KEY || apiKey !== AGENT_ASSETS_API_KEY) {
     res.status(401).json({ error: "Invalid or missing agent API key" });
@@ -82,6 +86,7 @@ export const agentApiKeyAuth = (req: Request, res: Response, next: NextFunction)
 ### 3. New route: `GET /api/v2/agents/assets/presigned-url`
 
 Mirrors the existing `GET /api/v2/attachments/presigned-url` but:
+
 - Uses `agentApiKeyAuth` middleware instead of JWT auth
 - Stores files under `agents/` prefix in the same bucket
 - Same CDN base URL
@@ -144,14 +149,14 @@ The encryption materials (key) are already stored in `appData` and implemented o
 
 ## Files to Create/Modify
 
-| File | Change |
-|------|--------|
-| `src/config.ts` | Add `AGENT_ASSETS_API_KEY` export |
-| `src/middleware/agentAuth.ts` | **New** — API key auth middleware |
-| `src/api/v2/agents/assets/agent-assets.router.ts` | **New** — router with presigned URL endpoint |
+| File                                                     | Change                                                      |
+| -------------------------------------------------------- | ----------------------------------------------------------- |
+| `src/config.ts`                                          | Add `AGENT_ASSETS_API_KEY` export                           |
+| `src/middleware/agentAuth.ts`                            | **New** — API key auth middleware                           |
+| `src/api/v2/agents/assets/agent-assets.router.ts`        | **New** — router with presigned URL endpoint                |
 | `src/api/v2/agents/assets/handlers/get-presigned-url.ts` | **New** — handler (mirrors existing, adds `agents/` prefix) |
-| `src/api/v2/index.ts` | Mount agent assets router |
-| `src/api/v2/agents/assets/agent-assets.router.ts` | Also mount `POST /renew-batch` for agents |
+| `src/api/v2/index.ts`                                    | Mount agent assets router                                   |
+| `src/api/v2/agents/assets/agent-assets.router.ts`        | Also mount `POST /renew-batch` for agents                   |
 
 ---
 
@@ -161,8 +166,8 @@ Use a dedicated rate limiter for agent uploads, separate from user uploads:
 
 ```typescript
 export const agentAssetLimiter = rateLimit({
-  windowMs: 60 * 1000,    // 1 minute
-  max: 50,                // 50 requests per minute
+  windowMs: 60 * 1000, // 1 minute
+  max: 50, // 50 requests per minute
   keyGenerator: () => "agent-global", // single pool, not per-IP
 });
 ```
@@ -192,10 +197,10 @@ export const agentAssetLimiter = rateLimit({
 
 ## Open Questions Summary
 
-| # | Question | Status |
-|---|----------|--------|
-| 1 | ~~Reuse `AGENT_POOL_API_KEY` or new `AGENT_ASSETS_API_KEY`?~~ | ✅ New separate `AGENT_ASSETS_API_KEY` |
-| 2 | ~~Rate limit for agent uploads?~~ | ✅ 50/min |
-| 3 | ~~Content type restrictions?~~ | ✅ Any file type — needed in near-term |
-| 4 | ~~CLI encryption work tracked?~~ | ✅ In progress — [convos-cli#15](https://github.com/xmtplabs/convos-cli/pull/15) |
-| 5 | ~~Who renews agent PFPs?~~ | ✅ Agents renew their own assets (see below) |
+| #   | Question                                                      | Status                                                                           |
+| --- | ------------------------------------------------------------- | -------------------------------------------------------------------------------- |
+| 1   | ~~Reuse `AGENT_POOL_API_KEY` or new `AGENT_ASSETS_API_KEY`?~~ | ✅ New separate `AGENT_ASSETS_API_KEY`                                           |
+| 2   | ~~Rate limit for agent uploads?~~                             | ✅ 50/min                                                                        |
+| 3   | ~~Content type restrictions?~~                                | ✅ Any file type — needed in near-term                                           |
+| 4   | ~~CLI encryption work tracked?~~                              | ✅ In progress — [convos-cli#15](https://github.com/xmtplabs/convos-cli/pull/15) |
+| 5   | ~~Who renews agent PFPs?~~                                    | ✅ Agents renew their own assets (see below)                                     |
