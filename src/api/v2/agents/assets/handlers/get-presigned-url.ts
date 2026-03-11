@@ -46,6 +46,12 @@ export async function getAgentPresignedUrlHandler(req: Request, res: Response) {
 
     const { objectKey, uploadUrl, assetUrl } = await getAgentPresignedURL();
 
+    res.set({
+      "Cache-Control": "no-store",
+      Pragma: "no-cache",
+      Expires: "0",
+    });
+
     res.json({
       objectKey,
       url: uploadUrl, // @deprecated - use uploadUrl instead

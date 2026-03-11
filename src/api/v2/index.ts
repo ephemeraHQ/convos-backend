@@ -9,6 +9,7 @@ import { devAuthMiddleware } from "@/middleware/devAuth";
 import { lifecycleTestAuthMiddleware } from "@/middleware/lifecycleTestAuth";
 import {
   agentAssetLimiter,
+  agentAssetPreAuthLimiter,
   agentJoinLimiter,
   assetRenewalLimiter,
 } from "@/middleware/rateLimit";
@@ -70,6 +71,7 @@ v2Router.use("/assets", authMiddleware, assetsRouter);
 // Must be mounted before /agents to avoid being caught by /agents auth middleware
 v2Router.use(
   "/agents/assets",
+  agentAssetPreAuthLimiter,
   agentApiKeyAuth,
   agentAssetLimiter,
   agentAssetsRouter,
