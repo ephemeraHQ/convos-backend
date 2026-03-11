@@ -123,25 +123,6 @@ Agent-uploaded assets follow the same 30-day lifecycle. However, **iOS currently
 
 Agents need access to `POST /api/v2/assets/renew-batch` using the same `AGENT_ASSETS_API_KEY` auth. This endpoint currently uses JWT auth — needs to also accept agent API key auth.
 
-#### 5a. Durable asset inventory
-
-`POST /api/v2/assets/renew-batch` requires explicit `assetKeys`. The cron job has no way to discover which keys to pass after a restart unless asset metadata is persisted somewhere.
-
-**Solution:** Add an `agent_assets` table:
-
-```sql
-CREATE TABLE agent_assets (
-  object_key  TEXT        NOT NULL PRIMARY KEY,
-  uploaded_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-```
-
-- The `get-presigned-url` handler writes a row after generating the key (before returning the response).
-- A new `GET /api/v2/agents/assets/keys-due-for-renewal` endpoint (protected by `agentApiKeyAuth`) returns keys where `uploaded_at` is between 27–30 days ago, paginated to ≤ 100 per page (matching `MAX_BATCH_SIZE`).
-- The renewal cron calls that endpoint to build its batch, then calls `POST /api/v2/assets/renew-batch`. On success, the handler bumps `uploaded_at` to `now()` so the 30-day clock resets.
-
-This keeps the backend authoritative about which keys exist and when they expire, with no per-agent identity tracking required.
-
 ---
 
 ## S3 Key Structure
@@ -176,16 +157,14 @@ The encryption materials (key) are already stored in `appData` and implemented o
 
 ## Files to Create/Modify
 
-| File                                                               | Change                                                                           |
-| ------------------------------------------------------------------ | -------------------------------------------------------------------------------- |
-| `src/config.ts`                                                    | Add `AGENT_ASSETS_API_KEY` export                                                |
-| `src/middleware/agentAuth.ts`                                      | **New** — API key auth middleware (503 on missing config, 401 on bad key)        |
-| `src/api/v2/agents/assets/agent-assets.router.ts`                  | **New** — router with presigned URL + renewal-keys endpoints                     |
-| `src/api/v2/agents/assets/handlers/get-presigned-url.ts`           | **New** — handler (mirrors existing, adds `agents/` prefix, inserts to DB)       |
-| `src/api/v2/agents/assets/handlers/get-keys-due-for-renewal.ts`    | **New** — returns agent asset keys 27–30 days old                                |
-| `src/api/v2/assets/handlers/renew-batch.ts`                        | Bump `uploaded_at` in `agent_assets` after successful copy                       |
-| `src/api/v2/index.ts`                                              | Mount agent assets router **before** `/agents` (order matters)                   |
-| migrations                                                         | **New** — `agent_assets` table (`object_key PK`, `uploaded_at`)                  |
+| File                                                     | Change                                                                    |
+| -------------------------------------------------------- | ------------------------------------------------------------------------- |
+| `src/config.ts`                                          | Add `AGENT_ASSETS_API_KEY` export                                         |
+| `src/middleware/agentAuth.ts`                            | **New** — API key auth middleware (503 on missing config, 401 on bad key) |
+| `src/api/v2/agents/assets/agent-assets.router.ts`        | **New** — router with presigned URL endpoint                              |
+| `src/api/v2/agents/assets/handlers/get-presigned-url.ts` | **New** — handler (mirrors existing, adds `agents/` prefix)               |
+| `src/api/v2/assets/handlers/renew-batch.ts`              | Also accept `agentApiKeyAuth` (currently JWT-only)                        |
+| `src/api/v2/index.ts`                                    | Mount agent assets router **before** `/agents` (order matters)            |
 
 ---
 
