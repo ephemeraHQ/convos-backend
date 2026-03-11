@@ -101,11 +101,17 @@ const objectKey = `agents/${uuidv4()}${extension ? `.${extension}` : ""}`;
 v2Router.use("/agents/assets", agentApiKeyAuth, agentAssetsRouter);
 ```
 
-### 5. Renewal — iOS client handles it
+### 5. Renewal — who renews agent assets?
 
-Agent-uploaded assets follow the same 30-day lifecycle. The iOS client already scans conversation messages for asset URLs to renew via `POST /api/v2/assets/renew-batch`. Agent message attachments (including profile pics) will be included in that scan — no backend changes needed for renewal.
+Agent-uploaded assets follow the same 30-day lifecycle. However, **iOS currently only renews its own PFP and the group image** — it does not renew other members' PFPs or images sent in chat. This means agent profile pictures and any files agents share in messages would expire after 30 days with no one renewing them.
 
-If no client renews them, they expire after 30 days. This is the same behavior as user-uploaded assets.
+**❓ Team decision needed: who is responsible for renewing agent assets?**
+
+Options:
+- **A) Extend iOS renewal to include agent PFPs** — iOS already calls `POST /api/v2/assets/renew-batch`; expand the scan to include other members' profile images
+- **B) Agent pool renews its own assets** — pool manager periodically renews assets for active agents
+- **C) Backend renews agent assets** — a scheduled job renews all assets under `agents/` prefix
+- **D) Accept expiry** — agent PFPs expire after 30 days, agent would need to re-upload if still active
 
 ---
 
@@ -194,3 +200,4 @@ export const agentAssetLimiter = rateLimit({
 | 2 | Rate limit for agent uploads? | 30/min? More? Less? |
 | 3 | Content type restrictions? | Images only? Or any file type? |
 | 4 | Is CLI encryption work tracked separately? | @Jarod needs to implement `EncryptedProfileImage` in convos-cli |
+| 5 | Who renews agent PFPs to prevent 30-day expiry? | iOS currently only renews own PFP + group image, not other members' PFPs or chat images |
