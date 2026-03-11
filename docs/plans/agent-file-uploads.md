@@ -103,13 +103,12 @@ v2Router.use("/agents/assets", agentApiKeyAuth, agentAssetsRouter);
 
 Agent-uploaded assets follow the same 30-day lifecycle. However, **iOS currently only renews its own PFP and the group image** — it does not renew other members' PFPs or images sent in chat. This means agent profile pictures and any files agents share in messages would expire after 30 days with no one renewing them.
 
-**❓ Team decision needed: who is responsible for renewing agent assets?**
+**Decision:** Agents renew their own assets. Two strategies:
 
-Options:
-- **A) Extend iOS renewal to include agent PFPs** — iOS already calls `POST /api/v2/assets/renew-batch`; expand the scan to include other members' profile images
-- **B) Agent pool renews its own assets** — pool manager periodically renews assets for active agents
-- **C) Backend renews agent assets** — a scheduled job renews all assets under `agents/` prefix
-- **D) Accept expiry** — agent PFPs expire after 30 days, agent would need to re-upload if still active
+1. **On activity** — when an agent becomes active (sends/receives a message), it renews its assets
+2. **Scheduled** — agent pool runs a cron job around the 30-day mark, renews assets for agents that have had recent group activity
+
+Agents need access to `POST /api/v2/assets/renew-batch` using the same `AGENT_ASSETS_API_KEY` auth. This endpoint currently uses JWT auth — needs to also accept agent API key auth.
 
 ---
 
@@ -152,6 +151,7 @@ The encryption materials (key) are already stored in `appData` and implemented o
 | `src/api/v2/agents/assets/agent-assets.router.ts` | **New** — router with presigned URL endpoint |
 | `src/api/v2/agents/assets/handlers/get-presigned-url.ts` | **New** — handler (mirrors existing, adds `agents/` prefix) |
 | `src/api/v2/index.ts` | Mount agent assets router |
+| `src/api/v2/agents/assets/agent-assets.router.ts` | Also mount `POST /renew-batch` for agents |
 
 ---
 
@@ -196,6 +196,6 @@ export const agentAssetLimiter = rateLimit({
 |---|----------|--------|
 | 1 | ~~Reuse `AGENT_POOL_API_KEY` or new `AGENT_ASSETS_API_KEY`?~~ | ✅ New separate `AGENT_ASSETS_API_KEY` |
 | 2 | ~~Rate limit for agent uploads?~~ | ✅ 50/min |
-| 3 | Content type restrictions? | ❓ Open — images only? Or any file type? |
-| 4 | ~~CLI encryption work tracked?~~ | ✅ TODO in convos-cli |
-| 5 | Who renews agent PFPs to prevent 30-day expiry? | ❓ Open — iOS currently only renews own PFP + group image |
+| 3 | ~~Content type restrictions?~~ | ✅ Any file type — needed in near-term |
+| 4 | ~~CLI encryption work tracked?~~ | ✅ In progress — [convos-cli#15](https://github.com/xmtplabs/convos-cli/pull/15) |
+| 5 | ~~Who renews agent PFPs?~~ | ✅ Agents renew their own assets (see below) |
