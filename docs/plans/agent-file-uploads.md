@@ -61,9 +61,7 @@ AGENT_ASSETS_API_KEY=<shared secret>
 
 Shared between convos-backend and the agent pool/CLI. Added to `src/config.ts` as optional (endpoint returns 503 if not configured). Managed via Terraform in xmtp-infra.
 
-Can reuse `AGENT_POOL_API_KEY` if the team prefers a single shared secret, but a separate key gives independent rotation.
-
-**❓ Team decision: reuse `AGENT_POOL_API_KEY` or separate `AGENT_ASSETS_API_KEY`?**
+Separate from `AGENT_POOL_API_KEY` to allow independent rotation.
 
 ### 2. New middleware: `agentApiKeyAuth`
 
@@ -141,7 +139,7 @@ For agent profile pictures to work with the new `ProfileUpdate` proto, agents ne
 
 The encryption materials (key) are already stored in `appData` and implemented on iOS. The convos-cli needs to replicate this encryption. This is a **convos-cli change**, not a backend change.
 
-**❓ @Jarod — convos-cli needs to implement the encryption path. Is this tracked separately?**
+**TODO (convos-cli):** Implement the `EncryptedProfileImage` encryption path in convos-cli.
 
 ---
 
@@ -164,12 +162,12 @@ Use a dedicated rate limiter for agent uploads, separate from user uploads:
 ```typescript
 export const agentAssetLimiter = rateLimit({
   windowMs: 60 * 1000,    // 1 minute
-  max: 30,                // 30 requests per minute
+  max: 50,                // 50 requests per minute
   keyGenerator: () => "agent-global", // single pool, not per-IP
 });
 ```
 
-**❓ Team input: what's a reasonable rate limit? 30/min seems generous for profile pics but may be needed for general image handling.**
+50/min to accommodate general image handling beyond just profile pics.
 
 ---
 
@@ -184,7 +182,7 @@ export const agentAssetLimiter = rateLimit({
 
 ## Out of Scope
 
-- Image encryption in convos-cli (separate task for @Jarod)
+- Image encryption in convos-cli (tracked as TODO in convos-cli)
 - Virus/malware scanning
 - Image resizing/optimization
 - Per-agent identity tracking (all agents share one API key)
@@ -194,10 +192,10 @@ export const agentAssetLimiter = rateLimit({
 
 ## Open Questions Summary
 
-| # | Question | Context |
-|---|----------|---------|
-| 1 | Reuse `AGENT_POOL_API_KEY` or new `AGENT_ASSETS_API_KEY`? | Single shared secret vs. independent rotation |
-| 2 | Rate limit for agent uploads? | 30/min? More? Less? |
-| 3 | Content type restrictions? | Images only? Or any file type? |
-| 4 | Is CLI encryption work tracked separately? | @Jarod needs to implement `EncryptedProfileImage` in convos-cli |
-| 5 | Who renews agent PFPs to prevent 30-day expiry? | iOS currently only renews own PFP + group image, not other members' PFPs or chat images |
+| # | Question | Status |
+|---|----------|--------|
+| 1 | ~~Reuse `AGENT_POOL_API_KEY` or new `AGENT_ASSETS_API_KEY`?~~ | ✅ New separate `AGENT_ASSETS_API_KEY` |
+| 2 | ~~Rate limit for agent uploads?~~ | ✅ 50/min |
+| 3 | Content type restrictions? | ❓ Open — images only? Or any file type? |
+| 4 | ~~CLI encryption work tracked?~~ | ✅ TODO in convos-cli |
+| 5 | Who renews agent PFPs to prevent 30-day expiry? | ❓ Open — iOS currently only renews own PFP + group image |
