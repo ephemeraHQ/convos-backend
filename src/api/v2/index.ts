@@ -60,8 +60,8 @@ v2Router.post(
 // Renew assets with either JWT auth (iOS clients) or agent API key auth
 v2Router.post(
   "/assets/renew-batch",
-  assetRenewalLimiter,
   authOrAgentApiKeyAuth,
+  assetRenewalLimiter,
   renewBatchHandler,
 );
 
