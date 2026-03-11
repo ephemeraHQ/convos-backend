@@ -1,0 +1,265 @@
+# Agent Asset Upload — Auth & S3 Endpoint
+
+**Status:** Draft
+**Linear:** [AGNT-41](https://linear.app/convos/issue/AGNT-41/add-agent-asset-upload-auth-and-s3-endpoint)
+**Assignee:** @louis
+
+## Context
+
+Agents (AI assistants via convos-cli) need to upload files to S3 — starting with profile pictures, but also for general image handling in conversations. The current upload flow (`GET /api/v2/attachments/presigned`) requires iOS device auth (AppCheck → JWT), which agents can't use.
+
+### What broke
+
+PR [convos-cli#11](https://github.com/xmtplabs/convos-cli/pull/11) migrated conversation profiles from `appData` (shared protobuf blob) to dedicated `ProfileUpdate` XMTP messages. The old proto had a plain `image` string field (field 3) that accepted raw URLs. The new proto only has `encrypted_image` (field 2, `EncryptedProfileImage`). The CLI's `update-profile --image <url>` command silently discards the image — it reports success but the image is never included in the `ProfileUpdate` message. See [convos-cli#14](https://github.com/xmtplabs/convos-cli/issues/14).
+
+### Decisions from team discussion (2026-03-10)
+
+| Decision           | Outcome                                                                                                              |
+| ------------------ | -------------------------------------------------------------------------------------------------------------------- |
+| **Bucket**         | Same `PUBLIC_ASSETS_BUCKET`, dedicated route/directory: `a/*`                                                        |
+| **Retention**      | Same 30-day rolling policy (same as user PFPs and group images)                                                      |
+| **Auth**           | Dedicated auth mechanism — shared API key between agent pool and backend (like existing `AGENT_POOL_API_KEY`)        |
+| **Endpoint**       | New dedicated upload route for agents                                                                                |
+| **Encryption**     | Agents should encrypt profile photos same as users (encryption materials are in `appData`, can be replicated in CLI) |
+| **Infrastructure** | Keep everything in one AWS account, Terraform-managed                                                                |
+
+---
+
+## Architecture
+
+```
+Agent (convos-cli)          convos-backend                    S3
+  │                              │                             │
+  │  GET /api/v2/agents/assets/presigned                       │
+  │  (X-Agent-API-Key)           │                             │
+  │ ───────────────────────────> │                             │
+  │                              │  Generate presigned PUT URL │
+  │      { uploadUrl, assetUrl,  │                             │
+  │        objectKey }           │                             │
+  │ <─────────────────────────── │                             │
+  │                                                            │
+  │  PUT <uploadUrl>                                           │
+  │  (file data)                                               │
+  │ ─────────────────────────────────────────────────────────> │
+  │        200 OK                                              │
+  │ <───────────────────────────────────────────────────────── │
+  │                                                            │
+  │  [encrypt image, send ProfileUpdate via XMTP               │
+  │   or send as message attachment]                           │
+```
+
+---
+
+## Implementation
+
+### 1. New env var
+
+```
+AGENT_ASSETS_API_KEY=<shared secret>
+```
+
+Shared between convos-backend and the agent pool/CLI. Added to `src/config.ts` as optional (endpoint returns 503 if not configured). Managed via Terraform in xmtp-infra.
+
+Separate from `AGENT_POOL_API_KEY` to allow independent rotation.
+
+### 2. New middleware: `agentApiKeyAuth`
+
+Simple API key check — no AppCheck, no JWT, no device registration.
+Use constant-time comparison (`timingSafeEqual`) to avoid timing leaks.
+
+```typescript
+// src/middleware/agentAuth.ts
+import { timingSafeEqual } from "crypto";
+
+export const agentApiKeyAuth = (
+  req: Request,
+  res: Response,
+  next: NextFunction,
+) => {
+  const expectedKey = AGENT_ASSETS_API_KEY?.trim();
+  if (!expectedKey) {
+    res.status(503).json({ error: "Agent assets API key not configured" });
+    return;
+  }
+
+  const providedKey = req.header("X-Agent-API-Key")?.trim() ?? "";
+  if (providedKey.length === 0) {
+    res.status(401).json({ error: "Invalid or missing agent API key" });
+    return;
+  }
+
+  const provided = Buffer.from(providedKey, "utf8");
+  const expected = Buffer.from(expectedKey, "utf8");
+  const valid =
+    provided.length === expected.length && timingSafeEqual(provided, expected);
+
+  if (!valid) {
+    res.status(401).json({ error: "Invalid or missing agent API key" });
+    return;
+  }
+
+  next();
+};
+```
+
+### 3. New route: `GET /api/v2/agents/assets/presigned`
+
+Mirrors the existing `GET /api/v2/attachments/presigned` but:
+
+- Uses `agentApiKeyAuth` middleware instead of JWT auth
+- Stores files under `a/` prefix in the same bucket
+- Content-type is hardcoded to `application/octet-stream` — uploads are always encrypted binary blobs, no `?contentType` param needed, no file extension in the key
+- Same CDN base URL
+- Same presigned URL expiry (1 hour)
+
+```typescript
+const objectKey = `a/${uuidv4()}`;
+
+const command = new PutObjectCommand({
+  Bucket: env.PUBLIC_ASSETS_BUCKET,
+  Key: objectKey,
+  ContentType: "application/octet-stream",
+});
+```
+
+⚠️ `content-length-range` is not supported for presigned **PUT** URLs.
+So this endpoint does **not** get strict max-size enforcement from S3 policy conditions.
+
+For now, agents must enforce the 20 MB client-side before upload.
+If we need hard S3-enforced size limits later, switch this endpoint to presigned **POST** (policy-based upload).
+
+### 4. Wire up in router
+
+```typescript
+// src/api/v2/index.ts
+// ⚠️ Must be mounted BEFORE /agents — Express matches routes in order,
+// so /agents/assets/* would otherwise be caught by the broader /agents route
+// and routed through JWT authMiddleware instead of agentApiKeyAuth.
+v2Router.use("/agents/assets", agentApiKeyAuth, agentAssetsRouter);
+v2Router.use("/agents", agentJoinLimiter, authMiddleware, agentsRouter);
+```
+
+### 5. Renewal
+
+Agents renew their own assets via `POST /api/v2/assets/renew-batch` using `AGENT_ASSETS_API_KEY`.
+
+Important: this cannot be solved in `renew-batch` handler alone, because `/assets` is currently mounted behind `authMiddleware` at router level.
+
+Implement a combined auth middleware and apply it at route wiring level:
+
+```typescript
+// src/middleware/agentAuth.ts
+export const authOrAgentApiKeyAuth = async (
+  req: Request,
+  res: Response,
+  next: NextFunction,
+) => {
+  // If agent key is present, validate via agentApiKeyAuth.
+  // Otherwise, fall back to JWT authMiddleware.
+};
+```
+
+```typescript
+// src/api/v2/index.ts
+v2Router.post(
+  "/assets/renew-batch",
+  assetRenewalLimiter,
+  authOrAgentApiKeyAuth,
+  renewBatchHandler,
+);
+
+// Keep the rest of /assets JWT-protected as-is
+v2Router.use("/assets", authMiddleware, assetsRouter);
+```
+
+This ensures renew-batch accepts either JWT (existing iOS flow) or `X-Agent-API-Key` (agent flow), without unintentionally opening other `/assets/*` routes.
+
+---
+
+## S3 Key Structure
+
+```
+PUBLIC_ASSETS_BUCKET/
+├── <uuid>.png              ← user uploads (existing)
+├── <uuid>.jpg              ← user uploads (existing)
+└── a/
+    └── <uuid>              ← agent uploads (new, no extension — always octet-stream)
+```
+
+The `a/` prefix is purely organizational — same lifecycle rules apply (S3 lifecycle is bucket-wide based on `LastModified`).
+
+---
+
+## Profile Picture Encryption
+
+For agent profile pictures to work with the new `ProfileUpdate` proto, agents need to:
+
+1. Upload the image to S3 (via this new endpoint)
+2. Read the encryption key from conversation `appData`
+3. Encrypt the image URL using the same scheme as iOS
+4. Send a `ProfileUpdate` XMTP message with `encrypted_image`
+
+The encryption materials (key) are already stored in `appData` and implemented on iOS. The convos-cli needs to replicate this encryption. This is a **convos-cli change**, not a backend change.
+
+**TODO (convos-cli):** Implement the `EncryptedProfileImage` encryption path in convos-cli.
+
+---
+
+## Files to Create/Modify
+
+| File                                                     | Change                                                                                               |
+| -------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| `src/config.ts`                                          | Add `AGENT_ASSETS_API_KEY` export                                                                    |
+| `src/middleware/agentAuth.ts`                            | **New** — `agentApiKeyAuth` + `authOrAgentApiKeyAuth` (constant-time key comparison)               |
+| `src/api/v2/agents/assets/agent-assets.router.ts`        | **New** — router with presigned URL endpoint                                                         |
+| `src/api/v2/agents/assets/handlers/get-presigned-url.ts` | **New** — handler (mirrors existing, `a/` prefix, hardcoded octet-stream)                           |
+| `src/api/v2/index.ts`                                    | Mount agent assets router **before** `/agents`; wire `/assets/renew-batch` with `authOr...` auth   |
+| `src/api/v2/assets/assets.router.ts`                     | Remove `/renew-batch` from JWT-only assets router if renew-batch is mounted explicitly in `index.ts` |
+
+---
+
+## Rate Limiting
+
+Use a dedicated rate limiter for agent uploads, separate from user uploads:
+
+```typescript
+export const agentAssetLimiter = rateLimit({
+  windowMs: 60 * 1000, // 1 minute
+  max: 50, // 50 requests per minute
+  keyGenerator: () => "agent-global", // single pool, not per-IP
+});
+```
+
+50/min to accommodate general image handling beyond just profile pics.
+
+---
+
+## Security Considerations
+
+- **API key auth is simpler than JWT** — acceptable because agents are trusted server-side processes, not end-user clients
+- **Key rotation** — if compromised, rotate the env var and redeploy. No device re-registration needed
+- **No AppCheck** — agents can't do device attestation. The API key is the trust boundary
+- **S3 prefix isolation** — `a/` prefix lets us audit/delete agent files independently if needed
+- **20 MB size cap** — for presigned PUT, this is client-enforced (not S3-policy-enforced). Hard S3 size enforcement would require presigned POST
+
+---
+
+## Out of Scope
+
+- Image encryption in convos-cli (tracked as TODO in convos-cli)
+- Virus/malware scanning
+- Image resizing/optimization
+- Per-agent identity tracking (all agents share one API key)
+- Railway storage buckets (decided to keep on AWS/Terraform)
+
+---
+
+## Open Questions Summary
+
+| #   | Question                                                      | Status                                                                           |
+| --- | ------------------------------------------------------------- | -------------------------------------------------------------------------------- |
+| 1   | ~~Reuse `AGENT_POOL_API_KEY` or new `AGENT_ASSETS_API_KEY`?~~ | ✅ New separate `AGENT_ASSETS_API_KEY`                                           |
+| 2   | ~~Rate limit for agent uploads?~~                             | ✅ 50/min                                                                        |
+| 3   | ~~Content type restrictions?~~                                | ✅ Always `application/octet-stream` — uploads are encrypted binary              |
+| 4   | ~~CLI encryption work tracked?~~                              | ✅ In progress — [convos-cli#15](https://github.com/xmtplabs/convos-cli/pull/15) |
+| 5   | ~~Who renews agent PFPs?~~                                    | ✅ Agents renew their own assets (see below)                                     |
