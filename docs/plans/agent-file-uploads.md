@@ -6,7 +6,7 @@
 
 ## Context
 
-Agents (AI assistants via convos-cli) need to upload files to S3 — starting with profile pictures, but also for general image handling in conversations. The current upload flow (`GET /api/v2/attachments/presigned-url`) requires iOS device auth (AppCheck → JWT), which agents can't use.
+Agents (AI assistants via convos-cli) need to upload files to S3 — starting with profile pictures, but also for general image handling in conversations. The current upload flow (`GET /api/v2/attachments/presigned`) requires iOS device auth (AppCheck → JWT), which agents can't use.
 
 ### What broke
 
@@ -30,7 +30,7 @@ PR [convos-cli#11](https://github.com/xmtplabs/convos-cli/pull/11) migrated conv
 ```
 Agent (convos-cli)          convos-backend                    S3
   │                              │                             │
-  │  GET /api/v2/agents/assets/presigned-url                   │
+  │  GET /api/v2/agents/assets/presigned                       │
   │  (X-Agent-API-Key)           │                             │
   │ ───────────────────────────> │                             │
   │                              │  Generate presigned PUT URL │
@@ -65,30 +65,46 @@ Separate from `AGENT_POOL_API_KEY` to allow independent rotation.
 ### 2. New middleware: `agentApiKeyAuth`
 
 Simple API key check — no AppCheck, no JWT, no device registration.
+Use constant-time comparison (`timingSafeEqual`) to avoid timing leaks.
 
 ```typescript
 // src/middleware/agentAuth.ts
+import { timingSafeEqual } from "crypto";
+
 export const agentApiKeyAuth = (
   req: Request,
   res: Response,
   next: NextFunction,
 ) => {
-  if (!AGENT_ASSETS_API_KEY) {
+  const expectedKey = AGENT_ASSETS_API_KEY?.trim();
+  if (!expectedKey) {
     res.status(503).json({ error: "Agent assets API key not configured" });
     return;
   }
-  const apiKey = req.header("X-Agent-API-Key");
-  if (apiKey !== AGENT_ASSETS_API_KEY) {
+
+  const providedKey = req.header("X-Agent-API-Key")?.trim() ?? "";
+  if (providedKey.length === 0) {
     res.status(401).json({ error: "Invalid or missing agent API key" });
     return;
   }
+
+  const provided = Buffer.from(providedKey, "utf8");
+  const expected = Buffer.from(expectedKey, "utf8");
+  const valid =
+    provided.length === expected.length && timingSafeEqual(provided, expected);
+
+  if (!valid) {
+    res.status(401).json({ error: "Invalid or missing agent API key" });
+    return;
+  }
+
   next();
 };
 ```
 
-### 3. New route: `GET /api/v2/agents/assets/presigned-url`
+### 3. New route: `GET /api/v2/agents/assets/presigned`
 
-Mirrors the existing `GET /api/v2/attachments/presigned-url` but:
+Mirrors the existing `GET /api/v2/attachments/presigned` but:
 
 - Uses `agentApiKeyAuth` middleware instead of JWT auth
 - Stores files under `a/` prefix in the same bucket
@@ -103,11 +119,14 @@ const command = new PutObjectCommand({
   Bucket: env.PUBLIC_ASSETS_BUCKET,
   Key: objectKey,
   ContentType: "application/octet-stream",
-  ContentLengthRange: [1, 20 * 1024 * 1024], // 1 byte – 20 MB
 });
 ```
 
-The 20 MB cap is enforced by S3 via the presigned URL conditions — the PUT will be rejected by S3 if the uploaded payload exceeds it, no backend validation needed.
+⚠️ `content-length-range` is not supported for presigned **PUT** URLs.
+So this endpoint does **not** get strict max-size enforcement from S3 policy conditions.
+
+For now, agents must enforce the 20 MB client-side before upload.
+If we need hard S3-enforced size limits later, switch this endpoint to presigned **POST** (policy-based upload).
 
 ### 4. Wire up in router
 
@@ -122,7 +141,38 @@ v2Router.use("/agents", agentJoinLimiter, authMiddleware, agentsRouter);
 
 ### 5. Renewal
 
-Agents renew their own assets. They have access to `POST /api/v2/assets/renew-batch` using `AGENT_ASSETS_API_KEY` auth. This endpoint currently uses JWT auth — needs to also accept agent API key auth.
+Agents renew their own assets via `POST /api/v2/assets/renew-batch` using `AGENT_ASSETS_API_KEY`.
+
+Important: this cannot be solved in `renew-batch` handler alone, because `/assets` is currently mounted behind `authMiddleware` at router level.
+
+Implement a combined auth middleware and apply it at route wiring level:
+
+```typescript
+// src/middleware/agentAuth.ts
+export const authOrAgentApiKeyAuth = async (
+  req: Request,
+  res: Response,
+  next: NextFunction,
+) => {
+  // If agent key is present, validate via agentApiKeyAuth.
+  // Otherwise, fall back to JWT authMiddleware.
+};
+```
+
+```typescript
+// src/api/v2/index.ts
+v2Router.post(
+  "/assets/renew-batch",
+  assetRenewalLimiter,
+  authOrAgentApiKeyAuth,
+  renewBatchHandler,
+);
+
+// Keep the rest of /assets JWT-protected as-is
+v2Router.use("/assets", authMiddleware, assetsRouter);
+```
+
+This ensures renew-batch accepts either JWT (existing iOS flow) or `X-Agent-API-Key` (agent flow), without unintentionally opening other `/assets/*` routes.
 
 ---
 
@@ -157,14 +207,14 @@ The encryption materials (key) are already stored in `appData` and implemented o
 
 ## Files to Create/Modify
 
-| File                                                     | Change                                                                    |
-| -------------------------------------------------------- | ------------------------------------------------------------------------- |
-| `src/config.ts`                                          | Add `AGENT_ASSETS_API_KEY` export                                         |
-| `src/middleware/agentAuth.ts`                            | **New** — API key auth middleware (503 on missing config, 401 on bad key) |
-| `src/api/v2/agents/assets/agent-assets.router.ts`        | **New** — router with presigned URL endpoint                              |
-| `src/api/v2/agents/assets/handlers/get-presigned-url.ts` | **New** — handler (mirrors existing, `a/` prefix, hardcoded octet-stream) |
-| `src/api/v2/assets/handlers/renew-batch.ts`              | Also accept `agentApiKeyAuth` (currently JWT-only)                        |
-| `src/api/v2/index.ts`                                    | Mount agent assets router **before** `/agents` (order matters)            |
+| File                                                     | Change                                                                                               |
+| -------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| `src/config.ts`                                          | Add `AGENT_ASSETS_API_KEY` export                                                                    |
+| `src/middleware/agentAuth.ts`                            | **New** — `agentApiKeyAuth` + `authOrAgentApiKeyAuth` (constant-time key comparison)               |
+| `src/api/v2/agents/assets/agent-assets.router.ts`        | **New** — router with presigned URL endpoint                                                         |
+| `src/api/v2/agents/assets/handlers/get-presigned-url.ts` | **New** — handler (mirrors existing, `a/` prefix, hardcoded octet-stream)                           |
+| `src/api/v2/index.ts`                                    | Mount agent assets router **before** `/agents`; wire `/assets/renew-batch` with `authOr...` auth   |
+| `src/api/v2/assets/assets.router.ts`                     | Remove `/renew-batch` from JWT-only assets router if renew-batch is mounted explicitly in `index.ts` |
 
 ---
 
@@ -190,7 +240,7 @@ export const agentAssetLimiter = rateLimit({
 - **Key rotation** — if compromised, rotate the env var and redeploy. No device re-registration needed
 - **No AppCheck** — agents can't do device attestation. The API key is the trust boundary
 - **S3 prefix isolation** — `a/` prefix lets us audit/delete agent files independently if needed
-- **20 MB size cap** — enforced via presigned URL conditions (`ContentLengthRange`); S3 rejects oversized PUTs without the backend ever seeing the payload
+- **20 MB size cap** — for presigned PUT, this is client-enforced (not S3-policy-enforced). Hard S3 size enforcement would require presigned POST
 
 ---
 
