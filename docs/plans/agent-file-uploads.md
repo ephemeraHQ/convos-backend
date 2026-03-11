@@ -16,12 +16,12 @@ PR [convos-cli#11](https://github.com/xmtplabs/convos-cli/pull/11) migrated conv
 
 | Decision | Outcome |
 |----------|---------|
-| **Bucket** | Same `PUBLIC_ASSETS_BUCKET`, dedicated route |
-| **Retention** | Same 30-day rolling policy (same as user PFPs) |
+| **Bucket** | Same `PUBLIC_ASSETS_BUCKET`, dedicated route/directory: assistant/* |
+| **Retention** | Same 30-day rolling policy (same as user PFPs and group images) |
 | **Auth** | Dedicated auth mechanism — shared API key between agent pool and backend (like existing `AGENT_POOL_API_KEY`) |
 | **Endpoint** | New dedicated upload route for agents |
 | **Encryption** | Agents should encrypt profile photos same as users (encryption materials are in `appData`, can be replicated in CLI) |
-| **Infrastructure** | Keep everything in one AWS account, Terraform-managed (xmtp-infra repo) |
+| **Infrastructure** | Keep everything in one AWS account, Terraform-managed |
 
 ---
 
