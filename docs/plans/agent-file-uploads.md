@@ -16,7 +16,7 @@ PR [convos-cli#11](https://github.com/xmtplabs/convos-cli/pull/11) migrated conv
 
 | Decision           | Outcome                                                                                                              |
 | ------------------ | -------------------------------------------------------------------------------------------------------------------- |
-| **Bucket**         | Same `PUBLIC_ASSETS_BUCKET`, dedicated route/directory: assistant/\*                                                 |
+| **Bucket**         | Same `PUBLIC_ASSETS_BUCKET`, dedicated route/directory: `a/*`                                                        |
 | **Retention**      | Same 30-day rolling policy (same as user PFPs and group images)                                                      |
 | **Auth**           | Dedicated auth mechanism — shared API key between agent pool and backend (like existing `AGENT_POOL_API_KEY`)        |
 | **Endpoint**       | New dedicated upload route for agents                                                                                |
@@ -32,7 +32,6 @@ Agent (convos-cli)          convos-backend                    S3
   │                              │                             │
   │  GET /api/v2/agents/assets/presigned-url                   │
   │  (X-Agent-API-Key)           │                             │
-  │  ?contentType=image/png      │                             │
   │ ───────────────────────────> │                             │
   │                              │  Generate presigned PUT URL │
   │      { uploadUrl, assetUrl,  │                             │
@@ -92,13 +91,19 @@ export const agentApiKeyAuth = (
 Mirrors the existing `GET /api/v2/attachments/presigned-url` but:
 
 - Uses `agentApiKeyAuth` middleware instead of JWT auth
-- Stores files under `agents/` prefix in the same bucket
+- Stores files under `a/` prefix in the same bucket
+- Content-type is hardcoded to `application/octet-stream` — uploads are always encrypted binary blobs, no `?contentType` param needed, no file extension in the key
 - Same CDN base URL
 - Same presigned URL expiry (1 hour)
 
 ```typescript
-// Key generation with agents/ prefix
-const objectKey = `agents/${uuidv4()}${extension ? `.${extension}` : ""}`;
+const objectKey = `a/${uuidv4()}`;
+
+const command = new PutObjectCommand({
+  Bucket: env.PUBLIC_ASSETS_BUCKET,
+  Key: objectKey,
+  ContentType: "application/octet-stream",
+});
 ```
 
 ### 4. Wire up in router
@@ -131,12 +136,11 @@ Agents need access to `POST /api/v2/assets/renew-batch` using the same `AGENT_AS
 PUBLIC_ASSETS_BUCKET/
 ├── <uuid>.png              ← user uploads (existing)
 ├── <uuid>.jpg              ← user uploads (existing)
-└── agents/
-    ├── <uuid>.png          ← agent uploads (new)
-    └── <uuid>.jpg          ← agent uploads (new)
+└── a/
+    └── <uuid>              ← agent uploads (new, no extension — always octet-stream)
 ```
 
-The `agents/` prefix is purely organizational — same lifecycle rules apply (S3 lifecycle is bucket-wide based on `LastModified`).
+The `a/` prefix is purely organizational — same lifecycle rules apply (S3 lifecycle is bucket-wide based on `LastModified`).
 
 ---
 
@@ -162,7 +166,7 @@ The encryption materials (key) are already stored in `appData` and implemented o
 | `src/config.ts`                                          | Add `AGENT_ASSETS_API_KEY` export                                         |
 | `src/middleware/agentAuth.ts`                            | **New** — API key auth middleware (503 on missing config, 401 on bad key) |
 | `src/api/v2/agents/assets/agent-assets.router.ts`        | **New** — router with presigned URL endpoint                              |
-| `src/api/v2/agents/assets/handlers/get-presigned-url.ts` | **New** — handler (mirrors existing, adds `agents/` prefix)               |
+| `src/api/v2/agents/assets/handlers/get-presigned-url.ts` | **New** — handler (mirrors existing, `a/` prefix, hardcoded octet-stream) |
 | `src/api/v2/assets/handlers/renew-batch.ts`              | Also accept `agentApiKeyAuth` (currently JWT-only)                        |
 | `src/api/v2/index.ts`                                    | Mount agent assets router **before** `/agents` (order matters)            |
 
@@ -189,7 +193,7 @@ export const agentAssetLimiter = rateLimit({
 - **API key auth is simpler than JWT** — acceptable because agents are trusted server-side processes, not end-user clients
 - **Key rotation** — if compromised, rotate the env var and redeploy. No device re-registration needed
 - **No AppCheck** — agents can't do device attestation. The API key is the trust boundary
-- **S3 prefix isolation** — `agents/` prefix lets us audit/delete agent files independently if needed
+- **S3 prefix isolation** — `a/` prefix lets us audit/delete agent files independently if needed
 
 ---
 
@@ -209,6 +213,6 @@ export const agentAssetLimiter = rateLimit({
 | --- | ------------------------------------------------------------- | -------------------------------------------------------------------------------- |
 | 1   | ~~Reuse `AGENT_POOL_API_KEY` or new `AGENT_ASSETS_API_KEY`?~~ | ✅ New separate `AGENT_ASSETS_API_KEY`                                           |
 | 2   | ~~Rate limit for agent uploads?~~                             | ✅ 50/min                                                                        |
-| 3   | ~~Content type restrictions?~~                                | ✅ Any file type — needed in near-term                                           |
+| 3   | ~~Content type restrictions?~~                                | ✅ Always `application/octet-stream` — uploads are encrypted binary              |
 | 4   | ~~CLI encryption work tracked?~~                              | ✅ In progress — [convos-cli#15](https://github.com/xmtplabs/convos-cli/pull/15) |
 | 5   | ~~Who renews agent PFPs?~~                                    | ✅ Agents renew their own assets (see below)                                     |
