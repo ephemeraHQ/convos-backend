@@ -38,3 +38,23 @@ export const assetRenewalLimiter = rateLimit({
   standardHeaders: "draft-8",
   message: { error: "Too many renewal requests, please try again later" },
 });
+
+// Pre-auth rate limiting for agent asset uploads (protects API key auth surface)
+export const agentAssetPreAuthLimiter = rateLimit({
+  windowMs: 60 * 1000, // 1 minute
+  limit: 20,
+  keyGenerator: (req) => req.ip || "unknown",
+  legacyHeaders: false,
+  standardHeaders: "draft-8",
+  message: { error: "Too many agent auth attempts, please try again later" },
+});
+
+// Post-auth rate limiting for agent asset uploads (shared global throughput cap)
+export const agentAssetLimiter = rateLimit({
+  windowMs: 60 * 1000, // 1 minute
+  limit: 50,
+  keyGenerator: () => "agent-global",
+  legacyHeaders: false,
+  standardHeaders: "draft-8",
+  message: { error: "Too many agent upload requests, please try again later" },
+});

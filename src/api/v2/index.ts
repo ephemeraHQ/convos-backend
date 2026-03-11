@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { agentApiKeyAuth, authOrAgentApiKeyAuth } from "@/middleware/agentAuth";
 import {
   appCheckOnlyMiddleware,
   authMiddleware,
@@ -6,11 +7,18 @@ import {
 } from "@/middleware/auth";
 import { devAuthMiddleware } from "@/middleware/devAuth";
 import { lifecycleTestAuthMiddleware } from "@/middleware/lifecycleTestAuth";
-import { agentJoinLimiter, assetRenewalLimiter } from "@/middleware/rateLimit";
+import {
+  agentAssetLimiter,
+  agentAssetPreAuthLimiter,
+  agentJoinLimiter,
+  assetRenewalLimiter,
+} from "@/middleware/rateLimit";
 import { agentsRouter } from "./agents/agents.router";
+import { agentAssetsRouter } from "./agents/assets/agent-assets.router";
 import { assetsRouter } from "./assets/assets.router";
 import { lifecycleStatusHandler } from "./assets/handlers/lifecycle-status";
 import { migrateTimestampsHandler } from "./assets/handlers/migrate-timestamps";
+import { renewBatchHandler } from "./assets/handlers/renew-batch";
 import { testLifecycleHandler } from "./assets/handlers/test-lifecycle";
 import { attachmentsRouter } from "./attachments/attachments.router";
 import { authRouter } from "./auth/auth.router";
@@ -50,7 +58,24 @@ v2Router.post(
   migrateTimestampsHandler,
 );
 
-v2Router.use("/assets", authMiddleware, assetRenewalLimiter, assetsRouter);
+// Renew assets with either JWT auth (iOS clients) or agent API key auth
+v2Router.post(
+  "/assets/renew-batch",
+  authOrAgentApiKeyAuth,
+  assetRenewalLimiter,
+  renewBatchHandler,
+);
+
+v2Router.use("/assets", authMiddleware, assetsRouter);
+
+// Must be mounted before /agents to avoid being caught by /agents auth middleware
+v2Router.use(
+  "/agents/assets",
+  agentAssetPreAuthLimiter,
+  agentApiKeyAuth,
+  agentAssetLimiter,
+  agentAssetsRouter,
+);
 v2Router.use("/agents", agentJoinLimiter, authMiddleware, agentsRouter);
 v2Router.use("/attachments", authMiddleware, attachmentsRouter);
 v2Router.use("/notifications/xmtp", webhookRouter);
