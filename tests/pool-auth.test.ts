@@ -29,7 +29,9 @@ describe("poolApiKeyAuth", () => {
 
   beforeAll(async () => {
     await new Promise<void>((resolve) => {
-      server = app.listen(4010, () => resolve());
+      server = app.listen(4010, () => {
+        resolve();
+      });
     });
   });
 
@@ -41,7 +43,9 @@ describe("poolApiKeyAuth", () => {
     }
 
     await new Promise<void>((resolve) => {
-      server.close(() => resolve());
+      server.close(() => {
+        resolve();
+      });
     });
   });
 

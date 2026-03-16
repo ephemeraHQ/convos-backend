@@ -13,11 +13,6 @@ const POOL_PATHS: Record<ServiceType, string> = {
   sms: "/api/proxy/sms/provision",
 };
 
-const RESPONSE_KEY: Record<ServiceType, "email" | "phone"> = {
-  email: "email",
-  sms: "phone",
-};
-
 const poolResponseSchemas = {
   email: z.object({
     email: z.string(),
@@ -50,9 +45,8 @@ function makeErrors(service: ServiceType) {
   } as const;
 }
 
-export function createProvisionHandler<S extends ServiceType>(service: S) {
+export function createProvisionHandler(service: ServiceType) {
   const ERRORS = makeErrors(service);
-  const responseKey = RESPONSE_KEY[service];
   const poolPath = POOL_PATHS[service];
   const responseSchema = poolResponseSchemas[service];
 

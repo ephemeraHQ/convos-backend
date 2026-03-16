@@ -5,7 +5,6 @@ import {
   beforeEach,
   describe,
   expect,
-  mock,
   test,
 } from "bun:test";
 import express from "express";
@@ -54,7 +53,9 @@ describe("provision endpoints", () => {
 
   beforeAll(async () => {
     await new Promise<void>((resolve) => {
-      server = app.listen(4011, () => resolve());
+      server = app.listen(4011, () => {
+        resolve();
+      });
     });
   });
 
@@ -73,7 +74,9 @@ describe("provision endpoints", () => {
     }
 
     await new Promise<void>((resolve) => {
-      server.close(() => resolve());
+      server.close(() => {
+        resolve();
+      });
     });
   });
 
