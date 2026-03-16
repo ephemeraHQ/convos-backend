@@ -1,6 +1,5 @@
 import { createHash, timingSafeEqual } from "crypto";
 import type { NextFunction, Request, Response } from "express";
-import { AGENT_POOL_API_KEY } from "@/config";
 
 const MIN_POOL_API_KEY_LENGTH = 32;
 
@@ -18,7 +17,7 @@ export const poolApiKeyAuth = (
   res: Response,
   next: NextFunction,
 ) => {
-  const expectedKey = AGENT_POOL_API_KEY.trim();
+  const expectedKey = (process.env.AGENT_POOL_API_KEY ?? "").trim();
 
   if (!expectedKey) {
     res.status(503).json({ error: "Pool API key not configured" });
