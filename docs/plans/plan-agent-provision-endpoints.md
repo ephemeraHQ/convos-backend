@@ -9,6 +9,14 @@ POST /api/v2/agents/provision/sms     { "instanceId": "<id>" }  →  { "phone": 
 
 Auth: `Authorization: Bearer <POOL_API_KEY>`
 
+## Idempotency
+
+Calls are idempotent. The pool returns:
+- `provisioned: true` — freshly created
+- `provisioned: false` — already existed, returns the existing email/phone
+
+No duplicates are created on repeated calls for the same instance.
+
 ## New files
 
 | File | Purpose |
@@ -34,7 +42,7 @@ Auth: `Authorization: Bearer <POOL_API_KEY>`
    - SMS: `POST ${AGENT_POOL_URL}/api/proxy/sms/provision` with `{ instanceId }`
    - Headers: `Authorization: Bearer ${AGENT_POOL_API_KEY}`, `Content-Type: application/json`
    - 30s timeout via `AbortSignal.timeout`
-4. Return pool response or map errors
+4. Return pool response (including `provisioned` flag) or map errors
 
 ## No new env vars, no DB changes
 
