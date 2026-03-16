@@ -20,20 +20,16 @@ const RESPONSE_KEY: Record<ServiceType, "email" | "phone"> = {
   sms: "phone",
 };
 
-const poolEmailResponseSchema = z.object({
-  email: z.string(),
-  provisioned: z.boolean(),
-});
-
-const poolSmsResponseSchema = z.object({
-  phone: z.string(),
-  provisioned: z.boolean(),
-});
-
-const POOL_RESPONSE_SCHEMA: Record<ServiceType, z.ZodType> = {
-  email: poolEmailResponseSchema,
-  sms: poolSmsResponseSchema,
-};
+const poolResponseSchemas = {
+  email: z.object({
+    email: z.string(),
+    provisioned: z.boolean(),
+  }),
+  sms: z.object({
+    phone: z.string(),
+    provisioned: z.boolean(),
+  }),
+} as const;
 
 function makeErrors(service: ServiceType) {
   const label = service.toUpperCase();
@@ -56,11 +52,11 @@ function makeErrors(service: ServiceType) {
   } as const;
 }
 
-export function createProvisionHandler(service: ServiceType) {
+export function createProvisionHandler<S extends ServiceType>(service: S) {
   const ERRORS = makeErrors(service);
   const responseKey = RESPONSE_KEY[service];
   const poolPath = POOL_PATHS[service];
-  const responseSchema = POOL_RESPONSE_SCHEMA[service];
+  const responseSchema = poolResponseSchemas[service];
 
   return async (req: Request, res: Response) => {
     if (!AGENT_POOL_URL || !AGENT_POOL_API_KEY) {
@@ -119,8 +115,8 @@ export function createProvisionHandler(service: ServiceType) {
       }
 
       res.status(200).json({
-        [responseKey]: (result.data as Record<string, unknown>)[responseKey],
-        provisioned: (result.data as Record<string, unknown>).provisioned,
+        success: true,
+        ...result.data,
       });
       return;
     } catch (error) {
