@@ -32,12 +32,16 @@ process.env.AGENT_POOL_URL = POOL_URL;
 const { createProvisionHandler } = await import(
   "@/api/v2/agents/provision/handlers/provision"
 );
+const { serviceStatusHandler } = await import(
+  "@/api/v2/agents/provision/handlers/service-status"
+);
 
 const emailHandler = createProvisionHandler("email");
 const smsHandler = createProvisionHandler("sms");
 
 app.post("/api/v2/agents/provision/email", emailHandler);
 app.post("/api/v2/agents/provision/sms", smsHandler);
+app.get("/api/v2/agents/provision/status", serviceStatusHandler);
 
 function jsonResponse(status: number, body: unknown): Response {
   return new Response(JSON.stringify(body), {
@@ -343,6 +347,142 @@ describe("provision endpoints", () => {
       const res = await post("/api/v2/agents/provision/email", {
         instanceId: "test",
       });
+      expect(res.status).toBe(200);
+    });
+  });
+
+  // --- Service status ---
+
+  const getStatus = (instanceId?: string) => {
+    const qs = instanceId
+      ? `?instanceId=${encodeURIComponent(instanceId)}`
+      : "";
+    return originalFetch(
+      `${baseURL}/api/v2/agents/provision/status${qs}`,
+      { method: "GET" },
+    );
+  };
+
+  describe("GET /api/v2/agents/provision/status", () => {
+    test("should return status for a fully provisioned instance", async () => {
+      mockFetchImpl = (url) => {
+        expect(url).toBe(
+          `${POOL_URL}/api/proxy/services/status?instanceId=instance-789`,
+        );
+        return Promise.resolve(
+          jsonResponse(200, {
+            instanceId: "instance-789",
+            email: "inbox@convos.org",
+            phone: "+12025551234",
+          }),
+        );
+      };
+
+      const res = await getStatus("instance-789");
+      expect(res.status).toBe(200);
+      const data = (await res.json()) as {
+        success: boolean;
+        instanceId: string;
+        email: string | null;
+        phone: string | null;
+      };
+      expect(data.success).toBe(true);
+      expect(data.instanceId).toBe("instance-789");
+      expect(data.email).toBe("inbox@convos.org");
+      expect(data.phone).toBe("+12025551234");
+    });
+
+    test("should return null for non-provisioned services", async () => {
+      mockFetchImpl = () =>
+        Promise.resolve(
+          jsonResponse(200, {
+            instanceId: "instance-789",
+            email: null,
+            phone: null,
+          }),
+        );
+
+      const res = await getStatus("instance-789");
+      expect(res.status).toBe(200);
+      const data = (await res.json()) as {
+        success: boolean;
+        email: string | null;
+        phone: string | null;
+      };
+      expect(data.success).toBe(true);
+      expect(data.email).toBeNull();
+      expect(data.phone).toBeNull();
+    });
+
+    test("should return 400 for missing instanceId", async () => {
+      const res = await getStatus();
+      expect(res.status).toBe(400);
+      const data = (await res.json()) as { success: boolean; error: string };
+      expect(data.success).toBe(false);
+      expect(data.error).toBe("INVALID_REQUEST");
+    });
+
+    test("should return 400 for empty instanceId", async () => {
+      const res = await getStatus("");
+      expect(res.status).toBe(400);
+      const data = (await res.json()) as { success: boolean; error: string };
+      expect(data.success).toBe(false);
+      expect(data.error).toBe("INVALID_REQUEST");
+    });
+
+    test("should return 502 when pool returns non-200", async () => {
+      mockFetchImpl = () =>
+        Promise.resolve(jsonResponse(500, { error: "internal" }));
+
+      const res = await getStatus("instance-789");
+      expect(res.status).toBe(502);
+      const data = (await res.json()) as { success: boolean; error: string };
+      expect(data.success).toBe(false);
+      expect(data.error).toBe("SERVICE_STATUS_FAILED");
+    });
+
+    test("should return 502 when pool returns malformed response", async () => {
+      mockFetchImpl = () =>
+        Promise.resolve(jsonResponse(200, { unexpected: "shape" }));
+
+      const res = await getStatus("instance-789");
+      expect(res.status).toBe(502);
+      const data = (await res.json()) as { success: boolean; error: string };
+      expect(data.success).toBe(false);
+      expect(data.error).toBe("SERVICE_STATUS_FAILED");
+    });
+
+    test("should return 504 on pool timeout", async () => {
+      mockFetchImpl = () => {
+        const err = new DOMException(
+          "The operation was aborted",
+          "TimeoutError",
+        );
+        return Promise.reject(err);
+      };
+
+      const res = await getStatus("instance-789");
+      expect(res.status).toBe(504);
+      const data = (await res.json()) as { success: boolean; error: string };
+      expect(data.success).toBe(false);
+      expect(data.error).toBe("AGENT_POOL_TIMEOUT");
+    });
+
+    test("should URL-encode instanceId in query string", async () => {
+      mockFetchImpl = (url) => {
+        expect(url).toBe(
+          `${POOL_URL}/api/proxy/services/status?instanceId=id%20with%20spaces`,
+        );
+        return Promise.resolve(
+          jsonResponse(200, {
+            instanceId: "id with spaces",
+            email: null,
+            phone: null,
+          }),
+        );
+      };
+
+      const res = await getStatus("id with spaces");
       expect(res.status).toBe(200);
     });
   });
