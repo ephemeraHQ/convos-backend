@@ -12,6 +12,7 @@ Auth: `Authorization: Bearer <POOL_API_KEY>`
 ## Idempotency
 
 Calls are idempotent. The pool returns:
+
 - `provisioned: true` — freshly created
 - `provisioned: false` — already existed, returns the existing email/phone
 
@@ -19,19 +20,19 @@ No duplicates are created on repeated calls for the same instance.
 
 ## New files
 
-| File | Purpose |
-|------|---------|
-| `src/middleware/poolAuth.ts` | Bearer token middleware — constant-time compare against `AGENT_POOL_API_KEY` |
-| `src/api/v2/agents/provision/provision.router.ts` | Router with both provision endpoints |
-| `src/api/v2/agents/provision/handlers/provision-email.ts` | Email handler |
-| `src/api/v2/agents/provision/handlers/provision-sms.ts` | SMS handler |
+| File                                                      | Purpose                                                                      |
+| --------------------------------------------------------- | ---------------------------------------------------------------------------- |
+| `src/middleware/poolAuth.ts`                              | Bearer token middleware — constant-time compare against `AGENT_POOL_API_KEY` |
+| `src/api/v2/agents/provision/provision.router.ts`         | Router with both provision endpoints                                         |
+| `src/api/v2/agents/provision/handlers/provision-email.ts` | Email handler                                                                |
+| `src/api/v2/agents/provision/handlers/provision-sms.ts`   | SMS handler                                                                  |
 
 ## Modified files
 
-| File | Change |
-|------|--------|
-| `src/api/v2/index.ts` | Mount provision router at `/agents/provision` with `poolAuth` before the JWT-protected `/agents` catch-all |
-| `src/middleware/rateLimit.ts` | Add `serviceProvisionLimiter` |
+| File                          | Change                                                                                                     |
+| ----------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| `src/api/v2/index.ts`         | Mount provision router at `/agents/provision` with `poolAuth` before the JWT-protected `/agents` catch-all |
+| `src/middleware/rateLimit.ts` | Add `serviceProvisionLimiter`                                                                              |
 
 ## Handler logic (both)
 

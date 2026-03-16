@@ -16,8 +16,8 @@ import {
   serviceProvisionLimiter,
 } from "@/middleware/rateLimit";
 import { agentsRouter } from "./agents/agents.router";
-import { provisionRouter } from "./agents/provision/provision.router";
 import { agentAssetsRouter } from "./agents/assets/agent-assets.router";
+import { provisionRouter } from "./agents/provision/provision.router";
 import { assetsRouter } from "./assets/assets.router";
 import { lifecycleStatusHandler } from "./assets/handlers/lifecycle-status";
 import { migrateTimestampsHandler } from "./assets/handlers/migrate-timestamps";
