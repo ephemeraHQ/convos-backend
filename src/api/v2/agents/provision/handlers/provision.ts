@@ -6,8 +6,6 @@ const bodySchema = z.object({
   instanceId: z.string().trim().min(1, "instanceId is required"),
 });
 
-const poolBaseUrl = AGENT_POOL_URL.replace(/\/+$/, "");
-
 type ServiceType = "email" | "sms";
 
 const POOL_PATHS: Record<ServiceType, string> = {
@@ -59,7 +57,12 @@ export function createProvisionHandler<S extends ServiceType>(service: S) {
   const responseSchema = poolResponseSchemas[service];
 
   return async (req: Request, res: Response) => {
-    if (!AGENT_POOL_URL || !AGENT_POOL_API_KEY) {
+    const MIN_KEY_LENGTH = 32;
+    if (
+      !AGENT_POOL_URL ||
+      !AGENT_POOL_API_KEY ||
+      AGENT_POOL_API_KEY.trim().length < MIN_KEY_LENGTH
+    ) {
       req.log.error("Agent pool not configured");
       const { status, ...body } = ERRORS.POOL_UNAVAILABLE;
       res.status(status).json({ success: false, ...body });
@@ -80,6 +83,7 @@ export function createProvisionHandler<S extends ServiceType>(service: S) {
     req.log.info({ instanceId }, `${service} provision request received`);
 
     try {
+      const poolBaseUrl = AGENT_POOL_URL.replace(/\/+$/, "");
       const poolRes = await fetch(`${poolBaseUrl}${poolPath}`, {
         method: "POST",
         headers: {
