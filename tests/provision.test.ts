@@ -21,8 +21,7 @@ const app = express();
 app.use(pinoMiddleware);
 app.use(jsonMiddleware);
 
-const VALID_POOL_KEY =
-  "test-pool-api-key-that-is-at-least-32-characters-long";
+const VALID_POOL_KEY = "test-pool-api-key-that-is-at-least-32-characters-long";
 const POOL_URL = "https://pool.test.local";
 
 const originalPoolKey = process.env.AGENT_POOL_API_KEY;
@@ -219,7 +218,10 @@ describe("provision endpoints", () => {
 
     test("should return 504 on pool timeout", async () => {
       mockFetchImpl = () => {
-        const err = new DOMException("The operation was aborted", "TimeoutError");
+        const err = new DOMException(
+          "The operation was aborted",
+          "TimeoutError",
+        );
         return Promise.reject(err);
       };
 
@@ -333,7 +335,10 @@ describe("provision endpoints", () => {
 
     test("should return 504 on pool timeout", async () => {
       mockFetchImpl = () => {
-        const err = new DOMException("The operation was aborted", "TimeoutError");
+        const err = new DOMException(
+          "The operation was aborted",
+          "TimeoutError",
+        );
         return Promise.reject(err);
       };
 
@@ -374,10 +379,9 @@ describe("provision endpoints", () => {
     const qs = instanceId
       ? `?instanceId=${encodeURIComponent(instanceId)}`
       : "";
-    return originalFetch(
-      `${baseURL}/api/v2/agents/provision/status${qs}`,
-      { method: "GET" },
-    );
+    return originalFetch(`${baseURL}/api/v2/agents/provision/status${qs}`, {
+      method: "GET",
+    });
   };
 
   describe("GET /api/v2/agents/provision/status", () => {

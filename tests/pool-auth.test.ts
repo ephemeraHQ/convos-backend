@@ -9,8 +9,8 @@ import {
 } from "bun:test";
 import express from "express";
 import { jsonMiddleware } from "@/middleware/json";
-import { poolApiKeyAuth } from "@/middleware/poolAuth";
 import { pinoMiddleware } from "@/middleware/pino";
+import { poolApiKeyAuth } from "@/middleware/poolAuth";
 
 const app = express();
 app.use(pinoMiddleware);
@@ -25,8 +25,7 @@ describe("poolApiKeyAuth", () => {
   const baseURL = "http://localhost:4010";
   const originalKey = process.env.AGENT_POOL_API_KEY;
 
-  const VALID_KEY =
-    "test-pool-api-key-that-is-at-least-32-characters-long";
+  const VALID_KEY = "test-pool-api-key-that-is-at-least-32-characters-long";
 
   beforeAll(async () => {
     await new Promise<void>((resolve) => {
