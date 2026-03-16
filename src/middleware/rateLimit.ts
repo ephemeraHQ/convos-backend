@@ -49,6 +49,17 @@ export const agentAssetPreAuthLimiter = rateLimit({
   message: { error: "Too many agent auth attempts, please try again later" },
 });
 
+// Rate limiting for service provision endpoints (10 requests per 5 minutes per IP)
+export const serviceProvisionLimiter = rateLimit({
+  windowMs: 5 * 60 * 1000, // 5 minutes
+  limit: 10,
+  legacyHeaders: false,
+  standardHeaders: "draft-8",
+  message: {
+    error: "Too many provision requests, please try again later",
+  },
+});
+
 // Post-auth rate limiting for agent asset uploads (shared global throughput cap)
 export const agentAssetLimiter = rateLimit({
   windowMs: 60 * 1000, // 1 minute
