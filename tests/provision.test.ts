@@ -21,13 +21,12 @@ const app = express();
 app.use(pinoMiddleware);
 app.use(jsonMiddleware);
 
-// We need to set env vars before importing the handler (config.ts caches them)
 const VALID_POOL_KEY =
   "test-pool-api-key-that-is-at-least-32-characters-long";
 const POOL_URL = "https://pool.test.local";
 
-process.env.AGENT_POOL_API_KEY = VALID_POOL_KEY;
-process.env.AGENT_POOL_URL = POOL_URL;
+const originalPoolKey = process.env.AGENT_POOL_API_KEY;
+const originalPoolUrl = process.env.AGENT_POOL_URL;
 
 const { createProvisionHandler } = await import(
   "@/api/v2/agents/provision/handlers/provision"
@@ -62,12 +61,28 @@ describe("provision endpoints", () => {
 
   afterAll(async () => {
     globalThis.fetch = originalFetch;
+
+    if (originalPoolKey !== undefined) {
+      process.env.AGENT_POOL_API_KEY = originalPoolKey;
+    } else {
+      delete process.env.AGENT_POOL_API_KEY;
+    }
+    if (originalPoolUrl !== undefined) {
+      process.env.AGENT_POOL_URL = originalPoolUrl;
+    } else {
+      delete process.env.AGENT_POOL_URL;
+    }
+
     await new Promise<void>((resolve) => {
       server.close(() => resolve());
     });
   });
 
   beforeEach(() => {
+    // Restore env vars to known good state for each test
+    process.env.AGENT_POOL_API_KEY = VALID_POOL_KEY;
+    process.env.AGENT_POOL_URL = POOL_URL;
+
     // Default: reject unmocked fetch calls
     mockFetchImpl = () => Promise.reject(new Error("unmocked fetch"));
     globalThis.fetch = ((url: string, init?: RequestInit) =>
@@ -337,6 +352,8 @@ describe("provision endpoints", () => {
 
   describe("pool URL construction", () => {
     test("should strip trailing slashes from pool URL", async () => {
+      process.env.AGENT_POOL_URL = `${POOL_URL}///`;
+
       mockFetchImpl = (url) => {
         expect(url).toBe(`${POOL_URL}/api/proxy/email/provision`);
         return Promise.resolve(

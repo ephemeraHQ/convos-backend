@@ -1,5 +1,6 @@
 import type { Request, Response } from "express";
 import { z } from "zod";
+import { getPoolConfig } from "./pool-config";
 
 const bodySchema = z.object({
   instanceId: z.string().trim().min(1, "instanceId is required"),
@@ -56,11 +57,8 @@ export function createProvisionHandler<S extends ServiceType>(service: S) {
   const responseSchema = poolResponseSchemas[service];
 
   return async (req: Request, res: Response) => {
-    const poolUrl = process.env.AGENT_POOL_URL ?? "";
-    const poolApiKey = process.env.AGENT_POOL_API_KEY ?? "";
-    const MIN_KEY_LENGTH = 32;
-    if (!poolUrl || !poolApiKey || poolApiKey.trim().length < MIN_KEY_LENGTH) {
-      req.log.error("Agent pool not configured");
+    const pool = getPoolConfig(req);
+    if (!pool) {
       const { status, ...body } = ERRORS.POOL_UNAVAILABLE;
       res.status(status).json({ success: false, ...body });
       return;
@@ -80,12 +78,11 @@ export function createProvisionHandler<S extends ServiceType>(service: S) {
     req.log.info({ instanceId }, `${service} provision request received`);
 
     try {
-      const poolBaseUrl = poolUrl.replace(/\/+$/, "");
-      const poolRes = await fetch(`${poolBaseUrl}${poolPath}`, {
+      const poolRes = await fetch(`${pool.poolBaseUrl}${poolPath}`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          Authorization: `Bearer ${poolApiKey}`,
+          Authorization: `Bearer ${pool.poolApiKey}`,
         },
         signal: AbortSignal.timeout(30_000),
         body: JSON.stringify({ instanceId }),

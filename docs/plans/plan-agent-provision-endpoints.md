@@ -2,9 +2,10 @@
 
 ## Routes
 
-```
-POST /api/v2/agents/provision/email   { "instanceId": "<id>" }  →  { "email": "...", "provisioned": true }
-POST /api/v2/agents/provision/sms     { "instanceId": "<id>" }  →  { "phone": "+1...", "provisioned": true }
+```text
+POST /api/v2/agents/provision/email    { "instanceId": "<id>" }  →  { "email": "...", "provisioned": true }
+POST /api/v2/agents/provision/sms      { "instanceId": "<id>" }  →  { "phone": "+1...", "provisioned": true }
+GET  /api/v2/agents/provision/status?instanceId=<id>             →  { "instanceId", "email", "phone" }
 ```
 
 Auth: `Authorization: Bearer <POOL_API_KEY>`
