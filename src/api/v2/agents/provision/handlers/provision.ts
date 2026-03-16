@@ -94,7 +94,11 @@ export function createProvisionHandler<S extends ServiceType>(service: S) {
       if (!poolRes.ok) {
         const text = await poolRes.text();
         req.log.error(
-          { status: poolRes.status, body: text },
+          {
+            status: poolRes.status,
+            bodyPreview: text.substring(0, 200),
+            bodyLength: text.length,
+          },
           `${service} provision failed`,
         );
         const { status, ...body } = ERRORS.PROVISION_FAILED;
