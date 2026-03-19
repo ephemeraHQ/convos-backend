@@ -5,7 +5,6 @@ process.env.LOG_FORMAT = "json";
 
 // Set required environment variables for tests
 process.env.PUBLIC_ASSETS_BUCKET = "test-public-assets-bucket";
-process.env.JWT_SECRET = "test-jwt-secret";
 process.env.FIREBASE_SERVICE_ACCOUNT = "{}";
 process.env.XMTP_ENV = "local";
 process.env.NOTIFICATION_SERVER_URL = "http://localhost:8080";
