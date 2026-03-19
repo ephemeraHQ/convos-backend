@@ -35,6 +35,12 @@ export type ApnsNotificationPayload = NotificationPayload & {
   };
 };
 
+/** Mask a token for safe logging: show first 8 and last 4 chars */
+function maskToken(token: string): string {
+  if (token.length <= 16) return `${token.slice(0, 4)}...${token.slice(-4)}`;
+  return `${token.slice(0, 8)}...${token.slice(-4)} (len=${token.length})`;
+}
+
 export class ApnsPushService {
   private config: ApnsConfig;
   private jwtToken?: string;
@@ -89,10 +95,18 @@ export class ApnsPushService {
     const { device, notification, isSilent } = args;
 
     if (!device.pushToken) {
+      logger.warn(
+        { deviceId: device.id },
+        "[APNS] No push token available – skipping send",
+      );
       return { success: false, error: "No APNS push token available" };
     }
 
     if (device.pushTokenType !== "apns") {
+      logger.warn(
+        { deviceId: device.id, pushTokenType: device.pushTokenType },
+        "[APNS] Device push token type mismatch – expected 'apns'",
+      );
       return { success: false, error: "Device is not configured for APNS" };
     }
 
@@ -129,7 +143,7 @@ export class ApnsPushService {
       client.on("error", (error: Error) => {
         logger.error(
           { error: error.message, stack: error.stack, deviceId: device.id },
-          "HTTP/2 connection error",
+          "[APNS] HTTP/2 connection error",
         );
         client.close();
         resolve({ success: false, error: error.message });
@@ -145,16 +159,29 @@ export class ApnsPushService {
         "content-type": "application/json",
       };
 
+      // Extract content topic for logging (if Protocol notification)
+      const contentTopic =
+        "contentTopic" in notification.notificationData
+          ? (notification.notificationData as { contentTopic?: string })
+              .contentTopic
+          : undefined;
+
       const safeHeaders = { ...headers, authorization: "[REDACTED]" };
       logger.info(
         {
-          url: `https://${hostname}/3/device/${device.pushToken}`,
+          url: `https://${hostname}/3/device/${maskToken(device.pushToken!)}`,
+          pushTokenMasked: maskToken(device.pushToken!),
           headers: safeHeaders,
-          payload,
           deviceId: device.id,
+          apnsEnv: device.apnsEnv,
+          isSilent,
+          notificationType: notification.notificationType,
+          contentTopic,
+          bundleId: this.config.bundleId,
+          payloadSize: JSON.stringify(payload).length,
           verbose: true,
         },
-        "[VERBOSE] Sending APNS HTTP/2 request",
+        "[APNS] Sending HTTP/2 push request",
       );
 
       const request = client.request(headers);
@@ -173,7 +200,7 @@ export class ApnsPushService {
             deviceId: device.id,
             verbose: true,
           },
-          "[VERBOSE] APNS HTTP/2 response received",
+          "[APNS] HTTP/2 response received",
         );
       });
 
@@ -182,7 +209,7 @@ export class ApnsPushService {
         responseData += chunkStr;
         logger.info(
           { chunk: chunkStr, deviceId: device.id, verbose: true },
-          "[VERBOSE] APNS response data chunk",
+          "[APNS] Response data chunk",
         );
       });
 
@@ -194,10 +221,11 @@ export class ApnsPushService {
             {
               deviceId: device.id,
               apnsEnv: device.apnsEnv,
+              pushTokenMasked: maskToken(device.pushToken!),
               apnsId: responseHeaders["apns-id"] as string,
-              verbose: true,
+              bundleId: this.config.bundleId,
             },
-            "[VERBOSE] APNS push notification sent successfully",
+            "[APNS] Push notification sent successfully",
           );
           resolve({ success: true });
           return;
@@ -220,9 +248,10 @@ export class ApnsPushService {
             responseData,
             deviceId: device.id,
             apnsEnv: device.apnsEnv,
-            verbose: true,
+            pushTokenMasked: maskToken(device.pushToken!),
+            bundleId: this.config.bundleId,
           },
-          "[VERBOSE] APNS push notification failed",
+          "[APNS] Push notification failed",
         );
 
         // Handle specific APNS errors
@@ -247,9 +276,9 @@ export class ApnsPushService {
             error: error.message,
             stack: error.stack,
             deviceId: device.id,
-            verbose: true,
+            pushTokenMasked: maskToken(device.pushToken!),
           },
-          "[VERBOSE] APNS HTTP/2 request error",
+          "[APNS] HTTP/2 request error",
         );
         client.close();
         resolve({ success: false, error: error.message });
@@ -263,16 +292,11 @@ export class ApnsPushService {
           deviceId: device.id,
           verbose: true,
         },
-        "[VERBOSE] Writing APNS payload to HTTP/2 stream",
+        "[APNS] Writing payload to HTTP/2 stream",
       );
 
       request.write(payloadStr);
       request.end();
-
-      logger.info(
-        { deviceId: device.id, verbose: true },
-        "[VERBOSE] APNS HTTP/2 request stream ended",
-      );
     });
   }
 }
@@ -296,13 +320,18 @@ export function createApnsService(): ApnsPushService | null {
 
   if (!teamId || !keyId || !privateKey || !bundleId) {
     logger.warn(
-      "APNS configuration incomplete, APNS push notifications disabled",
+      "[APNS] Configuration incomplete, APNS push notifications disabled",
     );
     return null;
   }
 
   // Convert \n escape sequences to actual newlines
   const formattedPrivateKey = privateKey.replace(/\\n/g, "\n");
+
+  logger.info(
+    { teamId, keyId, bundleId },
+    "[APNS] Initialising APNS service",
+  );
 
   cachedApnsService = new ApnsPushService({
     teamId,
