@@ -10,6 +10,7 @@ import { noRouteMiddleware } from "./middleware/noRoute";
 import { pinoMiddleware } from "./middleware/pino";
 import { rateLimitMiddleware } from "./middleware/rateLimit";
 import healthcheckRouter from "./routes/healthcheck";
+import { wellKnownRouter } from "./routes/well-known";
 import { validateJWTKeys } from "./utils/jwt";
 import logger from "./utils/logger";
 
@@ -44,6 +45,9 @@ app.use(rateLimitMiddleware);
 
 // add healthcheck routes
 app.use("/healthcheck", healthcheckRouter);
+
+// .well-known proxied from agent pool (RFC 8615 – must be at domain root)
+app.use("/.well-known", wellKnownRouter);
 
 // add api routes
 app.use("/api", apiRouter);
