@@ -55,7 +55,10 @@ wellKnownRouter.get("/agents.json", async (req, res) => {
     res.status(200).send(body);
   } catch (error) {
     if (error instanceof DOMException && error.name === "TimeoutError") {
-      logger.error({ upstreamUrl }, "Upstream .well-known/agents.json timed out");
+      logger.error(
+        { upstreamUrl },
+        "Upstream .well-known/agents.json timed out",
+      );
       res.status(504).json({ error: "Upstream timeout" });
       return;
     }

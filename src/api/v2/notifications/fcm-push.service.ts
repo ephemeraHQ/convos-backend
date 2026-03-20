@@ -33,8 +33,8 @@ export class FcmPushService {
       const sa = JSON.parse(
         process.env.FIREBASE_SERVICE_ACCOUNT ?? "{}",
       ) as ServiceAccount;
-      this.projectId = sa.projectId as string | undefined;
-      this.serviceAccountEmail = sa.clientEmail as string | undefined;
+      this.projectId = sa.projectId;
+      this.serviceAccountEmail = sa.clientEmail;
     } catch {
       // Non-critical – just for logging
     }
@@ -93,10 +93,18 @@ export class FcmPushService {
         : "inboxId" in notification && notification.inboxId
           ? "inboxId"
           : undefined;
-    if (identifierType === "clientId" && "clientId" in notification) {
-      data.clientId = notification.clientId!;
-    } else if (identifierType === "inboxId" && "inboxId" in notification) {
-      data.inboxId = notification.inboxId!;
+    if (
+      identifierType === "clientId" &&
+      "clientId" in notification &&
+      notification.clientId
+    ) {
+      data.clientId = notification.clientId;
+    } else if (
+      identifierType === "inboxId" &&
+      "inboxId" in notification &&
+      notification.inboxId
+    ) {
+      data.inboxId = notification.inboxId;
     }
 
     // Extract content topic for logging (if Protocol notification)
@@ -165,10 +173,10 @@ export class FcmPushService {
 
       // Emit a targeted diagnostic for IAM permission errors so the fix is obvious in logs
       const isIamError =
-        fcmError.message?.includes("cloudmessaging.messages.create") ||
-        fcmError.message?.includes("PERMISSION_DENIED") ||
-        (fcmError.message?.includes("Permission") &&
-          fcmError.message?.includes("denied"));
+        fcmError.message.includes("cloudmessaging.messages.create") ||
+        fcmError.message.includes("PERMISSION_DENIED") ||
+        (fcmError.message.includes("Permission") &&
+          fcmError.message.includes("denied"));
       if (isIamError) {
         logger.error(
           {
