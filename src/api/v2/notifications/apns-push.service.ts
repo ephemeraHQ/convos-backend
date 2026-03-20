@@ -110,6 +110,9 @@ export class ApnsPushService {
       return { success: false, error: "Device is not configured for APNS" };
     }
 
+    // Narrowed after the null guard above
+    const pushToken = device.pushToken;
+
     const payload: ApnsNotificationPayload = isSilent
       ? {
           aps: {
@@ -169,8 +172,8 @@ export class ApnsPushService {
       const safeHeaders = { ...headers, authorization: "[REDACTED]" };
       logger.info(
         {
-          url: `https://${hostname}/3/device/${maskToken(device.pushToken!)}`,
-          pushTokenMasked: maskToken(device.pushToken!),
+          url: `https://${hostname}/3/device/${maskToken(pushToken)}`,
+          pushTokenMasked: maskToken(pushToken),
           headers: safeHeaders,
           deviceId: device.id,
           apnsEnv: device.apnsEnv,
@@ -221,7 +224,7 @@ export class ApnsPushService {
             {
               deviceId: device.id,
               apnsEnv: device.apnsEnv,
-              pushTokenMasked: maskToken(device.pushToken!),
+              pushTokenMasked: maskToken(pushToken),
               apnsId: responseHeaders["apns-id"] as string,
               bundleId: this.config.bundleId,
             },
@@ -248,7 +251,7 @@ export class ApnsPushService {
             responseData,
             deviceId: device.id,
             apnsEnv: device.apnsEnv,
-            pushTokenMasked: maskToken(device.pushToken!),
+            pushTokenMasked: maskToken(pushToken),
             bundleId: this.config.bundleId,
           },
           "[APNS] Push notification failed",
@@ -276,7 +279,7 @@ export class ApnsPushService {
             error: error.message,
             stack: error.stack,
             deviceId: device.id,
-            pushTokenMasked: maskToken(device.pushToken!),
+            pushTokenMasked: maskToken(pushToken),
           },
           "[APNS] HTTP/2 request error",
         );
@@ -328,10 +331,7 @@ export function createApnsService(): ApnsPushService | null {
   // Convert \n escape sequences to actual newlines
   const formattedPrivateKey = privateKey.replace(/\\n/g, "\n");
 
-  logger.info(
-    { teamId, keyId, bundleId },
-    "[APNS] Initialising APNS service",
-  );
+  logger.info({ teamId, keyId, bundleId }, "[APNS] Initialising APNS service");
 
   cachedApnsService = new ApnsPushService({
     teamId,

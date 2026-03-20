@@ -154,7 +154,10 @@ async function handleV2Notification(args: {
 
   if (isWelcome) {
     req.log.info(
-      { contentTopic: notification.message.content_topic, pushTokenType: pushType },
+      {
+        contentTopic: notification.message.content_topic,
+        pushTokenType: pushType,
+      },
       `${tag} Detected welcome message – omitting encrypted content to avoid payload limit`,
     );
   }
@@ -279,11 +282,12 @@ async function handleV2Notification(args: {
 
     // Log detailed error information
     const rawToken = client.device.pushToken ?? "";
-    const maskedToken = rawToken.length > 16
-      ? `${rawToken.slice(0, 8)}...${rawToken.slice(-4)} (len=${rawToken.length})`
-      : rawToken.length > 0
-        ? `${rawToken.slice(0, 4)}...${rawToken.slice(-4)}`
-        : "(none)";
+    const maskedToken =
+      rawToken.length > 16
+        ? `${rawToken.slice(0, 8)}...${rawToken.slice(-4)} (len=${rawToken.length})`
+        : rawToken.length > 0
+          ? `${rawToken.slice(0, 4)}...${rawToken.slice(-4)}`
+          : "(none)";
     req.log.error(
       {
         deviceId: client.deviceId,
