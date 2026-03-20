@@ -53,13 +53,15 @@ export async function handleXmtpNotification(req: Request, res: Response) {
 
     const notification = parseResult.data;
 
-    // Log the notification for debugging
+    // Log the incoming webhook for debugging
     req.log.info(
       {
         contentTopic: notification.message.content_topic,
+        messageType: notification.message_context.message_type,
         installationId: notification.installation.id,
+        timestampNs: notification.message.timestamp_ns,
       },
-      "received notification",
+      "Received XMTP notification webhook",
     );
 
     // Process v2 notifications (clientId lookup)
@@ -69,9 +71,19 @@ export async function handleXmtpNotification(req: Request, res: Response) {
     });
 
     if (v2Client) {
+      const pushType = v2Client.device.pushTokenType; // 'fcm' | 'apns'
+      const tag = pushType === "fcm" ? "[FCM]" : "[APNS]";
       req.log.info(
-        { clientId: notification.installation.id },
-        "Processing v2 notification",
+        {
+          clientId: notification.installation.id,
+          deviceId: v2Client.deviceId,
+          pushTokenType: pushType,
+          hasPushToken: !!v2Client.device.pushToken,
+          apnsEnv: v2Client.device.apnsEnv,
+          disabled: v2Client.device.disabled,
+          pushFailures: v2Client.device.pushFailures,
+        },
+        `${tag} Processing v2 notification`,
       );
       await handleV2Notification({
         notification,
@@ -97,11 +109,14 @@ async function handleV2Notification(args: {
 }) {
   const { notification, client, req } = args;
 
+  const pushType = client.device.pushTokenType; // 'fcm' | 'apns'
+  const tag = pushType === "fcm" ? "[FCM]" : "[APNS]";
+
   // Only check manual disable flag (not failure count)
   if (client.device.disabled) {
     req.log.warn(
-      { deviceId: client.deviceId },
-      `Device is manually disabled. Skipping notification.`,
+      { deviceId: client.deviceId, pushTokenType: pushType },
+      `${tag} Device is manually disabled. Skipping notification.`,
     );
     return { success: false };
   }
@@ -111,10 +126,11 @@ async function handleV2Notification(args: {
     req.log.warn(
       {
         deviceId: client.deviceId,
+        pushTokenType: pushType,
         failures: client.device.pushFailures,
         lastFailureAt: client.device.lastFailureAt,
       },
-      `Device has high failure count (${client.device.pushFailures}) but continuing`,
+      `${tag} Device has high failure count (${client.device.pushFailures}) but continuing`,
     );
   }
 
@@ -138,8 +154,8 @@ async function handleV2Notification(args: {
 
   if (isWelcome) {
     req.log.info(
-      { contentTopic: notification.message.content_topic },
-      "Detected welcome message - omitting encrypted content to avoid payload limit",
+      { contentTopic: notification.message.content_topic, pushTokenType: pushType },
+      `${tag} Detected welcome message – omitting encrypted content to avoid payload limit`,
     );
   }
 
@@ -160,11 +176,26 @@ async function handleV2Notification(args: {
   // Route to appropriate push service based on token type
   let result: { success: boolean; error?: string };
 
-  if (client.device.pushTokenType === "fcm") {
+  req.log.info(
+    {
+      deviceId: client.deviceId,
+      pushTokenType: pushType,
+      contentTopic: notification.message.content_topic,
+      messageType: notification.message_context.message_type,
+      isWelcome,
+      payloadSize: JSON.stringify(v2Notification.notificationData).length,
+    },
+    `${tag} Routing push notification to ${pushType} service`,
+  );
+
+  if (pushType === "fcm") {
     // Android/FCM push notification
     const fcmService = createFcmService();
     if (!fcmService) {
-      req.log.error("FCM service not configured");
+      req.log.error(
+        { deviceId: client.deviceId },
+        "[FCM] Service not configured – cannot send push",
+      );
       return { success: false };
     }
 
@@ -180,7 +211,10 @@ async function handleV2Notification(args: {
     // iOS/APNS push notification
     const apnsService = createApnsService();
     if (!apnsService) {
-      req.log.error("APNS service not configured");
+      req.log.error(
+        { deviceId: client.deviceId },
+        "[APNS] Service not configured – cannot send push",
+      );
       return { success: false };
     }
 
@@ -205,8 +239,12 @@ async function handleV2Notification(args: {
       },
     });
     req.log.info(
-      { deviceId: client.deviceId },
-      `Successfully sent v2 push notification`,
+      {
+        deviceId: client.deviceId,
+        pushTokenType: pushType,
+        contentTopic: notification.message.content_topic,
+      },
+      `${tag} Successfully sent v2 push notification`,
     );
   } else {
     // Increment failures and conditionally disable in XMTP production environment
@@ -240,17 +278,26 @@ async function handleV2Notification(args: {
     });
 
     // Log detailed error information
+    const rawToken = client.device.pushToken ?? "";
+    const maskedToken = rawToken.length > 16
+      ? `${rawToken.slice(0, 8)}...${rawToken.slice(-4)} (len=${rawToken.length})`
+      : rawToken.length > 0
+        ? `${rawToken.slice(0, 4)}...${rawToken.slice(-4)}`
+        : "(none)";
     req.log.error(
       {
         deviceId: client.deviceId,
         error: result.error,
         failureCount: updated.pushFailures,
-        pushTokenType: client.device.pushTokenType,
+        pushTokenType: pushType,
+        pushTokenMasked: maskedToken,
         apnsEnv: client.device.apnsEnv,
         lastFailureAt: updated.lastFailureAt,
         autoDisabled,
+        contentTopic: notification.message.content_topic,
+        messageType: notification.message_context.message_type,
       },
-      `Failed to send v2 push notification: ${result.error}`,
+      `${tag} Failed to send v2 push notification: ${result.error}`,
     );
 
     // Cleanup if unrecoverable error
@@ -259,8 +306,8 @@ async function handleV2Notification(args: {
       result.error === "BadDeviceToken"
     ) {
       req.log.info(
-        { clientId: client.id, error: result.error },
-        `Cleaning up v2 notification client due to unrecoverable error`,
+        { clientId: client.id, error: result.error, pushTokenType: pushType },
+        `${tag} Cleaning up v2 notification client due to unrecoverable error`,
       );
       try {
         // Delete from local DB first to ensure we don't retry on failure
@@ -277,18 +324,18 @@ async function handleV2Notification(args: {
           // Log but don't fail - DB is authoritative, orphaned XMTP installation is harmless
           req.log.warn(
             { error: xmtpError, clientId: client.id },
-            "Failed to delete XMTP installation, but local DB is clean",
+            `${tag} Failed to delete XMTP installation, but local DB is clean`,
           );
         }
 
         req.log.info(
-          { clientId: client.id },
-          "Successfully cleaned up v2 notifications",
+          { clientId: client.id, pushTokenType: pushType },
+          `${tag} Successfully cleaned up v2 notifications`,
         );
       } catch (cleanupError) {
         req.log.error(
           { error: cleanupError, clientId: client.id },
-          "Failed to cleanup v2 notification subscriptions after push failure",
+          `${tag} Failed to cleanup v2 notification subscriptions after push failure`,
         );
         // Don't throw here - this is already in error handling path
       }

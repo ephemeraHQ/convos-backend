@@ -1,4 +1,5 @@
 import type { PushTokenType } from "@prisma/client";
+import type { ServiceAccount } from "firebase-admin/app";
 import { getMessaging, type Messaging } from "firebase-admin/messaging";
 import { getFirebaseApp } from "@/utils/firebase";
 import logger from "@/utils/logger";
@@ -10,12 +11,33 @@ export interface FcmDevice {
   pushTokenType: PushTokenType;
 }
 
+/** Mask a token for safe logging: show first 8 and last 4 chars */
+function maskToken(token: string): string {
+  if (token.length <= 16) return `${token.slice(0, 4)}...${token.slice(-4)}`;
+  return `${token.slice(0, 8)}...${token.slice(-4)} (len=${token.length})`;
+}
+
 export class FcmPushService {
   private messaging: Messaging;
+  /** Firebase project ID extracted from the service account (for diagnostics) */
+  private projectId: string | undefined;
+  /** Service account email (for diagnostics) */
+  private serviceAccountEmail: string | undefined;
 
   constructor() {
     const app = getFirebaseApp();
     this.messaging = getMessaging(app);
+
+    // Extract project metadata from service account for diagnostic logging
+    try {
+      const sa = JSON.parse(
+        process.env.FIREBASE_SERVICE_ACCOUNT ?? "{}",
+      ) as ServiceAccount;
+      this.projectId = sa.projectId as string | undefined;
+      this.serviceAccountEmail = sa.clientEmail as string | undefined;
+    } catch {
+      // Non-critical – just for logging
+    }
   }
 
   async sendPushNotification(args: {
@@ -26,10 +48,18 @@ export class FcmPushService {
     const { device, notification, isSilent } = args;
 
     if (!device.pushToken) {
+      logger.warn(
+        { deviceId: device.id },
+        "[FCM] No push token available – skipping send",
+      );
       return { success: false, error: "No FCM push token available" };
     }
 
     if (device.pushTokenType !== "fcm") {
+      logger.warn(
+        { deviceId: device.id, pushTokenType: device.pushTokenType },
+        "[FCM] Device push token type mismatch – expected 'fcm'",
+      );
       return { success: false, error: "Device is not configured for FCM" };
     }
 
@@ -41,9 +71,8 @@ export class FcmPushService {
         {
           deviceId: device.id,
           error,
-          verbose: true,
         },
-        "[VERBOSE] Failed to serialize notification data",
+        "[FCM] Failed to serialize notification data",
       );
       return { success: false, error: "Invalid notification data" };
     }
@@ -58,20 +87,38 @@ export class FcmPushService {
     };
 
     // Add clientId or inboxId depending on which is present
-    if ("clientId" in notification && notification.clientId) {
-      data.clientId = notification.clientId;
-    } else if ("inboxId" in notification && notification.inboxId) {
-      data.inboxId = notification.inboxId;
+    const identifierType =
+      "clientId" in notification && notification.clientId
+        ? "clientId"
+        : "inboxId" in notification && notification.inboxId
+          ? "inboxId"
+          : undefined;
+    if (identifierType === "clientId" && "clientId" in notification) {
+      data.clientId = notification.clientId!;
+    } else if (identifierType === "inboxId" && "inboxId" in notification) {
+      data.inboxId = notification.inboxId!;
     }
+
+    // Extract content topic for logging (if Protocol notification)
+    const contentTopic =
+      "contentTopic" in notification.notificationData
+        ? (notification.notificationData as { contentTopic?: string })
+            .contentTopic
+        : undefined;
 
     try {
       logger.info(
         {
           deviceId: device.id,
+          pushTokenMasked: maskToken(device.pushToken),
           isSilent,
-          verbose: true,
+          notificationType: notification.notificationType,
+          identifierType,
+          contentTopic,
+          firebaseProject: this.projectId,
+          payloadSize: notificationData.length,
         },
-        "[VERBOSE] Sending FCM push notification",
+        "[FCM] Sending push notification",
       );
 
       const messageId = await this.messaging.send({
@@ -87,24 +134,52 @@ export class FcmPushService {
         {
           deviceId: device.id,
           messageId,
-          verbose: true,
+          pushTokenMasked: maskToken(device.pushToken),
+          firebaseProject: this.projectId,
         },
-        "[VERBOSE] FCM push notification sent successfully",
+        "[FCM] Push notification sent successfully",
       );
 
       return { success: true };
     } catch (error) {
-      const fcmError = error as Error & { code?: string };
+      const fcmError = error as Error & {
+        code?: string;
+        details?: unknown;
+        errorInfo?: Record<string, unknown>;
+      };
 
       logger.error(
         {
           deviceId: device.id,
+          pushTokenMasked: maskToken(device.pushToken),
           error: fcmError.message,
           code: fcmError.code,
-          verbose: true,
+          errorInfo: fcmError.errorInfo,
+          firebaseProject: this.projectId,
+          serviceAccountEmail: this.serviceAccountEmail,
+          notificationType: notification.notificationType,
+          contentTopic,
         },
-        "[VERBOSE] FCM push notification failed",
+        "[FCM] Push notification failed",
       );
+
+      // Emit a targeted diagnostic for IAM permission errors so the fix is obvious in logs
+      const isIamError =
+        fcmError.message?.includes("cloudmessaging.messages.create") ||
+        fcmError.message?.includes("PERMISSION_DENIED") ||
+        (fcmError.message?.includes("Permission") &&
+          fcmError.message?.includes("denied"));
+      if (isIamError) {
+        logger.error(
+          {
+            serviceAccountEmail: this.serviceAccountEmail,
+            firebaseProject: this.projectId,
+            requiredRole: "roles/cloudmessaging.admin",
+            gcloudFix: `gcloud projects add-iam-policy-binding ${this.projectId} --member="serviceAccount:${this.serviceAccountEmail}" --role="roles/cloudmessaging.admin"`,
+          },
+          "[FCM] IAM PERMISSION DENIED – service account is missing cloudmessaging.messages.create. Grant roles/cloudmessaging.admin (see gcloudFix field)",
+        );
+      }
 
       // Map FCM error codes to consistent error responses
       if (
@@ -133,16 +208,28 @@ export function createFcmService(): FcmPushService | null {
 
   if (!process.env.FIREBASE_SERVICE_ACCOUNT) {
     logger.warn(
-      "FIREBASE_SERVICE_ACCOUNT not set, FCM push notifications disabled",
+      "[FCM] FIREBASE_SERVICE_ACCOUNT not set, FCM push notifications disabled",
     );
     return null;
   }
 
   try {
+    // Log which Firebase project we're initialising against
+    const sa = JSON.parse(
+      process.env.FIREBASE_SERVICE_ACCOUNT,
+    ) as ServiceAccount;
+    logger.info(
+      {
+        firebaseProject: sa.projectId,
+        serviceAccountEmail: sa.clientEmail,
+      },
+      "[FCM] Initialising FCM service",
+    );
+
     cachedFcmService = new FcmPushService();
     return cachedFcmService;
   } catch (error) {
-    logger.warn({ error }, "Failed to initialize FCM service");
+    logger.warn({ error }, "[FCM] Failed to initialize FCM service");
     return null;
   }
 }
