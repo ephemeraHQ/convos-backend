@@ -29,7 +29,6 @@ import { authRouter } from "./auth/auth.router";
 import { devRouter } from "./dev/dev.router";
 import { deviceRouter } from "./device/device.router";
 import {
-  inviteCodesAdminPageRouter,
   inviteCodesAdminRouter,
   inviteCodesRouter,
 } from "./invite-codes/invite-codes.router";
@@ -45,10 +44,8 @@ if (process.env.XMTP_ENV !== "production") {
 
 v2Router.use("/invites", invitesV2Router);
 
-// Invite codes: admin page (HTML, no auth — page handles auth client-side)
-v2Router.use("/invite-codes/admin/page", inviteCodesAdminPageRouter);
-// Invite codes: admin API (devAuth-protected, called by the admin page)
-v2Router.use("/invite-codes/admin", devAuthMiddleware, inviteCodesAdminRouter);
+// Invite codes: admin page + API (auth applied per-route inside the router)
+v2Router.use("/invite-codes/admin", inviteCodesAdminRouter);
 // Invite codes: client redemption (JWT-authenticated)
 v2Router.use(
   "/invite-codes",

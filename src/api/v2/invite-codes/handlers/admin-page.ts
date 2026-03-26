@@ -187,7 +187,7 @@ async function doLogin() {
   if (!pw) return;
   sessionStorage.setItem("invite_admin_token", pw);
   // Test the token by listing codes
-  const res = await apiFetch("/?limit=1");
+  const res = await apiFetch("/codes?limit=1");
   if (res.ok) {
     showApp();
   } else {
@@ -215,7 +215,7 @@ function showApp() {
 
 // On load, check if already authed
 if (token()) {
-  apiFetch("/?limit=1").then(r => { if (r.ok) showApp(); });
+  apiFetch("/codes?limit=1").then(r => { if (r.ok) showApp(); });
 }
 
 // Generate
@@ -261,7 +261,7 @@ async function loadCodes() {
   if (batch) params.set("batchLabel", batch);
 
   try {
-    const res = await apiFetch("/?" + params.toString());
+    const res = await apiFetch("/codes?" + params.toString());
     const json = await res.json();
     if (!res.ok) { toast(json.message || "Failed to load", "error"); return; }
 
