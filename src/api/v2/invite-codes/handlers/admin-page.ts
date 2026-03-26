@@ -209,9 +209,15 @@ function buildHTML(nonce: string): string {
       .then(function (r) {
         if (r.ok && r.json.success) {
           var out = document.getElementById("gen-output");
-          out.innerHTML = '<div class="generated-codes">' +
-            r.json.data.codes.map(function (c) { return "<span>" + esc(c) + "</span>"; }).join("") +
-            "</div>";
+          out.textContent = "";
+          var wrap = document.createElement("div");
+          wrap.className = "generated-codes";
+          r.json.data.codes.forEach(function (c) {
+            var span = document.createElement("span");
+            span.textContent = c;
+            wrap.appendChild(span);
+          });
+          out.appendChild(wrap);
           toast("Generated " + r.json.data.count + " codes");
           loadCodes();
         } else {
@@ -235,18 +241,46 @@ function buildHTML(nonce: string): string {
         var codes = r.json.data.codes;
         var total = r.json.data.total;
         var tbody = document.getElementById("codes-body");
+        tbody.textContent = "";
         if (codes.length === 0) {
-          tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:#6e6e73;padding:1.5rem">No codes found</td></tr>';
+          var emptyRow = document.createElement("tr");
+          var emptyCell = document.createElement("td");
+          emptyCell.colSpan = 5;
+          emptyCell.style.cssText = "text-align:center;color:#6e6e73;padding:1.5rem";
+          emptyCell.textContent = "No codes found";
+          emptyRow.appendChild(emptyCell);
+          tbody.appendChild(emptyRow);
         } else {
-          tbody.innerHTML = codes.map(function (c) {
-            return "<tr>" +
-              "<td><code>" + esc(c.code) + "</code></td>" +
-              '<td><span class="badge badge-' + esc(c.status) + '">' + esc(c.status) + "</span></td>" +
-              "<td>" + (c.batchLabel ? esc(c.batchLabel) : "—") + "</td>" +
-              "<td>" + fmtDate(c.createdAt) + "</td>" +
-              "<td>" + fmtDate(c.redeemedAt) + "</td>" +
-              "</tr>";
-          }).join("");
+          codes.forEach(function (c) {
+            var tr = document.createElement("tr");
+
+            var tdCode = document.createElement("td");
+            var codeEl = document.createElement("code");
+            codeEl.textContent = c.code;
+            tdCode.appendChild(codeEl);
+            tr.appendChild(tdCode);
+
+            var tdStatus = document.createElement("td");
+            var badge = document.createElement("span");
+            badge.classList.add("badge", "badge-" + c.status);
+            badge.textContent = c.status;
+            tdStatus.appendChild(badge);
+            tr.appendChild(tdStatus);
+
+            var tdBatch = document.createElement("td");
+            tdBatch.textContent = c.batchLabel || "\u2014";
+            tr.appendChild(tdBatch);
+
+            var tdCreated = document.createElement("td");
+            tdCreated.textContent = fmtDate(c.createdAt);
+            tr.appendChild(tdCreated);
+
+            var tdRedeemed = document.createElement("td");
+            tdRedeemed.textContent = fmtDate(c.redeemedAt);
+            tr.appendChild(tdRedeemed);
+
+            tbody.appendChild(tr);
+          });
         }
         var start = total === 0 ? 0 : currentOffset + 1;
         var end = Math.min(currentOffset + PAGE_SIZE, total);

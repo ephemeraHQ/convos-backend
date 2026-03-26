@@ -67,7 +67,9 @@ export const inviteCodeRedeemLimiter = rateLimit({
   legacyHeaders: false,
   standardHeaders: "draft-8",
   message: {
-    error: "Too many code redemption attempts, please try again later",
+    success: false,
+    error: "RATE_LIMITED",
+    message: "Too many code redemption attempts, please try again later",
   },
 });
 

@@ -75,6 +75,13 @@ export async function generateHandler(req: Request, res: Response) {
       const remaining = count - codes.length;
       const candidates = generateUniqueCodes(remaining);
 
+      // Find which candidates already exist before inserting
+      const existing = await prisma.inviteCode.findMany({
+        where: { code: { in: candidates } },
+        select: { code: true },
+      });
+      const existingSet = new Set(existing.map((r) => r.code));
+
       await prisma.inviteCode.createMany({
         data: candidates.map((code) => ({
           code,
@@ -83,14 +90,9 @@ export async function generateHandler(req: Request, res: Response) {
         skipDuplicates: true,
       });
 
-      // Query back which candidates were actually inserted (skipped
-      // duplicates won't be found with this batch label + code combo)
-      const inserted = await prisma.inviteCode.findMany({
-        where: { code: { in: candidates }, batchLabel: batchLabel ?? null },
-        select: { code: true },
-      });
-
-      codes = codes.concat(inserted.map((r) => r.code));
+      // Only include candidates that didn't exist before the insert
+      const newCodes = candidates.filter((c) => !existingSet.has(c));
+      codes = codes.concat(newCodes);
       retries++;
     }
 
