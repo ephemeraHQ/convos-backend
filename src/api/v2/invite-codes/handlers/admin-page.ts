@@ -160,6 +160,11 @@ function buildHTML(nonce: string): string {
     setTimeout(function () { el.className = "toast"; }, 3000);
   }
 
+  function esc(s) {
+    if (!s) return "";
+    return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+  }
+
   function fmtDate(iso) {
     if (!iso) return "—";
     var d = new Date(iso);
@@ -205,7 +210,7 @@ function buildHTML(nonce: string): string {
         if (r.ok && r.json.success) {
           var out = document.getElementById("gen-output");
           out.innerHTML = '<div class="generated-codes">' +
-            r.json.data.codes.map(function (c) { return "<span>" + c + "</span>"; }).join("") +
+            r.json.data.codes.map(function (c) { return "<span>" + esc(c) + "</span>"; }).join("") +
             "</div>";
           toast("Generated " + r.json.data.count + " codes");
           loadCodes();
@@ -235,9 +240,9 @@ function buildHTML(nonce: string): string {
         } else {
           tbody.innerHTML = codes.map(function (c) {
             return "<tr>" +
-              "<td><code>" + c.code + "</code></td>" +
-              '<td><span class="badge badge-' + c.status + '">' + c.status + "</span></td>" +
-              "<td>" + (c.batchLabel || "—") + "</td>" +
+              "<td><code>" + esc(c.code) + "</code></td>" +
+              '<td><span class="badge badge-' + esc(c.status) + '">' + esc(c.status) + "</span></td>" +
+              "<td>" + (c.batchLabel ? esc(c.batchLabel) : "—") + "</td>" +
               "<td>" + fmtDate(c.createdAt) + "</td>" +
               "<td>" + fmtDate(c.redeemedAt) + "</td>" +
               "</tr>";

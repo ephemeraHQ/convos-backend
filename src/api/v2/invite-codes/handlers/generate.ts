@@ -68,12 +68,14 @@ export async function generateHandler(req: Request, res: Response) {
     let codes: string[] = [];
     let retries = 0;
 
-    // Retry loop to handle (extremely unlikely) collisions with existing codes
+    // Retry loop to handle (extremely unlikely) collisions with existing codes.
+    // We can't trust candidates ordering after skipDuplicates, so we query
+    // back the codes that were actually inserted in each batch.
     while (codes.length < count && retries < MAX_GENERATION_RETRIES) {
       const remaining = count - codes.length;
       const candidates = generateUniqueCodes(remaining);
 
-      const created = await prisma.inviteCode.createMany({
+      await prisma.inviteCode.createMany({
         data: candidates.map((code) => ({
           code,
           batchLabel: batchLabel ?? null,
@@ -81,7 +83,14 @@ export async function generateHandler(req: Request, res: Response) {
         skipDuplicates: true,
       });
 
-      codes = codes.concat(candidates.slice(0, created.count));
+      // Query back which candidates were actually inserted (skipped
+      // duplicates won't be found with this batch label + code combo)
+      const inserted = await prisma.inviteCode.findMany({
+        where: { code: { in: candidates }, batchLabel: batchLabel ?? null },
+        select: { code: true },
+      });
+
+      codes = codes.concat(inserted.map((r) => r.code));
       retries++;
     }
 
