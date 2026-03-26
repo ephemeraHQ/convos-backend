@@ -41,11 +41,28 @@ export async function redeemHandler(req: Request, res: Response) {
   }
 
   try {
-    const inviteCode = await prisma.inviteCode.findUnique({
-      where: { code: normalised },
+    // Atomic update: only redeem if the code exists AND hasn't been redeemed yet.
+    // This avoids the TOCTOU race where two concurrent requests both read
+    // redeemedAt as null and both succeed.
+    const result = await prisma.inviteCode.updateMany({
+      where: { code: normalised, redeemedAt: null },
+      data: { redeemedAt: new Date() },
     });
 
-    if (!inviteCode) {
+    if (result.count === 1) {
+      req.log.info({ code: normalised }, "Invite code redeemed");
+      res.status(200).json({ success: true });
+      return;
+    }
+
+    // count === 0: either the code doesn't exist or it was already redeemed.
+    // One more read to distinguish the two cases for the error response.
+    const existing = await prisma.inviteCode.findUnique({
+      where: { code: normalised },
+      select: { redeemedAt: true },
+    });
+
+    if (!existing) {
       res.status(404).json({
         success: false,
         error: "CODE_NOT_FOUND",
@@ -54,24 +71,11 @@ export async function redeemHandler(req: Request, res: Response) {
       return;
     }
 
-    if (inviteCode.redeemedAt !== null) {
-      res.status(409).json({
-        success: false,
-        error: "CODE_ALREADY_REDEEMED",
-        message: "This invite code has already been used",
-      });
-      return;
-    }
-
-    // Mark the code as redeemed (keep the row for auditability in Retool)
-    await prisma.inviteCode.update({
-      where: { code: normalised },
-      data: { redeemedAt: new Date() },
+    res.status(409).json({
+      success: false,
+      error: "CODE_ALREADY_REDEEMED",
+      message: "This invite code has already been used",
     });
-
-    req.log.info({ code: normalised }, "Invite code redeemed");
-
-    res.status(200).json({ success: true });
     return;
   } catch (error) {
     req.log.error(
