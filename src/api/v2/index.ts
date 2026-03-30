@@ -13,6 +13,7 @@ import {
   agentAssetPreAuthLimiter,
   agentJoinLimiter,
   assetRenewalLimiter,
+  inviteCodeRedeemLimiter,
   serviceProvisionLimiter,
 } from "@/middleware/rateLimit";
 import { agentsRouter } from "./agents/agents.router";
@@ -27,6 +28,10 @@ import { attachmentsRouter } from "./attachments/attachments.router";
 import { authRouter } from "./auth/auth.router";
 import { devRouter } from "./dev/dev.router";
 import { deviceRouter } from "./device/device.router";
+import {
+  inviteCodesAdminRouter,
+  inviteCodesRouter,
+} from "./invite-codes/invite-codes.router";
 import invitesV2Router from "./invites/invites.router";
 import { notificationsRouter } from "./notifications/notifications.router";
 import { webhookRouter } from "./notifications/webhook.router";
@@ -38,6 +43,16 @@ if (process.env.XMTP_ENV !== "production") {
 }
 
 v2Router.use("/invites", invitesV2Router);
+
+// Invite codes: admin page + API (auth applied per-route inside the router)
+v2Router.use("/invite-codes/admin", inviteCodesAdminRouter);
+// Invite codes: client redemption (JWT-authenticated)
+v2Router.use(
+  "/invite-codes",
+  inviteCodeRedeemLimiter,
+  authMiddleware,
+  inviteCodesRouter,
+);
 v2Router.use("/auth", authRouter);
 v2Router.use("/device", appCheckOnlyMiddleware, deviceRouter);
 

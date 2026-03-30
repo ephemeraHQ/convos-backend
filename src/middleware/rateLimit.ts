@@ -60,6 +60,19 @@ export const serviceProvisionLimiter = rateLimit({
   },
 });
 
+// Rate limiting for invite code redemption (5 attempts per 15 minutes per IP)
+export const inviteCodeRedeemLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  limit: 5,
+  legacyHeaders: false,
+  standardHeaders: "draft-8",
+  message: {
+    success: false,
+    error: "RATE_LIMITED",
+    message: "Too many code redemption attempts, please try again later",
+  },
+});
+
 // Post-auth rate limiting for agent asset uploads (shared global throughput cap)
 export const agentAssetLimiter = rateLimit({
   windowMs: 60 * 1000, // 1 minute

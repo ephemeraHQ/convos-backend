@@ -1,0 +1,21 @@
+import { Router } from "express";
+import { devAuthMiddleware } from "@/middleware/devAuth";
+import { adminPageHandler } from "./handlers/admin-page";
+import { generateHandler } from "./handlers/generate";
+import { listHandler } from "./handlers/list";
+import { redeemHandler } from "./handlers/redeem";
+
+export const inviteCodesRouter = Router();
+
+// Public (authenticated) endpoint — clients redeem codes here
+inviteCodesRouter.post("/redeem", redeemHandler);
+
+// Admin router — single mount point, auth applied per-route
+export const inviteCodesAdminRouter = Router();
+
+// HTML page (no server auth — page authenticates client-side via Bearer token)
+inviteCodesAdminRouter.get("/", adminPageHandler);
+
+// API endpoints (devAuth-protected, called by the admin page)
+inviteCodesAdminRouter.get("/codes", devAuthMiddleware, listHandler);
+inviteCodesAdminRouter.post("/generate", devAuthMiddleware, generateHandler);
