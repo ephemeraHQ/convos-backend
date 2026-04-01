@@ -36,7 +36,7 @@ function buildHTML(nonce: string): string {
 <title>Invite Codes — Convos Admin</title>
 <style>
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f5f5f7; color: #1d1d1f; padding: 2rem; max-width: 960px; margin: 0 auto; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f5f5f7; color: #1d1d1f; padding: 2rem; max-width: 1200px; margin: 0 auto; }
   h1 { font-size: 1.5rem; font-weight: 600; margin-bottom: 1.5rem; }
   h2 { font-size: 1.1rem; font-weight: 600; margin-bottom: 0.75rem; }
   #login { max-width: 360px; margin: 4rem auto; }
@@ -199,12 +199,14 @@ function buildHTML(nonce: string): string {
   function doGenerate() {
     var btn = document.getElementById("gen-btn");
     var count = parseInt(document.getElementById("gen-count").value, 10) || 10;
+    var maxRedemptions = parseInt(document.getElementById("gen-max-redemptions").value, 10) || 1;
+    var name = document.getElementById("gen-name").value.trim() || undefined;
     var label = document.getElementById("gen-label").value.trim() || undefined;
     btn.disabled = true;
     btn.textContent = "Generating…";
     apiFetch("/generate", {
       method: "POST",
-      body: JSON.stringify({ count: count, batchLabel: label })
+      body: JSON.stringify({ count: count, batchLabel: label, name: name, maxRedemptions: maxRedemptions })
     }).then(function (res) { return res.json().then(function (json) { return { ok: res.ok, json: json }; }); })
       .then(function (r) {
         if (r.ok && r.json.success) {
@@ -260,6 +262,10 @@ function buildHTML(nonce: string): string {
             tdCode.appendChild(codeEl);
             tr.appendChild(tdCode);
 
+            var tdName = document.createElement("td");
+            tdName.textContent = c.name || "\u2014";
+            tr.appendChild(tdName);
+
             var tdStatus = document.createElement("td");
             var badge = document.createElement("span");
             badge.classList.add("badge", "badge-" + c.status);
@@ -267,9 +273,23 @@ function buildHTML(nonce: string): string {
             tdStatus.appendChild(badge);
             tr.appendChild(tdStatus);
 
+            var tdRedemptions = document.createElement("td");
+            tdRedemptions.textContent = c.redemptionCount + " / " + c.maxRedemptions;
+            tr.appendChild(tdRedemptions);
+
             var tdBatch = document.createElement("td");
             tdBatch.textContent = c.batchLabel || "\u2014";
             tr.appendChild(tdBatch);
+
+            var tdParent = document.createElement("td");
+            if (c.parentCode) {
+              var parentEl = document.createElement("code");
+              parentEl.textContent = c.parentCode;
+              tdParent.appendChild(parentEl);
+            } else {
+              tdParent.textContent = "\u2014";
+            }
+            tr.appendChild(tdParent);
 
             var tdCreated = document.createElement("td");
             tdCreated.textContent = fmtDate(c.createdAt);

@@ -4,11 +4,13 @@ import { adminPageHandler } from "./handlers/admin-page";
 import { generateHandler } from "./handlers/generate";
 import { listHandler } from "./handlers/list";
 import { redeemHandler } from "./handlers/redeem";
+import { statusHandler } from "./handlers/status";
 
 export const inviteCodesRouter = Router();
 
-// Public (authenticated) endpoint — clients redeem codes here
+// Public (authenticated) endpoints — clients redeem codes and check status here
 inviteCodesRouter.post("/redeem", redeemHandler);
+inviteCodesRouter.get("/:code/status", statusHandler);
 
 // Admin router — single mount point, auth applied per-route
 export const inviteCodesAdminRouter = Router();
