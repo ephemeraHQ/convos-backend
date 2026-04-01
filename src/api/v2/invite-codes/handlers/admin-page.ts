@@ -89,7 +89,17 @@ function buildHTML(nonce: string): string {
     <div class="row">
       <div>
         <label for="gen-count">Count</label>
-        <input type="number" id="gen-count" value="10" min="1" max="500">
+        <input type="number" id="gen-count" value="1" min="1" max="500">
+      </div>
+      <div>
+        <label for="gen-max-redemptions">Max redemptions</label>
+        <input type="number" id="gen-max-redemptions" value="5" min="1">
+      </div>
+    </div>
+    <div class="row">
+      <div>
+        <label for="gen-name">Name (optional)</label>
+        <input type="text" id="gen-name" placeholder="e.g. VIP invite">
       </div>
       <div>
         <label for="gen-label">Batch label (optional)</label>
@@ -118,7 +128,7 @@ function buildHTML(nonce: string): string {
     </div>
     <div class="table-wrap">
       <table>
-        <thead><tr><th>Code</th><th>Status</th><th>Batch</th><th>Created</th><th>Redeemed</th></tr></thead>
+        <thead><tr><th>Code</th><th>Name</th><th>Status</th><th>Redemptions</th><th>Batch</th><th>Parent</th><th>Created</th><th>Redeemed</th></tr></thead>
         <tbody id="codes-body"></tbody>
       </table>
     </div>
@@ -247,7 +257,7 @@ function buildHTML(nonce: string): string {
         if (codes.length === 0) {
           var emptyRow = document.createElement("tr");
           var emptyCell = document.createElement("td");
-          emptyCell.colSpan = 5;
+          emptyCell.colSpan = 8;
           emptyCell.style.cssText = "text-align:center;color:#6e6e73;padding:1.5rem";
           emptyCell.textContent = "No codes found";
           emptyRow.appendChild(emptyCell);
