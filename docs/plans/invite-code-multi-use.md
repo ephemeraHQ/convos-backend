@@ -59,11 +59,12 @@ Track each individual redemption event (for auditability and the viral chain).
   - `name` defaults to `null`
   - `parentCodeId` defaults to `null`
 - Create `InviteCodeRedemption` table
-- **Remove `redeemedAt` from `InviteCode`** — redemption status is now derived:
+- **Keep `redeemedAt` on `InviteCode`** for backwards compatibility — updated to the timestamp of the most recent redemption. Redemption status is now primarily derived from counts:
   - A code is "fully redeemed" when `redemptionCount >= maxRedemptions`
   - A code is "available" when `redemptionCount < maxRedemptions`
   - Individual redemption timestamps live in `InviteCodeRedemption`
-- Migrate existing redeemed codes: for each code where `redeemedAt IS NOT NULL`, set `redemptionCount = 1` and create a corresponding `InviteCodeRedemption` row. Then drop `redeemedAt`.
+  - `redeemedAt` is set/updated on each redemption for compatibility with existing queries and admin tooling
+- Migrate existing redeemed codes: for each code where `redeemedAt IS NOT NULL`, set `redemptionCount = 1` and create a corresponding `InviteCodeRedemption` row.
 
 ### Updated Prisma Schema
 
@@ -75,6 +76,7 @@ model InviteCode {
   maxRedemptions  Int       @default(1)
   redemptionCount Int       @default(0)
   createdAt       DateTime  @default(now())
+  redeemedAt      DateTime?           // kept for backwards compat — updated on each redemption
   batchLabel      String?   @db.VarChar(255)
   parentCodeId    String?   @db.Uuid
   parentCode      InviteCode?  @relation("CodeLineage", fields: [parentCodeId], references: [id])
@@ -83,6 +85,7 @@ model InviteCode {
   generatedFrom   InviteCodeRedemption[] @relation("GeneratedCode")
 
   @@index([batchLabel])
+  @@index([redeemedAt])
   @@index([parentCodeId])
 }
 
@@ -134,16 +137,16 @@ model InviteCodeRedemption {
 5. Create an `InviteCodeRedemption` row linking the redeemed code to the child code
 6. Return the generated code in the response
 
-**Updated error responses:**
+**Error responses** (unchanged error codes for backwards compatibility):
 
 | HTTP status | Error code              | Meaning                                                |
 | ----------- | ----------------------- | ------------------------------------------------------ |
 | 404         | `CODE_NOT_FOUND`        | No code exists with that value                         |
-| 409         | `CODE_FULLY_REDEEMED`   | Code exists but has reached its max redemptions        |
+| 409         | `CODE_ALREADY_REDEEMED` | Code exists but has reached its max redemptions        |
 | 422         | `CODE_INVALID_FORMAT`   | Malformed code string                                  |
 | 401         | —                       | Invalid or missing JWT                                 |
 
-> Note: `CODE_ALREADY_REDEEMED` → `CODE_FULLY_REDEEMED` (semantic change since codes can now be redeemed multiple times). This is a **breaking change** for iOS — coordinate with client team.
+> Note: We keep `CODE_ALREADY_REDEEMED` as the error code even though a code can now be redeemed multiple times. The meaning is "this code has already been fully redeemed" — semantically close enough, and avoids a breaking change for existing iOS clients.
 
 ### 2b. `GET /api/v2/invite-codes/:code/status` — New Endpoint
 
@@ -211,11 +214,12 @@ Add new fields to the response objects:
 }
 ```
 
-**Status values** change from `pending`/`redeemed` to:
-- `available` — `redemptionCount < maxRedemptions`
-- `exhausted` — `redemptionCount >= maxRedemptions`
+**Status values** — the list endpoint returns **both** old and new status representations for backwards compatibility:
+- `status`: keeps the original values `"pending"` / `"redeemed"` (derived: `redeemed` if `redemptionCount >= maxRedemptions`, `pending` otherwise)
+- `redeemedAt`: kept — set to the most recent redemption timestamp (or `null`)
+- New additive fields: `maxRedemptions`, `redemptionCount`, `remainingRedemptions`, `name`, `parentCode`
 
-> This is a breaking change for the admin page filter. The admin page HTML needs updating too.
+The admin page filter continues to use `pending`/`redeemed` — no breaking change.
 
 ---
 
@@ -224,7 +228,7 @@ Add new fields to the response objects:
 Update the admin HTML page (`admin-page.ts`) to:
 
 - Show new columns: Name, Max Redemptions, Redemption Count, Remaining, Parent Code
-- Update status filter options: `all`, `available`, `exhausted` (replaces `pending`/`redeemed`)
+- Status filter keeps `all`, `pending`, `redeemed` (no change — semantics remain the same)
 - Add `name` and `maxRedemptions` inputs to the generate form
 - Widen table layout to accommodate new columns
 
@@ -241,12 +245,12 @@ Update the admin HTML page (`admin-page.ts`) to:
 
 | File | Change |
 |------|--------|
-| `prisma/schema.prisma` | Add `name`, `maxRedemptions`, `redemptionCount`, `parentCodeId` to `InviteCode`; add `InviteCodeRedemption` model; remove `redeemedAt` |
-| `prisma/migrations/2026XXXX_multi_use_invite_codes/migration.sql` | New migration: alter `InviteCode`, create `InviteCodeRedemption`, data migration, drop `redeemedAt` |
+| `prisma/schema.prisma` | Add `name`, `maxRedemptions`, `redemptionCount`, `parentCodeId` to `InviteCode`; keep `redeemedAt`; add `InviteCodeRedemption` model |
+| `prisma/migrations/2026XXXX_multi_use_invite_codes/migration.sql` | New migration: alter `InviteCode` (add columns), create `InviteCodeRedemption`, backfill `redemptionCount` from existing `redeemedAt` |
 | `src/api/v2/invite-codes/handlers/redeem.ts` | Rewrite redemption logic: check `redemptionCount < maxRedemptions`, atomic increment, generate child code, create redemption row, return child code |
 | `src/api/v2/invite-codes/handlers/status.ts` | **New file** — handler for `GET /:code/status` |
 | `src/api/v2/invite-codes/handlers/generate.ts` | Accept `name` and `maxRedemptions` in body schema; pass to `createMany` |
-| `src/api/v2/invite-codes/handlers/list.ts` | Update response shape (new fields, new status values), update filter logic |
+| `src/api/v2/invite-codes/handlers/list.ts` | Add new additive fields to response; keep existing `status`/`redeemedAt` fields for compat |
 | `src/api/v2/invite-codes/handlers/admin-page.ts` | Update HTML to show new columns, new filter options, new generate form fields |
 | `src/api/v2/invite-codes/invite-codes.router.ts` | Add `GET /:code/status` route |
 | `src/api/v2/index.ts` | No changes needed (router already mounted) |
@@ -273,7 +277,7 @@ Update the admin HTML page (`admin-page.ts`) to:
 - [ ] Should the status endpoint return redemption history (list of timestamps), or just the counts?
 - [ ] Should there be a way to revoke/disable a code without deleting it? (e.g., `disabled` boolean)
 - [ ] What should happen if code generation during redemption fails? Should the redemption still succeed (without a child code), or should the whole thing roll back?
-- [ ] Should the `CODE_ALREADY_REDEEMED` → `CODE_FULLY_REDEEMED` rename be coordinated with an iOS release, or should we support both error codes temporarily?
+- [x] ~~Should the `CODE_ALREADY_REDEEMED` → `CODE_FULLY_REDEEMED` rename be coordinated with an iOS release?~~ **Resolved: keep `CODE_ALREADY_REDEEMED` for backwards compatibility.**
 
 ---
 
@@ -282,7 +286,7 @@ Update the admin HTML page (`admin-page.ts`) to:
 | Risk | Impact | Mitigation |
 |------|--------|------------|
 | Race condition on `redemptionCount` increment | High | Use atomic `updateMany` with `where: { redemptionCount: { lt: maxRedemptions } }` — same pattern as current `redeemedAt: null` check |
-| Migration on existing data | Medium | Backfill `redemptionCount` from `redeemedAt` before dropping column; run in transaction |
-| Breaking change for iOS (`CODE_ALREADY_REDEEMED` → `CODE_FULLY_REDEEMED`) | Medium | Coordinate with iOS team; optionally support both error codes for one release cycle |
+| Migration on existing data | Medium | Backfill `redemptionCount` from `redeemedAt`; keep `redeemedAt` column; run in transaction |
+| ~~Breaking change for iOS~~ | ~~Medium~~ | **Resolved**: keeping `CODE_ALREADY_REDEEMED` error code and `pending`/`redeemed` status values; all new fields are additive |
 | Child code generation failure during redemption | Low | Wrap redemption + child creation in a transaction; roll back both on failure |
 | Unbounded viral chain depth | Low | Not a concern at 5 uses per child; monitor via `parentCodeId` lineage if needed |
