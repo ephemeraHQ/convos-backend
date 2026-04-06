@@ -1,11 +1,8 @@
-import crypto from "node:crypto";
 import type { Request, Response } from "express";
 import { z } from "zod";
 import { prisma } from "@/utils/prisma";
+import { generateUniqueCodes } from "../utils/code-generator";
 
-// Uppercase letters excluding visually ambiguous O and I
-const ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ";
-const CODE_LENGTH = 8;
 const MAX_BATCH_SIZE = 500;
 const MAX_GENERATION_RETRIES = 3;
 
@@ -16,28 +13,14 @@ const bodySchema = z.object({
     .min(1, "Count must be at least 1")
     .max(MAX_BATCH_SIZE, `Count must be at most ${MAX_BATCH_SIZE}`),
   batchLabel: z.string().max(255, "Batch label too long").optional().nullable(),
+  name: z.string().max(255, "Name too long").optional().nullable(),
+  maxRedemptions: z
+    .number()
+    .int()
+    .min(1, "Max redemptions must be at least 1")
+    .optional()
+    .default(1),
 });
-
-function generateCode(): string {
-  const bytes = crypto.randomBytes(CODE_LENGTH);
-  let code = "";
-  for (let i = 0; i < CODE_LENGTH; i++) {
-    code += ALPHABET[bytes[i] % ALPHABET.length];
-  }
-  return code;
-}
-
-function generateUniqueCodes(count: number): string[] {
-  const codes = new Set<string>();
-  // Guard against infinite loops with a generous iteration cap
-  const maxIterations = count * 10;
-  let iterations = 0;
-  while (codes.size < count && iterations < maxIterations) {
-    codes.add(generateCode());
-    iterations++;
-  }
-  return Array.from(codes);
-}
 
 /**
  * Handler for POST /api/v2/invite-codes/generate
@@ -62,7 +45,7 @@ export async function generateHandler(req: Request, res: Response) {
     return;
   }
 
-  const { count, batchLabel } = parsed.data;
+  const { count, batchLabel, name, maxRedemptions } = parsed.data;
 
   try {
     let codes: string[] = [];
@@ -86,6 +69,8 @@ export async function generateHandler(req: Request, res: Response) {
         data: candidates.map((code) => ({
           code,
           batchLabel: batchLabel ?? null,
+          name: name ?? null,
+          maxRedemptions,
         })),
         skipDuplicates: true,
       });
@@ -103,7 +88,10 @@ export async function generateHandler(req: Request, res: Response) {
       );
     }
 
-    req.log.info({ count: codes.length, batchLabel }, "Invite codes generated");
+    req.log.info(
+      { count: codes.length, batchLabel, name, maxRedemptions },
+      "Invite codes generated",
+    );
 
     res.status(201).json({
       success: true,
@@ -111,6 +99,8 @@ export async function generateHandler(req: Request, res: Response) {
         codes,
         count: codes.length,
         batchLabel: batchLabel ?? null,
+        name: name ?? null,
+        maxRedemptions,
       },
     });
     return;

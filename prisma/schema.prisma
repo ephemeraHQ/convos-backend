@@ -63,12 +63,33 @@ model RuntimeConfig {
 }
 
 model InviteCode {
-  id         String    @id @default(uuid()) @db.Uuid
-  code       String    @unique @db.VarChar(8)
-  createdAt  DateTime  @default(now())
-  redeemedAt DateTime?
-  batchLabel String?   @db.VarChar(255)
+  id              String    @id @default(uuid()) @db.Uuid
+  code            String    @unique @db.VarChar(8)
+  name            String?   @db.VarChar(255)
+  maxRedemptions  Int       @default(1)
+  redemptionCount Int       @default(0)
+  createdAt       DateTime  @default(now())
+  redeemedAt      DateTime? // kept for backwards compat — updated on each redemption
+  batchLabel      String?   @db.VarChar(255)
+  parentCodeId    String?   @db.Uuid
+  parentCode      InviteCode?            @relation("CodeLineage", fields: [parentCodeId], references: [id])
+  childCodes      InviteCode[]           @relation("CodeLineage")
+  redemptions     InviteCodeRedemption[] @relation("CodeRedemptions")
+  generatedFrom   InviteCodeRedemption[] @relation("GeneratedCode")
 
   @@index([batchLabel])
   @@index([redeemedAt])
+  @@index([parentCodeId])
+}
+
+model InviteCodeRedemption {
+  id           String      @id @default(uuid()) @db.Uuid
+  inviteCodeId String      @db.Uuid
+  inviteCode   InviteCode  @relation("CodeRedemptions", fields: [inviteCodeId], references: [id])
+  childCodeId  String?     @db.Uuid
+  childCode    InviteCode? @relation("GeneratedCode", fields: [childCodeId], references: [id])
+  redeemedAt   DateTime    @default(now())
+
+  @@index([inviteCodeId])
+  @@index([childCodeId])
 }
