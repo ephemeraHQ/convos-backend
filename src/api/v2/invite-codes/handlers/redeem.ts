@@ -24,6 +24,19 @@ const bodySchema = z.object({
 });
 
 /**
+ * Sentinel error thrown from inside the redeem transaction when we
+ * exhaust child-code generation retries. Throwing (rather than
+ * returning) ensures the parent code's redemption increment is rolled
+ * back along with everything else in the transaction.
+ */
+class ChildCodeGenerationError extends Error {
+  constructor() {
+    super("Failed to generate unique child code after retries");
+    this.name = "ChildCodeGenerationError";
+  }
+}
+
+/**
  * Handler for POST /api/v2/invite-codes/redeem
  *
  * Redeems an invite code for the "Instant assistant" feature.
@@ -59,28 +72,47 @@ export async function redeemHandler(req: Request, res: Response) {
   }
 
   try {
-    // Atomic compare-and-increment: only redeem if the code exists AND
-    // has remaining redemptions. Uses a raw query because Prisma's
-    // updateMany can't compare two columns in the where clause.
-    // This avoids the TOCTOU race where two concurrent requests both
-    // read redemptionCount and both succeed past the limit.
-    const updateResult: { id: string }[] = await prisma.$queryRaw`
-      UPDATE "InviteCode"
-      SET "redemptionCount" = "redemptionCount" + 1,
-          "redeemedAt" = NOW()
-      WHERE "code" = ${normalised}
-        AND "redemptionCount" < "maxRedemptions"
-      RETURNING "id"
-    `;
+    // Everything below runs in a single transaction so that the parent
+    // code's redemption increment is atomically tied to the existence of
+    // the child code. If anything after the increment fails (child code
+    // generation, child create, redemption-record create, transient DB
+    // error, etc.) the increment is rolled back and the parent code is
+    // not silently consumed.
+    const result = await prisma.$transaction(async (tx) => {
+      // Atomic compare-and-increment: only redeem if the code exists
+      // AND has remaining redemptions. Uses a raw query because
+      // Prisma's updateMany can't compare two columns in the where
+      // clause. This avoids the TOCTOU race where two concurrent
+      // requests both read redemptionCount and both succeed past the
+      // limit.
+      const updateResult: { id: string }[] = await tx.$queryRaw`
+        UPDATE "InviteCode"
+        SET "redemptionCount" = "redemptionCount" + 1,
+            "redeemedAt" = NOW()
+        WHERE "code" = ${normalised}
+          AND "redemptionCount" < "maxRedemptions"
+        RETURNING "id"
+      `;
 
-    if (updateResult.length === 1) {
+      if (updateResult.length === 0) {
+        // Either the code doesn't exist or it's fully redeemed. One
+        // more read to distinguish the two cases.
+        const existing = await tx.inviteCode.findUnique({
+          where: { code: normalised },
+          select: { id: true },
+        });
+        return existing
+          ? ({ kind: "already_redeemed" } as const)
+          : ({ kind: "not_found" } as const);
+      }
+
       const parentCodeId = updateResult[0].id;
 
-      // Generate a unique child code (retry on collision)
+      // Generate a unique child code (retry on collision).
       let childCode: string | null = null;
       for (let i = 0; i < MAX_CODE_GENERATION_ATTEMPTS; i++) {
         const candidate = generateCode();
-        const existing = await prisma.inviteCode.findUnique({
+        const existing = await tx.inviteCode.findUnique({
           where: { code: candidate },
           select: { id: true },
         });
@@ -91,78 +123,31 @@ export async function redeemHandler(req: Request, res: Response) {
       }
 
       if (!childCode) {
-        // Extremely unlikely — roll back the redemption count
-        await prisma.$queryRaw`
-          UPDATE "InviteCode"
-          SET "redemptionCount" = "redemptionCount" - 1
-          WHERE "id" = ${parentCodeId}::uuid
-        `;
-        req.log.error(
-          { code: normalised },
-          "Failed to generate unique child code after retries",
-        );
-        res.status(500).json({
-          success: false,
-          error: "INTERNAL_ERROR",
-          message: "Failed to generate invite code",
-        });
-        return;
+        // Extremely unlikely. Throw to roll back the redemption
+        // increment via the surrounding transaction; the outer catch
+        // turns this into a 500.
+        throw new ChildCodeGenerationError();
       }
 
-      // Create child code and redemption record in a transaction
-      const childInviteCode = await prisma.$transaction(async (tx) => {
-        const child = await tx.inviteCode.create({
-          data: {
-            code: childCode!,
-            maxRedemptions: DEFAULT_CHILD_CODE_MAX_REDEMPTIONS,
-            parentCodeId,
-          },
-        });
-
-        await tx.inviteCodeRedemption.create({
-          data: {
-            inviteCodeId: parentCodeId,
-            childCodeId: child.id,
-          },
-        });
-
-        return child;
-      });
-
-      req.log.info(
-        {
-          code: normalised,
-          childCode: childInviteCode.code,
-          childMaxRedemptions: DEFAULT_CHILD_CODE_MAX_REDEMPTIONS,
-        },
-        "Invite code redeemed, child code generated",
-      );
-
-      res.status(200).json({
-        success: true,
+      const child = await tx.inviteCode.create({
         data: {
-          inviteCode: {
-            code: childInviteCode.code,
-            name: childInviteCode.name,
-            maxRedemptions: childInviteCode.maxRedemptions,
-            redemptionCount: childInviteCode.redemptionCount,
-            remainingRedemptions:
-              childInviteCode.maxRedemptions -
-              childInviteCode.redemptionCount,
-          },
+          code: childCode,
+          maxRedemptions: DEFAULT_CHILD_CODE_MAX_REDEMPTIONS,
+          parentCodeId,
         },
       });
-      return;
-    }
 
-    // updateResult.length === 0: either the code doesn't exist or it's
-    // fully redeemed. One more read to distinguish the two cases.
-    const existing = await prisma.inviteCode.findUnique({
-      where: { code: normalised },
-      select: { redemptionCount: true, maxRedemptions: true },
+      await tx.inviteCodeRedemption.create({
+        data: {
+          inviteCodeId: parentCodeId,
+          childCodeId: child.id,
+        },
+      });
+
+      return { kind: "success", child } as const;
     });
 
-    if (!existing) {
+    if (result.kind === "not_found") {
       res.status(404).json({
         success: false,
         error: "CODE_NOT_FOUND",
@@ -171,15 +156,56 @@ export async function redeemHandler(req: Request, res: Response) {
       return;
     }
 
-    // Code exists but fully redeemed — keep CODE_ALREADY_REDEEMED for
-    // backwards compatibility with existing iOS clients.
-    res.status(409).json({
-      success: false,
-      error: "CODE_ALREADY_REDEEMED",
-      message: "This invite code has already been used",
+    if (result.kind === "already_redeemed") {
+      // Keep CODE_ALREADY_REDEEMED for backwards compatibility with
+      // existing iOS clients.
+      res.status(409).json({
+        success: false,
+        error: "CODE_ALREADY_REDEEMED",
+        message: "This invite code has already been used",
+      });
+      return;
+    }
+
+    const childInviteCode = result.child;
+
+    req.log.info(
+      {
+        code: normalised,
+        childCode: childInviteCode.code,
+        childMaxRedemptions: DEFAULT_CHILD_CODE_MAX_REDEMPTIONS,
+      },
+      "Invite code redeemed, child code generated",
+    );
+
+    res.status(200).json({
+      success: true,
+      data: {
+        inviteCode: {
+          code: childInviteCode.code,
+          name: childInviteCode.name,
+          maxRedemptions: childInviteCode.maxRedemptions,
+          redemptionCount: childInviteCode.redemptionCount,
+          remainingRedemptions:
+            childInviteCode.maxRedemptions - childInviteCode.redemptionCount,
+        },
+      },
     });
     return;
   } catch (error) {
+    if (error instanceof ChildCodeGenerationError) {
+      req.log.error(
+        { code: normalised },
+        "Failed to generate unique child code after retries",
+      );
+      res.status(500).json({
+        success: false,
+        error: "INTERNAL_ERROR",
+        message: "Failed to generate invite code",
+      });
+      return;
+    }
+
     req.log.error(
       { error, stack: error instanceof Error ? error.stack : undefined },
       "Failed to redeem invite code",
