@@ -208,8 +208,8 @@ function buildHTML(nonce: string): string {
   // --- Generate ---
   function doGenerate() {
     var btn = document.getElementById("gen-btn");
-    var count = parseInt(document.getElementById("gen-count").value, 10) || 10;
-    var maxRedemptions = parseInt(document.getElementById("gen-max-redemptions").value, 10) || 1;
+    var count = parseInt(document.getElementById("gen-count").value, 10) || 1;
+    var maxRedemptions = parseInt(document.getElementById("gen-max-redemptions").value, 10) || 5;
     var name = document.getElementById("gen-name").value.trim() || undefined;
     var label = document.getElementById("gen-label").value.trim() || undefined;
     btn.disabled = true;
