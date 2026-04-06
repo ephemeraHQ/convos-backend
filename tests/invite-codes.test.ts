@@ -181,23 +181,26 @@ describe("Invite Codes API Tests", () => {
       const updated = await prisma.inviteCode.findUnique({
         where: { code: "XKQBWFMR" },
       });
-      expect(updated?.redemptionCount).toBe(1);
-      expect(updated?.redeemedAt).not.toBeNull();
+      if (!updated) throw new Error("Expected parent invite code to exist");
+      expect(updated.redemptionCount).toBe(1);
+      expect(updated.redeemedAt).not.toBeNull();
 
       // Verify the child code exists in DB
       const childCode = await prisma.inviteCode.findUnique({
         where: { code: data.data.inviteCode.code },
       });
-      expect(childCode).not.toBeNull();
-      expect(childCode?.parentCodeId).toBe(updated?.id);
-      expect(childCode?.maxRedemptions).toBe(5);
+      if (!childCode) throw new Error("Expected child invite code to exist");
+      expect(childCode.parentCodeId).toBe(updated.id);
+      expect(childCode.maxRedemptions).toBe(5);
 
       // Verify the redemption record was created
       const redemptions = await prisma.inviteCodeRedemption.findMany({
-        where: { inviteCodeId: updated!.id },
+        where: { inviteCodeId: updated.id },
       });
       expect(redemptions).toHaveLength(1);
-      expect(redemptions[0]!.childCodeId).toBe(childCode!.id);
+      const firstRedemption = redemptions[0];
+      if (!firstRedemption) throw new Error("Expected a redemption record");
+      expect(firstRedemption.childCodeId).toBe(childCode.id);
     });
 
     test("should return 409 for fully redeemed single-use code", async () => {
