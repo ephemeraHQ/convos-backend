@@ -13,7 +13,9 @@ const CODE_PATTERN = /^[A-HJ-NP-Z]{8}$/;
 export async function statusHandler(req: Request, res: Response) {
   const rawCode = req.params.code as string | undefined;
 
-  if (!rawCode || rawCode.length > 8) {
+  const normalised = rawCode?.trim().toUpperCase() ?? "";
+
+  if (!normalised || normalised.length > 8) {
     res.status(422).json({
       success: false,
       error: "CODE_INVALID_FORMAT",
@@ -21,8 +23,6 @@ export async function statusHandler(req: Request, res: Response) {
     });
     return;
   }
-
-  const normalised = rawCode.toUpperCase().trim();
 
   if (!CODE_PATTERN.test(normalised)) {
     res.status(422).json({
