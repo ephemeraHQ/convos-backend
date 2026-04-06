@@ -6,10 +6,16 @@ import { generateCode } from "../utils/code-generator";
 // 8 uppercase letters excluding visually ambiguous O and I
 const CODE_PATTERN = /^[A-HJ-NP-Z]{8}$/;
 
-const DEFAULT_CHILD_CODE_MAX_REDEMPTIONS = parseInt(
-  process.env.DEFAULT_CHILD_CODE_MAX_REDEMPTIONS ?? "5",
+const DEFAULT_CHILD_CODE_MAX_REDEMPTIONS_FALLBACK = 5;
+const parsedDefaultChildCodeMaxRedemptions = parseInt(
+  process.env.DEFAULT_CHILD_CODE_MAX_REDEMPTIONS ?? "",
   10,
 );
+const DEFAULT_CHILD_CODE_MAX_REDEMPTIONS = Number.isNaN(
+  parsedDefaultChildCodeMaxRedemptions,
+)
+  ? DEFAULT_CHILD_CODE_MAX_REDEMPTIONS_FALLBACK
+  : parsedDefaultChildCodeMaxRedemptions;
 
 const MAX_CODE_GENERATION_ATTEMPTS = 5;
 
