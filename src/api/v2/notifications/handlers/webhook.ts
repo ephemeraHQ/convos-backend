@@ -3,6 +3,7 @@ import type { Request, Response } from "express";
 import { createApnsService } from "@/api/v2/notifications/apns-push.service";
 import { createFcmService } from "@/api/v2/notifications/fcm-push.service";
 import type { V2NotificationPayload } from "@/api/v2/notifications/types";
+import { isXmtpProduction, XMTP_ENV } from "@/config";
 import {
   createNotificationClient,
   webhookNotificationBodySchema,
@@ -263,10 +264,7 @@ async function handleV2Notification(args: {
       });
 
       // Auto-disable in XMTP production only to preserve test devices in dev/staging for debugging
-      if (
-        process.env.XMTP_ENV === "production" &&
-        u.pushFailures >= MAX_PUSH_FAILURES
-      ) {
+      if (isXmtpProduction(XMTP_ENV) && u.pushFailures >= MAX_PUSH_FAILURES) {
         await tx.deviceRegistration.updateMany({
           where: {
             deviceId: client.deviceId,

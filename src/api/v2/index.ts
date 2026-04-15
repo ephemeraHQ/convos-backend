@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { shouldUseDevBehavior, XMTP_ENV } from "@/config";
 import { agentApiKeyAuth, authOrAgentApiKeyAuth } from "@/middleware/agentAuth";
 import {
   appCheckOnlyMiddleware,
@@ -38,7 +39,7 @@ import { webhookRouter } from "./notifications/webhook.router";
 
 const v2Router = Router();
 
-if (process.env.XMTP_ENV !== "production") {
+if (shouldUseDevBehavior(XMTP_ENV)) {
   v2Router.use("/dev", devAuthMiddleware, devRouter);
 }
 
