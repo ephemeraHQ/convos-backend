@@ -1,6 +1,12 @@
 import type { Request, Response } from "express";
 import { z } from "zod";
-import { AGENT_POOL_API_KEY, AGENT_POOL_URL, XMTP_ENV } from "@/config";
+import {
+  AGENT_POOL_API_KEY,
+  AGENT_POOL_URL,
+  shouldUseDevBehavior,
+  XMTP_ENV,
+  type XmtpEnv,
+} from "@/config";
 
 const bodySchema = z.object({
   slug: z.string().min(1, "Slug is required").max(2048),
@@ -27,10 +33,22 @@ const ERRORS = {
   },
 } as const;
 
-function buildInviteUrl(slug: string): string {
-  const domain =
-    XMTP_ENV === "production" ? "popup.convos.org" : "dev.convos.org";
+export function buildInviteUrl(
+  slug: string,
+  xmtpEnv: XmtpEnv = XMTP_ENV,
+): string {
+  const domainByEnv: Record<XmtpEnv, string> = {
+    production: "popup.convos.org",
+    testnet: "testnet.convos.org",
+    dev: "dev.convos.org",
+    local: "dev.convos.org",
+  };
+  const domain = domainByEnv[xmtpEnv];
   return `https://${domain}/v2?i=${encodeURIComponent(slug)}`;
+}
+
+export function shouldAllowForcedErrors(xmtpEnv: XmtpEnv = XMTP_ENV): boolean {
+  return shouldUseDevBehavior(xmtpEnv);
 }
 
 /**
@@ -64,8 +82,9 @@ function buildInviteUrl(slug: string): string {
  */
 export async function joinHandler(req: Request, res: Response) {
   // Force error responses for testing (non-production XMTP env only) — see JSDoc above for usage
-  const forceError =
-    XMTP_ENV !== "production" ? req.headers["x-force-error"] : undefined;
+  const forceError = shouldAllowForcedErrors()
+    ? req.headers["x-force-error"]
+    : undefined;
   const forcedError = Object.values(ERRORS).find(
     (e) => String(e.status) === forceError,
   );
