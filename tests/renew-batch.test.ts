@@ -32,6 +32,36 @@ void mock.module("@aws-sdk/client-s3", () => ({
       return mockS3Send(command);
     }
   },
+  DeleteObjectCommand: class DeleteObjectCommand {
+    input: unknown;
+    constructor(input: unknown) {
+      this.input = input;
+    }
+  },
+  HeadBucketCommand: class HeadBucketCommand {
+    input: unknown;
+    constructor(input: unknown) {
+      this.input = input;
+    }
+  },
+  HeadObjectCommand: class HeadObjectCommand {
+    input: unknown;
+    constructor(input: unknown) {
+      this.input = input;
+    }
+  },
+  ListObjectsV2Command: class ListObjectsV2Command {
+    input: unknown;
+    constructor(input: unknown) {
+      this.input = input;
+    }
+  },
+  PutObjectCommand: class PutObjectCommand {
+    input: unknown;
+    constructor(input: unknown) {
+      this.input = input;
+    }
+  },
   CopyObjectCommand: class {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     input: any;
@@ -67,11 +97,11 @@ app.post("/api/v2/assets/renew-batch", renewBatchHandler);
 
 describe("POST /api/v2/assets/renew-batch", () => {
   let server: Server;
-  const baseURL = "http://localhost:4002";
+  const baseURL = "http://localhost:4005";
 
   beforeAll(async () => {
     await new Promise<void>((resolve) => {
-      server = app.listen(4002, () => {
+      server = app.listen(4005, () => {
         resolve();
       });
     });

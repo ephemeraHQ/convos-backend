@@ -1,8 +1,7 @@
 # Multi-Use Invite Codes with Viral Redemption
 
 > **Status**: Draft
-> **Branch**: `feat/invite-code-multi-use`
-> **Parent PR**: #183 (Invite code gating for Instant Assistant)
+> **Branch**: `feat/invite-code-multi-use` > **Parent PR**: #183 (Invite code gating for Instant Assistant)
 > **Created**: 2026-04-01
 
 ## Overview
@@ -33,23 +32,23 @@ Expand the invite code system so that codes can be redeemed a configurable numbe
 
 ### Schema Changes to `InviteCode`
 
-| Column             | Type     | Default | Notes                                              |
-| ------------------ | -------- | ------- | -------------------------------------------------- |
-| `name`             | String?  | null    | Optional human-readable label for the code          |
-| `maxRedemptions`   | Int      | 1       | How many times this code can be redeemed            |
-| `redemptionCount`  | Int      | 0       | How many times this code has been redeemed so far   |
-| `parentCodeId`     | UUID?    | null    | FK → InviteCode.id — the code that was redeemed to generate this one |
+| Column            | Type    | Default | Notes                                                                |
+| ----------------- | ------- | ------- | -------------------------------------------------------------------- |
+| `name`            | String? | null    | Optional human-readable label for the code                           |
+| `maxRedemptions`  | Int     | 1       | How many times this code can be redeemed                             |
+| `redemptionCount` | Int     | 0       | How many times this code has been redeemed so far                    |
+| `parentCodeId`    | UUID?   | null    | FK → InviteCode.id — the code that was redeemed to generate this one |
 
 ### New Table: `InviteCodeRedemption`
 
 Track each individual redemption event (for auditability and the viral chain).
 
-| Column         | Type      | Notes                                    |
-| -------------- | --------- | ---------------------------------------- |
-| `id`           | UUID      | Primary key                              |
-| `inviteCodeId` | UUID      | FK → InviteCode.id (the code redeemed)   |
+| Column         | Type      | Notes                                                    |
+| -------------- | --------- | -------------------------------------------------------- |
+| `id`           | UUID      | Primary key                                              |
+| `inviteCodeId` | UUID      | FK → InviteCode.id (the code redeemed)                   |
 | `childCodeId`  | UUID?     | FK → InviteCode.id (the code generated for the redeemer) |
-| `redeemedAt`   | Timestamp | When this redemption occurred            |
+| `redeemedAt`   | Timestamp | When this redemption occurred                            |
 
 ### Migration Strategy
 
@@ -109,11 +108,13 @@ model InviteCodeRedemption {
 ### 2a. `POST /api/v2/invite-codes/redeem` — Updated
 
 **Request body** (unchanged):
+
 ```json
 { "code": "XKQBWFMR" }
 ```
 
 **Success response** (`200`) — **updated to include generated code**:
+
 ```json
 {
   "success": true,
@@ -130,6 +131,7 @@ model InviteCodeRedemption {
 ```
 
 **Logic changes:**
+
 1. Look up the code
 2. Check `redemptionCount < maxRedemptions` (replaces the `redeemedAt == null` check)
 3. Atomically increment `redemptionCount` (use `updateMany` with `where: { code, redemptionCount: { lt: maxRedemptions } }` to prevent races)
@@ -139,12 +141,12 @@ model InviteCodeRedemption {
 
 **Error responses** (unchanged error codes for backwards compatibility):
 
-| HTTP status | Error code              | Meaning                                                |
-| ----------- | ----------------------- | ------------------------------------------------------ |
-| 404         | `CODE_NOT_FOUND`        | No code exists with that value                         |
-| 409         | `CODE_ALREADY_REDEEMED` | Code exists but has reached its max redemptions        |
-| 422         | `CODE_INVALID_FORMAT`   | Malformed code string                                  |
-| 401         | —                       | Invalid or missing JWT                                 |
+| HTTP status | Error code              | Meaning                                         |
+| ----------- | ----------------------- | ----------------------------------------------- |
+| 404         | `CODE_NOT_FOUND`        | No code exists with that value                  |
+| 409         | `CODE_ALREADY_REDEEMED` | Code exists but has reached its max redemptions |
+| 422         | `CODE_INVALID_FORMAT`   | Malformed code string                           |
+| 401         | —                       | Invalid or missing JWT                          |
 
 > Note: We keep `CODE_ALREADY_REDEEMED` as the error code even though a code can now be redeemed multiple times. The meaning is "this code has already been fully redeemed" — semantically close enough, and avoids a breaking change for existing iOS clients.
 
@@ -155,6 +157,7 @@ Check the remaining redemptions for a given invite code.
 **Authentication**: Requires a valid JWT (same as redeem).
 
 **Response** (`200`):
+
 ```json
 {
   "success": true,
@@ -170,15 +173,16 @@ Check the remaining redemptions for a given invite code.
 
 **Error responses:**
 
-| HTTP status | Error code       | Meaning                               |
-| ----------- | ---------------- | ------------------------------------- |
-| 404         | `CODE_NOT_FOUND` | No code exists with that value        |
-| 422         | `CODE_INVALID_FORMAT` | Malformed code string            |
-| 401         | —                | Invalid or missing JWT                |
+| HTTP status | Error code            | Meaning                        |
+| ----------- | --------------------- | ------------------------------ |
+| 404         | `CODE_NOT_FOUND`      | No code exists with that value |
+| 422         | `CODE_INVALID_FORMAT` | Malformed code string          |
+| 401         | —                     | Invalid or missing JWT         |
 
 ### 2c. `POST /api/v2/invite-codes/admin/generate` — Updated
 
 **Request body** — add optional fields:
+
 ```json
 {
   "count": 10,
@@ -188,12 +192,12 @@ Check the remaining redemptions for a given invite code.
 }
 ```
 
-| Field            | Type    | Default | Notes                                       |
-| ---------------- | ------- | ------- | ------------------------------------------- |
-| `count`          | Int     | —       | Required, 1–500                             |
-| `batchLabel`     | String? | null    | Optional batch label                        |
-| `name`           | String? | null    | Optional name applied to all generated codes|
-| `maxRedemptions` | Int?    | 1       | Max redemptions for each generated code     |
+| Field            | Type    | Default | Notes                                        |
+| ---------------- | ------- | ------- | -------------------------------------------- |
+| `count`          | Int     | —       | Required, 1–500                              |
+| `batchLabel`     | String? | null    | Optional batch label                         |
+| `name`           | String? | null    | Optional name applied to all generated codes |
+| `maxRedemptions` | Int?    | 1       | Max redemptions for each generated code      |
 
 ### 2d. `GET /api/v2/invite-codes/admin/codes` — Updated
 
@@ -215,6 +219,7 @@ Add new fields to the response objects:
 ```
 
 **Status values** — the list endpoint returns **both** old and new status representations for backwards compatibility:
+
 - `status`: keeps the original values `"pending"` / `"redeemed"` (derived: `redeemed` if `redemptionCount >= maxRedemptions`, `pending` otherwise)
 - `redeemedAt`: kept — set to the most recent redemption timestamp (or `null`)
 - New additive fields: `maxRedemptions`, `redemptionCount`, `remainingRedemptions`, `name`, `parentCode`
@@ -243,18 +248,18 @@ Update the admin HTML page (`admin-page.ts`) to:
 
 ## 5. File-by-File Change List
 
-| File | Change |
-|------|--------|
-| `prisma/schema.prisma` | Add `name`, `maxRedemptions`, `redemptionCount`, `parentCodeId` to `InviteCode`; keep `redeemedAt`; add `InviteCodeRedemption` model |
-| `prisma/migrations/2026XXXX_multi_use_invite_codes/migration.sql` | New migration: alter `InviteCode` (add columns), create `InviteCodeRedemption`, backfill `redemptionCount` from existing `redeemedAt` |
-| `src/api/v2/invite-codes/handlers/redeem.ts` | Rewrite redemption logic: check `redemptionCount < maxRedemptions`, atomic increment, generate child code, create redemption row, return child code |
-| `src/api/v2/invite-codes/handlers/status.ts` | **New file** — handler for `GET /:code/status` |
-| `src/api/v2/invite-codes/handlers/generate.ts` | Accept `name` and `maxRedemptions` in body schema; pass to `createMany` |
-| `src/api/v2/invite-codes/handlers/list.ts` | Add new additive fields to response; keep existing `status`/`redeemedAt` fields for compat |
-| `src/api/v2/invite-codes/handlers/admin-page.ts` | Update HTML to show new columns, new filter options, new generate form fields |
-| `src/api/v2/invite-codes/invite-codes.router.ts` | Add `GET /:code/status` route |
-| `src/api/v2/index.ts` | No changes needed (router already mounted) |
-| `tests/invite-codes.test.ts` | Update existing tests, add tests for: multi-use redemption, child code generation, status endpoint, exhausted codes |
+| File                                                              | Change                                                                                                                                              |
+| ----------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `prisma/schema.prisma`                                            | Add `name`, `maxRedemptions`, `redemptionCount`, `parentCodeId` to `InviteCode`; keep `redeemedAt`; add `InviteCodeRedemption` model                |
+| `prisma/migrations/2026XXXX_multi_use_invite_codes/migration.sql` | New migration: alter `InviteCode` (add columns), create `InviteCodeRedemption`, backfill `redemptionCount` from existing `redeemedAt`               |
+| `src/api/v2/invite-codes/handlers/redeem.ts`                      | Rewrite redemption logic: check `redemptionCount < maxRedemptions`, atomic increment, generate child code, create redemption row, return child code |
+| `src/api/v2/invite-codes/handlers/status.ts`                      | **New file** — handler for `GET /:code/status`                                                                                                      |
+| `src/api/v2/invite-codes/handlers/generate.ts`                    | Accept `name` and `maxRedemptions` in body schema; pass to `createMany`                                                                             |
+| `src/api/v2/invite-codes/handlers/list.ts`                        | Add new additive fields to response; keep existing `status`/`redeemedAt` fields for compat                                                          |
+| `src/api/v2/invite-codes/handlers/admin-page.ts`                  | Update HTML to show new columns, new filter options, new generate form fields                                                                       |
+| `src/api/v2/invite-codes/invite-codes.router.ts`                  | Add `GET /:code/status` route                                                                                                                       |
+| `src/api/v2/index.ts`                                             | No changes needed (router already mounted)                                                                                                          |
+| `tests/invite-codes.test.ts`                                      | Update existing tests, add tests for: multi-use redemption, child code generation, status endpoint, exhausted codes                                 |
 
 ---
 
@@ -283,10 +288,10 @@ Update the admin HTML page (`admin-page.ts`) to:
 
 ## 8. Risks & Mitigations
 
-| Risk | Impact | Mitigation |
-|------|--------|------------|
-| Race condition on `redemptionCount` increment | High | Use atomic `updateMany` with `where: { redemptionCount: { lt: maxRedemptions } }` — same pattern as current `redeemedAt: null` check |
-| Migration on existing data | Medium | Backfill `redemptionCount` from `redeemedAt`; keep `redeemedAt` column; run in transaction |
-| ~~Breaking change for iOS~~ | ~~Medium~~ | **Resolved**: keeping `CODE_ALREADY_REDEEMED` error code and `pending`/`redeemed` status values; all new fields are additive |
-| Child code generation failure during redemption | Low | Wrap redemption + child creation in a transaction; roll back both on failure |
-| Unbounded viral chain depth | Low | Not a concern at 5 uses per child; monitor via `parentCodeId` lineage if needed |
+| Risk                                            | Impact     | Mitigation                                                                                                                           |
+| ----------------------------------------------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| Race condition on `redemptionCount` increment   | High       | Use atomic `updateMany` with `where: { redemptionCount: { lt: maxRedemptions } }` — same pattern as current `redeemedAt: null` check |
+| Migration on existing data                      | Medium     | Backfill `redemptionCount` from `redeemedAt`; keep `redeemedAt` column; run in transaction                                           |
+| ~~Breaking change for iOS~~                     | ~~Medium~~ | **Resolved**: keeping `CODE_ALREADY_REDEEMED` error code and `pending`/`redeemed` status values; all new fields are additive         |
+| Child code generation failure during redemption | Low        | Wrap redemption + child creation in a transaction; roll back both on failure                                                         |
+| Unbounded viral chain depth                     | Low        | Not a concern at 5 uses per child; monitor via `parentCodeId` lineage if needed                                                      |
