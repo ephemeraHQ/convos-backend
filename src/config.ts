@@ -35,4 +35,29 @@ export const AGENT_POOL_API_KEY = process.env.AGENT_POOL_API_KEY || "";
 // Agent asset upload auth (optional — endpoint returns 503 if not configured)
 export const AGENT_ASSETS_API_KEY = process.env.AGENT_ASSETS_API_KEY || "";
 
-export const XMTP_ENV = process.env.XMTP_ENV || "dev";
+export const VALID_XMTP_ENVS = ["production", "testnet", "dev"] as const;
+export type XmtpEnv = (typeof VALID_XMTP_ENVS)[number];
+
+function isValidXmtpEnv(value: string): value is XmtpEnv {
+  return (VALID_XMTP_ENVS as readonly string[]).includes(value);
+}
+
+export function parseXmtpEnv(value = process.env.XMTP_ENV || "dev"): XmtpEnv {
+  if (!isValidXmtpEnv(value)) {
+    throw new Error(
+      `Invalid XMTP_ENV: ${value}. Must be one of: ${VALID_XMTP_ENVS.join(", ")}`,
+    );
+  }
+
+  return value;
+}
+
+export const XMTP_ENV = parseXmtpEnv();
+
+export function isXmtpProduction(xmtpEnv: XmtpEnv = XMTP_ENV): boolean {
+  return xmtpEnv === "production";
+}
+
+export function shouldUseDevBehavior(xmtpEnv: XmtpEnv = XMTP_ENV): boolean {
+  return !isXmtpProduction(xmtpEnv);
+}

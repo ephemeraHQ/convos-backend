@@ -6,6 +6,7 @@ on:
   push:
     branches:
       - otr-dev
+      - otr-testnet
       - otr-prod
   pull_request:
   workflow_dispatch:
@@ -16,9 +17,10 @@ on:
         type: choice
         options:
           - otr-dev
+          - otr-testnet
           - otr-prod
   repository_dispatch:
-    types: [deploy-otr-prod]
+    types: [deploy-otr-testnet, deploy-otr-prod]
   workflow_call:
     inputs:
       ref:
@@ -138,6 +140,28 @@ jobs:
           variable-value: "ghcr.io/xmtplabs/convos-backend@${{ needs.push_to_registry.outputs.digest }}"
           variable-value-required-prefix: "ghcr.io/xmtplabs/convos-backend@sha256:"
 
+  deploy_otr_testnet:
+    name: Deploy to OTR Testnet
+    runs-on: ubuntu-latest
+    needs: push_to_registry
+    if: (inputs.ref == 'otr-testnet') || (inputs.environment == 'otr-testnet') || (github.ref == 'refs/heads/otr-testnet' && !inputs.ref && !inputs.environment) || (github.event_name == 'repository_dispatch' && github.event.client_payload.ref == 'otr-testnet')
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'repository_dispatch' && github.event.client_payload.ref || github.event_name == 'workflow_dispatch' && inputs.environment || github.event_name == 'workflow_call' && inputs.ref || github.ref }}
+      - name: Deploy to OTR Testnet Environment
+        uses: xmtp-labs/terraform-deployer@v1
+        timeout-minutes: 20
+        with:
+          timeout: 20m
+          terraform-token: ${{ secrets.TERRAFORM_TOKEN }}
+          terraform-org: xmtp
+          terraform-workspace: convos-otr-testnet
+          variable-name: api_image
+          variable-value: "ghcr.io/xmtplabs/convos-backend@${{ needs.push_to_registry.outputs.digest }}"
+          variable-value-required-prefix: "ghcr.io/xmtplabs/convos-backend@sha256:"
+
   test_lifecycle_dev:
     name: Test S3 Lifecycle Renewal (Dev)
     runs-on: ubuntu-latest
@@ -173,6 +197,42 @@ jobs:
             exit 1
           fi
           echo "✅ Lifecycle renewal test passed (dev)" >> $GITHUB_STEP_SUMMARY
+
+  test_lifecycle_testnet:
+    name: Test S3 Lifecycle Renewal (Testnet)
+    runs-on: ubuntu-latest
+    needs: deploy_otr_testnet
+    steps:
+      - name: Wait for deployment and verify health
+        run: |
+          echo "Waiting for deployment to stabilize..."
+          for i in {1..10}; do
+            sleep 10
+            if curl -sf "${{ vars.TESTNET_API_URL }}/healthcheck" > /dev/null 2>&1; then
+              echo "Service is healthy after $((i * 10)) seconds"
+              exit 0
+            fi
+            echo "Waiting for service to be ready (attempt $i/10)..."
+          done
+          echo "::error::Service did not become healthy after 100s"
+          exit 1
+
+      - name: Test lifecycle renewal endpoint
+        run: |
+          response=$(curl -s -w "\n%{http_code}" \
+            --max-time 60 \
+            --retry 3 \
+            --retry-connrefused \
+            -X POST "${{ vars.TESTNET_API_URL }}/api/v2/assets/test/lifecycle" \
+            -H "Authorization: Bearer ${{ secrets.LIFECYCLE_TEST_TOKEN }}")
+          http_code=$(echo "$response" | tail -1)
+          body=$(echo "$response" | head -n -1)
+          echo "$body"
+          if [ "$http_code" != "200" ] || ! echo "$body" | jq -e '.success == true' > /dev/null 2>&1; then
+            echo "::error::Lifecycle test failed!"
+            exit 1
+          fi
+          echo "✅ Lifecycle renewal test passed (testnet)" >> $GITHUB_STEP_SUMMARY
 
   test_lifecycle_prod:
     name: Test S3 Lifecycle Renewal (Prod)

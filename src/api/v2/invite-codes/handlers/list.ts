@@ -1,5 +1,5 @@
-import type { Request, Response } from "express";
 import { Prisma } from "@prisma/client";
+import type { Request, Response } from "express";
 import { z } from "zod";
 import { prisma } from "@/utils/prisma";
 
@@ -44,13 +44,9 @@ export async function listHandler(req: Request, res: Response) {
     const conditions: Prisma.Sql[] = [];
 
     if (status === "pending") {
-      conditions.push(
-        Prisma.sql`"redemptionCount" < "maxRedemptions"`,
-      );
+      conditions.push(Prisma.sql`"redemptionCount" < "maxRedemptions"`);
     } else if (status === "redeemed") {
-      conditions.push(
-        Prisma.sql`"redemptionCount" >= "maxRedemptions"`,
-      );
+      conditions.push(Prisma.sql`"redemptionCount" >= "maxRedemptions"`);
     }
 
     if (batchLabel !== undefined) {
@@ -118,7 +114,7 @@ export async function listHandler(req: Request, res: Response) {
           redemptionCount: c.redemptionCount,
           remainingRedemptions: c.maxRedemptions - c.redemptionCount,
           parentCode: c.parentCodeId
-            ? parentCodeMap.get(c.parentCodeId) ?? null
+            ? (parentCodeMap.get(c.parentCodeId) ?? null)
             : null,
         })),
         total,

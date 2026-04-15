@@ -199,7 +199,6 @@ describe("Invite Codes API Tests", () => {
       });
       expect(redemptions).toHaveLength(1);
       const firstRedemption = redemptions[0];
-      if (!firstRedemption) throw new Error("Expected a redemption record");
       expect(firstRedemption.childCodeId).toBe(childCode.id);
     });
 
@@ -408,9 +407,7 @@ describe("Invite Codes API Tests", () => {
     });
 
     test("should return 422 for invalid code format", async () => {
-      const response = await fetch(
-        `${baseURL}/api/v2/invite-codes/bad/status`,
-      );
+      const response = await fetch(`${baseURL}/api/v2/invite-codes/bad/status`);
 
       expect(response.status).toBe(422);
       const data = (await response.json()) as { error: string };
