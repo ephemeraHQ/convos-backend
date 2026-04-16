@@ -43,7 +43,8 @@ export const appCheckOnlyMiddleware = async (
     req.log.info("AppCheck verification successful");
     next();
   } catch (error) {
-    req.log.error({ error }, "AppCheck verification failed");
+    const message = error instanceof Error ? error.message : String(error);
+    req.log.error({ error: message }, "AppCheck verification failed");
     res.status(401).json({ error: "Invalid AppCheck token" });
     return;
   }
