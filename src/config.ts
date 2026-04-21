@@ -35,4 +35,11 @@ export const AGENT_POOL_API_KEY = process.env.AGENT_POOL_API_KEY || "";
 // Agent asset upload auth (optional — endpoint returns 503 if not configured)
 export const AGENT_ASSETS_API_KEY = process.env.AGENT_ASSETS_API_KEY || "";
 
+// Composio (optional — /v2/connections/* endpoints return 503 if not configured).
+// Auth configs are resolved dynamically from Composio by toolkit slug; no local mapping.
+export const COMPOSIO_API_KEY = process.env.COMPOSIO_API_KEY || "";
+export const COMPOSIO_CONNECTION_CALLBACK_URL =
+  process.env.COMPOSIO_CONNECTION_CALLBACK_URL ||
+  "convos://connections/callback";
+
 export const XMTP_ENV = process.env.XMTP_ENV || "dev";
