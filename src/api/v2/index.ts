@@ -26,6 +26,7 @@ import { renewBatchHandler } from "./assets/handlers/renew-batch";
 import { testLifecycleHandler } from "./assets/handlers/test-lifecycle";
 import { attachmentsRouter } from "./attachments/attachments.router";
 import { authRouter } from "./auth/auth.router";
+import { connectionsRouter } from "./connections/connections.router";
 import { devRouter } from "./dev/dev.router";
 import { deviceRouter } from "./device/device.router";
 import {
@@ -102,6 +103,7 @@ v2Router.use(
 );
 v2Router.use("/agents", agentJoinLimiter, authMiddleware, agentsRouter);
 v2Router.use("/attachments", authMiddleware, attachmentsRouter);
+v2Router.use("/connections", authMiddleware, connectionsRouter);
 v2Router.use("/notifications/xmtp", webhookRouter);
 v2Router.use("/notifications", authMiddleware, notificationsRouter);
 
