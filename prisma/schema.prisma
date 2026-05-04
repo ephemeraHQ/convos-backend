@@ -216,11 +216,12 @@ model UserCredits {
 }
 
 model GrantKind {
-  id            String         @id
+  id            String         @id @db.VarChar(64)
   name          String
   description   String?
   active        Boolean        @default(true)
   createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
   ledgerEntries CreditLedger[]
 }
 

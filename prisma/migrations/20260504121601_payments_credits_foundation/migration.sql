@@ -13,11 +13,12 @@ CREATE TABLE "UserCredits" (
 
 -- CreateTable
 CREATE TABLE "GrantKind" (
-    "id" TEXT NOT NULL,
+    "id" VARCHAR(64) NOT NULL,
     "name" TEXT NOT NULL,
     "description" TEXT,
     "active" BOOLEAN NOT NULL DEFAULT true,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
 
     CONSTRAINT "GrantKind_pkey" PRIMARY KEY ("id")
 );
@@ -55,7 +56,6 @@ CREATE UNIQUE INDEX "CreditLedger_inboxId_idempotencyKey_key" ON "CreditLedger"(
 ALTER TABLE "CreditLedger" ADD CONSTRAINT "CreditLedger_grantKindId_fkey" FOREIGN KEY ("grantKindId") REFERENCES "GrantKind"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- Seed GrantKind rows
-INSERT INTO "GrantKind" ("id", "name", "description", "active", "createdAt") VALUES
-  ('signup_bonus',  'Signup Bonus',  'Granted once on first agent creation', true, now()),
-  ('daily_refill',  'Daily Refill',  'Periodic top-up via cron',             true, now()),
-  ('manual',        'Manual Grant',  'Operator-initiated grant',             true, now());
+INSERT INTO "GrantKind" ("id", "name", "description", "active", "createdAt", "updatedAt") VALUES ('signup_bonus', 'Signup Bonus', 'Granted once on first agent creation', true, now(), now()) ON CONFLICT ("id") DO NOTHING;
+INSERT INTO "GrantKind" ("id", "name", "description", "active", "createdAt", "updatedAt") VALUES ('daily_refill', 'Daily Refill', 'Periodic top-up via cron',             true, now(), now()) ON CONFLICT ("id") DO NOTHING;
+INSERT INTO "GrantKind" ("id", "name", "description", "active", "createdAt", "updatedAt") VALUES ('manual',       'Manual Grant', 'Operator-initiated grant',             true, now(), now()) ON CONFLICT ("id") DO NOTHING;
