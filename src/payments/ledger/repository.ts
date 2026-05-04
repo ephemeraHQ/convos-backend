@@ -61,6 +61,40 @@ export class LedgerFloorBreachError extends Error {
 type TxClient = Prisma.TransactionClient;
 
 /**
+ * Atomically ensure a `UserCredits` row exists for `inboxId`, take a row-level
+ * lock on it for the rest of the transaction, and return its current balance.
+ *
+ * Implementation: a single `INSERT ... ON CONFLICT DO UPDATE ... RETURNING`
+ * statement. The deliberately no-op self-assignment in the `DO UPDATE SET`
+ * clause (`SET "inboxId" = EXCLUDED."inboxId"`) is the trick — without it,
+ * a plain `INSERT ... ON CONFLICT DO NOTHING` returns no rows on conflict,
+ * and a follow-up SELECT would race with concurrent transactions. The
+ * self-assign forces Postgres to treat the existing row as updated, which:
+ *   1. Acquires the row-level lock (FOR UPDATE-equivalent for the rest of tx)
+ *   2. Returns the current `balance` via RETURNING
+ * all in one atomic statement.
+ *
+ * Why not Prisma's typed `upsert()`: it compiles to a separate SELECT then
+ * INSERT/UPDATE under the hood, leaving a window where another tx can mutate
+ * the row between read and write. Inline raw SQL is the only way to express
+ * the atomic upsert+lock semantics here. Inputs are bound parameters, not
+ * interpolated — injection-safe.
+ */
+const lockOrCreateBalance = async (
+  tx: TxClient,
+  inboxId: string,
+): Promise<bigint> => {
+  const rows = await tx.$queryRaw<RawBalanceRow[]>`
+    INSERT INTO "UserCredits" ("inboxId", "balance", "createdAt", "updatedAt")
+    VALUES (${inboxId}, 0::bigint, now(), now())
+    ON CONFLICT ("inboxId") DO UPDATE
+      SET "inboxId" = EXCLUDED."inboxId"
+    RETURNING "balance"
+  `;
+  return rows[0]?.balance ?? 0n;
+};
+
+/**
  * Run the ledger mutation inside an existing transaction. Caller owns the tx.
  * Use this when the caller needs to perform additional reads/writes inside the
  * same transaction (e.g. tx-scoped GrantKind active-check in `grant()`).
@@ -72,14 +106,7 @@ export const applyDeltaWithTx = async (
   tx: TxClient,
   input: ApplyDeltaInput,
 ): Promise<ApplyDeltaResult> => {
-  const rows = await tx.$queryRaw<RawBalanceRow[]>`
-    INSERT INTO "UserCredits" ("inboxId", "balance", "createdAt", "updatedAt")
-    VALUES (${input.inboxId}, 0::bigint, now(), now())
-    ON CONFLICT ("inboxId") DO UPDATE
-      SET "inboxId" = EXCLUDED."inboxId"
-    RETURNING "balance"
-  `;
-  const before = rows[0]?.balance ?? 0n;
+  const before = await lockOrCreateBalance(tx, input.inboxId);
   const after = before + BigInt(input.delta);
 
   if (input.floorCheck && after < input.floorCheck.minBalance) {
