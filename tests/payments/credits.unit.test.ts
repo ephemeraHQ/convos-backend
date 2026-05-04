@@ -98,3 +98,23 @@ describe("payments/credits/pricing", () => {
     }
   });
 });
+
+import { isAllowedFromBalance } from "@/payments/credits/policy";
+
+describe("payments/credits/policy", () => {
+  test("balance equal to threshold → allowed", () => {
+    expect(isAllowedFromBalance(1n)).toBe(true);
+  });
+
+  test("balance above threshold → allowed", () => {
+    expect(isAllowedFromBalance(100n)).toBe(true);
+  });
+
+  test("balance below threshold → not allowed", () => {
+    expect(isAllowedFromBalance(0n)).toBe(false);
+  });
+
+  test("negative balance → not allowed", () => {
+    expect(isAllowedFromBalance(-5n)).toBe(false);
+  });
+});
