@@ -1,15 +1,15 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import {
+  GrantKindNotFoundError,
+  InsufficientBalanceError,
+} from "@/payments/errors";
+import {
   adjust,
   consume,
   getBalance,
   grant,
   isAllowed,
 } from "@/payments/index";
-import {
-  GrantKindNotFoundError,
-  InsufficientBalanceError,
-} from "@/payments/errors";
 import { prisma } from "@/utils/prisma";
 
 const inbox = (suffix: string) =>
@@ -56,7 +56,9 @@ describe("payments/index — composed service", () => {
     cleanup.push(id);
 
     await grant(id, 100, "seed", "signup_bonus");
-    const r = await consume(id, 2000n, "c1", "req-1", { model: "claude-opus-4-7" });
+    const r = await consume(id, 2000n, "c1", "req-1", {
+      model: "claude-opus-4-7",
+    });
 
     expect(r.spent).toBe(4);
     expect(r.balance).toBe(96n);
@@ -139,8 +141,8 @@ describe("payments/index — replay + concurrency", () => {
     const replay = await consume(id, 2000n, "c1", "req-1"); // same key
 
     expect(replay.spent).toBe(first.spent);
-    expect(replay.balance).toBe(first.balance);     // historical 96, NOT current 146
-    expect(await getBalance(id)).toBe(146n);        // unchanged by replay
+    expect(replay.balance).toBe(first.balance); // historical 96, NOT current 146
+    expect(await getBalance(id)).toBe(146n); // unchanged by replay
 
     const rows = await prisma.creditLedger.findMany({
       where: { inboxId: id, idempotencyKey: "c1" },

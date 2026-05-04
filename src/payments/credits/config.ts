@@ -25,15 +25,23 @@ const requireInt = (key: string, raw: string | undefined): number => {
 };
 
 export const loadConfig = (): PaymentsConfig => {
-  const markup = requireFloat("PAYMENTS_MARKUP_RATE", process.env.PAYMENTS_MARKUP_RATE);
+  const markup = requireFloat(
+    "PAYMENTS_MARKUP_RATE",
+    process.env.PAYMENTS_MARKUP_RATE,
+  );
   if (markup < 0) {
     throw new Error(`PAYMENTS_MARKUP_RATE markup must be >= 0: ${markup}`);
   }
   const markupRateBps = BigInt(Math.round(markup * 10000));
 
-  const cpd = requireInt("PAYMENTS_CREDITS_PER_DOLLAR", process.env.PAYMENTS_CREDITS_PER_DOLLAR);
+  const cpd = requireInt(
+    "PAYMENTS_CREDITS_PER_DOLLAR",
+    process.env.PAYMENTS_CREDITS_PER_DOLLAR,
+  );
   if (cpd <= 0) {
-    throw new Error(`PAYMENTS_CREDITS_PER_DOLLAR creditsPerDollar must be > 0: ${cpd}`);
+    throw new Error(
+      `PAYMENTS_CREDITS_PER_DOLLAR creditsPerDollar must be > 0: ${cpd}`,
+    );
   }
   const creditsPerDollar = BigInt(cpd);
 
@@ -46,13 +54,21 @@ export const loadConfig = (): PaymentsConfig => {
   }
   const reservedMaxTurnCredits = BigInt(rmt);
 
-  const min = requireInt("PAYMENTS_MIN_BALANCE", process.env.PAYMENTS_MIN_BALANCE);
+  const min = requireInt(
+    "PAYMENTS_MIN_BALANCE",
+    process.env.PAYMENTS_MIN_BALANCE,
+  );
   if (min > 0) {
     throw new Error(`PAYMENTS_MIN_BALANCE minBalance must be <= 0: ${min}`);
   }
   const minBalance = BigInt(min);
 
-  return { markupRateBps, creditsPerDollar, reservedMaxTurnCredits, minBalance };
+  return {
+    markupRateBps,
+    creditsPerDollar,
+    reservedMaxTurnCredits,
+    minBalance,
+  };
 };
 
 export const config: PaymentsConfig = loadConfig();

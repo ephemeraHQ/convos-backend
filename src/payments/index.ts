@@ -1,20 +1,13 @@
 import { LedgerReason } from "@prisma/client";
-import {
-  config,
-  isAllowedFromBalance,
-  usdToCredits,
-} from "./credits";
-import {
-  GrantKindNotFoundError,
-  InsufficientBalanceError,
-} from "./errors";
+import { prisma } from "@/utils/prisma";
+import { config, isAllowedFromBalance, usdToCredits } from "./credits";
+import { GrantKindNotFoundError, InsufficientBalanceError } from "./errors";
 import {
   applyDelta,
+  LedgerFloorBreachError,
   getBalance as ledgerGetBalance,
   getHistory as ledgerGetHistory,
-  LedgerFloorBreachError,
 } from "./ledger";
-import { prisma } from "@/utils/prisma";
 import type {
   AdjustResult,
   ConsumeResult,
@@ -103,7 +96,8 @@ export const adjust = async (
   if (delta === 0) {
     throw new Error("adjust delta must be non-zero");
   }
-  const opts = delta < 0 ? { floorCheck: { minBalance: config.minBalance } } : {};
+  const opts =
+    delta < 0 ? { floorCheck: { minBalance: config.minBalance } } : {};
   try {
     const result = await applyDelta({
       inboxId,

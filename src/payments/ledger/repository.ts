@@ -1,4 +1,4 @@
-import { type CreditLedger, LedgerReason, Prisma } from "@prisma/client";
+import { Prisma, type CreditLedger, type LedgerReason } from "@prisma/client";
 import { prisma } from "@/utils/prisma";
 import type { HistoryCursor } from "../types";
 

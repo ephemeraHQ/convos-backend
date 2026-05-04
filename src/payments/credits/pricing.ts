@@ -13,7 +13,8 @@ export const usdToCredits = (usdCostMicros: bigint): number => {
   if (usdCostMicros < 0n) {
     throw new Error(`usdCostMicros must be >= 0: ${usdCostMicros}`);
   }
-  const numerator = usdCostMicros * config.markupRateBps * config.creditsPerDollar;
+  const numerator =
+    usdCostMicros * config.markupRateBps * config.creditsPerDollar;
   const credits = ceilDiv(numerator, SCALE);
   return Number(credits);
 };

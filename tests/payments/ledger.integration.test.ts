@@ -1,6 +1,11 @@
-import { afterEach, describe, expect, test } from "bun:test";
 import { LedgerReason } from "@prisma/client";
-import { LedgerFloorBreachError, applyDelta, getBalance, getHistory } from "@/payments/ledger/repository";
+import { afterEach, describe, expect, test } from "bun:test";
+import {
+  applyDelta,
+  getBalance,
+  getHistory,
+  LedgerFloorBreachError,
+} from "@/payments/ledger/repository";
 import { prisma } from "@/utils/prisma";
 
 const inbox = (suffix: string) =>
@@ -85,13 +90,39 @@ describe("payments/ledger/repository", () => {
     const id = inbox("invariant");
     cleanupKeys.push({ inboxId: id });
 
-    await applyDelta({ inboxId: id, delta: 100, reason: LedgerReason.grant, idempotencyKey: "g1", grantKindId: "manual" });
-    await applyDelta({ inboxId: id, delta: -30, reason: LedgerReason.consume, idempotencyKey: "c1" });
-    await applyDelta({ inboxId: id, delta: 50, reason: LedgerReason.grant, idempotencyKey: "g2", grantKindId: "manual" });
-    await applyDelta({ inboxId: id, delta: -10, reason: LedgerReason.adjust, idempotencyKey: "a1", note: "fix" });
+    await applyDelta({
+      inboxId: id,
+      delta: 100,
+      reason: LedgerReason.grant,
+      idempotencyKey: "g1",
+      grantKindId: "manual",
+    });
+    await applyDelta({
+      inboxId: id,
+      delta: -30,
+      reason: LedgerReason.consume,
+      idempotencyKey: "c1",
+    });
+    await applyDelta({
+      inboxId: id,
+      delta: 50,
+      reason: LedgerReason.grant,
+      idempotencyKey: "g2",
+      grantKindId: "manual",
+    });
+    await applyDelta({
+      inboxId: id,
+      delta: -10,
+      reason: LedgerReason.adjust,
+      idempotencyKey: "a1",
+      note: "fix",
+    });
 
     const balance = await getBalance(id);
-    const agg = await prisma.creditLedger.aggregate({ where: { inboxId: id }, _sum: { delta: true } });
+    const agg = await prisma.creditLedger.aggregate({
+      where: { inboxId: id },
+      _sum: { delta: true },
+    });
     expect(balance).toBe(BigInt(agg._sum.delta ?? 0));
   });
 });
@@ -153,7 +184,10 @@ describe("payments/ledger/repository — floor + history", () => {
     expect(page1).toHaveLength(2);
 
     const last = page1[page1.length - 1];
-    const page2 = await getHistory(id, 2, { createdAt: last.createdAt, id: last.id });
+    const page2 = await getHistory(id, 2, {
+      createdAt: last.createdAt,
+      id: last.id,
+    });
     expect(page2).toHaveLength(2);
 
     const ids = [...page1, ...page2].map((r) => r.id);

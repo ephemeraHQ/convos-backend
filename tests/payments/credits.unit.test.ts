@@ -1,4 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { isAllowedFromBalance } from "@/payments/credits/policy";
+import { creditsToUsd, usdToCredits } from "@/payments/credits/pricing";
 
 const ENV_KEYS = [
   "PAYMENTS_MARKUP_RATE",
@@ -69,8 +71,6 @@ describe("payments/credits/config", () => {
   });
 });
 
-import { creditsToUsd, usdToCredits } from "@/payments/credits/pricing";
-
 describe("payments/credits/pricing", () => {
   test("zero usd → zero credits", () => {
     expect(usdToCredits(0n)).toBe(0);
@@ -98,8 +98,6 @@ describe("payments/credits/pricing", () => {
     }
   });
 });
-
-import { isAllowedFromBalance } from "@/payments/credits/policy";
 
 describe("payments/credits/policy", () => {
   test("balance equal to threshold → allowed", () => {
