@@ -1,11 +1,5 @@
 export interface PaymentsConfig {
   markupRateBps: bigint;
-  /**
-   * Operator-configured markup as a canonical decimal string (e.g. "2"
-   * for 2×). Snapshot for the consume ledger row so historical audits
-   * can read what was applied without re-deriving from `markupRateBps`
-   * (which is quantized and would lose digits beyond 4 decimal places).
-   */
   markupRate: string;
   creditsPerDollar: bigint;
   reservedMaxTurnCredits: bigint;
@@ -31,7 +25,7 @@ const requireInt = (key: string, raw: string | undefined): number => {
   return n;
 };
 
-export const loadConfig = (): PaymentsConfig => {
+const loadMarkup = (): Pick<PaymentsConfig, "markupRateBps" | "markupRate"> => {
   const markup = requireFloat(
     "PAYMENTS_MARKUP_RATE",
     process.env.PAYMENTS_MARKUP_RATE,
@@ -39,9 +33,13 @@ export const loadConfig = (): PaymentsConfig => {
   if (markup < 0) {
     throw new Error(`PAYMENTS_MARKUP_RATE markup must be >= 0: ${markup}`);
   }
-  const markupRateBps = BigInt(Math.round(markup * 10000));
-  const markupRate = String(markup);
+  return {
+    markupRateBps: BigInt(Math.round(markup * 10000)),
+    markupRate: String(markup),
+  };
+};
 
+const loadCreditsPerDollar = (): bigint => {
   const cpd = requireInt(
     "PAYMENTS_CREDITS_PER_USD",
     process.env.PAYMENTS_CREDITS_PER_USD,
@@ -51,8 +49,10 @@ export const loadConfig = (): PaymentsConfig => {
       `PAYMENTS_CREDITS_PER_USD creditsPerDollar must be > 0: ${cpd}`,
     );
   }
-  const creditsPerDollar = BigInt(cpd);
+  return BigInt(cpd);
+};
 
+const loadReservedMaxTurnCredits = (): bigint => {
   const rmt = requireInt(
     "PAYMENTS_RESERVED_MAX_TURN_CREDITS",
     process.env.PAYMENTS_RESERVED_MAX_TURN_CREDITS,
@@ -60,8 +60,10 @@ export const loadConfig = (): PaymentsConfig => {
   if (rmt < 0) {
     throw new Error(`PAYMENTS_RESERVED_MAX_TURN_CREDITS must be >= 0: ${rmt}`);
   }
-  const reservedMaxTurnCredits = BigInt(rmt);
+  return BigInt(rmt);
+};
 
+const loadMinBalance = (): bigint => {
   const min = requireInt(
     "PAYMENTS_MIN_BALANCE_CREDITS",
     process.env.PAYMENTS_MIN_BALANCE_CREDITS,
@@ -71,15 +73,14 @@ export const loadConfig = (): PaymentsConfig => {
       `PAYMENTS_MIN_BALANCE_CREDITS minBalance must be <= 0: ${min}`,
     );
   }
-  const minBalance = BigInt(min);
-
-  return {
-    markupRateBps,
-    markupRate,
-    creditsPerDollar,
-    reservedMaxTurnCredits,
-    minBalance,
-  };
+  return BigInt(min);
 };
+
+export const loadConfig = (): PaymentsConfig => ({
+  ...loadMarkup(),
+  creditsPerDollar: loadCreditsPerDollar(),
+  reservedMaxTurnCredits: loadReservedMaxTurnCredits(),
+  minBalance: loadMinBalance(),
+});
 
 export const config: PaymentsConfig = loadConfig();
