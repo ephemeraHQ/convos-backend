@@ -118,3 +118,55 @@ describe("payments/index — composed service", () => {
     expect(await isAllowed(id)).toBe(true);
   });
 });
+
+describe("payments/index — replay + concurrency", () => {
+  const cleanup: string[] = [];
+
+  afterEach(async () => {
+    for (const id of cleanup) await wipe(id);
+    cleanup.length = 0;
+  });
+
+  test("consume replay returns historical balanceAfter, not current", async () => {
+    const id = inbox("replay");
+    cleanup.push(id);
+
+    await grant(id, 100, "seed", "signup_bonus");
+    const first = await consume(id, 2000n, "c1", "req-1"); // balance 96
+
+    await grant(id, 50, "g2", "manual"); // balance 146
+
+    const replay = await consume(id, 2000n, "c1", "req-1"); // same key
+
+    expect(replay.spent).toBe(first.spent);
+    expect(replay.balance).toBe(first.balance);     // historical 96, NOT current 146
+    expect(await getBalance(id)).toBe(146n);        // unchanged by replay
+
+    const rows = await prisma.creditLedger.findMany({
+      where: { inboxId: id, idempotencyKey: "c1" },
+    });
+    expect(rows).toHaveLength(1);
+  });
+
+  test("concurrent consumes on same inbox serialize correctly (no lost updates)", async () => {
+    const id = inbox("race");
+    cleanup.push(id);
+
+    await grant(id, 1000, "seed", "signup_bonus");
+
+    const calls = Array.from({ length: 10 }, (_, i) =>
+      consume(id, 2000n, `r${i}`, `req-${i}`),
+    );
+    const results = await Promise.all(calls);
+
+    expect(results).toHaveLength(10);
+    for (const r of results) expect(r.spent).toBe(4);
+
+    expect(await getBalance(id)).toBe(960n); // 1000 - 10×4
+
+    const rows = await prisma.creditLedger.findMany({
+      where: { inboxId: id, reason: "consume" },
+    });
+    expect(rows).toHaveLength(10);
+  });
+});
