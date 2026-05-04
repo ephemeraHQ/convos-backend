@@ -34,9 +34,9 @@ OP+zVxhBMYUsKckj/D/LaTlJSqCNg68mmBceBCYarZ1dw4adcC3MQymWBg==
 
 // Payments / credits test defaults — match spec §5
 process.env.PAYMENTS_MARKUP_RATE = "2.0";
-process.env.PAYMENTS_CREDITS_PER_DOLLAR = "1000";
+process.env.PAYMENTS_CREDITS_PER_USD = "1000";
 process.env.PAYMENTS_RESERVED_MAX_TURN_CREDITS = "1";
-process.env.PAYMENTS_MIN_BALANCE = "-1000";
+process.env.PAYMENTS_MIN_BALANCE_CREDITS = "-1000";
 
 // mock Firebase functions
 

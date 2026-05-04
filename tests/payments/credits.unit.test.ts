@@ -4,9 +4,9 @@ import { creditsToUsd, usdToCredits } from "@/payments/credits/pricing";
 
 const ENV_KEYS = [
   "PAYMENTS_MARKUP_RATE",
-  "PAYMENTS_CREDITS_PER_DOLLAR",
+  "PAYMENTS_CREDITS_PER_USD",
   "PAYMENTS_RESERVED_MAX_TURN_CREDITS",
-  "PAYMENTS_MIN_BALANCE",
+  "PAYMENTS_MIN_BALANCE_CREDITS",
 ] as const;
 
 const snapshot = (): Record<string, string | undefined> =>
@@ -29,9 +29,9 @@ describe("payments/credits/config", () => {
   test("loads valid env into typed config", async () => {
     snap = snapshot();
     process.env.PAYMENTS_MARKUP_RATE = "2.0";
-    process.env.PAYMENTS_CREDITS_PER_DOLLAR = "1000";
+    process.env.PAYMENTS_CREDITS_PER_USD = "1000";
     process.env.PAYMENTS_RESERVED_MAX_TURN_CREDITS = "1";
-    process.env.PAYMENTS_MIN_BALANCE = "-1000";
+    process.env.PAYMENTS_MIN_BALANCE_CREDITS = "-1000";
 
     const { loadConfig } = await import("@/payments/credits/config");
     const cfg = loadConfig();
@@ -55,14 +55,14 @@ describe("payments/credits/config", () => {
 
   test("rejects zero creditsPerDollar", async () => {
     snap = snapshot();
-    process.env.PAYMENTS_CREDITS_PER_DOLLAR = "0";
+    process.env.PAYMENTS_CREDITS_PER_USD = "0";
     const { loadConfig } = await import("@/payments/credits/config");
     expect(() => loadConfig()).toThrow(/creditsPerDollar/i);
   });
 
   test("rejects positive minBalance", async () => {
     snap = snapshot();
-    process.env.PAYMENTS_MIN_BALANCE = "10";
+    process.env.PAYMENTS_MIN_BALANCE_CREDITS = "10";
     const { loadConfig } = await import("@/payments/credits/config");
     expect(() => loadConfig()).toThrow(/minBalance/i);
   });
