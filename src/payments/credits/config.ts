@@ -59,7 +59,9 @@ export const loadConfig = (): PaymentsConfig => {
     process.env.PAYMENTS_MIN_BALANCE_CREDITS,
   );
   if (min > 0) {
-    throw new Error(`PAYMENTS_MIN_BALANCE_CREDITS minBalance must be <= 0: ${min}`);
+    throw new Error(
+      `PAYMENTS_MIN_BALANCE_CREDITS minBalance must be <= 0: ${min}`,
+    );
   }
   const minBalance = BigInt(min);
 
