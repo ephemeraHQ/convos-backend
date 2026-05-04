@@ -68,3 +68,33 @@ describe("payments/credits/config", () => {
     expect(() => loadConfig()).toThrow();
   });
 });
+
+import { creditsToUsd, usdToCredits } from "@/payments/credits/pricing";
+
+describe("payments/credits/pricing", () => {
+  test("zero usd → zero credits", () => {
+    expect(usdToCredits(0n)).toBe(0);
+  });
+
+  test("worked example from spec: $0.002 → 4 credits", () => {
+    expect(usdToCredits(2000n)).toBe(4);
+  });
+
+  test("ceil rounds up sub-credit micro values", () => {
+    expect(usdToCredits(1n)).toBe(1);
+  });
+
+  test("large values stay exact (no float drift)", () => {
+    expect(usdToCredits(1_000_000_000n)).toBe(2_000_000);
+  });
+
+  test("creditsToUsd(usdToCredits(x)) >= x and within one credit's worth of micros", () => {
+    const inputs = [0n, 1n, 999n, 2000n, 1_500_000n];
+    for (const x of inputs) {
+      const credits = usdToCredits(x);
+      const back = creditsToUsd(credits);
+      expect(back).toBeGreaterThanOrEqual(x);
+      expect(back - x).toBeLessThanOrEqual(500n);
+    }
+  });
+});
