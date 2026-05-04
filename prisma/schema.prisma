@@ -200,3 +200,48 @@ model AuthNonce {
   nonce     String   @id
   createdAt DateTime @default(now())
 }
+
+enum LedgerReason {
+  consume
+  grant
+  refill
+  adjust
+}
+
+model UserCredits {
+  inboxId    String   @id
+  balance    BigInt
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+}
+
+model GrantKind {
+  id            String         @id
+  name          String
+  description   String?
+  active        Boolean        @default(true)
+  createdAt     DateTime       @default(now())
+  ledgerEntries CreditLedger[]
+}
+
+model CreditLedger {
+  id               String       @id @default(cuid())
+  inboxId          String
+  delta            Int
+  reason           LedgerReason
+  idempotencyKey   String
+  balanceAfter     BigInt
+  usdCostMicros    BigInt?
+  markupRate       Decimal?     @db.Decimal(8, 4)
+  creditsPerDollar Int?
+  model            String?
+  requestId        String?
+  note             String?
+  grantKindId      String?
+  grantKind        GrantKind?   @relation(fields: [grantKindId], references: [id])
+  createdAt        DateTime     @default(now())
+
+  @@unique([inboxId, idempotencyKey])
+  @@index([inboxId, createdAt])
+  @@index([requestId])
+}
