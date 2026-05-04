@@ -1,12 +1,6 @@
 -- CreateEnum
 CREATE TYPE "LedgerReason" AS ENUM ('consume', 'grant', 'refill', 'adjust');
 
--- AlterTable
-ALTER TABLE "InviteCode" ALTER COLUMN "id" DROP DEFAULT;
-
--- AlterTable
-ALTER TABLE "InviteCodeRedemption" ALTER COLUMN "id" DROP DEFAULT;
-
 -- CreateTable
 CREATE TABLE "UserCredits" (
     "inboxId" TEXT NOT NULL,
