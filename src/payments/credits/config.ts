@@ -1,5 +1,12 @@
 export interface PaymentsConfig {
   markupRateBps: bigint;
+  /**
+   * Operator-configured markup as a canonical decimal string (e.g. "2"
+   * for 2×). Snapshot for the consume ledger row so historical audits
+   * can read what was applied without re-deriving from `markupRateBps`
+   * (which is quantized and would lose digits beyond 4 decimal places).
+   */
+  markupRate: string;
   creditsPerDollar: bigint;
   reservedMaxTurnCredits: bigint;
   minBalance: bigint;
@@ -33,6 +40,7 @@ export const loadConfig = (): PaymentsConfig => {
     throw new Error(`PAYMENTS_MARKUP_RATE markup must be >= 0: ${markup}`);
   }
   const markupRateBps = BigInt(Math.round(markup * 10000));
+  const markupRate = String(markup);
 
   const cpd = requireInt(
     "PAYMENTS_CREDITS_PER_USD",
@@ -67,6 +75,7 @@ export const loadConfig = (): PaymentsConfig => {
 
   return {
     markupRateBps,
+    markupRate,
     creditsPerDollar,
     reservedMaxTurnCredits,
     minBalance,

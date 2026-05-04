@@ -37,7 +37,7 @@ export const consume = async (
       reason: LedgerReason.consume,
       idempotencyKey,
       usdCostMicros,
-      markupRate: (Number(config.markupRateBps) / 10000).toString(),
+      markupRate: config.markupRate,
       creditsPerDollar: Number(config.creditsPerDollar),
       model: opts?.model,
       requestId,

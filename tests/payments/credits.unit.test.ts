@@ -37,6 +37,7 @@ describe("payments/credits/config", () => {
     const cfg = loadConfig();
 
     expect(cfg.markupRateBps).toBe(20000n);
+    expect(cfg.markupRate).toBe("2");
     expect(cfg.creditsPerDollar).toBe(1000n);
     expect(cfg.reservedMaxTurnCredits).toBe(1n);
     expect(cfg.minBalance).toBe(-1000n);
