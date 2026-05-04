@@ -32,6 +32,12 @@ MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAESMP6ComOG5JFvIjnIIslG9VzzrQU
 OP+zVxhBMYUsKckj/D/LaTlJSqCNg68mmBceBCYarZ1dw4adcC3MQymWBg==
 -----END PUBLIC KEY-----`;
 
+// Payments / credits test defaults — match spec §5
+process.env.PAYMENTS_MARKUP_RATE = "2.0";
+process.env.PAYMENTS_CREDITS_PER_DOLLAR = "1000";
+process.env.PAYMENTS_RESERVED_MAX_TURN_CREDITS = "1";
+process.env.PAYMENTS_MIN_BALANCE = "-1000";
+
 // mock Firebase functions
 
 void mock.module("firebase-admin/app-check", () => ({
