@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { LedgerReason } from "@prisma/client";
-import { applyDelta, getBalance } from "@/payments/ledger/repository";
+import { LedgerFloorBreachError, applyDelta, getBalance, getHistory } from "@/payments/ledger/repository";
 import { prisma } from "@/utils/prisma";
 
 const inbox = (suffix: string) =>
@@ -93,5 +93,70 @@ describe("payments/ledger/repository", () => {
     const balance = await getBalance(id);
     const agg = await prisma.creditLedger.aggregate({ where: { inboxId: id }, _sum: { delta: true } });
     expect(balance).toBe(BigInt(agg._sum.delta ?? 0));
+  });
+});
+
+describe("payments/ledger/repository — floor + history", () => {
+  const cleanup: string[] = [];
+
+  afterEach(async () => {
+    for (const id of cleanup) {
+      await prisma.creditLedger.deleteMany({ where: { inboxId: id } });
+      await prisma.userCredits.deleteMany({ where: { inboxId: id } });
+    }
+    cleanup.length = 0;
+  });
+
+  test("floor breach throws and writes nothing", async () => {
+    const id = inbox("floor");
+    cleanup.push(id);
+
+    // seed at -500
+    await applyDelta({
+      inboxId: id,
+      delta: -500,
+      reason: LedgerReason.adjust,
+      idempotencyKey: "seed",
+      note: "seed",
+    });
+
+    await expect(
+      applyDelta({
+        inboxId: id,
+        delta: -1000,
+        reason: LedgerReason.consume,
+        idempotencyKey: "breach",
+        floorCheck: { minBalance: -1000n },
+      }),
+    ).rejects.toBeInstanceOf(LedgerFloorBreachError);
+
+    expect(await getBalance(id)).toBe(-500n);
+    const rows = await prisma.creditLedger.findMany({ where: { inboxId: id } });
+    expect(rows).toHaveLength(1);
+  });
+
+  test("getHistory orders DESC by (createdAt, id) and paginates by tuple cursor", async () => {
+    const id = inbox("history");
+    cleanup.push(id);
+
+    for (let i = 0; i < 5; i++) {
+      await applyDelta({
+        inboxId: id,
+        delta: 1,
+        reason: LedgerReason.grant,
+        idempotencyKey: `h${i}`,
+        grantKindId: "manual",
+      });
+    }
+
+    const page1 = await getHistory(id, 2);
+    expect(page1).toHaveLength(2);
+
+    const last = page1[page1.length - 1];
+    const page2 = await getHistory(id, 2, { createdAt: last.createdAt, id: last.id });
+    expect(page2).toHaveLength(2);
+
+    const ids = [...page1, ...page2].map((r) => r.id);
+    expect(new Set(ids).size).toBe(4);
   });
 });
