@@ -42,6 +42,10 @@ describe("payments/credits/config", () => {
     expect(cfg.minBalance).toBe(-1000n);
   });
 
+  // The dynamic `import("@/payments/credits/config")` returns the same cached
+  // module across tests; that's intentional. These tests work because they
+  // call `loadConfig()` directly, which re-reads `process.env` on every call —
+  // NOT the cached `config` singleton (which snapshots env at first import).
   test("rejects negative markup", async () => {
     snap = snapshot();
     process.env.PAYMENTS_MARKUP_RATE = "-1";

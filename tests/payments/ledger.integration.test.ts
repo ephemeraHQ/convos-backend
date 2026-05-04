@@ -193,4 +193,48 @@ describe("payments/ledger/repository — floor + history", () => {
     const ids = [...page1, ...page2].map((r) => r.id);
     expect(new Set(ids).size).toBe(4);
   });
+
+  test("getHistory tuple cursor breaks createdAt ties by id DESC", async () => {
+    const id = inbox("tiecursor");
+    cleanup.push(id);
+
+    // Force identical createdAt across rows by inserting directly with prisma.
+    // applyDelta uses server-side now() and may not collide reliably.
+    const sharedTs = new Date("2030-01-01T00:00:00.000Z");
+    // Seed the UserCredits row so the FK / invariants stay sane (balance is
+    // not asserted here — this test only exercises ordering).
+    await prisma.userCredits.create({
+      data: { inboxId: id, balance: 0n },
+    });
+    for (let i = 0; i < 3; i++) {
+      await prisma.creditLedger.create({
+        data: {
+          inboxId: id,
+          delta: 1,
+          reason: LedgerReason.grant,
+          idempotencyKey: `tie${i}`,
+          balanceAfter: BigInt(i + 1),
+          grantKindId: "manual",
+          createdAt: sharedTs,
+        },
+      });
+    }
+
+    const all = await getHistory(id, 10);
+    expect(all).toHaveLength(3);
+    // All three share createdAt, so ordering must come from id DESC.
+    const idsDesc = [...all.map((r) => r.id)].sort().reverse();
+    expect(all.map((r) => r.id)).toEqual(idsDesc);
+
+    // Paginate with a tuple cursor anchored on the first row. The remaining
+    // page must continue id-DESC within the same createdAt bucket.
+    const page1 = await getHistory(id, 1);
+    expect(page1).toHaveLength(1);
+    const page2 = await getHistory(id, 10, {
+      createdAt: page1[0].createdAt,
+      id: page1[0].id,
+    });
+    expect(page2).toHaveLength(2);
+    expect(page2.map((r) => r.id)).toEqual(idsDesc.slice(1));
+  });
 });

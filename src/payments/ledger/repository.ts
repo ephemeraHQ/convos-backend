@@ -58,56 +58,71 @@ export class LedgerFloorBreachError extends Error {
   }
 }
 
+type TxClient = Prisma.TransactionClient;
+
+/**
+ * Run the ledger mutation inside an existing transaction. Caller owns the tx.
+ * Use this when the caller needs to perform additional reads/writes inside the
+ * same transaction (e.g. tx-scoped GrantKind active-check in `grant()`).
+ *
+ * Does NOT handle the P2002 idempotent-replay path — that lives in `applyDelta`
+ * because replay requires a fresh top-level read after the inner tx aborted.
+ */
+export const applyDeltaWithTx = async (
+  tx: TxClient,
+  input: ApplyDeltaInput,
+): Promise<ApplyDeltaResult> => {
+  const rows = await tx.$queryRaw<RawBalanceRow[]>`
+    INSERT INTO "UserCredits" ("inboxId", "balance", "createdAt", "updatedAt")
+    VALUES (${input.inboxId}, 0::bigint, now(), now())
+    ON CONFLICT ("inboxId") DO UPDATE
+      SET "inboxId" = EXCLUDED."inboxId"
+    RETURNING "balance"
+  `;
+  const before = rows[0]?.balance ?? 0n;
+  const after = before + BigInt(input.delta);
+
+  if (input.floorCheck && after < input.floorCheck.minBalance) {
+    throw new LedgerFloorBreachError(
+      before,
+      input.delta,
+      input.floorCheck.minBalance,
+    );
+  }
+
+  await tx.userCredits.update({
+    where: { inboxId: input.inboxId },
+    data: { balance: after },
+  });
+
+  const created = await tx.creditLedger.create({
+    data: {
+      inboxId: input.inboxId,
+      delta: input.delta,
+      reason: input.reason,
+      idempotencyKey: input.idempotencyKey,
+      balanceAfter: after,
+      usdCostMicros: input.usdCostMicros ?? null,
+      markupRate:
+        input.markupRate !== undefined
+          ? new Prisma.Decimal(input.markupRate.toString())
+          : null,
+      creditsPerDollar: input.creditsPerDollar ?? null,
+      model: input.model ?? null,
+      requestId: input.requestId ?? null,
+      note: input.note ?? null,
+      grantKindId: input.grantKindId ?? null,
+    },
+  });
+
+  return { balanceAfter: after, ledgerId: created.id, replayed: false };
+};
+
 export const applyDelta = async (
   input: ApplyDeltaInput,
 ): Promise<ApplyDeltaResult> => {
   try {
-    return await prisma.$transaction(async (tx) => {
-      const rows = await tx.$queryRaw<RawBalanceRow[]>`
-        INSERT INTO "UserCredits" ("inboxId", "balance", "createdAt", "updatedAt")
-        VALUES (${input.inboxId}, 0::bigint, now(), now())
-        ON CONFLICT ("inboxId") DO UPDATE
-          SET "inboxId" = EXCLUDED."inboxId"
-        RETURNING "balance"
-      `;
-      const before = rows[0]?.balance ?? 0n;
-      const after = before + BigInt(input.delta);
-
-      if (input.floorCheck && after < input.floorCheck.minBalance) {
-        throw new LedgerFloorBreachError(
-          before,
-          input.delta,
-          input.floorCheck.minBalance,
-        );
-      }
-
-      await tx.userCredits.update({
-        where: { inboxId: input.inboxId },
-        data: { balance: after },
-      });
-
-      const created = await tx.creditLedger.create({
-        data: {
-          inboxId: input.inboxId,
-          delta: input.delta,
-          reason: input.reason,
-          idempotencyKey: input.idempotencyKey,
-          balanceAfter: after,
-          usdCostMicros: input.usdCostMicros ?? null,
-          markupRate:
-            input.markupRate !== undefined
-              ? new Prisma.Decimal(input.markupRate.toString())
-              : null,
-          creditsPerDollar: input.creditsPerDollar ?? null,
-          model: input.model ?? null,
-          requestId: input.requestId ?? null,
-          note: input.note ?? null,
-          grantKindId: input.grantKindId ?? null,
-        },
-      });
-
-      return { balanceAfter: after, ledgerId: created.id, replayed: false };
-    });
+    return await prisma.$transaction((tx) => applyDeltaWithTx(tx, input));
   } catch (err) {
     if (
       err instanceof Prisma.PrismaClientKnownRequestError &&

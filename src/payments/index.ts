@@ -1,9 +1,11 @@
-import { LedgerReason } from "@prisma/client";
+import { LedgerReason, Prisma } from "@prisma/client";
 import { prisma } from "@/utils/prisma";
 import { config, isAllowedFromBalance, usdToCredits } from "./credits";
 import { GrantKindNotFoundError, InsufficientBalanceError } from "./errors";
 import {
   applyDelta,
+  applyDeltaWithTx,
+  findLedgerByIdempotencyKey,
   LedgerFloorBreachError,
   getBalance as ledgerGetBalance,
   getHistory as ledgerGetHistory,
@@ -55,6 +57,14 @@ export const consume = async (
   }
 };
 
+/**
+ * Grant credits to an inbox.
+ *
+ * NOTE: Pricing snapshot fields (`markupRate`, `creditsPerDollar`) are NOT
+ * recorded on grant ledger entries. This is acceptable while grants stay
+ * credit-denominated. Future: if USD-denominated promo grants are introduced,
+ * snapshot pricing at grant time so historical USD value is auditable.
+ */
 export const grant = async (
   inboxId: string,
   credits: number,
@@ -62,28 +72,57 @@ export const grant = async (
   kind: GrantKindId,
   opts?: { note?: string; requestId?: string },
 ): Promise<GrantResult> => {
-  const kindRow = await prisma.grantKind.findUnique({
-    where: { id: kind },
-    select: { id: true, active: true },
-  });
-  if (!kindRow || !kindRow.active) {
-    throw new GrantKindNotFoundError(kind);
-  }
   if (credits <= 0) {
     throw new Error(`grant credits must be > 0: ${credits}`);
   }
-  const result = await applyDelta({
-    inboxId,
-    delta: credits,
-    reason: LedgerReason.grant,
-    idempotencyKey,
-    grantKindId: kind,
-    note: opts?.note,
-    requestId: opts?.requestId,
-  });
-  return { granted: credits, balance: result.balanceAfter };
+  // GrantKind active-check is done inside the same transaction as the ledger
+  // write so a concurrent `active=false` flip cannot slip through between the
+  // read and the write. The FK already prevents deleted kinds; this guards
+  // against deactivation.
+  try {
+    const result = await prisma.$transaction(async (tx) => {
+      const kindRow = await tx.grantKind.findUnique({
+        where: { id: kind },
+        select: { id: true, active: true },
+      });
+      if (!kindRow || !kindRow.active) {
+        throw new GrantKindNotFoundError(kind);
+      }
+      return applyDeltaWithTx(tx, {
+        inboxId,
+        delta: credits,
+        reason: LedgerReason.grant,
+        idempotencyKey,
+        grantKindId: kind,
+        note: opts?.note,
+        requestId: opts?.requestId,
+      });
+    });
+    return { granted: credits, balance: result.balanceAfter };
+  } catch (err) {
+    // Idempotent replay: same (inboxId, idempotencyKey) returns the historical
+    // ledger row instead of erroring. Mirrors the path in applyDelta().
+    if (
+      err instanceof Prisma.PrismaClientKnownRequestError &&
+      err.code === "P2002"
+    ) {
+      const prior = await findLedgerByIdempotencyKey(inboxId, idempotencyKey);
+      if (prior) {
+        return { granted: credits, balance: prior.balanceAfter };
+      }
+    }
+    throw err;
+  }
 };
 
+/**
+ * Manually adjust an inbox balance (positive or negative).
+ *
+ * NOTE: Pricing snapshot fields (`markupRate`, `creditsPerDollar`) are NOT
+ * recorded on adjust ledger entries. This is acceptable while adjustments stay
+ * credit-denominated. Future: if USD-denominated adjustments are introduced,
+ * snapshot pricing at adjust time so historical USD value is auditable.
+ */
 export const adjust = async (
   inboxId: string,
   delta: number,
@@ -124,6 +163,15 @@ export const adjust = async (
 export const getBalance = async (inboxId: string): Promise<bigint> =>
   ledgerGetBalance(inboxId);
 
+/**
+ * Check whether the inbox currently has a sufficient balance to act.
+ *
+ * ADVISORY ONLY. Concurrent `consume` calls can invalidate the read between
+ * the gate check and any subsequent action. Callers must NOT rely on this for
+ * correctness — only `consume` itself enforces the floor atomically (via
+ * `floorCheck` inside the applyDelta transaction). Suitable for UX hints
+ * (e.g. disabling a button), NOT for authorization gates.
+ */
 export const isAllowed = async (inboxId: string): Promise<boolean> =>
   isAllowedFromBalance(await ledgerGetBalance(inboxId));
 

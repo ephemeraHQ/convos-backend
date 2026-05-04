@@ -1,5 +1,6 @@
 export {
   applyDelta,
+  applyDeltaWithTx,
   findLedgerByIdempotencyKey,
   getBalance,
   getHistory,
