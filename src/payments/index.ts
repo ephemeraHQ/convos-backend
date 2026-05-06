@@ -3,11 +3,7 @@ import { ValidationError } from "@/utils/errors";
 import { prisma } from "@/utils/prisma";
 import { config, usdToCredits } from "./credits";
 import { isAllowedFromBalance } from "./credits/policy";
-import {
-  GrantKindNotFoundError,
-  IdempotencyMismatchError,
-  InsufficientBalanceError,
-} from "./errors";
+import { GrantKindNotFoundError, InsufficientBalanceError } from "./errors";
 import {
   applyDelta,
   applyDeltaWithTx,
@@ -15,6 +11,7 @@ import {
   LedgerFloorBreachError,
   getBalance as ledgerGetBalance,
   getHistory as ledgerGetHistory,
+  validateReplayPayload,
 } from "./ledger";
 import {
   GrantKindIdSchema,
@@ -89,6 +86,16 @@ export const grant = async (args: {
   }
   const parsedKind = GrantKindIdSchema.parse(args.kind);
 
+  const ledgerInput = {
+    inboxId: args.inboxId,
+    delta: BigInt(args.credits),
+    reason: LedgerReason.grant,
+    idempotencyKey: args.idempotencyKey,
+    grantKindId: parsedKind,
+    note: args.note,
+    requestId: args.requestId,
+  };
+
   try {
     await prisma.$transaction(async (tx) => {
       const kindRow = await tx.grantKind.findUnique({
@@ -98,15 +105,7 @@ export const grant = async (args: {
       if (!kindRow || !kindRow.active) {
         throw new GrantKindNotFoundError(parsedKind);
       }
-      return applyDeltaWithTx(tx, {
-        inboxId: args.inboxId,
-        delta: BigInt(args.credits),
-        reason: LedgerReason.grant,
-        idempotencyKey: args.idempotencyKey,
-        grantKindId: parsedKind,
-        note: args.note,
-        requestId: args.requestId,
-      });
+      return applyDeltaWithTx(tx, ledgerInput);
     });
     return { granted: args.credits };
   } catch (err) {
@@ -119,13 +118,7 @@ export const grant = async (args: {
         args.idempotencyKey,
       );
       if (prior) {
-        if (BigInt(prior.delta) !== BigInt(args.credits)) {
-          throw new IdempotencyMismatchError(
-            args.idempotencyKey,
-            BigInt(prior.delta),
-            BigInt(args.credits),
-          );
-        }
+        validateReplayPayload(prior, ledgerInput);
         return { granted: args.credits };
       }
     }

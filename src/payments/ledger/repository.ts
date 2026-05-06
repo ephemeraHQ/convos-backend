@@ -45,6 +45,52 @@ export const findLedgerByIdempotencyKey = async (
     },
   });
 
+/**
+ * Stripe-style strict replay validation: every input field must match the
+ * prior ledger row, or we throw `IdempotencyMismatchError` for the first
+ * mismatch. Catches caller bugs where the same idempotency key is reused
+ * for a logically different operation.
+ *
+ * `delta` is the only field that affects balance state; mismatches on
+ * other fields (model, requestId, note, ...) are detection of caller-side
+ * bugs, not money safety.
+ */
+export const validateReplayPayload = (
+  prior: CreditLedger,
+  input: ApplyDeltaInput,
+): void => {
+  const checks: Array<[string, unknown, unknown]> = [
+    ["delta", BigInt(prior.delta), input.delta],
+    ["reason", prior.reason, input.reason],
+    ["usdCostMicros", prior.usdCostMicros, input.usdCostMicros ?? null],
+    [
+      "markupRate",
+      prior.markupRate?.toString() ?? null,
+      input.markupRate !== undefined ? input.markupRate.toString() : null,
+    ],
+    [
+      "creditsPerDollar",
+      prior.creditsPerDollar,
+      input.creditsPerDollar ?? null,
+    ],
+    ["model", prior.model, input.model ?? null],
+    ["requestId", prior.requestId, input.requestId ?? null],
+    ["note", prior.note, input.note ?? null],
+    ["grantKindId", prior.grantKindId, input.grantKindId ?? null],
+  ];
+
+  for (const [field, priorValue, attemptedValue] of checks) {
+    if (priorValue !== attemptedValue) {
+      throw new IdempotencyMismatchError(
+        input.idempotencyKey,
+        field,
+        priorValue,
+        attemptedValue,
+      );
+    }
+  }
+};
+
 export class LedgerFloorBreachError extends Error {
   constructor(
     public readonly currentBalance: bigint,
@@ -159,13 +205,7 @@ export const applyDelta = async (
         input.idempotencyKey,
       );
       if (prior) {
-        if (BigInt(prior.delta) !== input.delta) {
-          throw new IdempotencyMismatchError(
-            input.idempotencyKey,
-            BigInt(prior.delta),
-            input.delta,
-          );
-        }
+        validateReplayPayload(prior, input);
         return { ledgerId: prior.id, replayed: true };
       }
     }

@@ -28,13 +28,19 @@ export class InsufficientBalanceError extends AppError {
 export class IdempotencyMismatchError extends AppError {
   constructor(
     public readonly idempotencyKey: string,
-    public readonly priorDelta: bigint,
-    public readonly attemptedDelta: bigint,
+    public readonly field: string,
+    public readonly priorValue: unknown,
+    public readonly attemptedValue: unknown,
   ) {
     super(
       409,
-      `Idempotency key "${idempotencyKey}" already used with delta=${priorDelta}, cannot replay with delta=${attemptedDelta}`,
-      { idempotencyKey, priorDelta, attemptedDelta },
+      `Idempotency key "${idempotencyKey}" already used; field "${field}" differs (prior=${String(priorValue)}, attempted=${String(attemptedValue)})`,
+      {
+        idempotencyKey,
+        field,
+        priorValue: String(priorValue),
+        attemptedValue: String(attemptedValue),
+      },
     );
     this.name = "IdempotencyMismatchError";
     Object.setPrototypeOf(this, IdempotencyMismatchError.prototype);

@@ -1,5 +1,8 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { InsufficientBalanceError } from "@/payments/errors";
+import {
+  IdempotencyMismatchError,
+  InsufficientBalanceError,
+} from "@/payments/errors";
 import {
   adjust,
   consume,
@@ -209,6 +212,119 @@ describe("payments/index — replay + concurrency", () => {
       where: { inboxId: id, idempotencyKey: "c1" },
     });
     expect(rows).toHaveLength(1);
+  });
+
+  test("consume replay with different model throws IdempotencyMismatchError", async () => {
+    const id = inbox("replay-model");
+    cleanup.push(id);
+    await grant({
+      inboxId: id,
+      credits: 100,
+      idempotencyKey: "seed",
+      kind: "signup_bonus",
+    });
+    await consume({
+      inboxId: id,
+      usdCostMicros: 2000n,
+      idempotencyKey: "c1",
+      requestId: "req-1",
+      model: "claude-opus-4-7",
+    });
+    expect(
+      consume({
+        inboxId: id,
+        usdCostMicros: 2000n,
+        idempotencyKey: "c1",
+        requestId: "req-1",
+        model: "claude-haiku-4-5",
+      }),
+    ).rejects.toBeInstanceOf(IdempotencyMismatchError);
+    expect(await getBalance(id)).toBe(96n);
+  });
+
+  test("consume replay with different requestId throws IdempotencyMismatchError", async () => {
+    const id = inbox("replay-req");
+    cleanup.push(id);
+    await grant({
+      inboxId: id,
+      credits: 100,
+      idempotencyKey: "seed",
+      kind: "signup_bonus",
+    });
+    await consume({
+      inboxId: id,
+      usdCostMicros: 2000n,
+      idempotencyKey: "c1",
+      requestId: "req-1",
+    });
+    expect(
+      consume({
+        inboxId: id,
+        usdCostMicros: 2000n,
+        idempotencyKey: "c1",
+        requestId: "req-2",
+      }),
+    ).rejects.toBeInstanceOf(IdempotencyMismatchError);
+  });
+
+  test("grant replay with different note throws IdempotencyMismatchError", async () => {
+    const id = inbox("replay-grant-note");
+    cleanup.push(id);
+    await grant({
+      inboxId: id,
+      credits: 50,
+      idempotencyKey: "g1",
+      kind: "manual",
+      note: "first reason",
+    });
+    expect(
+      grant({
+        inboxId: id,
+        credits: 50,
+        idempotencyKey: "g1",
+        kind: "manual",
+        note: "different reason",
+      }),
+    ).rejects.toBeInstanceOf(IdempotencyMismatchError);
+    expect(await getBalance(id)).toBe(50n);
+  });
+
+  test("grant replay with different kind throws IdempotencyMismatchError", async () => {
+    const id = inbox("replay-grant-kind");
+    cleanup.push(id);
+    await grant({
+      inboxId: id,
+      credits: 50,
+      idempotencyKey: "g1",
+      kind: "manual",
+    });
+    expect(
+      grant({
+        inboxId: id,
+        credits: 50,
+        idempotencyKey: "g1",
+        kind: "signup_bonus",
+      }),
+    ).rejects.toBeInstanceOf(IdempotencyMismatchError);
+  });
+
+  test("adjust replay with different note throws IdempotencyMismatchError", async () => {
+    const id = inbox("replay-adjust-note");
+    cleanup.push(id);
+    await adjust({
+      inboxId: id,
+      delta: 25,
+      idempotencyKey: "a1",
+      note: "original note",
+    });
+    expect(
+      adjust({
+        inboxId: id,
+        delta: 25,
+        idempotencyKey: "a1",
+        note: "tampered note",
+      }),
+    ).rejects.toBeInstanceOf(IdempotencyMismatchError);
   });
 
   test("concurrent consumes on same inbox serialize correctly (no lost updates)", async () => {
