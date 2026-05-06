@@ -226,7 +226,7 @@ model GrantKind {
 }
 
 model CreditLedger {
-  id               String       @id @default(cuid())
+  id               String       @id @default(uuid()) @db.Uuid
   inboxId          String
   delta            BigInt
   reason           LedgerReason

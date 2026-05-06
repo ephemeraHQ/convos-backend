@@ -25,7 +25,7 @@ CREATE TABLE "GrantKind" (
 
 -- CreateTable
 CREATE TABLE "CreditLedger" (
-    "id" TEXT NOT NULL,
+    "id" UUID NOT NULL,
     "inboxId" TEXT NOT NULL,
     "delta" BIGINT NOT NULL,
     "reason" "LedgerReason" NOT NULL,
