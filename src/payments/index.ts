@@ -39,7 +39,7 @@ export const consume = async (args: {
 }): Promise<ConsumeResult> => {
   const credits = usdToCredits(args.usdCostMicros);
   try {
-    await applyDelta({
+    const { replayed } = await applyDelta({
       inboxId: args.inboxId,
       delta: BigInt(-credits),
       reason: LedgerReason.consume,
@@ -51,7 +51,7 @@ export const consume = async (args: {
       requestId: args.requestId,
       floorCheck: { minBalance: config.minBalance },
     });
-    return { spent: credits };
+    return { spent: credits, replayed };
   } catch (err) {
     if (err instanceof LedgerFloorBreachError) {
       throw new InsufficientBalanceError(
@@ -107,7 +107,7 @@ export const grant = async (args: {
       }
       return applyDeltaWithTx(tx, ledgerInput);
     });
-    return { granted: args.credits };
+    return { granted: args.credits, replayed: false };
   } catch (err) {
     if (
       err instanceof Prisma.PrismaClientKnownRequestError &&
@@ -119,7 +119,7 @@ export const grant = async (args: {
       );
       if (prior) {
         validateReplayPayload(prior, ledgerInput);
-        return { granted: args.credits };
+        return { granted: args.credits, replayed: true };
       }
     }
     throw err;
@@ -147,7 +147,7 @@ export const adjust = async (args: {
   const opts =
     args.delta < 0 ? { floorCheck: { minBalance: config.minBalance } } : {};
   try {
-    await applyDelta({
+    const { replayed } = await applyDelta({
       inboxId: args.inboxId,
       delta: BigInt(args.delta),
       reason: LedgerReason.adjust,
@@ -155,7 +155,7 @@ export const adjust = async (args: {
       note: args.note,
       ...opts,
     });
-    return { applied: true };
+    return { applied: true, replayed };
   } catch (err) {
     if (err instanceof LedgerFloorBreachError) {
       throw new InsufficientBalanceError(

@@ -9,6 +9,6 @@ export type GrantKindId = z.infer<typeof GrantKindIdSchema>;
 
 export type HistoryCursor = { createdAt: Date; id: string };
 
-export type ConsumeResult = { spent: number };
-export type GrantResult = { granted: number };
-export type AdjustResult = { applied: true };
+export type ConsumeResult = { spent: number; replayed: boolean };
+export type GrantResult = { granted: number; replayed: boolean };
+export type AdjustResult = { applied: true; replayed: boolean };

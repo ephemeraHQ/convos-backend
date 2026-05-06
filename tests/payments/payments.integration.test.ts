@@ -39,6 +39,7 @@ describe("payments/index — composed service", () => {
       kind: "signup_bonus",
     });
     expect(r.granted).toBe(100);
+    expect(r.replayed).toBe(false);
     expect(await getBalance(id)).toBe(100n);
 
     const rows = await prisma.creditLedger.findMany({ where: { inboxId: id } });
@@ -80,6 +81,7 @@ describe("payments/index — composed service", () => {
     });
 
     expect(r.spent).toBe(4);
+    expect(r.replayed).toBe(false);
     expect(await getBalance(id)).toBe(96n);
 
     const row = await prisma.creditLedger.findFirst({
@@ -128,6 +130,7 @@ describe("payments/index — composed service", () => {
       note: "support refund — call failed",
     });
     expect(r.applied).toBe(true);
+    expect(r.replayed).toBe(false);
     expect(await getBalance(id)).toBe(10n);
     const row = await prisma.creditLedger.findFirst({
       where: { inboxId: id, idempotencyKey: "a1" },
@@ -205,7 +208,9 @@ describe("payments/index — replay + concurrency", () => {
       requestId: "req-1",
     }); // same key
 
+    expect(first.replayed).toBe(false);
     expect(replay.spent).toBe(first.spent);
+    expect(replay.replayed).toBe(true);
     expect(await getBalance(id)).toBe(146n); // unchanged by replay
 
     const rows = await prisma.creditLedger.findMany({
@@ -265,6 +270,58 @@ describe("payments/index — replay + concurrency", () => {
         requestId: "req-2",
       }),
     ).rejects.toBeInstanceOf(IdempotencyMismatchError);
+  });
+
+  test("grant replay with identical payload returns replayed:true, balance unchanged", async () => {
+    const id = inbox("replay-grant-ok");
+    cleanup.push(id);
+    const first = await grant({
+      inboxId: id,
+      credits: 50,
+      idempotencyKey: "g1",
+      kind: "manual",
+      note: "same",
+    });
+    const replay = await grant({
+      inboxId: id,
+      credits: 50,
+      idempotencyKey: "g1",
+      kind: "manual",
+      note: "same",
+    });
+    expect(first.replayed).toBe(false);
+    expect(replay.replayed).toBe(true);
+    expect(replay.granted).toBe(first.granted);
+    expect(await getBalance(id)).toBe(50n);
+    const rows = await prisma.creditLedger.findMany({
+      where: { inboxId: id, idempotencyKey: "g1" },
+    });
+    expect(rows).toHaveLength(1);
+  });
+
+  test("adjust replay with identical payload returns replayed:true, balance unchanged", async () => {
+    const id = inbox("replay-adjust-ok");
+    cleanup.push(id);
+    const first = await adjust({
+      inboxId: id,
+      delta: 25,
+      idempotencyKey: "a1",
+      note: "same note",
+    });
+    const replay = await adjust({
+      inboxId: id,
+      delta: 25,
+      idempotencyKey: "a1",
+      note: "same note",
+    });
+    expect(first.replayed).toBe(false);
+    expect(replay.replayed).toBe(true);
+    expect(replay.applied).toBe(true);
+    expect(await getBalance(id)).toBe(25n);
+    const rows = await prisma.creditLedger.findMany({
+      where: { inboxId: id, idempotencyKey: "a1" },
+    });
+    expect(rows).toHaveLength(1);
   });
 
   test("grant replay with different note throws IdempotencyMismatchError", async () => {
