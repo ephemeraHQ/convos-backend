@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
 import { isAllowedFromBalance } from "@/payments/credits/policy";
 import { creditsToUsd, usdToCredits } from "@/payments/credits/pricing";
 
@@ -20,11 +20,7 @@ const restore = (snap: Record<string, string | undefined>) => {
 };
 
 describe("payments/credits/config", () => {
-  let snap: Record<string, string | undefined> = {};
-
-  beforeEach(() => {
-    snap = snapshot();
-  });
+  const snap = snapshot();
 
   afterEach(() => {
     restore(snap);
