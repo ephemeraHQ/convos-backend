@@ -41,7 +41,9 @@ const loadMarkupRate = (): Pick<
     process.env.PAYMENTS_MARKUP_RATE,
   );
   if (markup < 0) {
-    throw new ValidationError(`PAYMENTS_MARKUP_RATE must be >= 0, got: ${markup}`);
+    throw new ValidationError(
+      `PAYMENTS_MARKUP_RATE must be >= 0, got: ${markup}`,
+    );
   }
   return {
     markupRateBps: BigInt(Math.round(markup * 10000)),
@@ -61,7 +63,9 @@ const loadCreditsPerUsd = (): bigint => {
     process.env.PAYMENTS_CREDITS_PER_USD,
   );
   if (cpd <= 0) {
-    throw new ValidationError(`PAYMENTS_CREDITS_PER_USD must be > 0, got: ${cpd}`);
+    throw new ValidationError(
+      `PAYMENTS_CREDITS_PER_USD must be > 0, got: ${cpd}`,
+    );
   }
   return BigInt(cpd);
 };
@@ -77,7 +81,9 @@ const loadReservedMaxTurnCredits = (): bigint => {
     process.env.PAYMENTS_RESERVED_MAX_TURN_CREDITS,
   );
   if (rmt < 0) {
-    throw new ValidationError(`PAYMENTS_RESERVED_MAX_TURN_CREDITS must be >= 0: ${rmt}`);
+    throw new ValidationError(
+      `PAYMENTS_RESERVED_MAX_TURN_CREDITS must be >= 0: ${rmt}`,
+    );
   }
   return BigInt(rmt);
 };
@@ -94,7 +100,9 @@ const loadMinBalanceCredits = (): bigint => {
     process.env.PAYMENTS_MIN_BALANCE_CREDITS,
   );
   if (min > 0) {
-    throw new ValidationError(`PAYMENTS_MIN_BALANCE_CREDITS must be <= 0, got: ${min}`);
+    throw new ValidationError(
+      `PAYMENTS_MIN_BALANCE_CREDITS must be <= 0, got: ${min}`,
+    );
   }
   return BigInt(min);
 };

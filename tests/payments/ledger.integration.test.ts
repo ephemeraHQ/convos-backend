@@ -1,12 +1,12 @@
 import { LedgerReason } from "@prisma/client";
 import { afterEach, describe, expect, test } from "bun:test";
+import { IdempotencyMismatchError } from "@/payments/errors";
 import {
   applyDelta,
   getBalance,
   getHistory,
   LedgerFloorBreachError,
 } from "@/payments/ledger/repository";
-import { IdempotencyMismatchError } from "@/payments/errors";
 import { prisma } from "@/utils/prisma";
 
 const inbox = (suffix: string) =>

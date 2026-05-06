@@ -65,7 +65,9 @@ describe("payments/credits/config", () => {
     snap = snapshot();
     process.env.PAYMENTS_MIN_BALANCE_CREDITS = "10";
     const { loadConfig } = await import("@/payments/credits/config");
-    expect(() => loadConfig()).toThrow(/PAYMENTS_MIN_BALANCE_CREDITS must be <= 0/);
+    expect(() => loadConfig()).toThrow(
+      /PAYMENTS_MIN_BALANCE_CREDITS must be <= 0/,
+    );
   });
 
   test("rejects non-numeric markup", async () => {

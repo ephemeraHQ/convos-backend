@@ -1,6 +1,6 @@
 import { LedgerReason, Prisma } from "@prisma/client";
-import { prisma } from "@/utils/prisma";
 import { ValidationError } from "@/utils/errors";
+import { prisma } from "@/utils/prisma";
 import { config, usdToCredits } from "./credits";
 import { isAllowedFromBalance } from "./credits/policy";
 import {
