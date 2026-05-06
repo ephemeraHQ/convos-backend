@@ -228,13 +228,12 @@ model GrantKind {
 model CreditLedger {
   id               String       @id @default(cuid())
   inboxId          String
-  delta            Int
+  delta            BigInt
   reason           LedgerReason
   idempotencyKey   String
-  balanceAfter     BigInt
   usdCostMicros    BigInt?
   markupRate       Decimal?     @db.Decimal(8, 4)
-  creditsPerDollar Int?
+  creditsPerDollar BigInt?
   model            String?
   requestId        String?
   note             String?
@@ -245,4 +244,5 @@ model CreditLedger {
   @@unique([inboxId, idempotencyKey])
   @@index([inboxId, createdAt])
   @@index([requestId])
+  @@index([grantKindId])
 }
