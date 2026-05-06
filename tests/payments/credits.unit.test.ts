@@ -14,7 +14,7 @@ const snapshot = (): Record<string, string | undefined> =>
 
 const restore = (snap: Record<string, string | undefined>) => {
   for (const k of ENV_KEYS) {
-    if (snap[k] === undefined) delete process.env[k];
+    if (snap[k] === undefined) Reflect.deleteProperty(process.env, k);
     else process.env[k] = snap[k];
   }
 };
@@ -51,21 +51,21 @@ describe("payments/credits/config", () => {
     snap = snapshot();
     process.env.PAYMENTS_MARKUP_RATE = "-1";
     const { loadConfig } = await import("@/payments/credits/config");
-    expect(() => loadConfig()).toThrow(/markup/i);
+    expect(() => loadConfig()).toThrow(/PAYMENTS_MARKUP_RATE must be >= 0/);
   });
 
   test("rejects zero creditsPerDollar", async () => {
     snap = snapshot();
     process.env.PAYMENTS_CREDITS_PER_USD = "0";
     const { loadConfig } = await import("@/payments/credits/config");
-    expect(() => loadConfig()).toThrow(/creditsPerDollar/i);
+    expect(() => loadConfig()).toThrow(/PAYMENTS_CREDITS_PER_USD must be > 0/);
   });
 
   test("rejects positive minBalance", async () => {
     snap = snapshot();
     process.env.PAYMENTS_MIN_BALANCE_CREDITS = "10";
     const { loadConfig } = await import("@/payments/credits/config");
-    expect(() => loadConfig()).toThrow(/minBalance/i);
+    expect(() => loadConfig()).toThrow(/PAYMENTS_MIN_BALANCE_CREDITS must be <= 0/);
   });
 
   test("rejects non-numeric markup", async () => {

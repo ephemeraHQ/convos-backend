@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import {
   GrantKindNotFoundError,
+  IdempotencyMismatchError,
   InsufficientBalanceError,
 } from "@/payments/errors";
 import {
@@ -32,7 +33,7 @@ describe("payments/index — composed service", () => {
     const id = inbox("grant");
     cleanup.push(id);
 
-    const r = await grant(id, 100, "g1", "signup_bonus");
+    const r = await grant({ inboxId: id, credits: 100, idempotencyKey: "g1", kind: "signup_bonus" });
     expect(r.granted).toBe(100);
     expect(await getBalance(id)).toBe(100n);
 
@@ -44,10 +45,15 @@ describe("payments/index — composed service", () => {
   test("grant rejects unknown kind", async () => {
     const id = inbox("grantbad");
     cleanup.push(id);
-    // @ts-expect-error testing runtime behavior with invalid kind
-    await expect(grant(id, 10, "x", "not_a_kind")).rejects.toBeInstanceOf(
-      GrantKindNotFoundError,
-    );
+    await expect(
+      // @ts-expect-error testing runtime behavior with invalid kind
+      grant({
+        inboxId: id,
+        credits: 10,
+        idempotencyKey: "x",
+        kind: "not_a_kind",
+      }),
+    ).rejects.toThrow(); // ZodError from schema parse
     expect(await getBalance(id)).toBe(0n);
   });
 
@@ -55,10 +61,8 @@ describe("payments/index — composed service", () => {
     const id = inbox("consume");
     cleanup.push(id);
 
-    await grant(id, 100, "seed", "signup_bonus");
-    const r = await consume(id, 2000n, "c1", "req-1", {
-      model: "claude-opus-4-7",
-    });
+    await grant({ inboxId: id, credits: 100, idempotencyKey: "seed", kind: "signup_bonus" });
+    const r = await consume({ inboxId: id, usdCostMicros: 2000n, idempotencyKey: "c1", requestId: "req-1", model: "claude-opus-4-7" });
 
     expect(r.spent).toBe(4);
     expect(await getBalance(id)).toBe(96n);
@@ -67,7 +71,7 @@ describe("payments/index — composed service", () => {
       where: { inboxId: id, idempotencyKey: "c1" },
     });
     expect(row?.usdCostMicros).toBe(2000n);
-    expect(row?.creditsPerDollar).toBe(1000);
+    expect(row?.creditsPerDollar).toBe(1000n);
     expect(Number(row?.markupRate)).toBe(2);
     expect(row?.model).toBe("claude-opus-4-7");
     expect(row?.requestId).toBe("req-1");
@@ -77,8 +81,8 @@ describe("payments/index — composed service", () => {
     const id = inbox("floor");
     cleanup.push(id);
 
-    await adjust(id, -996, "seed", "drop balance below safe");
-    await expect(consume(id, 5000n, "breach", "req-1")).rejects.toBeInstanceOf(
+    await adjust({ inboxId: id, delta: -996, idempotencyKey: "seed", note: "drop balance below safe" });
+    await expect(consume({ inboxId: id, usdCostMicros: 5000n, idempotencyKey: "breach", requestId: "req-1" })).rejects.toBeInstanceOf(
       InsufficientBalanceError,
     );
     expect(await getBalance(id)).toBe(-996n);
@@ -92,7 +96,7 @@ describe("payments/index — composed service", () => {
     const id = inbox("adjust");
     cleanup.push(id);
 
-    const r = await adjust(id, 10, "a1", "support refund — call failed");
+    const r = await adjust({ inboxId: id, delta: 10, idempotencyKey: "a1", note: "support refund — call failed" });
     expect(r.applied).toBe(true);
     expect(await getBalance(id)).toBe(10n);
     const row = await prisma.creditLedger.findFirst({
@@ -107,7 +111,7 @@ describe("payments/index — composed service", () => {
     cleanup.push(id);
 
     await expect(
-      adjust(id, -2000, "a1", "would breach floor"),
+      adjust({ inboxId: id, delta: -2000, idempotencyKey: "a1", note: "would breach floor" }),
     ).rejects.toBeInstanceOf(InsufficientBalanceError);
     expect(await getBalance(id)).toBe(0n);
   });
@@ -117,7 +121,7 @@ describe("payments/index — composed service", () => {
     cleanup.push(id);
 
     expect(await isAllowed(id)).toBe(false);
-    await grant(id, 1, "seed", "signup_bonus");
+    await grant({ inboxId: id, credits: 1, idempotencyKey: "seed", kind: "signup_bonus" });
     expect(await isAllowed(id)).toBe(true);
   });
 });
@@ -130,16 +134,16 @@ describe("payments/index — replay + concurrency", () => {
     cleanup.length = 0;
   });
 
-  test("consume replay returns historical balanceAfter, not current", async () => {
+  test("consume replay is idempotent", async () => {
     const id = inbox("replay");
     cleanup.push(id);
 
-    await grant(id, 100, "seed", "signup_bonus");
-    const first = await consume(id, 2000n, "c1", "req-1"); // balance 96
+    await grant({ inboxId: id, credits: 100, idempotencyKey: "seed", kind: "signup_bonus" });
+    const first = await consume({ inboxId: id, usdCostMicros: 2000n, idempotencyKey: "c1", requestId: "req-1" }); // balance 96
 
-    await grant(id, 50, "g2", "manual"); // balance 146
+    await grant({ inboxId: id, credits: 50, idempotencyKey: "g2", kind: "manual" }); // balance 146
 
-    const replay = await consume(id, 2000n, "c1", "req-1"); // same key
+    const replay = await consume({ inboxId: id, usdCostMicros: 2000n, idempotencyKey: "c1", requestId: "req-1" }); // same key
 
     expect(replay.spent).toBe(first.spent);
     expect(await getBalance(id)).toBe(146n); // unchanged by replay
@@ -154,10 +158,10 @@ describe("payments/index — replay + concurrency", () => {
     const id = inbox("race");
     cleanup.push(id);
 
-    await grant(id, 1000, "seed", "signup_bonus");
+    await grant({ inboxId: id, credits: 1000, idempotencyKey: "seed", kind: "signup_bonus" });
 
     const calls = Array.from({ length: 10 }, (_, i) =>
-      consume(id, 2000n, `r${i}`, `req-${i}`),
+      consume({ inboxId: id, usdCostMicros: 2000n, idempotencyKey: `r${i}`, requestId: `req-${i}` }),
     );
     const results = await Promise.all(calls);
 

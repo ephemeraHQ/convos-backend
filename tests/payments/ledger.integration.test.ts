@@ -6,6 +6,7 @@ import {
   getHistory,
   LedgerFloorBreachError,
 } from "@/payments/ledger/repository";
+import { IdempotencyMismatchError } from "@/payments/errors";
 import { prisma } from "@/utils/prisma";
 
 const inbox = (suffix: string) =>
@@ -33,13 +34,12 @@ describe("payments/ledger/repository", () => {
 
     const result = await applyDelta({
       inboxId: id,
-      delta: 100,
+      delta: 100n,
       reason: LedgerReason.grant,
       idempotencyKey: "k1",
       grantKindId: "manual",
     });
 
-    expect(result.balanceAfter).toBe(100n);
     expect(result.replayed).toBe(false);
 
     const balance = await getBalance(id);
@@ -47,43 +47,66 @@ describe("payments/ledger/repository", () => {
 
     const rows = await prisma.creditLedger.findMany({ where: { inboxId: id } });
     expect(rows).toHaveLength(1);
-    expect(rows[0].delta).toBe(100);
-    expect(rows[0].balanceAfter).toBe(100n);
+    expect(rows[0].delta).toBe(100n);
     expect(rows[0].idempotencyKey).toBe("k1");
   });
 
-  test("applyDelta replay returns historical balanceAfter, no double mutation", async () => {
+  test("applyDelta replay returns ledgerId, no double mutation", async () => {
     const id = inbox("replay");
     cleanupKeys.push({ inboxId: id });
 
-    const first = await applyDelta({
+    await applyDelta({
       inboxId: id,
-      delta: 50,
+      delta: 50n,
       reason: LedgerReason.grant,
       idempotencyKey: "k1",
       grantKindId: "manual",
     });
-    // intervening mutation to prove replay returns historical
+    // intervening mutation to prove replay does not double-apply
     await applyDelta({
       inboxId: id,
-      delta: 25,
+      delta: 25n,
       reason: LedgerReason.grant,
       idempotencyKey: "k2",
       grantKindId: "manual",
     });
     const replay = await applyDelta({
       inboxId: id,
-      delta: 50,
+      delta: 50n,
       reason: LedgerReason.grant,
       idempotencyKey: "k1",
       grantKindId: "manual",
     });
 
     expect(replay.replayed).toBe(true);
-    expect(replay.balanceAfter).toBe(first.balanceAfter); // historical, NOT current
     expect(await getBalance(id)).toBe(75n); // current is unchanged by replay
     const rows = await prisma.creditLedger.findMany({ where: { inboxId: id } });
     expect(rows).toHaveLength(2);
+  });
+
+  test("applyDelta replay with different delta throws IdempotencyMismatchError", async () => {
+    const id = inbox("mismatch");
+    cleanupKeys.push({ inboxId: id });
+
+    await applyDelta({
+      inboxId: id,
+      delta: 50n,
+      reason: LedgerReason.grant,
+      idempotencyKey: "k1",
+      grantKindId: "manual",
+    });
+
+    await expect(
+      applyDelta({
+        inboxId: id,
+        delta: 99n,
+        reason: LedgerReason.grant,
+        idempotencyKey: "k1",
+        grantKindId: "manual",
+      }),
+    ).rejects.toBeInstanceOf(IdempotencyMismatchError);
+
+    expect(await getBalance(id)).toBe(50n);
   });
 
   test("invariant: balance == SUM(delta) after mixed sequence", async () => {
@@ -92,27 +115,27 @@ describe("payments/ledger/repository", () => {
 
     await applyDelta({
       inboxId: id,
-      delta: 100,
+      delta: 100n,
       reason: LedgerReason.grant,
       idempotencyKey: "g1",
       grantKindId: "manual",
     });
     await applyDelta({
       inboxId: id,
-      delta: -30,
+      delta: -30n,
       reason: LedgerReason.consume,
       idempotencyKey: "c1",
     });
     await applyDelta({
       inboxId: id,
-      delta: 50,
+      delta: 50n,
       reason: LedgerReason.grant,
       idempotencyKey: "g2",
       grantKindId: "manual",
     });
     await applyDelta({
       inboxId: id,
-      delta: -10,
+      delta: -10n,
       reason: LedgerReason.adjust,
       idempotencyKey: "a1",
       note: "fix",
@@ -145,7 +168,7 @@ describe("payments/ledger/repository — floor + history", () => {
     // seed at -500
     await applyDelta({
       inboxId: id,
-      delta: -500,
+      delta: -500n,
       reason: LedgerReason.adjust,
       idempotencyKey: "seed",
       note: "seed",
@@ -154,7 +177,7 @@ describe("payments/ledger/repository — floor + history", () => {
     await expect(
       applyDelta({
         inboxId: id,
-        delta: -1000,
+        delta: -1000n,
         reason: LedgerReason.consume,
         idempotencyKey: "breach",
         floorCheck: { minBalance: -1000n },
@@ -173,7 +196,7 @@ describe("payments/ledger/repository — floor + history", () => {
     for (let i = 0; i < 5; i++) {
       await applyDelta({
         inboxId: id,
-        delta: 1,
+        delta: 1n,
         reason: LedgerReason.grant,
         idempotencyKey: `h${i}`,
         grantKindId: "manual",
@@ -210,10 +233,9 @@ describe("payments/ledger/repository — floor + history", () => {
       await prisma.creditLedger.create({
         data: {
           inboxId: id,
-          delta: 1,
+          delta: 1n,
           reason: LedgerReason.grant,
           idempotencyKey: `tie${i}`,
-          balanceAfter: BigInt(i + 1),
           grantKindId: "manual",
           createdAt: sharedTs,
         },
