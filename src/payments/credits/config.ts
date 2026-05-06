@@ -1,3 +1,5 @@
+import { ValidationError } from "@/utils/errors";
+
 export interface PaymentsConfig {
   markupRateBps: bigint;
   markupRate: string;
@@ -8,11 +10,11 @@ export interface PaymentsConfig {
 
 const requireFloat = (key: string, raw: string | undefined): number => {
   if (raw === undefined || raw === "") {
-    throw new Error(`${key} not configured`);
+    throw new ValidationError(`${key} not configured`);
   }
   const n = Number(raw);
   if (!Number.isFinite(n)) {
-    throw new Error(`${key} is not a finite number: ${raw}`);
+    throw new ValidationError(`${key} is not a finite number: ${raw}`);
   }
   return n;
 };
@@ -20,7 +22,7 @@ const requireFloat = (key: string, raw: string | undefined): number => {
 const requireInt = (key: string, raw: string | undefined): number => {
   const n = requireFloat(key, raw);
   if (!Number.isInteger(n)) {
-    throw new Error(`${key} must be an integer: ${raw}`);
+    throw new ValidationError(`${key} must be an integer: ${raw}`);
   }
   return n;
 };
@@ -39,7 +41,7 @@ const loadMarkupRate = (): Pick<
     process.env.PAYMENTS_MARKUP_RATE,
   );
   if (markup < 0) {
-    throw new Error(`PAYMENTS_MARKUP_RATE markup must be >= 0: ${markup}`);
+    throw new ValidationError(`PAYMENTS_MARKUP_RATE must be >= 0, got: ${markup}`);
   }
   return {
     markupRateBps: BigInt(Math.round(markup * 10000)),
@@ -48,19 +50,18 @@ const loadMarkupRate = (): Pick<
 };
 
 // PAYMENTS_CREDITS_PER_USD
-//   Pricing constant: how many credits represent one US dollar. `1000`
-//   means 1 credit = $0.001 (a tenth of a cent). Integer, must be > 0.
-//   Used by usdToCredits / creditsToUsd and snapshotted on each consume
-//   ledger row so historical USD value is reconstructable.
+//   How many credits represent one US dollar. Credit-denominated operations
+//   (grant, adjust) don't need pricing snapshots because the credit value
+//   is captured directly in the delta field. Conversion back to USD (if
+//   needed for display or reporting) uses current pricing, not historical.
+//   Integer, must be > 0.
 const loadCreditsPerUsd = (): bigint => {
   const cpd = requireInt(
     "PAYMENTS_CREDITS_PER_USD",
     process.env.PAYMENTS_CREDITS_PER_USD,
   );
   if (cpd <= 0) {
-    throw new Error(
-      `PAYMENTS_CREDITS_PER_USD creditsPerDollar must be > 0: ${cpd}`,
-    );
+    throw new ValidationError(`PAYMENTS_CREDITS_PER_USD must be > 0, got: ${cpd}`);
   }
   return BigInt(cpd);
 };
@@ -76,7 +77,7 @@ const loadReservedMaxTurnCredits = (): bigint => {
     process.env.PAYMENTS_RESERVED_MAX_TURN_CREDITS,
   );
   if (rmt < 0) {
-    throw new Error(`PAYMENTS_RESERVED_MAX_TURN_CREDITS must be >= 0: ${rmt}`);
+    throw new ValidationError(`PAYMENTS_RESERVED_MAX_TURN_CREDITS must be >= 0: ${rmt}`);
   }
   return BigInt(rmt);
 };
@@ -93,9 +94,7 @@ const loadMinBalanceCredits = (): bigint => {
     process.env.PAYMENTS_MIN_BALANCE_CREDITS,
   );
   if (min > 0) {
-    throw new Error(
-      `PAYMENTS_MIN_BALANCE_CREDITS minBalance must be <= 0: ${min}`,
-    );
+    throw new ValidationError(`PAYMENTS_MIN_BALANCE_CREDITS must be <= 0, got: ${min}`);
   }
   return BigInt(min);
 };
