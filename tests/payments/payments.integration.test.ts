@@ -34,7 +34,7 @@ describe("payments/index — composed service", () => {
 
     const r = await grant(id, 100, "g1", "signup_bonus");
     expect(r.granted).toBe(100);
-    expect(r.balance).toBe(100n);
+    expect(await getBalance(id)).toBe(100n);
 
     const rows = await prisma.creditLedger.findMany({ where: { inboxId: id } });
     expect(rows[0].grantKindId).toBe("signup_bonus");
@@ -61,7 +61,7 @@ describe("payments/index — composed service", () => {
     });
 
     expect(r.spent).toBe(4);
-    expect(r.balance).toBe(96n);
+    expect(await getBalance(id)).toBe(96n);
 
     const row = await prisma.creditLedger.findFirst({
       where: { inboxId: id, idempotencyKey: "c1" },
@@ -93,7 +93,8 @@ describe("payments/index — composed service", () => {
     cleanup.push(id);
 
     const r = await adjust(id, 10, "a1", "support refund — call failed");
-    expect(r.balance).toBe(10n);
+    expect(r.applied).toBe(true);
+    expect(await getBalance(id)).toBe(10n);
     const row = await prisma.creditLedger.findFirst({
       where: { inboxId: id, idempotencyKey: "a1" },
     });
@@ -141,7 +142,6 @@ describe("payments/index — replay + concurrency", () => {
     const replay = await consume(id, 2000n, "c1", "req-1"); // same key
 
     expect(replay.spent).toBe(first.spent);
-    expect(replay.balance).toBe(first.balance); // historical 96, NOT current 146
     expect(await getBalance(id)).toBe(146n); // unchanged by replay
 
     const rows = await prisma.creditLedger.findMany({

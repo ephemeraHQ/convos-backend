@@ -19,6 +19,7 @@ import type {
 } from "./types";
 
 export type { GrantKindId, HistoryCursor } from "./types";
+export { GrantKindIdSchema } from "./types";
 export { GrantKindNotFoundError, InsufficientBalanceError } from "./errors";
 export { creditsToUsd, usdToCredits } from "./credits";
 
@@ -43,7 +44,7 @@ export const consume = async (
       requestId,
       floorCheck: { minBalance: config.minBalance },
     });
-    return { spent: credits, balance: result.balanceAfter };
+    return { spent: credits };
   } catch (err) {
     if (err instanceof LedgerFloorBreachError) {
       throw new InsufficientBalanceError(
@@ -98,7 +99,7 @@ export const grant = async (
         requestId: opts?.requestId,
       });
     });
-    return { granted: credits, balance: result.balanceAfter };
+    return { granted: credits };
   } catch (err) {
     // Idempotent replay: same (inboxId, idempotencyKey) returns the historical
     // ledger row instead of erroring. Mirrors the path in applyDelta().
@@ -108,7 +109,7 @@ export const grant = async (
     ) {
       const prior = await findLedgerByIdempotencyKey(inboxId, idempotencyKey);
       if (prior) {
-        return { granted: credits, balance: prior.balanceAfter };
+        return { granted: credits };
       }
     }
     throw err;
@@ -146,7 +147,7 @@ export const adjust = async (
       note,
       ...opts,
     });
-    return { balance: result.balanceAfter };
+    return { applied: true as const };
   } catch (err) {
     if (err instanceof LedgerFloorBreachError) {
       throw new InsufficientBalanceError(
