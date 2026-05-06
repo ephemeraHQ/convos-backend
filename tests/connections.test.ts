@@ -56,7 +56,7 @@ app.use(jsonMiddleware);
 app.use("/api/v2/connections", authMiddleware, connectionsRouter);
 
 let server: Server;
-const baseURL = "http://localhost:4010";
+const baseURL = "http://localhost:4012";
 
 function makeStub(
   options: {
@@ -193,7 +193,7 @@ function installStub(stub: ComposioStub) {
 describe("Connections API", () => {
   beforeAll(async () => {
     await new Promise<void>((resolve) => {
-      server = app.listen(4010, () => {
+      server = app.listen(4012, () => {
         resolve();
       });
     });
