@@ -1,9 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import {
-  GrantKindNotFoundError,
-  IdempotencyMismatchError,
-  InsufficientBalanceError,
-} from "@/payments/errors";
+import { InsufficientBalanceError } from "@/payments/errors";
 import {
   adjust,
   consume,
@@ -50,7 +46,7 @@ describe("payments/index — composed service", () => {
   test("grant rejects unknown kind", async () => {
     const id = inbox("grantbad");
     cleanup.push(id);
-    await expect(
+    expect(
       grant({
         inboxId: id,
         credits: 10,
@@ -103,7 +99,7 @@ describe("payments/index — composed service", () => {
       idempotencyKey: "seed",
       note: "drop balance below safe",
     });
-    await expect(
+    expect(
       consume({
         inboxId: id,
         usdCostMicros: 5000n,
@@ -141,7 +137,7 @@ describe("payments/index — composed service", () => {
     const id = inbox("adjustfloor");
     cleanup.push(id);
 
-    await expect(
+    expect(
       adjust({
         inboxId: id,
         delta: -2000,

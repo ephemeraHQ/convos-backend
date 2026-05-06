@@ -96,7 +96,7 @@ describe("payments/ledger/repository", () => {
       grantKindId: "manual",
     });
 
-    await expect(
+    expect(
       applyDelta({
         inboxId: id,
         delta: 99n,
@@ -174,7 +174,7 @@ describe("payments/ledger/repository — floor + history", () => {
       note: "seed",
     });
 
-    await expect(
+    expect(
       applyDelta({
         inboxId: id,
         delta: -1000n,
