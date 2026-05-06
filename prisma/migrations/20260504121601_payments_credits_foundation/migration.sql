@@ -27,13 +27,12 @@ CREATE TABLE "GrantKind" (
 CREATE TABLE "CreditLedger" (
     "id" TEXT NOT NULL,
     "inboxId" TEXT NOT NULL,
-    "delta" INTEGER NOT NULL,
+    "delta" BIGINT NOT NULL,
     "reason" "LedgerReason" NOT NULL,
     "idempotencyKey" TEXT NOT NULL,
-    "balanceAfter" BIGINT NOT NULL,
     "usdCostMicros" BIGINT,
     "markupRate" DECIMAL(8,4),
-    "creditsPerDollar" INTEGER,
+    "creditsPerDollar" BIGINT,
     "model" TEXT,
     "requestId" TEXT,
     "note" TEXT,
@@ -48,6 +47,9 @@ CREATE INDEX "CreditLedger_inboxId_createdAt_idx" ON "CreditLedger"("inboxId", "
 
 -- CreateIndex
 CREATE INDEX "CreditLedger_requestId_idx" ON "CreditLedger"("requestId");
+
+-- CreateIndex
+CREATE INDEX "CreditLedger_grantKindId_idx" ON "CreditLedger"("grantKindId");
 
 -- CreateIndex
 CREATE UNIQUE INDEX "CreditLedger_inboxId_idempotencyKey_key" ON "CreditLedger"("inboxId", "idempotencyKey");
