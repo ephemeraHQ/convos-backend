@@ -1,3 +1,4 @@
+import { ValidationError } from "@/utils/errors";
 import { config } from "./config";
 
 const MICROS_PER_USD = 1_000_000n;
@@ -11,17 +12,28 @@ const ceilDiv = (num: bigint, den: bigint): bigint => {
 
 export const usdToCredits = (usdCostMicros: bigint): number => {
   if (usdCostMicros < 0n) {
-    throw new Error(`usdCostMicros must be >= 0: ${usdCostMicros}`);
+    throw new ValidationError(`usdCostMicros must be >= 0: ${usdCostMicros}`);
   }
   const numerator =
     usdCostMicros * config.markupRateBps * config.creditsPerDollar;
   const credits = ceilDiv(numerator, SCALE);
+  if (credits > BigInt(Number.MAX_SAFE_INTEGER)) {
+    throw new ValidationError(
+      `usdToCredits result exceeds safe integer range: ${credits}`,
+    );
+  }
   return Number(credits);
 };
 
 export const creditsToUsd = (credits: number): bigint => {
   if (credits < 0) {
-    throw new Error(`credits must be >= 0: ${credits}`);
+    throw new ValidationError(`credits must be >= 0: ${credits}`);
+  }
+  if (!Number.isInteger(credits)) {
+    throw new ValidationError(`credits must be an integer: ${credits}`);
+  }
+  if (!Number.isSafeInteger(credits)) {
+    throw new ValidationError(`credits exceeds safe integer range: ${credits}`);
   }
   const denom = config.markupRateBps * config.creditsPerDollar;
   if (denom === 0n) return 0n;

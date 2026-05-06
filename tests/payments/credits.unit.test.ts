@@ -102,6 +102,23 @@ describe("payments/credits/pricing", () => {
       expect(back - x).toBeLessThanOrEqual(500n);
     }
   });
+
+  test("creditsToUsd rejects non-integer credits", () => {
+    expect(() => creditsToUsd(1.5)).toThrow(/must be an integer/);
+  });
+
+  test("creditsToUsd rejects unsafe integer", () => {
+    expect(() => creditsToUsd(Number.MAX_SAFE_INTEGER + 1)).toThrow(
+      /exceeds safe integer/,
+    );
+  });
+
+  test("usdToCredits result within safe integer range", () => {
+    // With default config (markup=2, cpd=1000), even large USD values
+    // stay within safe range. This test documents the guard exists.
+    const result = usdToCredits(1_000_000_000_000n);
+    expect(Number.isSafeInteger(result)).toBe(true);
+  });
 });
 
 describe("payments/credits/policy", () => {
