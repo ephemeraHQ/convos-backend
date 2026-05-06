@@ -1,15 +1,16 @@
 import { Prisma, type CreditLedger, type LedgerReason } from "@prisma/client";
 import { prisma } from "@/utils/prisma";
+import { IdempotencyMismatchError } from "../errors";
 import type { HistoryCursor } from "../types";
 
 interface ApplyDeltaInput {
   inboxId: string;
-  delta: number;
+  delta: bigint;
   reason: LedgerReason;
   idempotencyKey: string;
   usdCostMicros?: bigint;
   markupRate?: Prisma.Decimal | string;
-  creditsPerDollar?: number;
+  creditsPerDollar?: bigint;
   model?: string;
   requestId?: string;
   note?: string;
@@ -18,7 +19,6 @@ interface ApplyDeltaInput {
 }
 
 export interface ApplyDeltaResult {
-  balanceAfter: bigint;
   ledgerId: string;
   replayed: boolean;
 }
@@ -48,7 +48,7 @@ export const findLedgerByIdempotencyKey = async (
 export class LedgerFloorBreachError extends Error {
   constructor(
     public readonly currentBalance: bigint,
-    public readonly attempted: number,
+    public readonly attempted: bigint,
     public readonly minBalance: bigint,
   ) {
     super(
@@ -107,7 +107,7 @@ export const applyDeltaWithTx = async (
   input: ApplyDeltaInput,
 ): Promise<ApplyDeltaResult> => {
   const before = await lockOrCreateBalance(tx, input.inboxId);
-  const after = before + BigInt(input.delta);
+  const after = before + input.delta;
 
   if (input.floorCheck && after < input.floorCheck.minBalance) {
     throw new LedgerFloorBreachError(
@@ -128,7 +128,6 @@ export const applyDeltaWithTx = async (
       delta: input.delta,
       reason: input.reason,
       idempotencyKey: input.idempotencyKey,
-      balanceAfter: after,
       usdCostMicros: input.usdCostMicros ?? null,
       markupRate:
         input.markupRate !== undefined
@@ -142,7 +141,7 @@ export const applyDeltaWithTx = async (
     },
   });
 
-  return { balanceAfter: after, ledgerId: created.id, replayed: false };
+  return { ledgerId: created.id, replayed: false };
 };
 
 export const applyDelta = async (
@@ -160,11 +159,14 @@ export const applyDelta = async (
         input.idempotencyKey,
       );
       if (prior) {
-        return {
-          balanceAfter: prior.balanceAfter,
-          ledgerId: prior.id,
-          replayed: true,
-        };
+        if (BigInt(prior.delta) !== input.delta) {
+          throw new IdempotencyMismatchError(
+            input.idempotencyKey,
+            BigInt(prior.delta),
+            input.delta,
+          );
+        }
+        return { ledgerId: prior.id, replayed: true };
       }
     }
     throw err;
