@@ -1,7 +1,13 @@
 import { LedgerReason, Prisma } from "@prisma/client";
 import { prisma } from "@/utils/prisma";
-import { config, isAllowedFromBalance, usdToCredits } from "./credits";
-import { GrantKindNotFoundError, InsufficientBalanceError } from "./errors";
+import { ValidationError } from "@/utils/errors";
+import { config, usdToCredits } from "./credits";
+import { isAllowedFromBalance } from "./credits/policy";
+import {
+  GrantKindNotFoundError,
+  IdempotencyMismatchError,
+  InsufficientBalanceError,
+} from "./errors";
 import {
   applyDelta,
   applyDeltaWithTx,
@@ -10,47 +16,51 @@ import {
   getBalance as ledgerGetBalance,
   getHistory as ledgerGetHistory,
 } from "./ledger";
-import type {
-  AdjustResult,
-  ConsumeResult,
-  GrantKindId,
-  GrantResult,
-  HistoryCursor,
+import {
+  GrantKindIdSchema,
+  type AdjustResult,
+  type ConsumeResult,
+  type GrantKindId,
+  type GrantResult,
+  type HistoryCursor,
 } from "./types";
 
 export type { GrantKindId, HistoryCursor } from "./types";
-export { GrantKindIdSchema } from "./types";
-export { GrantKindNotFoundError, InsufficientBalanceError } from "./errors";
+export {
+  GrantKindNotFoundError,
+  IdempotencyMismatchError,
+  InsufficientBalanceError,
+} from "./errors";
 export { creditsToUsd, usdToCredits } from "./credits";
 
-export const consume = async (
-  inboxId: string,
-  usdCostMicros: bigint,
-  idempotencyKey: string,
-  requestId: string,
-  opts?: { model?: string },
-): Promise<ConsumeResult> => {
-  const credits = usdToCredits(usdCostMicros);
+export const consume = async (args: {
+  inboxId: string;
+  usdCostMicros: bigint;
+  idempotencyKey: string;
+  requestId: string;
+  model?: string;
+}): Promise<ConsumeResult> => {
+  const credits = usdToCredits(args.usdCostMicros);
   try {
-    const result = await applyDelta({
-      inboxId,
-      delta: -credits,
+    await applyDelta({
+      inboxId: args.inboxId,
+      delta: BigInt(-credits),
       reason: LedgerReason.consume,
-      idempotencyKey,
-      usdCostMicros,
+      idempotencyKey: args.idempotencyKey,
+      usdCostMicros: args.usdCostMicros,
       markupRate: config.markupRate,
-      creditsPerDollar: Number(config.creditsPerDollar),
-      model: opts?.model,
-      requestId,
+      creditsPerDollar: config.creditsPerDollar,
+      model: args.model,
+      requestId: args.requestId,
       floorCheck: { minBalance: config.minBalance },
     });
     return { spent: credits };
   } catch (err) {
     if (err instanceof LedgerFloorBreachError) {
       throw new InsufficientBalanceError(
-        inboxId,
+        args.inboxId,
         err.currentBalance,
-        err.attempted,
+        Number(err.attempted),
         err.minBalance,
       );
     }
@@ -61,55 +71,62 @@ export const consume = async (
 /**
  * Grant credits to an inbox.
  *
- * NOTE: Pricing snapshot fields (`markupRate`, `creditsPerDollar`) are NOT
- * recorded on grant ledger entries. This is acceptable while grants stay
- * credit-denominated. Future: if USD-denominated promo grants are introduced,
- * snapshot pricing at grant time so historical USD value is auditable.
+ * Pricing snapshot fields (markupRate, creditsPerDollar) are NOT recorded
+ * on grant ledger entries. Credit-denominated operations don't need pricing
+ * snapshots because the credit value is captured directly in the delta field.
+ * Conversion back to USD (if needed for display) uses current pricing.
  */
-export const grant = async (
-  inboxId: string,
-  credits: number,
-  idempotencyKey: string,
-  kind: GrantKindId,
-  opts?: { note?: string; requestId?: string },
-): Promise<GrantResult> => {
-  if (credits <= 0) {
-    throw new Error(`grant credits must be > 0: ${credits}`);
+export const grant = async (args: {
+  inboxId: string;
+  credits: number;
+  idempotencyKey: string;
+  kind: GrantKindId;
+  note?: string;
+  requestId?: string;
+}): Promise<GrantResult> => {
+  if (args.credits <= 0) {
+    throw new ValidationError(`grant credits must be > 0: ${args.credits}`);
   }
-  // GrantKind active-check is done inside the same transaction as the ledger
-  // write so a concurrent `active=false` flip cannot slip through between the
-  // read and the write. The FK already prevents deleted kinds; this guards
-  // against deactivation.
+  const parsedKind = GrantKindIdSchema.parse(args.kind);
+
   try {
-    const result = await prisma.$transaction(async (tx) => {
+    await prisma.$transaction(async (tx) => {
       const kindRow = await tx.grantKind.findUnique({
-        where: { id: kind },
+        where: { id: parsedKind },
         select: { id: true, active: true },
       });
       if (!kindRow || !kindRow.active) {
-        throw new GrantKindNotFoundError(kind);
+        throw new GrantKindNotFoundError(parsedKind);
       }
       return applyDeltaWithTx(tx, {
-        inboxId,
-        delta: credits,
+        inboxId: args.inboxId,
+        delta: BigInt(args.credits),
         reason: LedgerReason.grant,
-        idempotencyKey,
-        grantKindId: kind,
-        note: opts?.note,
-        requestId: opts?.requestId,
+        idempotencyKey: args.idempotencyKey,
+        grantKindId: parsedKind,
+        note: args.note,
+        requestId: args.requestId,
       });
     });
-    return { granted: credits };
+    return { granted: args.credits };
   } catch (err) {
-    // Idempotent replay: same (inboxId, idempotencyKey) returns the historical
-    // ledger row instead of erroring. Mirrors the path in applyDelta().
     if (
       err instanceof Prisma.PrismaClientKnownRequestError &&
       err.code === "P2002"
     ) {
-      const prior = await findLedgerByIdempotencyKey(inboxId, idempotencyKey);
+      const prior = await findLedgerByIdempotencyKey(
+        args.inboxId,
+        args.idempotencyKey,
+      );
       if (prior) {
-        return { granted: credits };
+        if (BigInt(prior.delta) !== BigInt(args.credits)) {
+          throw new IdempotencyMismatchError(
+            args.idempotencyKey,
+            BigInt(prior.delta),
+            BigInt(args.credits),
+          );
+        }
+        return { granted: args.credits };
       }
     }
     throw err;
@@ -119,41 +136,39 @@ export const grant = async (
 /**
  * Manually adjust an inbox balance (positive or negative).
  *
- * NOTE: Pricing snapshot fields (`markupRate`, `creditsPerDollar`) are NOT
- * recorded on adjust ledger entries. This is acceptable while adjustments stay
- * credit-denominated. Future: if USD-denominated adjustments are introduced,
- * snapshot pricing at adjust time so historical USD value is auditable.
+ * Credit-denominated — no pricing snapshot needed. The delta field itself
+ * is the complete record of the adjustment value.
  */
-export const adjust = async (
-  inboxId: string,
-  delta: number,
-  idempotencyKey: string,
-  note: string,
-): Promise<AdjustResult> => {
-  if (!note || !note.trim()) {
-    throw new Error("adjust note is required");
+export const adjust = async (args: {
+  inboxId: string;
+  delta: number;
+  idempotencyKey: string;
+  note: string;
+}): Promise<AdjustResult> => {
+  if (!args.note || !args.note.trim()) {
+    throw new ValidationError("adjust note is required");
   }
-  if (delta === 0) {
-    throw new Error("adjust delta must be non-zero");
+  if (args.delta === 0) {
+    throw new ValidationError("adjust delta must be non-zero");
   }
   const opts =
-    delta < 0 ? { floorCheck: { minBalance: config.minBalance } } : {};
+    args.delta < 0 ? { floorCheck: { minBalance: config.minBalance } } : {};
   try {
-    const result = await applyDelta({
-      inboxId,
-      delta,
+    await applyDelta({
+      inboxId: args.inboxId,
+      delta: BigInt(args.delta),
       reason: LedgerReason.adjust,
-      idempotencyKey,
-      note,
+      idempotencyKey: args.idempotencyKey,
+      note: args.note,
       ...opts,
     });
-    return { applied: true as const };
+    return { applied: true };
   } catch (err) {
     if (err instanceof LedgerFloorBreachError) {
       throw new InsufficientBalanceError(
-        inboxId,
+        args.inboxId,
         err.currentBalance,
-        err.attempted,
+        Number(err.attempted),
         err.minBalance,
       );
     }
@@ -165,13 +180,8 @@ export const getBalance = async (inboxId: string): Promise<bigint> =>
   ledgerGetBalance(inboxId);
 
 /**
- * Check whether the inbox currently has a sufficient balance to act.
- *
- * ADVISORY ONLY. Concurrent `consume` calls can invalidate the read between
- * the gate check and any subsequent action. Callers must NOT rely on this for
- * correctness — only `consume` itself enforces the floor atomically (via
- * `floorCheck` inside the applyDelta transaction). Suitable for UX hints
- * (e.g. disabling a button), NOT for authorization gates.
+ * Advisory balance check. NOT an authorization gate — only consume()
+ * enforces the floor atomically. Use for UX hints (disable button).
  */
 export const isAllowed = async (inboxId: string): Promise<boolean> =>
   isAllowedFromBalance(await ledgerGetBalance(inboxId));
