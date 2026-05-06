@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { isAllowedFromBalance } from "@/payments/credits/policy";
 import { creditsToUsd, usdToCredits } from "@/payments/credits/pricing";
 
@@ -20,14 +20,17 @@ const restore = (snap: Record<string, string | undefined>) => {
 };
 
 describe("payments/credits/config", () => {
-  let snap: Record<string, string | undefined>;
+  let snap: Record<string, string | undefined> = {};
+
+  beforeEach(() => {
+    snap = snapshot();
+  });
 
   afterEach(() => {
-    if (snap) restore(snap);
+    restore(snap);
   });
 
   test("loads valid env into typed config", async () => {
-    snap = snapshot();
     process.env.PAYMENTS_MARKUP_RATE = "2.0";
     process.env.PAYMENTS_CREDITS_PER_USD = "1000";
     process.env.PAYMENTS_RESERVED_MAX_TURN_CREDITS = "1";
@@ -48,21 +51,18 @@ describe("payments/credits/config", () => {
   // call `loadConfig()` directly, which re-reads `process.env` on every call —
   // NOT the cached `config` singleton (which snapshots env at first import).
   test("rejects negative markup", async () => {
-    snap = snapshot();
     process.env.PAYMENTS_MARKUP_RATE = "-1";
     const { loadConfig } = await import("@/payments/credits/config");
     expect(() => loadConfig()).toThrow(/PAYMENTS_MARKUP_RATE must be >= 0/);
   });
 
   test("rejects zero creditsPerDollar", async () => {
-    snap = snapshot();
     process.env.PAYMENTS_CREDITS_PER_USD = "0";
     const { loadConfig } = await import("@/payments/credits/config");
     expect(() => loadConfig()).toThrow(/PAYMENTS_CREDITS_PER_USD must be > 0/);
   });
 
   test("rejects positive minBalance", async () => {
-    snap = snapshot();
     process.env.PAYMENTS_MIN_BALANCE_CREDITS = "10";
     const { loadConfig } = await import("@/payments/credits/config");
     expect(() => loadConfig()).toThrow(
@@ -71,7 +71,6 @@ describe("payments/credits/config", () => {
   });
 
   test("rejects non-numeric markup", async () => {
-    snap = snapshot();
     process.env.PAYMENTS_MARKUP_RATE = "abc";
     const { loadConfig } = await import("@/payments/credits/config");
     expect(() => loadConfig()).toThrow();
