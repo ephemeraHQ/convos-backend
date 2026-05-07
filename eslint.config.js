@@ -75,6 +75,12 @@ export default tseslint.config(
     },
   },
   {
+    files: ["src/utils/slug-hash.ts"],
+    rules: {
+      "@typescript-eslint/no-unused-vars": "off",
+    },
+  },
+  {
     files: ["sdks/js-sdk/**/*.ts"],
     rules: {
       "no-restricted-syntax": [
