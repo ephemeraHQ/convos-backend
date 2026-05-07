@@ -1,7 +1,7 @@
 // This is your Prisma schema file,
 // learn more about it in the docs: https://pris.ly/d/prisma-schema
 
-// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Looking for ways to speed up your queries, or scale easily with serverless or edge functions?
 // Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
 
 generator client {
@@ -99,7 +99,47 @@ model Account {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  authMethods AuthMethod[]
+  authMethods    AuthMethod[]
+  agentTemplates AgentTemplate[]
+}
+
+enum PublishStatus {
+  draft
+  published
+  unlisted
+  archived
+}
+
+model AgentTemplate {
+  id               String        @id
+  slug             String
+  ownerAccountId   String        @db.Uuid
+  forkedFromId     String?
+  agentName        String
+  description      String?
+  prompt           String        @db.Text
+  category         String?
+  emoji            String?
+  avatarUrl        String?
+  tools            String[]      @default([])
+  connections      String[]      @default([])
+  version          Int           @default(1)
+  firstPublishedAt DateTime?
+  status           PublishStatus @default(draft)
+  featured         Boolean       @default(false)
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
+
+  owner      Account         @relation(fields: [ownerAccountId], references: [id])
+  forkedFrom AgentTemplate?  @relation("Forks", fields: [forkedFromId], references: [id])
+  forks      AgentTemplate[] @relation("Forks")
+
+  @@unique([ownerAccountId, slug])
+  @@index([slug])
+  @@index([status, createdAt, id])
+  @@index([status, category, createdAt, id])
+  @@index([status, featured, createdAt, id])
+  @@index([forkedFromId])
 }
 
 model AuthMethod {
