@@ -86,12 +86,12 @@ describe("agent templates and skills production guard", () => {
     );
   });
 
-  test("router shells are empty in M1", () => {
-    expect(getRouterStack(agentTemplatesRouter)).toHaveLength(0);
+  test("router registrations match the current milestone", () => {
+    expect(getRouterStack(agentTemplatesRouter).length).toBeGreaterThan(0);
     expect(getRouterStack(agentSkillsRouter)).toHaveLength(0);
   });
 
-  test("production does not mount routers and non-production mounts empty routers", async () => {
+  test("production does not mount routers and non-production mounts current routers", async () => {
     process.env.XMTP_ENV = "production";
     const productionRouter = buildGuardedV2Router();
     expect(hasMountedRouter(productionRouter, "/agent-templates")).toBe(false);
@@ -125,7 +125,7 @@ describe("agent templates and skills production guard", () => {
       );
 
       expect(responses.map((response) => response.status)).toEqual([
-        404, 404, 404, 404,
+        200, 404, 404, 404,
       ]);
     });
   });
