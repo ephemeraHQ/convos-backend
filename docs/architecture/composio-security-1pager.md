@@ -14,7 +14,7 @@ iOS authorizes Google Calendar via Convos Backend's Composio project. The connec
 
 The capability-request consent layer ([convos-ios#796](https://github.com/xmtplabs/convos-ios/pull/796) / [#797](https://github.com/xmtplabs/convos-ios/pull/797), [convos-assistants#1484](https://github.com/xmtplabs/convos-assistants/pull/1484)) is correct under any security model below. The break is purely **where the agent invokes the toolkit**.
 
-## Recommendation: Backend mints scoped invocations
+## Recommendation: Backend mediates Composio access
 
 Agents call **Convos Backend → Composio**, never Composio directly. Backend already holds the only Composio project key; we keep it that way and expose a narrow API to agents.
 
