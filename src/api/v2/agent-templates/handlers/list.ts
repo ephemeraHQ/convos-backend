@@ -2,6 +2,7 @@ import type { AgentTemplate, Prisma } from "@prisma/client";
 import type { Request, Response } from "express";
 import { z } from "zod";
 import { prisma } from "@/utils/prisma";
+import { serializeAgentTemplate } from "../lib/serialize-agent-template";
 
 const DEFAULT_LIMIT = 20;
 const MAX_LIMIT = 100;
@@ -22,27 +23,6 @@ const cursorPayloadSchema = z
     createdAt: z.string().min(1),
   })
   .strict();
-
-const serializeAgentTemplate = (template: AgentTemplate) => ({
-  object: "agent_template",
-  id: template.id,
-  slug: template.slug,
-  ownerAccountId: template.ownerAccountId,
-  forkedFromId: template.forkedFromId,
-  agentName: template.agentName,
-  description: template.description,
-  prompt: template.prompt,
-  category: template.category,
-  emoji: template.emoji,
-  avatarUrl: template.avatarUrl,
-  tools: template.tools,
-  connections: template.connections,
-  version: template.version,
-  firstPublishedAt: template.firstPublishedAt?.toISOString() ?? null,
-  status: template.status,
-  featured: template.featured,
-  createdAt: template.createdAt.toISOString(),
-});
 
 const sendInvalidQuery = (res: Response, message: string) => {
   res.status(400).json({
@@ -175,7 +155,7 @@ export async function listHandler(req: Request, res: Response) {
     const lastTemplate = page.at(-1);
 
     res.status(200).json({
-      data: page.map(serializeAgentTemplate),
+      data: page.map((template) => serializeAgentTemplate(template)),
       hasMore,
       nextCursor:
         hasMore && lastTemplate !== undefined
