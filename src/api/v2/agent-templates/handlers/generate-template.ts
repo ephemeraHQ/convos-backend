@@ -1,17 +1,28 @@
 /**
- * Handler for POST /api/v2/agent-templates/generate (JSON mode).
+ * Handler for POST /api/v2/agent-templates/generate (JSON + SSE modes).
  *
  * Auth via `authOrAgentApiKeyAuth`. Validation runs BEFORE any branch on
  * `Accept` so bad inputs always return JSON 400. Legacy field coalescing
  * accepts `text|idea|content|url`. Body limits: MAX_TEXT_LEN=50_000,
- * MAX_BASE64_LEN=35_000_000. Default Accept (or absent) returns
- * 200 application/json with the camelCase template draft.
+ * MAX_BASE64_LEN=35_000_000.
  *
- * Error → status mapping:
+ * Accept header routing:
+ *   - Contains `text/event-stream` substring → SSE mode
+ *   - Otherwise (default) → JSON mode
+ *
+ * SSE mode:
+ *   - Headers: Content-Type: text/event-stream, Cache-Control: no-cache,
+ *     Connection: keep-alive; flushHeaders() called before any data.
+ *   - Keep-alive: `:\n\n` comment every 15 000 ms while pending.
+ *   - Success: `event: result\ndata: <camelCase JSON>\n\n`, then res.end().
+ *   - Error:   `event: error\ndata: {"error":"...","status":<int>}\n\n`, then res.end().
+ *   - HTTP status line is always 200 (headers flushed before terminal frame).
+ *   - Client disconnect: generateTemplate NOT aborted (no AbortSignal);
+ *     keep-alive write errors swallowed; clearInterval always runs.
+ *
+ * Error → status mapping (both modes):
  *   - Validation-class messages (Invalid URL|No content|Could not extract) → 400
  *   - All other rejections → 502
- *
- * SSE mode will be added in a separate feature (m3-generate-handler-sse-mode).
  */
 
 import type { Request, Response } from "express";
@@ -156,15 +167,55 @@ export async function generateTemplateHandler(req: Request, res: Response) {
     return;
   }
 
-  // 4. Branch on Accept header — JSON mode (default) only for now.
-  //    SSE mode will be added in the m3-generate-handler-sse-mode feature.
+  // 4. Branch on Accept header — SSE vs JSON mode
   const accept = req.headers.accept || "";
   const isSSE = accept.includes("text/event-stream");
 
-  // NOTE: SSE branch will be added later. For now, all requests go through JSON mode.
-  void isSSE; // used by future SSE branch
+  if (isSSE) {
+    // ---- SSE mode ----
+    // Set SSE headers and flush immediately so the client knows the stream is live
+    res.status(200);
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache");
+    res.setHeader("Connection", "keep-alive");
+    // No X-Accel-Buffering header — preserve pool's absence
+    res.flushHeaders();
 
-  // 5. JSON mode: call generateTemplate and return buffered response
+    // Start keep-alive interval: emit `:\n\n` comment every 15 000 ms
+    const KEEPALIVE_MS = 15_000;
+    const keepalive = setInterval(() => {
+      try {
+        res.write(":\n\n");
+      } catch {
+        // Swallow write errors (client disconnected, stream ended, etc.)
+        // No uncaughtException leak
+      }
+    }, KEEPALIVE_MS);
+
+    try {
+      const result = await callGenerateTemplate(coalesced);
+
+      // Terminal success frame
+      clearInterval(keepalive);
+      const data = JSON.stringify(result);
+      res.write(`event: result\ndata: ${data}\n\n`);
+      res.end();
+    } catch (err) {
+      const error = err instanceof Error ? err : new Error(String(err));
+      req.log.warn({ error: error.message }, "Template generation failed");
+
+      // Terminal error frame — HTTP status is 200 (already flushed)
+      clearInterval(keepalive);
+      const status = errorStatus(error);
+      const data = JSON.stringify({ error: error.message, status });
+      res.write(`event: error\ndata: ${data}\n\n`);
+      res.end();
+    }
+
+    return;
+  }
+
+  // ---- JSON mode (default) ----
   try {
     const result = await callGenerateTemplate(coalesced);
 
