@@ -1,6 +1,5 @@
 import { createHash, timingSafeEqual } from "crypto";
 import type { NextFunction, Request, Response } from "express";
-import { AGENT_ASSETS_API_KEY } from "@/config";
 import { authMiddleware } from "./auth";
 
 export const AGENT_API_KEY_HEADER = "X-Agent-API-Key";
@@ -21,7 +20,7 @@ export const agentApiKeyAuth = (
   res: Response,
   next: NextFunction,
 ) => {
-  const expectedKey = AGENT_ASSETS_API_KEY.trim();
+  const expectedKey = (process.env.AGENT_ASSETS_API_KEY ?? "").trim();
 
   if (!expectedKey) {
     res.status(503).json({ error: "Agent assets API key not configured" });
