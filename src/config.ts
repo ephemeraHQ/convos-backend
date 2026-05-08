@@ -43,3 +43,29 @@ export const COMPOSIO_CONNECTION_CALLBACK_URL =
   "convos://connections/callback";
 
 export const XMTP_ENV = process.env.XMTP_ENV || "dev";
+
+// SIWE / nonce-cookie auth (required)
+if (!process.env.SIWE_DOMAIN) {
+  throw new Error("SIWE_DOMAIN is not configured");
+}
+if (!process.env.SIWE_URI) {
+  throw new Error("SIWE_URI is not configured");
+}
+if (!process.env.NONCE_HMAC_SECRET || process.env.NONCE_HMAC_SECRET.length < 32) {
+  throw new Error(
+    "NONCE_HMAC_SECRET is not configured or too short (need >= 32 chars)",
+  );
+}
+
+const parsedChainIds = (process.env.SIWE_ALLOWED_CHAIN_IDS || "1")
+  .split(",")
+  .map((s) => Number(s.trim()))
+  .filter((n) => Number.isFinite(n));
+if (parsedChainIds.length === 0) {
+  throw new Error("SIWE_ALLOWED_CHAIN_IDS must contain at least one chain id");
+}
+
+export const SIWE_DOMAIN = process.env.SIWE_DOMAIN;
+export const SIWE_URI = process.env.SIWE_URI;
+export const SIWE_ALLOWED_CHAIN_IDS: readonly number[] = parsedChainIds;
+export const NONCE_HMAC_SECRET = process.env.NONCE_HMAC_SECRET;
