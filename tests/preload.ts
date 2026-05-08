@@ -12,6 +12,14 @@ process.env.NOTIFICATION_SERVER_URL = "http://localhost:8080";
 process.env.XMTP_NOTIFICATION_SECRET =
   process.env.XMTP_NOTIFICATION_SECRET || "test-notification-secret";
 
+process.env.SIWE_DOMAIN = process.env.SIWE_DOMAIN || "convos.app";
+process.env.SIWE_URI = process.env.SIWE_URI || "https://convos.app";
+process.env.SIWE_ALLOWED_CHAIN_IDS = process.env.SIWE_ALLOWED_CHAIN_IDS || "1";
+// 64-char hex = 32 bytes. Test secret only.
+process.env.NONCE_HMAC_SECRET =
+  process.env.NONCE_HMAC_SECRET ||
+  "0000000000000000000000000000000000000000000000000000000000000000";
+
 // v2 JWT test keys (ECDSA P-256) - must be set before config.ts loads
 process.env.JWT_PRIVATE_KEY = `-----BEGIN PRIVATE KEY-----
 MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgGis9E4WiE4Ou51Ho
