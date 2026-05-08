@@ -180,4 +180,29 @@ describe("POST /auth/token (legacy + SIWE)", () => {
       where: { deviceId: "dev-disabled" },
     });
   });
+
+  test("valid HMAC + bad SIWE signature → 401 AND nonce is consumed (locks in atomic-consume-before-verify ordering)", async () => {
+    const nonce = await issueNonce();
+    const cookieValue = signNonce(nonce);
+    const { messageStr } = await buildSiwe(nonce);
+
+    // Sign the same message with a different wallet so signature fails verifySiwe
+    const otherWallet = new Wallet("0x" + "9".repeat(64));
+    const badSignature = await otherWallet.signMessage(messageStr);
+
+    const res = await request(makeApp())
+      .post("/auth/token")
+      .set(...APPCHECK)
+      .set("Cookie", `${NONCE_COOKIE_NAME}=${cookieValue}`)
+      .send({
+        deviceId: "dev-bad-sig",
+        siwe: { message: messageStr, signature: badSignature },
+      });
+
+    expect(res.status).toBe(401);
+
+    // Nonce row must be gone — consume happened before verifySiwe.
+    const row = await prisma.authNonce.findUnique({ where: { nonce } });
+    expect(row).toBeNull();
+  });
 });

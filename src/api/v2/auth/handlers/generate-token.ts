@@ -115,7 +115,7 @@ export async function generateToken(
 
   // 5. Clear nonce cookie on successful SIWE upgrade
   if (body.siwe) {
-    res.setHeader(
+    res.append(
       "Set-Cookie",
       `${NONCE_COOKIE_NAME}=; ${NONCE_COOKIE_CLEAR_FLAGS}`,
     );
