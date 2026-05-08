@@ -9,7 +9,7 @@ import {
 export async function generateNonce(_req: Request, res: Response) {
   const nonce = await issueNonce();
   const value = signNonce(nonce);
-  res.setHeader(
+  res.append(
     "Set-Cookie",
     `${NONCE_COOKIE_NAME}=${value}; ${NONCE_COOKIE_SET_FLAGS}`,
   );
