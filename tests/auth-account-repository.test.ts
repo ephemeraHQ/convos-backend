@@ -1,0 +1,59 @@
+import { afterEach, beforeAll, describe, expect, test } from "bun:test";
+import { AuthMethodType } from "@prisma/client";
+import { upsertAuthMethodAndAccount } from "@/accounts/repository";
+import { prisma } from "@/utils/prisma";
+
+const ADDR_A = "0x" + "a".repeat(40);
+const ADDR_B = "0x" + "b".repeat(40);
+
+async function reset() {
+  await prisma.authMethod.deleteMany();
+  await prisma.account.deleteMany();
+}
+
+describe("upsertAuthMethodAndAccount", () => {
+  beforeAll(reset);
+  afterEach(reset);
+
+  test("first login: creates Account + AuthMethod, returns accountId", async () => {
+    const { accountId } = await upsertAuthMethodAndAccount({
+      type: AuthMethodType.SIWE,
+      externalKey: ADDR_A,
+    });
+    const account = await prisma.account.findUnique({ where: { id: accountId } });
+    expect(account).not.toBeNull();
+    const method = await prisma.authMethod.findFirst({
+      where: { accountId, type: AuthMethodType.SIWE },
+    });
+    expect(method?.externalKey).toBe(ADDR_A);
+  });
+
+  test("second login same wallet: returns same accountId, does not insert", async () => {
+    const first = await upsertAuthMethodAndAccount({
+      type: AuthMethodType.SIWE,
+      externalKey: ADDR_A,
+    });
+    const second = await upsertAuthMethodAndAccount({
+      type: AuthMethodType.SIWE,
+      externalKey: ADDR_A,
+    });
+    expect(second.accountId).toBe(first.accountId);
+    const accounts = await prisma.account.count();
+    expect(accounts).toBe(1);
+    const methods = await prisma.authMethod.count();
+    expect(methods).toBe(1);
+  });
+
+  test("two different wallets create two accounts", async () => {
+    const a = await upsertAuthMethodAndAccount({
+      type: AuthMethodType.SIWE,
+      externalKey: ADDR_A,
+    });
+    const b = await upsertAuthMethodAndAccount({
+      type: AuthMethodType.SIWE,
+      externalKey: ADDR_B,
+    });
+    expect(a.accountId).not.toBe(b.accountId);
+    expect(await prisma.account.count()).toBe(2);
+  });
+});
