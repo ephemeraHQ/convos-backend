@@ -54,7 +54,6 @@ The new auth API ([Borja's design](https://xmtp-labs.slack.com/archives/C0ASWCMS
 
 Why `accountId` beats the simpler "use `inboxId`" cut:
 
-- **Inbox recovery survives.** `inboxId` changes on key rotation / lost device; `accountId` persists. Composio connections shouldn't churn on inbox changes.
 - **Multi-inbox per user.** Users will have multiple inboxes (work/personal, etc.); their connections shouldn't fragment across inboxes.
 - **Auth-method federation.** A Composio connection isn't tied to whichever auth method the user happened to sign in with.
 - **Multi-device for free.** Same human on two devices = one Composio user. The latent multi-device bug iOS has today goes away by construction.
