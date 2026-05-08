@@ -6,6 +6,7 @@ import {
   expect,
   test,
 } from "bun:test";
+import { ADMIN_ACCOUNT_ID } from "@/utils/prefixed-id";
 import { prisma } from "@/utils/prisma";
 import { buildSlug } from "@/utils/slug-hash";
 import {
@@ -33,7 +34,7 @@ const reservedWords = [
 const cleanupTemplates = () =>
   prisma.agentTemplate.deleteMany({
     where: {
-      ownerAccountId: "acct_admin",
+      ownerAccountId: ADMIN_ACCOUNT_ID,
       OR: [
         { slug: { in: ["brewski", "brewski-2"] } },
         { slug: { startsWith: "cross-reserved-" } },

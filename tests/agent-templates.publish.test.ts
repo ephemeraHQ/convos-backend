@@ -14,6 +14,7 @@ import { jsonMiddleware } from "@/middleware/json";
 import { noRouteMiddleware } from "@/middleware/noRoute";
 import { pinoMiddleware } from "@/middleware/pino";
 import { createJwtToken } from "@/utils/jwt";
+import { ADMIN_ACCOUNT_ID } from "@/utils/prefixed-id";
 import { prisma } from "@/utils/prisma";
 
 type TemplateBody = Record<string, unknown>;
@@ -55,7 +56,7 @@ const seedTemplate = async (
     data: {
       id: overrides.id,
       slug: overrides.slug ?? overrides.id.replace(/_/g, "-"),
-      ownerAccountId: overrides.ownerAccountId ?? "acct_admin",
+      ownerAccountId: overrides.ownerAccountId ?? ADMIN_ACCOUNT_ID,
       forkedFromId: overrides.forkedFromId ?? null,
       agentName: overrides.agentName ?? "Publish Test Template",
       description: overrides.description ?? null,

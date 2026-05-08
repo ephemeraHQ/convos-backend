@@ -6,6 +6,7 @@ import {
   expect,
   test,
 } from "bun:test";
+import { ADMIN_ACCOUNT_ID } from "@/utils/prefixed-id";
 import { prisma } from "@/utils/prisma";
 import {
   agentKeyHeaders,
@@ -23,7 +24,7 @@ const originalAgentAssetsApiKey = process.env.AGENT_ASSETS_API_KEY;
 const cleanupTemplates = () =>
   prisma.agentTemplate.deleteMany({
     where: {
-      ownerAccountId: "acct_admin",
+      ownerAccountId: ADMIN_ACCOUNT_ID,
       OR: [
         { slug: { startsWith: "cross-auth-" } },
         { agentName: { startsWith: "Cross Auth" } },
@@ -83,13 +84,13 @@ describe("Agent template cross auth flow", () => {
     expect(keyCreated.response.status).toBe(201);
     expect(jwtCreated.body).toMatchObject({
       object: "agent_template",
-      ownerAccountId: "acct_admin",
+      ownerAccountId: ADMIN_ACCOUNT_ID,
       status: "draft",
       version: 1,
     });
     expect(keyCreated.body).toMatchObject({
       object: "agent_template",
-      ownerAccountId: "acct_admin",
+      ownerAccountId: ADMIN_ACCOUNT_ID,
       status: "draft",
       version: 1,
     });
@@ -105,7 +106,7 @@ describe("Agent template cross auth flow", () => {
       select: { id: true, ownerAccountId: true, status: true },
     });
     expect(rows).toHaveLength(2);
-    expect(rows.every((row) => row.ownerAccountId === "acct_admin")).toBe(true);
+    expect(rows.every((row) => row.ownerAccountId === ADMIN_ACCOUNT_ID)).toBe(true);
     expect(rows.every((row) => row.status === "draft")).toBe(true);
 
     const missingAuth = await createTemplate({

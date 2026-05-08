@@ -11,6 +11,7 @@ import {
 import express from "express";
 import { agentTemplatesRouter } from "@/api/v2/agent-templates/agent-templates.router";
 import { noRouteMiddleware } from "@/middleware/noRoute";
+import { ADMIN_ACCOUNT_ID } from "@/utils/prefixed-id";
 import { prisma } from "@/utils/prisma";
 
 type JsonObject = Record<string, unknown>;
@@ -58,7 +59,7 @@ const createTemplate = async (
     data: {
       id: overrides.id,
       slug: overrides.slug ?? overrides.id.replace(/_/g, "-"),
-      ownerAccountId: overrides.ownerAccountId ?? "acct_admin",
+      ownerAccountId: overrides.ownerAccountId ?? ADMIN_ACCOUNT_ID,
       forkedFromId: overrides.forkedFromId ?? null,
       agentName: overrides.agentName ?? `Template ${overrides.id}`,
       description: overrides.description ?? "Convention fixture",
@@ -206,7 +207,7 @@ describe("Agent template read response conventions", () => {
     expect(rows[0]).toMatchObject({
       object: "agent_template",
       id: "tmpl_test_conventions_child",
-      ownerAccountId: "acct_admin",
+      ownerAccountId: ADMIN_ACCOUNT_ID,
       forkedFromId: "tmpl_test_conventions_parent",
       featured: true,
       status: "published",
@@ -224,7 +225,7 @@ describe("Agent template read response conventions", () => {
     expect(detail.body).toMatchObject({
       object: "agent_template",
       id: "tmpl_test_conventions_child",
-      ownerAccountId: "acct_admin",
+      ownerAccountId: ADMIN_ACCOUNT_ID,
       forkedFromId: "tmpl_test_conventions_parent",
       featured: true,
     });
@@ -254,7 +255,7 @@ describe("Agent template read response conventions", () => {
     const owner = body.owner as JsonObject;
     expect(owner).toBeDefined();
     expect(owner.object).toBe("account");
-    expect(owner.id).toBe("acct_admin");
+    expect(owner.id).toBe(ADMIN_ACCOUNT_ID);
     expect(owner.createdAt).toEqual(expect.stringMatching(isoTimestampPattern));
     expect(Object.keys(owner).sort()).toEqual(["createdAt", "id", "object"]);
   });

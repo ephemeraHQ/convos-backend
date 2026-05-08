@@ -6,6 +6,7 @@ import {
   expect,
   test,
 } from "bun:test";
+import { ADMIN_ACCOUNT_ID } from "@/utils/prefixed-id";
 import { prisma } from "@/utils/prisma";
 import {
   createTemplate,
@@ -22,7 +23,7 @@ const category = "cross-pagination-category";
 const cleanupTemplates = () =>
   prisma.agentTemplate.deleteMany({
     where: {
-      ownerAccountId: "acct_admin",
+      ownerAccountId: ADMIN_ACCOUNT_ID,
       OR: [
         { category },
         { slug: { startsWith: "cross-pagination-" } },

@@ -2,11 +2,9 @@ import { Prisma } from "@prisma/client";
 import type { Request, Response } from "express";
 import { z } from "zod";
 import { serializeAgentTemplate } from "@/api/v2/agent-templates/lib/serialize-agent-template";
-import { mintTemplateId } from "@/utils/prefixed-id";
+import { ADMIN_ACCOUNT_ID, mintTemplateId } from "@/utils/prefixed-id";
 import { prisma } from "@/utils/prisma";
 import { validateSlug } from "@/utils/reserved-slugs";
-
-const OWNER_ACCOUNT_ID = "acct_admin";
 const MAX_AUTO_SLUG_ATTEMPTS = 50;
 
 const bodySchema = z
@@ -74,7 +72,7 @@ const isSlugUniqueConstraintError = (error: unknown) => {
 const hasSlugConflict = async (args: { slug: string }) => {
   const existing = await prisma.agentTemplate.findFirst({
     where: {
-      ownerAccountId: OWNER_ACCOUNT_ID,
+      ownerAccountId: ADMIN_ACCOUNT_ID,
       slug: args.slug,
     },
     select: { id: true },
@@ -88,7 +86,7 @@ const createTemplateRow = (args: { body: CreateBody; slug: string }) =>
     data: {
       id: mintTemplateId(),
       slug: args.slug,
-      ownerAccountId: OWNER_ACCOUNT_ID,
+      ownerAccountId: ADMIN_ACCOUNT_ID,
       forkedFromId: null,
       agentName: args.body.agentName,
       description: args.body.description ?? null,

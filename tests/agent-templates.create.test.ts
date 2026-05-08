@@ -13,9 +13,12 @@ import { jsonMiddleware } from "@/middleware/json";
 import { noRouteMiddleware } from "@/middleware/noRoute";
 import { pinoMiddleware } from "@/middleware/pino";
 import { createJwtToken } from "@/utils/jwt";
+import { ADMIN_ACCOUNT_ID } from "@/utils/prefixed-id";
 import { prisma } from "@/utils/prisma";
 
 type TemplateBody = Record<string, unknown>;
+
+const OTHER_ACCOUNT_ID = "bbbbbbbb-cccc-4ddd-eeee-ffffffff0001";
 
 const app = express();
 app.use(pinoMiddleware);
@@ -32,7 +35,7 @@ const snakeCasePattern = /_/;
 const cleanupTemplates = () =>
   prisma.agentTemplate.deleteMany({
     where: {
-      ownerAccountId: "acct_admin",
+      ownerAccountId: ADMIN_ACCOUNT_ID,
       OR: [
         { slug: { startsWith: "create-test-" } },
         { agentName: { startsWith: "Create Test" } },
@@ -62,7 +65,7 @@ const createTemplate = async (body: Record<string, unknown>) => {
 const expectTemplateShape = (body: TemplateBody) => {
   expect(body.object).toBe("agent_template");
   expect(body.id).toEqual(expect.stringMatching(/^tmpl_[A-Za-z0-9]+$/));
-  expect(body.ownerAccountId).toBe("acct_admin");
+  expect(body.ownerAccountId).toBe(ADMIN_ACCOUNT_ID);
   expect(body.status).toBe("draft");
   expect(body.version).toBe(1);
   expect(body.firstPublishedAt).toBeNull();
@@ -77,7 +80,7 @@ const expectTemplateShape = (body: TemplateBody) => {
 const countCreateTestTemplates = () =>
   prisma.agentTemplate.count({
     where: {
-      ownerAccountId: "acct_admin",
+      ownerAccountId: ADMIN_ACCOUNT_ID,
       OR: [
         { slug: { startsWith: "create-test-" } },
         { agentName: { startsWith: "Create Test" } },
@@ -150,7 +153,7 @@ describe("Agent template create endpoint", () => {
       agentName: "Create Test Sneaky",
       prompt: "You are still a draft",
       slug: "create-test-sneaky",
-      ownerAccountId: "acct_other",
+      ownerAccountId: OTHER_ACCOUNT_ID,
       status: "published",
       version: 99,
       firstPublishedAt: "2020-01-01T00:00:00.000Z",
@@ -163,7 +166,7 @@ describe("Agent template create endpoint", () => {
     const row = await prisma.agentTemplate.findUniqueOrThrow({
       where: { id: body.id as string },
     });
-    expect(row.ownerAccountId).toBe("acct_admin");
+    expect(row.ownerAccountId).toBe(ADMIN_ACCOUNT_ID);
     expect(row.status).toBe("draft");
     expect(row.version).toBe(1);
     expect(row.firstPublishedAt).toBeNull();
@@ -192,7 +195,7 @@ describe("Agent template create endpoint", () => {
 
     const rows = await prisma.agentTemplate.findMany({
       where: {
-        ownerAccountId: "acct_admin",
+        ownerAccountId: ADMIN_ACCOUNT_ID,
         slug: { in: slugs },
       },
       orderBy: { createdAt: "asc" },
@@ -295,7 +298,7 @@ describe("Agent template create endpoint", () => {
     expect(second.body.error).toMatchObject({ code: "SLUG_CONFLICT" });
 
     const rows = await prisma.agentTemplate.count({
-      where: { ownerAccountId: "acct_admin", slug: "create-test-taken" },
+      where: { ownerAccountId: ADMIN_ACCOUNT_ID, slug: "create-test-taken" },
     });
     expect(rows).toBe(1);
   });
@@ -351,7 +354,7 @@ describe("Agent template create endpoint", () => {
     expect(row.slug).toBe("create-test-minimal");
     expect(row.agentName).toBe("Create Test Minimal");
     expect(row.prompt).toBe("Persist me");
-    expect(row.ownerAccountId).toBe("acct_admin");
+    expect(row.ownerAccountId).toBe(ADMIN_ACCOUNT_ID);
     expect(row.status).toBe("draft");
     expect(row.version).toBe(1);
     expect(row.firstPublishedAt).toBeNull();

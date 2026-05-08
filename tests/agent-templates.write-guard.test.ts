@@ -7,6 +7,7 @@ import { jsonMiddleware } from "@/middleware/json";
 import { noRouteMiddleware } from "@/middleware/noRoute";
 import { pinoMiddleware } from "@/middleware/pino";
 import { createJwtToken } from "@/utils/jwt";
+import { ADMIN_ACCOUNT_ID } from "@/utils/prefixed-id";
 import { prisma } from "@/utils/prisma";
 
 const originalXMTPEnv = process.env.XMTP_ENV;
@@ -14,7 +15,7 @@ const originalXMTPEnv = process.env.XMTP_ENV;
 const cleanupTemplates = () =>
   prisma.agentTemplate.deleteMany({
     where: {
-      ownerAccountId: "acct_admin",
+      ownerAccountId: ADMIN_ACCOUNT_ID,
       OR: [
         { id: { startsWith: "tmpl_test_write_guard_" } },
         { slug: { startsWith: "write-guard-" } },

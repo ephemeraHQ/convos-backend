@@ -12,6 +12,7 @@ import express from "express";
 import { agentTemplatesRouter } from "@/api/v2/agent-templates/agent-templates.router";
 import { noRouteMiddleware } from "@/middleware/noRoute";
 import { createJwtToken } from "@/utils/jwt";
+import { ADMIN_ACCOUNT_ID } from "@/utils/prefixed-id";
 import { prisma } from "@/utils/prisma";
 
 type ListEnvelope = {
@@ -53,7 +54,7 @@ const createTemplate = async (
     data: {
       id: overrides.id,
       slug,
-      ownerAccountId: overrides.ownerAccountId ?? "acct_admin",
+      ownerAccountId: overrides.ownerAccountId ?? ADMIN_ACCOUNT_ID,
       forkedFromId: overrides.forkedFromId ?? null,
       agentName: overrides.agentName ?? `Template ${overrides.id}`,
       description: overrides.description ?? null,
@@ -113,7 +114,7 @@ describe("Agent template list endpoint", () => {
     expect(body.data[0]).toMatchObject({
       object: "agent_template",
       id: "tmpl_test_public_envelope",
-      ownerAccountId: "acct_admin",
+      ownerAccountId: ADMIN_ACCOUNT_ID,
       status: "published",
     });
     expect(body.data[0]?.id).toMatch(/^tmpl_/);
@@ -195,7 +196,7 @@ describe("Agent template list endpoint", () => {
       nextCursor: null,
     });
 
-    const owner = await readList("/api/v2/agent-templates?owner=acct_admin");
+    const owner = await readList(`/api/v2/agent-templates?owner=${ADMIN_ACCOUNT_ID}`);
     expect(ids(owner.body.data).sort()).toEqual(
       ids(defaultList.body.data).sort(),
     );
@@ -229,7 +230,7 @@ describe("Agent template list endpoint", () => {
     );
 
     const composed = await readList(
-      "/api/v2/agent-templates?category=utility&owner=acct_admin&featured=true",
+      `/api/v2/agent-templates?category=utility&owner=${ADMIN_ACCOUNT_ID}&featured=true`,
     );
     expect(ids(composed.body.data)).toEqual([
       "tmpl_test_filters_published_featured",
