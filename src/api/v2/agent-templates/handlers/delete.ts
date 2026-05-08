@@ -11,7 +11,8 @@ const sendAlreadyPublished = (res: Response) => {
   res.status(409).json({
     error: {
       code: "ALREADY_PUBLISHED",
-      message: "Published agent templates cannot be hard-deleted",
+      message:
+        "Agent templates with firstPublishedAt set cannot be hard-deleted",
     },
   });
 };
