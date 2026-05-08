@@ -58,7 +58,11 @@ export async function generateToken(
 
   if (body.siwe) {
     // 3a. Read & verify nonce cookie (HMAC)
-    const cookies = req.cookies as Record<string, string | undefined>;
+    // Defensive ?? {}: Express types declare req.cookies non-null, but if
+    // cookieParser() is ever unmounted upstream this would be undefined.
+    // Falling through cleanly produces a 401 "Invalid nonce" instead of a 500.
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+    const cookies = (req.cookies ?? {}) as Record<string, string | undefined>;
     const cookieValue = cookies[NONCE_COOKIE_NAME];
     const nonce = readNonceFromCookie(cookieValue);
     if (!nonce) {

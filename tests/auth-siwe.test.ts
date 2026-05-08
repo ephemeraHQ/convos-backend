@@ -30,6 +30,7 @@ async function buildMessage(
 
 async function expectInvalidSiwe(
   args: Parameters<typeof verifySiwe>[0],
+  expectedReason?: string,
 ): Promise<void> {
   let caught: unknown;
   try {
@@ -38,6 +39,9 @@ async function expectInvalidSiwe(
     caught = err;
   }
   expect(caught).toBeInstanceOf(InvalidSiweError);
+  if (expectedReason !== undefined) {
+    expect((caught as InvalidSiweError).reason).toBe(expectedReason);
+  }
 }
 
 describe("verifySiwe", () => {
@@ -105,12 +109,15 @@ describe("verifySiwe", () => {
     const { messageStr } = await buildMessage();
     const tampered = messageStr.replace("Version: 1", "Version: 2");
     const signature = await wallet.signMessage(tampered);
-    await expectInvalidSiwe({
-      message: tampered,
-      signature,
-      expectedNonce: NONCE,
-      now: NOW,
-    });
+    await expectInvalidSiwe(
+      {
+        message: tampered,
+        signature,
+        expectedNonce: NONCE,
+        now: NOW,
+      },
+      "parse",
+    );
   });
 
   test("rejects when expirationTime missing", async () => {

@@ -65,8 +65,13 @@ const parsedChainIds = (process.env.SIWE_ALLOWED_CHAIN_IDS || "1")
   .map((s) => s.trim())
   .filter((s) => s.length > 0)
   .map((s) => {
-    const n = Number(s);
-    if (!Number.isInteger(n) || n <= 0) {
+    if (!/^[0-9]+$/.test(s)) {
+      throw new Error(
+        `SIWE_ALLOWED_CHAIN_IDS contains invalid chain id: "${s}"`,
+      );
+    }
+    const n = parseInt(s, 10);
+    if (n <= 0) {
       throw new Error(
         `SIWE_ALLOWED_CHAIN_IDS contains invalid chain id: "${s}"`,
       );

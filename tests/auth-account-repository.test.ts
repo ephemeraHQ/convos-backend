@@ -58,4 +58,21 @@ describe("upsertAuthMethodAndAccount", () => {
     expect(a.accountId).not.toBe(b.accountId);
     expect(await prisma.account.count()).toBe(2);
   });
+
+  test("concurrent first-login same wallet → both resolve to same accountId, no orphan", async () => {
+    const ADDR_C = "0x" + "c".repeat(40);
+    const [a, b] = await Promise.all([
+      upsertAuthMethodAndAccount({
+        type: AuthMethodType.SIWE,
+        externalKey: ADDR_C,
+      }),
+      upsertAuthMethodAndAccount({
+        type: AuthMethodType.SIWE,
+        externalKey: ADDR_C,
+      }),
+    ]);
+    expect(a.accountId).toBe(b.accountId);
+    expect(await prisma.account.count()).toBe(1);
+    expect(await prisma.authMethod.count()).toBe(1);
+  });
 });
