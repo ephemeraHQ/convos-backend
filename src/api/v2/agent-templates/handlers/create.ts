@@ -5,6 +5,7 @@ import { serializeAgentTemplate } from "@/api/v2/agent-templates/lib/serialize-a
 import { ADMIN_ACCOUNT_ID, mintTemplateId } from "@/utils/prefixed-id";
 import { prisma } from "@/utils/prisma";
 import { validateSlug } from "@/utils/reserved-slugs";
+
 const MAX_AUTO_SLUG_ATTEMPTS = 50;
 
 const bodySchema = z

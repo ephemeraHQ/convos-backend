@@ -106,7 +106,9 @@ describe("Agent template cross auth flow", () => {
       select: { id: true, ownerAccountId: true, status: true },
     });
     expect(rows).toHaveLength(2);
-    expect(rows.every((row) => row.ownerAccountId === ADMIN_ACCOUNT_ID)).toBe(true);
+    expect(rows.every((row) => row.ownerAccountId === ADMIN_ACCOUNT_ID)).toBe(
+      true,
+    );
     expect(rows.every((row) => row.status === "draft")).toBe(true);
 
     const missingAuth = await createTemplate({

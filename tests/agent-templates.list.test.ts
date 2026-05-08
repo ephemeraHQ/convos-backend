@@ -196,7 +196,9 @@ describe("Agent template list endpoint", () => {
       nextCursor: null,
     });
 
-    const owner = await readList(`/api/v2/agent-templates?owner=${ADMIN_ACCOUNT_ID}`);
+    const owner = await readList(
+      `/api/v2/agent-templates?owner=${ADMIN_ACCOUNT_ID}`,
+    );
     expect(ids(owner.body.data).sort()).toEqual(
       ids(defaultList.body.data).sort(),
     );
