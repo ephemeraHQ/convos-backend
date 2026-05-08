@@ -17,11 +17,13 @@ export type V2JWTMetadata = {
 
 export type V2JWTPayload = {
   deviceId: string;
+  accountId?: string;
   metadata?: V2JWTMetadata;
 };
 
 const v2JWTPayloadSchema = z.object({
   deviceId: deviceIdSchema,
+  accountId: z.string().uuid().optional(),
   metadata: z
     .object({
       notificationExtensionOnly: z.boolean().optional(),
@@ -123,6 +125,7 @@ export const validateJWTKeys = async () => {
  */
 export const createJwtToken = async (args: {
   deviceId: string;
+  accountId?: string;
   metadata?: V2JWTMetadata;
   expirationTime?: string;
 }) => {
@@ -149,6 +152,10 @@ export const createJwtToken = async (args: {
   const payload: V2JWTPayload = {
     deviceId,
   };
+
+  if (args.accountId) {
+    payload.accountId = args.accountId;
+  }
 
   // Add metadata if provided
   if (args.metadata) {
