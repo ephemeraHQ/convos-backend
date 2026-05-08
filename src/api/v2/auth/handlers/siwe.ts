@@ -24,6 +24,9 @@ export async function verifySiwe(args: {
     throw new InvalidSiweError("parse");
   }
 
+  // Defense-in-depth: siwe v3's @spruceid/siwe-parser ABNF rejects non-v1
+  // at constructor time (caught above as "parse"). Keep this branch in
+  // case a future siwe minor loosens parser strictness.
   if (msg.version !== "1") throw new InvalidSiweError("version");
   if (msg.domain !== SIWE_DOMAIN) throw new InvalidSiweError("domain");
   if (msg.nonce !== args.expectedNonce) throw new InvalidSiweError("nonce");
@@ -60,6 +63,10 @@ export async function verifySiwe(args: {
 
   let result;
   try {
+    // EOA-only by design: do NOT pass `opts.provider`. Doing so would enable
+    // the EIP-1271 contract-wallet fallback path inside the siwe library,
+    // which validates via on-chain contract call instead of EOA signature
+    // recovery — a different trust model than the rest of this auth flow.
     result = await msg.verify({
       signature: args.signature,
       nonce: args.expectedNonce,
