@@ -57,7 +57,8 @@ describe("POST /auth/token (legacy + SIWE)", () => {
       .send({ deviceId: "dev-legacy" });
 
     expect(res.status).toBe(200);
-    const payload = await verifyJwtToken({ token: res.body.token });
+    const body = res.body as { token: string };
+    const payload = await verifyJwtToken({ token: body.token });
     expect(payload.deviceId).toBe("dev-legacy");
     expect(payload.accountId).toBeUndefined();
   });
@@ -77,7 +78,8 @@ describe("POST /auth/token (legacy + SIWE)", () => {
       });
 
     expect(res.status).toBe(200);
-    const payload = await verifyJwtToken({ token: res.body.token });
+    const body = res.body as { token: string };
+    const payload = await verifyJwtToken({ token: body.token });
     expect(payload.deviceId).toBe("dev-siwe");
     expect(payload.accountId).toMatch(
       /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
@@ -88,7 +90,10 @@ describe("POST /auth/token (legacy + SIWE)", () => {
     });
     expect(method).not.toBeNull();
 
-    const setCookie = res.headers["set-cookie"];
+    const setCookie = res.headers["set-cookie"] as
+      | string[]
+      | string
+      | undefined;
     const clearStr = Array.isArray(setCookie) ? setCookie[0] : setCookie;
     expect(clearStr).toContain("Max-Age=0");
   });

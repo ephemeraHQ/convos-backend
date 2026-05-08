@@ -1,4 +1,4 @@
-import { AuthMethodType } from "@prisma/client";
+import type { AuthMethodType } from "@prisma/client";
 import { prisma } from "@/utils/prisma";
 
 export async function upsertAuthMethodAndAccount(args: {

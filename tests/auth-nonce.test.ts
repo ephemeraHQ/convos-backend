@@ -22,7 +22,10 @@ describe("POST /auth/nonce", () => {
       .set("X-Firebase-AppCheck", "valid-app-check-token");
 
     expect(res.status).toBe(200);
-    const setCookie = res.headers["set-cookie"];
+    const setCookie = res.headers["set-cookie"] as
+      | string[]
+      | string
+      | undefined;
     expect(setCookie).toBeTruthy();
     const cookieStr = Array.isArray(setCookie) ? setCookie[0] : setCookie;
     expect(cookieStr).toMatch(/^__Host-convos_nonce=/);
