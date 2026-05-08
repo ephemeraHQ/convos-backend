@@ -78,6 +78,7 @@ export const authMiddleware = async (
   try {
     const payload = await verifyJwtToken({ token: authToken });
     res.locals.deviceId = payload.deviceId;
+    res.locals.accountId = payload.accountId;
     res.locals.jwtMetadata = payload.metadata;
 
     // Reject NSE tokens - they can only use auth-check endpoint
@@ -138,6 +139,7 @@ export const authMiddlewareAllowNSE = async (
   try {
     const payload = await verifyJwtToken({ token: authToken });
     res.locals.deviceId = payload.deviceId;
+    res.locals.accountId = payload.accountId;
     res.locals.jwtMetadata = payload.metadata;
 
     // Defense in depth: restrict NSE tokens to whitelisted paths
@@ -170,4 +172,16 @@ export const authMiddlewareAllowNSE = async (
     res.status(401).json({ error: "Invalid auth token" });
     return;
   }
+};
+
+export const requireAccount = (
+  _req: Request,
+  res: Response,
+  next: NextFunction,
+) => {
+  if (!res.locals.accountId) {
+    res.status(403).json({ error: "Account required" });
+    return;
+  }
+  next();
 };
