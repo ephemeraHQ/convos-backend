@@ -1,6 +1,8 @@
 # Templates and Builder Migration
 
 > **Status:** Locked **Owner:** @saul **Created:** 2026-05-06 **Source spec:** internal design doc "Move assistant generation and templates from pool to convos-backend"
+>
+> **Post-merge update (2026-05-08):** Re-stacked on `fbac/authentication-api` (Borja's auth PR #194). Account model now uses UUID primary keys (`@db.Uuid` with `gen_random_uuid()`) instead of `acct_`-prefixed strings. The `acct_admin` seed row uses a deterministic UUID `48a05ef4-4a71-57a0-957f-a3d410992b31` (exported as `ADMIN_ACCOUNT_ID` from `@/utils/prefixed-id`). All `ownerAccountId` references updated accordingly.
 
 ## Locked Deviations from the Spec
 
