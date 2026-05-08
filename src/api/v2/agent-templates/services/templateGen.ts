@@ -985,4 +985,35 @@ export function parseTemplateResponse(
   };
 }
 
+// ---------------------------------------------------------------------------
+// Test seam — allows tests to override generateTemplate at the singleton seam
+// (mirrors the __resetComposioServiceForTests pattern in connections).
+// ---------------------------------------------------------------------------
+
+let _generateTemplateOverride:
+  | ((input: GenerateTemplateInput | string) => Promise<GeneratedTemplate>)
+  | null = null;
+
+/** Install a test override for `generateTemplate`. Pass `null` to restore. */
+export function __resetGenerateTemplateForTests(
+  override:
+    | ((input: GenerateTemplateInput | string) => Promise<GeneratedTemplate>)
+    | null,
+) {
+  _generateTemplateOverride = override;
+}
+
+/**
+ * Dispatch function used by the handler — calls the override if installed,
+ * otherwise delegates to the real `generateTemplate`.
+ */
+export async function callGenerateTemplate(
+  input: GenerateTemplateInput | string,
+): Promise<GeneratedTemplate> {
+  if (_generateTemplateOverride) {
+    return _generateTemplateOverride(input);
+  }
+  return generateTemplate(input);
+}
+
 export { BREVITY_RAIL };
