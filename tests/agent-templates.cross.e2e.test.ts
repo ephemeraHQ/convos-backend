@@ -22,6 +22,7 @@ import {
   DEFAULT_TEST_METRICS,
   type GeneratedTemplate,
 } from "@/api/v2/agent-templates/services/templateGen";
+import { ADMIN_ACCOUNT_ID } from "@/utils/prefixed-id";
 import { prisma } from "@/utils/prisma";
 import {
   createTemplate,
@@ -69,7 +70,7 @@ const mockGenerate = () => {
 const cleanupTemplates = () =>
   prisma.agentTemplate.deleteMany({
     where: {
-      ownerAccountId: "acct_admin",
+      ownerAccountId: ADMIN_ACCOUNT_ID,
       slug: { startsWith: "cross-e2e-" },
     },
   });
@@ -143,7 +144,7 @@ describe("Cross-area E2E: Generate → Create → Publish → List → Hashed-sl
     expect(createResponse.status).toBe(201);
     expect(created.object).toBe("agent_template");
     expect((created.id as string).startsWith("tmpl_")).toBe(true);
-    expect(created.ownerAccountId).toBe("acct_admin");
+    expect(created.ownerAccountId).toBe(ADMIN_ACCOUNT_ID);
     expect(created.status).toBe("draft");
     expect(created.version).toBe(1);
     expect(created.firstPublishedAt).toBeNull();
