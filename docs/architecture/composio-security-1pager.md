@@ -40,22 +40,44 @@ The agent contract stays the same across phases — only Backend internals chang
 
 ## Identifier alignment (the missing link)
 
-Today there's no link between a Convos user's grants and Composio's connections:
-- iOS ↔ Backend uses `deviceId` (iOS `identifierForVendor`, encoded in the JWT).
-- Backend ↔ Composio passes `deviceId` verbatim as Composio's `userId`.
-- Conversation ↔ agent uses XMTP `inboxId` — the sender of `capability_request_result`.
+Today there are four silos with no link between them:
+- **device/auth:** `deviceId` (iOS `identifierForVendor`, encoded in the JWT).
+- **messaging:** `inboxId` (XMTP — sender of conversations).
+- **Composio API:** `userId`, populated today with `deviceId`.
+- **payments foundations:** `inboxId`.
 
-The agent only ever has `inboxId`; the Backend only ever has `deviceId`. There's no mapping anywhere — JWT has no inboxId field, no Backend table reconciles them. Today this works only because iOS handles both sides of its own flow; the moment an agent is the caller, the link breaks.
+The agent only ever has `inboxId` (from the XMTP envelope sender); the Backend only ever has `deviceId` (from the JWT). There's no mapping anywhere — JWT has no inboxId field, no Backend table reconciles them. Today this works only because iOS handles both sides of its own flow; the moment an agent is the caller, the link breaks.
 
-**Recommended fix: switch Composio's `userId` to `inboxId`, with a fallback window.**
+**Recommended fix: switch Composio's `userId` to `accountId` from the new auth API.**
 
-- iOS sends `inboxId` to the Backend on connection calls (header or JWT metadata).
-- Backend uses `inboxId` as Composio's `userId` for all *new* OAuth flows.
-- Backend's `exec` endpoint accepts `inboxId` from the agent — same identifier the agent already has from the XMTP message sender.
-- For existing connections (keyed under `deviceId` in Composio), Backend falls back to `deviceId` lookup if `inboxId` returns no result. Users naturally migrate when they re-OAuth, no forced action.
-- Side benefit: incidentally fixes a latent multi-device bug. Today, the same user on two devices = two Composio "users" and two separate OAuths.
+The new auth API ([Borja's design](https://xmtp-labs.slack.com/archives/C0ASWCMS0N9/), summarized below) introduces `accountId` as the unifying identifier across device/auth, messaging, payments, and Composio. SIWE / Google / Apple / X / mail auth methods all federate to one `accountId`; one `accountId` maps to N `inboxId` via an `XmtpInbox` object that proves ownership.
 
-**Alternative considered:** a `deviceId ↔ inboxId` mapping table on the Backend. Avoids any Composio-side migration but adds a schema model, a registration step, and 1:N ambiguity for users with multiple installs. The fallback-window approach gets us the same end state without those costs.
+Why `accountId` beats the simpler "use `inboxId`" cut:
+
+- **Inbox recovery survives.** `inboxId` changes on key rotation / lost device; `accountId` persists. Composio connections shouldn't churn on inbox changes.
+- **Multi-inbox per user.** Users will have multiple inboxes (work/personal, etc.); their connections shouldn't fragment across inboxes.
+- **Auth-method federation.** A Composio connection isn't tied to whichever auth method the user happened to sign in with.
+- **Multi-device for free.** Same human on two devices = one Composio user. The latent multi-device bug iOS has today goes away by construction.
+
+Concretely:
+- Backend uses `accountId` (read from the JWT) as Composio's `userId` for all new OAuth flows.
+- Backend's `exec` endpoint accepts `inboxId` from the agent — same identifier the agent already has from the XMTP envelope — then resolves `inboxId → accountId` via `XmtpInbox` before forwarding to Composio. Agent contract stays simple ("here's whose inbox I'm acting on behalf of"), Backend does the resolution.
+- For existing connections keyed on `deviceId` in Composio, Backend falls back to `deviceId` lookup if `accountId` returns no result. Users migrate naturally on re-OAuth, no forced action.
+
+**Sequencing:** Composio MVP-1 should land **after** (or alongside) the new auth API, not before. Otherwise we'd cut over from `deviceId` to `inboxId` in MVP-1 and then to `accountId` once auth ships — two migrations for nothing. Gate MVP-1 on `accountId` being in JWTs first.
+
+**Open question for the auth API:** the agent → Backend.exec call hits `XmtpInbox` resolution on every invocation. Worth confirming that proof-of-ownership lookup is cheap per-call (or cacheable per-conversation).
+
+**Alternative considered:** a `deviceId ↔ inboxId` mapping table on the Backend without going through `accountId`. Cheaper short-term but doesn't solve inbox recovery, multi-inbox, federation, or multi-device. The auth API gives us the right structural answer once.
+
+## Orthogonal: per-agent grant scoping ([convos-ios#812](https://github.com/xmtplabs/convos-ios/pull/812))
+
+Per-agent gating lives at the messaging layer keyed on agent `inboxId` (which agent owns the grant in this conversation). Composio's `userId` is the data owner (`accountId`). Two independent axes:
+
+- **#812** — iOS resolver enforces "agent X's grant ≠ agent Y's grant" via `grantedToInboxId` on `CapabilityResolution`, `ConnectionEnablement`, `CloudConnectionGrant`, plus `askerInboxId` on `CapabilityRequest`.
+- **This doc** — Backend's `exec` endpoint forwards to Composio with `userId: accountId`, where `accountId` is the data owner.
+
+Both should land. They don't conflict.
 
 ## Why not the alternatives
 
@@ -80,5 +102,6 @@ The agent only ever has `inboxId`; the Backend only ever has `deviceId`. There's
 ## Why this aligns with what we already shipped
 
 - iOS PRs (`#796`, `#797`) already issue grants tagged with `(provider, capability, conversationId)` and post `connection_event` revocations. These are the inputs the Backend re-checks before any tool execution.
+- iOS PR `#812` adds per-agent grant scoping (`grantedToInboxId`, `askerInboxId`). Composes naturally with this doc: per-agent gating at the messaging layer, per-account data scoping at Composio.
 - `convos-assistants#1484` already relays `connection_event.revoked` into the model as a system message. When the Backend rejects an `exec` because a grant was just revoked, the model already has the context to explain why.
 - No iOS changes needed regardless of the model chosen. The picker UI and the consent semantics are framework-agnostic.
