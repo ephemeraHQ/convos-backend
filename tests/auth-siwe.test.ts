@@ -28,6 +28,18 @@ async function buildMessage(
   return { messageStr, signature, address: wallet.address.toLowerCase() };
 }
 
+async function expectInvalidSiwe(
+  args: Parameters<typeof verifySiwe>[0],
+): Promise<void> {
+  let caught: unknown;
+  try {
+    await verifySiwe(args);
+  } catch (err) {
+    caught = err;
+  }
+  expect(caught).toBeInstanceOf(InvalidSiweError);
+}
+
 describe("verifySiwe", () => {
   test("happy path returns lowercased address", async () => {
     const { messageStr, signature, address } = await buildMessage();
@@ -44,52 +56,44 @@ describe("verifySiwe", () => {
     const { messageStr, signature } = await buildMessage({
       domain: "evil.app",
     });
-    await expect(
-      verifySiwe({
-        message: messageStr,
-        signature,
-        expectedNonce: NONCE,
-        now: NOW,
-      }),
-    ).rejects.toBeInstanceOf(InvalidSiweError);
+    await expectInvalidSiwe({
+      message: messageStr,
+      signature,
+      expectedNonce: NONCE,
+      now: NOW,
+    });
   });
 
   test("rejects when nonce mismatches", async () => {
     const { messageStr, signature } = await buildMessage();
-    await expect(
-      verifySiwe({
-        message: messageStr,
-        signature,
-        expectedNonce: "00".repeat(32),
-        now: NOW,
-      }),
-    ).rejects.toBeInstanceOf(InvalidSiweError);
+    await expectInvalidSiwe({
+      message: messageStr,
+      signature,
+      expectedNonce: "00".repeat(32),
+      now: NOW,
+    });
   });
 
   test("rejects when chainId not in allowlist", async () => {
     const { messageStr, signature } = await buildMessage({ chainId: 137 });
-    await expect(
-      verifySiwe({
-        message: messageStr,
-        signature,
-        expectedNonce: NONCE,
-        now: NOW,
-      }),
-    ).rejects.toBeInstanceOf(InvalidSiweError);
+    await expectInvalidSiwe({
+      message: messageStr,
+      signature,
+      expectedNonce: NONCE,
+      now: NOW,
+    });
   });
 
   test("rejects when uri mismatches", async () => {
     const { messageStr, signature } = await buildMessage({
       uri: "https://evil.app",
     });
-    await expect(
-      verifySiwe({
-        message: messageStr,
-        signature,
-        expectedNonce: NONCE,
-        now: NOW,
-      }),
-    ).rejects.toBeInstanceOf(InvalidSiweError);
+    await expectInvalidSiwe({
+      message: messageStr,
+      signature,
+      expectedNonce: NONCE,
+      now: NOW,
+    });
   });
 
   test("rejects when version is not 1", async () => {
@@ -101,97 +105,83 @@ describe("verifySiwe", () => {
     const { messageStr } = await buildMessage();
     const tampered = messageStr.replace("Version: 1", "Version: 2");
     const signature = await wallet.signMessage(tampered);
-    await expect(
-      verifySiwe({
-        message: tampered,
-        signature,
-        expectedNonce: NONCE,
-        now: NOW,
-      }),
-    ).rejects.toBeInstanceOf(InvalidSiweError);
+    await expectInvalidSiwe({
+      message: tampered,
+      signature,
+      expectedNonce: NONCE,
+      now: NOW,
+    });
   });
 
   test("rejects when expirationTime missing", async () => {
     const { messageStr, signature } = await buildMessage({
       expirationTime: undefined,
     });
-    await expect(
-      verifySiwe({
-        message: messageStr,
-        signature,
-        expectedNonce: NONCE,
-        now: NOW,
-      }),
-    ).rejects.toBeInstanceOf(InvalidSiweError);
+    await expectInvalidSiwe({
+      message: messageStr,
+      signature,
+      expectedNonce: NONCE,
+      now: NOW,
+    });
   });
 
   test("rejects when expirationTime in the past", async () => {
     const { messageStr, signature } = await buildMessage({
       expirationTime: new Date(NOW.getTime() - 60_000).toISOString(),
     });
-    await expect(
-      verifySiwe({
-        message: messageStr,
-        signature,
-        expectedNonce: NONCE,
-        now: NOW,
-      }),
-    ).rejects.toBeInstanceOf(InvalidSiweError);
+    await expectInvalidSiwe({
+      message: messageStr,
+      signature,
+      expectedNonce: NONCE,
+      now: NOW,
+    });
   });
 
   test("rejects when expirationTime more than 10 minutes in future", async () => {
     const { messageStr, signature } = await buildMessage({
       expirationTime: new Date(NOW.getTime() + 11 * 60_000).toISOString(),
     });
-    await expect(
-      verifySiwe({
-        message: messageStr,
-        signature,
-        expectedNonce: NONCE,
-        now: NOW,
-      }),
-    ).rejects.toBeInstanceOf(InvalidSiweError);
+    await expectInvalidSiwe({
+      message: messageStr,
+      signature,
+      expectedNonce: NONCE,
+      now: NOW,
+    });
   });
 
   test("rejects when issuedAt skew exceeds 5 minutes", async () => {
     const { messageStr, signature } = await buildMessage({
       issuedAt: new Date(NOW.getTime() - 6 * 60_000).toISOString(),
     });
-    await expect(
-      verifySiwe({
-        message: messageStr,
-        signature,
-        expectedNonce: NONCE,
-        now: NOW,
-      }),
-    ).rejects.toBeInstanceOf(InvalidSiweError);
+    await expectInvalidSiwe({
+      message: messageStr,
+      signature,
+      expectedNonce: NONCE,
+      now: NOW,
+    });
   });
 
   test("rejects when notBefore is in the future", async () => {
     const { messageStr, signature } = await buildMessage({
       notBefore: new Date(NOW.getTime() + 60_000).toISOString(),
     });
-    await expect(
-      verifySiwe({
-        message: messageStr,
-        signature,
-        expectedNonce: NONCE,
-        now: NOW,
-      }),
-    ).rejects.toBeInstanceOf(InvalidSiweError);
+    await expectInvalidSiwe({
+      message: messageStr,
+      signature,
+      expectedNonce: NONCE,
+      now: NOW,
+    });
   });
 
   test("rejects bad signature (signed by different key)", async () => {
     const { messageStr } = await buildMessage();
     const otherWallet = new Wallet("0x" + "2".repeat(64));
     const badSig = await otherWallet.signMessage(messageStr);
-    await expect(
-      verifySiwe({
-        message: messageStr,
-        signature: badSig,
-        expectedNonce: NONCE,
-        now: NOW,
-      }),
-    ).rejects.toBeInstanceOf(InvalidSiweError);
+    await expectInvalidSiwe({
+      message: messageStr,
+      signature: badSig,
+      expectedNonce: NONCE,
+      now: NOW,
+    });
   });
 });

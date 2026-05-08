@@ -58,7 +58,8 @@ export async function generateToken(
 
   if (body.siwe) {
     // 3a. Read & verify nonce cookie (HMAC)
-    const cookieValue = req.cookies?.[NONCE_COOKIE_NAME];
+    const cookies = req.cookies as Record<string, string | undefined>;
+    const cookieValue = cookies[NONCE_COOKIE_NAME];
     const nonce = readNonceFromCookie(cookieValue);
     if (!nonce) {
       res.status(401).json({ error: "Invalid nonce" });

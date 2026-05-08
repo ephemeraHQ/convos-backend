@@ -11,7 +11,7 @@ export async function sweepNonces(): Promise<void> {
 
 export function startNonceSweep() {
   const handle = setInterval(() => {
-    sweepNonces().catch((err) => {
+    sweepNonces().catch((err: unknown) => {
       logger.warn({ err }, "AuthNonce sweep failed");
     });
   }, NONCE_SWEEP_INTERVAL_MS);

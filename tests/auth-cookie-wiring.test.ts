@@ -8,7 +8,7 @@ describe("cookie-parser wiring smoke", () => {
     const app = express();
     app.use(cookieParser());
     app.get("/echo", (req, res) => {
-      res.json({ cookies: req.cookies });
+      res.json({ cookies: req.cookies as Record<string, string> });
     });
 
     const res = await request(app).get("/echo").set("Cookie", "x=hello");

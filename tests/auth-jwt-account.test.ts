@@ -33,6 +33,16 @@ describe("V2JWTPayload accountId widening", () => {
     const payload = await verifyJwtToken({ token });
     expect(payload.deviceId).toBe("dev-3");
     expect(payload.accountId).toBe("22222222-2222-2222-2222-222222222222");
-    expect((payload as any).somethingNew).toBeUndefined();
+    expect((payload as Record<string, unknown>).somethingNew).toBeUndefined();
+  });
+
+  test("NSE tokens never carry accountId (regression)", async () => {
+    const token = await createJwtToken({
+      deviceId: "dev-nse",
+      metadata: { notificationExtensionOnly: true },
+    });
+    const payload = await verifyJwtToken({ token });
+    expect(payload.metadata?.notificationExtensionOnly).toBe(true);
+    expect(payload.accountId).toBeUndefined();
   });
 });
