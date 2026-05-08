@@ -139,13 +139,13 @@ const createWithAutoSlug = async (args: {
 }) => {
   const baseSlug = deriveSlugFromAgentName(args.body.agentName);
   const baseValidation = validateSlug(baseSlug);
-  if (!baseValidation.valid && baseValidation.reason !== "reserved") {
+  if (!baseValidation.valid) {
     sendSlugValidationError(args.res, baseValidation);
     return null;
   }
 
   // attempt 0 → bare base slug; attempt 2+ → baseSlug-N (skip -1)
-  const startAttempt = baseValidation.valid ? 0 : 2;
+  const startAttempt = 0;
 
   for (
     let attempt = startAttempt;

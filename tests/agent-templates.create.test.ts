@@ -201,14 +201,37 @@ describe("Agent template create endpoint", () => {
     expect(rows.map((row) => row.slug)).toEqual(slugs);
   });
 
-  test("suffixes reserved auto-derived slugs and rejects reserved explicit slugs", async () => {
+  test("rejects auto-derived reserved slugs with 400 and rejects reserved explicit slugs", async () => {
+    // Auto-derived slug from agentName='Generate' → baseSlug='generate' (reserved)
+    // Server MUST reject with 400 RESERVED_SLUG, NOT silently suffix to 'generate-2'
     const autoReserved = await createTemplate({
       agentName: "Generate",
-      prompt: "Should create a safe generate-derived slug",
+      prompt: "Should be rejected because auto-derived slug is reserved",
     });
-    expect(autoReserved.response.status).toBe(201);
-    expect(autoReserved.body.slug).toBe("generate-2");
+    expect(autoReserved.response.status).toBe(400);
+    expect(autoReserved.body.error).toMatchObject({ code: "RESERVED_SLUG" });
 
+    // All seven reserved words as auto-derived slugs must be rejected
+    for (const word of [
+      "generate",
+      "publish",
+      "fork",
+      "search",
+      "files",
+      "templates",
+      "skills",
+    ]) {
+      const agentName = word[0].toUpperCase() + word.slice(1);
+      const { body, response } = await createTemplate({
+        agentName,
+        prompt: "Should be rejected because auto-derived slug is reserved",
+      });
+
+      expect(response.status).toBe(400);
+      expect(body.error).toMatchObject({ code: "RESERVED_SLUG" });
+    }
+
+    // Explicit reserved slugs are also rejected
     for (const slug of [
       "generate",
       "publish",
@@ -228,7 +251,8 @@ describe("Agent template create endpoint", () => {
       expect(body.error).toMatchObject({ code: "RESERVED_SLUG" });
     }
 
-    expect(await countCreateTestTemplates()).toBe(1);
+    // No rows created for any reserved-slug attempt
+    expect(await countCreateTestTemplates()).toBe(0);
   });
 
   test("rejects invalid user-supplied slugs and preserves row count", async () => {

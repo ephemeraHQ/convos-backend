@@ -7,7 +7,6 @@ import {
   test,
 } from "bun:test";
 import { prisma } from "@/utils/prisma";
-import { RESERVED_SLUGS, SLUG_REGEX } from "@/utils/reserved-slugs";
 import { buildSlug } from "@/utils/slug-hash";
 import {
   createTemplate,
@@ -113,23 +112,19 @@ describe("Agent template cross slug flow", () => {
     expect(crossAliased.response.status).toBe(404);
   });
 
-  test("auto-derived reserved words are suffixed and remain valid slugs", async () => {
+  test("auto-derived reserved words are rejected with 400 RESERVED_SLUG", async () => {
     for (const word of reservedWords) {
       const agentName = word[0].toUpperCase() + word.slice(1);
       const created = await createTemplate({
         baseURL,
         body: {
           agentName,
-          prompt: `Reserved word ${word} should auto-suffix`,
+          prompt: `Reserved word ${word} should be rejected`,
         },
       });
 
-      expect(created.response.status).toBe(201);
-      expect(typeof created.body.slug).toBe("string");
-      expect(created.body.slug).not.toBe(word);
-      expect(RESERVED_SLUGS.has(created.body.slug as string)).toBe(false);
-      expect(SLUG_REGEX.test(created.body.slug as string)).toBe(true);
-      expect((created.body.slug as string).length).toBeLessThanOrEqual(64);
+      expect(created.response.status).toBe(400);
+      expect(created.body.error).toMatchObject({ code: "RESERVED_SLUG" });
     }
   });
 
