@@ -101,6 +101,7 @@ model Account {
 
   authMethods    AuthMethod[]
   agentTemplates AgentTemplate[]
+  createJobs     CreateJob[]
 }
 
 enum PublishStatus {
@@ -162,4 +163,28 @@ enum AuthMethodType {
 model AuthNonce {
   nonce     String   @id
   createdAt DateTime @default(now())
+}
+
+enum CreateJobStatus {
+  pending
+  generating
+  provisioning
+  done
+  failed
+}
+
+model CreateJob {
+  id             String          @id @default(uuid())
+  status         CreateJobStatus @default(value: pending)
+  input          String
+  ownerAccountId String          @db.Uuid
+  result         String?
+  error          String?
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+  expiresAt      DateTime?
+
+  owner Account @relation(fields: [ownerAccountId], references: [id])
+
+  @@index([status, createdAt])
 }
