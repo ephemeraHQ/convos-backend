@@ -3,6 +3,7 @@ import cookieParser from "cookie-parser";
 import cors from "cors";
 import express from "express";
 import helmet from "helmet";
+import { startNonceSweep } from "@/api/v2/auth/sweep";
 import apiRouter from "./api";
 import { IS_DEVELOPMENT } from "./config";
 import { errorHandlerMiddleware } from "./middleware/errorHandler";
@@ -77,6 +78,8 @@ validateJWTKeys()
           logger.info(`Available at: http://${ip}:${port}`);
         });
       }
+
+      startNonceSweep();
     });
 
     process.on("SIGTERM", () => {
