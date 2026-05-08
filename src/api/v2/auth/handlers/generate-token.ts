@@ -1,26 +1,26 @@
+import { AuthMethodType } from "@prisma/client";
 import type { Request, Response } from "express";
 import { z } from "zod";
+import { upsertAuthMethodAndAccount } from "@/accounts/repository";
+import { consumeNonce } from "@/api/v2/auth/auth-nonce.repository";
+import { InvalidSiweError, verifySiwe } from "@/api/v2/auth/handlers/siwe";
+import {
+  NONCE_COOKIE_CLEAR_FLAGS,
+  NONCE_COOKIE_NAME,
+  readNonceFromCookie,
+} from "@/api/v2/auth/nonce-cookie";
 import { deviceIdSchema } from "@/utils/device-id";
 import { createJwtToken } from "@/utils/jwt";
 import { prisma } from "@/utils/prisma";
 
-/**
- * Token Generation Security Model
- *
- * This endpoint generates short-lived JWT tokens for NSE/Gateway authentication:
- *
- * 1. The outer authMiddleware validates the request using Firebase AppCheck,
- *    which verifies the request originates from a legitimate app instance.
- * 2. AppCheck validation is sufficient to prove device ownership.
- * 3. Device does NOT need to be registered yet - token generation works independently.
- * 4. If device is registered and disabled, token generation is rejected.
- * 5. Rate limiting prevents token exhaustion attacks.
- * 6. Tokens are short-lived (15 minutes) to limit exposure window.
- * 7. The JWT contains only deviceId - handlers receive clientId in request bodies.
- */
+const siweSchema = z.object({
+  message: z.string().min(1),
+  signature: z.string().min(1),
+});
 
 const generateTokenRequestSchema = z.object({
   deviceId: deviceIdSchema,
+  siwe: siweSchema.optional(),
 });
 
 export type IGenerateTokenRequestBody = z.infer<
@@ -31,45 +31,95 @@ export async function generateToken(
   req: Request<unknown, unknown, IGenerateTokenRequestBody>,
   res: Response,
 ) {
-  try {
-    const body = generateTokenRequestSchema.parse(req.body);
+  // 1. Body parse
+  const parsed = generateTokenRequestSchema.safeParse(req.body);
+  if (!parsed.success) {
+    req.log.warn({ errors: parsed.error.errors }, "Invalid /auth/token body");
+    res.status(400).json({ error: "Invalid request body" });
+    return;
+  }
+  const body = parsed.data;
+  req.log.info(
+    { deviceId: body.deviceId, hasSiwe: !!body.siwe },
+    "Generating token",
+  );
 
-    req.log.info({ deviceId: body.deviceId }, "Generating token");
+  // 2. Device-disabled check (before any nonce consumption)
+  const device = await prisma.deviceRegistration.findUnique({
+    where: { deviceId: body.deviceId },
+  });
+  if (device?.disabled) {
+    req.log.warn({ deviceId: body.deviceId }, "Device is disabled");
+    res.status(403).json({ error: "Device is disabled" });
+    return;
+  }
 
-    // Check if device is registered and disabled
-    const device = await prisma.deviceRegistration.findUnique({
-      where: { deviceId: body.deviceId },
-    });
+  let accountId: string | undefined;
 
-    if (device?.disabled) {
-      req.log.warn({ deviceId: body.deviceId }, "Device is disabled");
-      res.status(403).json({ error: "Device is disabled" });
+  if (body.siwe) {
+    // 3a. Read & verify nonce cookie (HMAC)
+    const cookieValue = req.cookies?.[NONCE_COOKIE_NAME];
+    const nonce = readNonceFromCookie(cookieValue);
+    if (!nonce) {
+      res.status(401).json({ error: "Invalid nonce" });
       return;
     }
 
-    // Generate JWT, this works even if device not registered yet
-    const token = await createJwtToken({
+    // 3b. Atomic single-use consume
+    const consumed = await consumeNonce(nonce);
+    if (!consumed) {
+      res.status(401).json({ error: "Invalid nonce" });
+      return;
+    }
+
+    // 3c. Verify SIWE message + signature
+    let address: string;
+    try {
+      const result = await verifySiwe({
+        message: body.siwe.message,
+        signature: body.siwe.signature,
+        expectedNonce: nonce,
+        now: new Date(),
+      });
+      address = result.address;
+    } catch (err) {
+      if (err instanceof InvalidSiweError) {
+        req.log.warn({ reason: err.reason }, "SIWE verification failed");
+        res.status(401).json({ error: "Invalid SIWE" });
+        return;
+      }
+      throw err;
+    }
+
+    // 3d. Upsert Account + AuthMethod
+    const upserted = await upsertAuthMethodAndAccount({
+      type: AuthMethodType.SIWE,
+      externalKey: address,
+    });
+    accountId = upserted.accountId;
+  }
+
+  // 4. Mint JWT
+  let token: string;
+  try {
+    token = await createJwtToken({
       deviceId: body.deviceId,
+      accountId,
       expirationTime: "15m",
     });
-
-    req.log.info(
-      { deviceId: body.deviceId, deviceRegistered: !!device },
-      "Token generated successfully",
-    );
-    res.json({ token });
-    return;
-  } catch (error) {
-    if (error instanceof z.ZodError) {
-      req.log.warn(
-        { errors: error.errors },
-        "Invalid request body for generate-token",
-      );
-      res.status(400).json({ error: "Invalid request body" });
-      return;
-    }
-    req.log.error({ error }, "Failed to generate token");
+  } catch (err) {
+    req.log.error({ err }, "Failed to mint JWT");
     res.status(500).json({ error: "Failed to generate token" });
     return;
   }
+
+  // 5. Clear nonce cookie on successful SIWE upgrade
+  if (body.siwe) {
+    res.setHeader(
+      "Set-Cookie",
+      `${NONCE_COOKIE_NAME}=; ${NONCE_COOKIE_CLEAR_FLAGS}`,
+    );
+  }
+
+  res.json({ token });
 }
