@@ -51,16 +51,25 @@ if (!process.env.SIWE_DOMAIN) {
 if (!process.env.SIWE_URI) {
   throw new Error("SIWE_URI is not configured");
 }
-if (!process.env.NONCE_HMAC_SECRET || process.env.NONCE_HMAC_SECRET.length < 32) {
+if (!process.env.NONCE_HMAC_SECRET || process.env.NONCE_HMAC_SECRET.length < 64) {
   throw new Error(
-    "NONCE_HMAC_SECRET is not configured or too short (need >= 32 chars)",
+    "NONCE_HMAC_SECRET is not configured or too short (need >= 64 chars / 32 bytes hex)",
   );
 }
 
 const parsedChainIds = (process.env.SIWE_ALLOWED_CHAIN_IDS || "1")
   .split(",")
-  .map((s) => Number(s.trim()))
-  .filter((n) => Number.isFinite(n));
+  .map((s) => s.trim())
+  .filter((s) => s.length > 0)
+  .map((s) => {
+    const n = Number(s);
+    if (!Number.isInteger(n) || n <= 0) {
+      throw new Error(
+        `SIWE_ALLOWED_CHAIN_IDS contains invalid chain id: "${s}"`,
+      );
+    }
+    return n;
+  });
 if (parsedChainIds.length === 0) {
   throw new Error("SIWE_ALLOWED_CHAIN_IDS must contain at least one chain id");
 }
