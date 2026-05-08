@@ -201,14 +201,13 @@ describe("Agent template create endpoint", () => {
     expect(rows.map((row) => row.slug)).toEqual(slugs);
   });
 
-  test("rejects reserved auto-derived and explicit slugs", async () => {
+  test("suffixes reserved auto-derived slugs and rejects reserved explicit slugs", async () => {
     const autoReserved = await createTemplate({
       agentName: "Generate",
-      prompt: "Should not create a generate slug",
+      prompt: "Should create a safe generate-derived slug",
     });
-    expect(autoReserved.response.status).toBe(400);
-    expect(autoReserved.body.error).toMatchObject({ code: "RESERVED_SLUG" });
-    expect(await countCreateTestTemplates()).toBe(0);
+    expect(autoReserved.response.status).toBe(201);
+    expect(autoReserved.body.slug).toBe("generate-2");
 
     for (const slug of [
       "generate",
@@ -229,7 +228,7 @@ describe("Agent template create endpoint", () => {
       expect(body.error).toMatchObject({ code: "RESERVED_SLUG" });
     }
 
-    expect(await countCreateTestTemplates()).toBe(0);
+    expect(await countCreateTestTemplates()).toBe(1);
   });
 
   test("rejects invalid user-supplied slugs and preserves row count", async () => {
