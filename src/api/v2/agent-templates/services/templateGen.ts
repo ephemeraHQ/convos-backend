@@ -1,0 +1,988 @@
+/**
+ * Template generation service — port of pool/src/services/skillGen.ts.
+ *
+ * URL detection → GitHub-passthrough → Exa/oEmbed/raw fetch →
+ * content-classifier passthrough → main LLM call.
+ * PDFs/images go straight to the multimodal call.
+ * Text truncated to MAX_CONTENT_LENGTH = 10_000.
+ * BREVITY_RAIL appended only on the production-LLM path (NOT on passthrough —
+ * pool's asymmetry preserved verbatim).
+ *
+ * OpenRouter raw fetch to https://openrouter.ai/api/v1/chat/completions with
+ * strict response_format json_schema, temp 0.7, no max_tokens.
+ * Helper calls (GitHub-instructions selector, content-classifier) at temp 0.2
+ * without response_format.
+ *
+ * Soft defaults for non-name fields. Server-injects connections: [].
+ */
+
+/* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-return, @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-argument */
+
+import { SYSTEM_PROMPT } from "../lib/system-prompt";
+
+// ---------------------------------------------------------------------------
+// Constants
+// ---------------------------------------------------------------------------
+
+const MAX_CONTENT_LENGTH = 10_000;
+const DEFAULT_MODEL = "@preset/assistants-pro";
+
+/** Read the model from env at call time so BUILDER_MODEL override works. */
+function getModel(): string {
+  return process.env.BUILDER_MODEL || DEFAULT_MODEL;
+}
+
+// Appended to every generated template prompt (and to the passthrough rail)
+// so the brevity + artifact-escape reminder sits at the trailing edge of the
+// prompt, where the model's attention lands when drafting a reply. Runtime
+// BREVITY.md handles the per-turn rail; this duplicates the rule inside the
+// template definition itself because generated templates are long (BRAIN /
+// SOUL / HEART / SCHEDULE + worked examples) and drown out the earlier rail.
+const BREVITY_RAIL = `## Runtime Reminder
+
+Chat replies appear as push notifications on members' phones. Hard cap: 3 sentences, plain text — no markdown, bullets, headers, or links. When the answer is reference-worthy (plan, guide, comparison, itinerary, summary, rundown, breakdown), write a file to your workspace and send it with MEDIA:./filename.html — Convos artifacts are HTML, never .md, and you must run the \`artifact\` skill before writing any .html file (it owns the design system: DESIGN.md, Note vs Table, head-meta, light/dark). The 3-sentence cap applies to the short chat message next to the artifact, not the file itself. Default to a single short paragraph. If two thoughts truly need to land apart, separate them with a **blank line** (double line break, \`\\n\\n\`) — a single newline glues them into one bubble, which is almost never what you want.`;
+
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
+
+export interface GeneratedTemplate {
+  agentName: string;
+  description: string;
+  prompt: string;
+  category: string;
+  emoji: string;
+  tools: string[];
+  connections: string[];
+}
+
+export interface GenerateTemplateInput {
+  /** What the user typed in the composer. When sent alone, URL-shaped
+   *  text is auto-extracted; everything else flows through the standard
+   *  text generation path. When sent alongside a file (pdfBase64 /
+   *  imageBase64), the file is the source material and `text` is the
+   *  user's intent / directive about how to use it. The HTTP route
+   *  handler coalesces legacy `idea` / `content` / `url` fields from
+   *  older clients into this single field at the API boundary. */
+  text?: string;
+  /** Base64-encoded PDF content. */
+  pdfBase64?: string;
+  /** Base64-encoded image content. */
+  imageBase64?: string;
+  /** MIME type for images (e.g. "image/png"). */
+  mimeType?: string;
+  /** Optional filename for the uploaded document. */
+  filename?: string;
+}
+
+// ---------------------------------------------------------------------------
+// Brevity rail helper — exported for testing
+// ---------------------------------------------------------------------------
+
+/** Append the Runtime Reminder rail to a generated template's prompt. Exported for testing. */
+export function appendBrevityRail(
+  template: GeneratedTemplate,
+): GeneratedTemplate {
+  return {
+    ...template,
+    prompt: `${template.prompt}\n\n---\n\n${BREVITY_RAIL}`,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// URL detection — exported for tests
+// ---------------------------------------------------------------------------
+
+/** Detect a URL-shaped text input. Trimmed leading/trailing whitespace
+ *  to be tolerant of pasted content. Exported for tests. */
+export function looksLikeUrl(text: string): boolean {
+  return /^https?:\/\//i.test(text.trim());
+}
+
+// ---------------------------------------------------------------------------
+// URL extraction helpers
+// ---------------------------------------------------------------------------
+
+/** Check if a URL is an X/Twitter post. */
+function isTwitterUrl(url: string): boolean {
+  return /^https?:\/\/(x\.com|twitter\.com)\/\w+\/status\/\d+/i.test(url);
+}
+
+/** Extract content from a URL using Exa's /contents API. */
+async function extractViaExa(url: string): Promise<string> {
+  const exaKey = process.env.EXA_SERVICE_KEY;
+  if (!exaKey) {
+    throw new Error("EXA_SERVICE_KEY not configured");
+  }
+
+  const res = await fetch("https://api.exa.ai/contents", {
+    method: "POST",
+    headers: {
+      "x-api-key": exaKey,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ urls: [url], text: true }),
+    signal: AbortSignal.timeout(30_000),
+  });
+
+  if (!res.ok) {
+    const errText = await res.text();
+    console.error(
+      "[templateGen] Exa error:",
+      res.status,
+      errText.slice(0, 300),
+    );
+    throw new Error(`Exa content extraction failed (${res.status})`);
+  }
+
+  const data = (await res.json()) as any;
+  const result = data?.results?.[0];
+  if (!result?.text) {
+    throw new Error("Exa returned no content for this URL");
+  }
+  return result.text;
+}
+
+/** Extract tweet content via oEmbed, following any embedded links. */
+async function extractViaTweetOEmbed(url: string): Promise<string> {
+  const oembedUrl = `https://publish.twitter.com/oembed?url=${encodeURIComponent(url)}`;
+  const res = await fetch(oembedUrl, { signal: AbortSignal.timeout(10_000) });
+  if (!res.ok) throw new Error(`Twitter oEmbed failed (${res.status})`);
+
+  const data = (await res.json()) as any;
+  const author = data.author_name || "";
+  const tweetText = (data.html || "")
+    .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, "")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&mdash;/g, "—")
+    .replace(/&amp;/g, "&")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  // Follow any t.co links and enrich with linked page content
+  const tcoLinks = (data.html || "").match(/https?:\/\/t\.co\/\w+/g) || [];
+  let linkedContent = "";
+  for (const tco of tcoLinks.slice(0, 3)) {
+    try {
+      const redirectRes = await fetch(tco, {
+        redirect: "follow",
+        signal: AbortSignal.timeout(5_000),
+      });
+      const realUrl = redirectRes.url;
+      if (isTwitterUrl(realUrl)) continue;
+      try {
+        const pageContent = await extractViaExa(realUrl);
+        linkedContent += `\n\n--- Linked content from ${realUrl} ---\n${pageContent}`;
+      } catch {
+        // skip
+      }
+    } catch {
+      // skip
+    }
+  }
+
+  const parts = [`Tweet by ${author}:\n${tweetText}`];
+  if (linkedContent) parts.push(linkedContent);
+  return parts.join("\n");
+}
+
+// ---------------------------------------------------------------------------
+// GitHub repo detection — agent install instructions passthrough
+// ---------------------------------------------------------------------------
+
+/**
+ * Parse a GitHub URL.
+ *
+ * Recognises both repo roots (`/owner/repo`) and file-blob URLs
+ * (`/owner/repo/blob/<branch>/<path>`). When `filePath` is set, the caller
+ * should fetch that file directly instead of asking an LLM to pick something
+ * out of the repo tree.
+ */
+function parseGithubRepoUrl(
+  url: string,
+): { owner: string; repo: string; branch?: string; filePath?: string } | null {
+  try {
+    const u = new URL(url);
+    if (!/^(www\.)?github\.com$/i.test(u.hostname)) return null;
+    const parts = u.pathname.split("/").filter(Boolean);
+    if (parts.length < 2) return null;
+    const owner = parts[0];
+    const repo = parts[1].replace(/\.git$/, "");
+    if (!/^[\w.-]+$/.test(owner) || !/^[\w.-]+$/.test(repo)) return null;
+
+    // /owner/repo/blob/<branch>/<...path> — direct file link.
+    if (parts[2] === "blob" && parts.length >= 5) {
+      return {
+        owner,
+        repo,
+        branch: parts[3],
+        filePath: parts.slice(4).join("/"),
+      };
+    }
+
+    return { owner, repo };
+  } catch {
+    return null;
+  }
+}
+
+async function githubApiGet(path: string): Promise<any> {
+  const res = await fetch(`https://api.github.com${path}`, {
+    headers: {
+      "User-Agent": "Convos-TemplateGen/1.0",
+      Accept: "application/vnd.github+json",
+      "X-GitHub-Api-Version": "2022-11-28",
+    },
+    signal: AbortSignal.timeout(15_000),
+  });
+  if (!res.ok) {
+    throw new Error(`GitHub API ${path} returned ${res.status}`);
+  }
+  return res.json();
+}
+
+/** Fetch the raw content of a file in a repo at its default branch. */
+async function githubFetchRaw(
+  owner: string,
+  repo: string,
+  branch: string,
+  path: string,
+): Promise<string> {
+  const url = `https://raw.githubusercontent.com/${owner}/${repo}/${branch}/${path}`;
+  const res = await fetch(url, { signal: AbortSignal.timeout(15_000) });
+  if (!res.ok) throw new Error(`Failed to fetch ${url} (${res.status})`);
+  return res.text();
+}
+
+type PassthroughType = "install-instructions" | "skill-definition";
+
+interface PassthroughMetadata {
+  agentName: string;
+  emoji: string;
+  description: string;
+  category: string;
+}
+
+/** Wrap raw agent-oriented content with a Convos runtime preamble and return a GeneratedTemplate. */
+function wrapAsPassthroughTemplate(
+  rawContent: string,
+  metadata: PassthroughMetadata,
+  type: PassthroughType,
+): GeneratedTemplate {
+  const rails = `## Convos Runtime Context
+
+You are running inside a Convos group chat, not a standalone terminal session.
+
+- Do not mention framework names (Hermes, OpenClaw, Claude, etc.) — you are a Convos agent.
+- Ask the user for any secrets (API keys, tokens). Never hardcode or persist them anywhere shared.`;
+
+  const typeSpecific =
+    type === "install-instructions"
+      ? `
+- Your terminal, file, and code_execution tools are available to perform clone/install/configure steps described above.
+- Follow the instructions above on first message. Report progress concisely (one line per step). When setup is complete, say "Setup done — what would you like to work on?" and wait for the user.`
+      : `
+- The content above is your full behavioral brief — adopt that identity and follow those instructions throughout the conversation.`;
+
+  const prompt = `${rawContent}
+
+---
+
+${rails}${typeSpecific}
+
+${BREVITY_RAIL}`;
+
+  return {
+    agentName: metadata.agentName,
+    description: metadata.description,
+    prompt,
+    category: metadata.category,
+    emoji: metadata.emoji,
+    tools: ["Search", "Browse", "Schedule"],
+    connections: [],
+  };
+}
+
+interface GithubInstructionSelection {
+  hasAgentInstructions: boolean;
+  passthroughType: PassthroughType | null;
+  instructionsPath: string | null;
+  embeddedContent: string | null;
+  agentName: string | null;
+  emoji: string | null;
+  description: string | null;
+  category: string | null;
+}
+
+/** Ask the LLM to locate agent install instructions in a repo and produce metadata. */
+async function selectInstructionsViaLLM(
+  owner: string,
+  repo: string,
+  repoDescription: string,
+  tree: string[],
+  readme: string,
+): Promise<GithubInstructionSelection | null> {
+  const apiKey = process.env.BUILDER_OPENROUTER_API_KEY;
+  if (!apiKey) return null;
+
+  const filteredTree = tree
+    .filter((p) => {
+      if (p.endsWith("/")) return false;
+      const lower = p.toLowerCase();
+      if (
+        lower.endsWith(".md") ||
+        lower.endsWith(".mdx") ||
+        lower.endsWith(".txt")
+      )
+        return true;
+      if (
+        lower.includes("agent") ||
+        lower.includes("claude") ||
+        lower.includes("ai")
+      )
+        return true;
+      if (
+        lower.endsWith(".yml") ||
+        lower.endsWith(".yaml") ||
+        lower.endsWith(".json")
+      )
+        return true;
+      return false;
+    })
+    .slice(0, 100);
+
+  const truncatedReadme = readme.slice(0, 5_000);
+
+  const selectorPrompt = `You are analyzing a GitHub repo to determine if it ships agent-ready content that should be used VERBATIM as the prompt for a new AI agent — not as source material to generate a new agent from.
+
+Repo: ${owner}/${repo}
+Description: ${repoDescription || "(none)"}
+
+Relevant files in the repo:
+${filteredTree.map((p) => `- ${p}`).join("\n")}
+
+README.md excerpt:
+---
+${truncatedReadme}
+---
+
+TASK — decide if the repo ships one of TWO kinds of agent-ready content, and if so, locate it:
+
+Type A — install-instructions: setup choreography addressed to an AI agent
+- Typical files: INSTALL_FOR_AGENTS.md, AGENTS.md, AI_SETUP.md, CLAUDE.md, .claude/instructions.md, docs/agents.md
+- Or an embedded README section like "## For AI Agents", "## Installation (for agents)", "## Agent Setup"
+- Contains steps like git clone, npm/bun install, API key setup, skill adoption — addressed TO an agent ("Read this, then follow the steps", "Ask the user for X")
+- NOT a generic user/developer install guide
+
+Type B — skill-definition: a complete system prompt already written for an agent
+- Typical files: SKILL.md, skills/*/SKILL.md, a standalone system prompt markdown
+- Often has YAML frontmatter with name: and description:
+- Written as direct instructions to an AI ("You are...", "You must...", "Your job is to...")
+- Could also be an existing Convos-style skill with BRAIN/SOUL/HEART sections
+
+If you find either kind, also produce metadata based on the README + repo:
+- agentName: a creative memorable name derived from the repo (e.g. "garrytan/gbrain" → "GBrain 🧠" style)
+- emoji: single emoji that fits
+- description: 1-2 sentence third-person description
+- category: one of: Sports & Rec, Travel & Adventures, Food & Dining, Events & Occasions, Hobbies & Interests, Entertainment & Culture, Music & Creative, Kids & Family, Wellness & Fitness, Money & Investing, Work, Local, Superpowers
+
+Respond with ONLY a JSON object (no markdown fences, no explanation):
+
+{
+  "hasAgentInstructions": true|false,
+  "passthroughType": "install-instructions" | "skill-definition" | null,
+  "instructionsPath": "path/to/file.md" | null,
+  "embeddedContent": "the exact extracted section text if embedded in README (including headers)" | null,
+  "agentName": string | null,
+  "emoji": string | null,
+  "description": string | null,
+  "category": string | null
+}
+
+Rules:
+- If hasAgentInstructions is false, all other fields MUST be null.
+- Prefer instructionsPath over embeddedContent when a dedicated file exists.
+- Never return both instructionsPath and embeddedContent — pick one.
+- If you're unsure whether content is "for agents" vs "source material about a topic", lean toward false. Better to fall back to generation than to pass through a human-oriented README.`;
+
+  const t0 = performance.now();
+  const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model: getModel(),
+      messages: [{ role: "user", content: selectorPrompt }],
+      temperature: 0.2,
+    }),
+  });
+
+  if (!res.ok) {
+    const body = await res.text();
+    console.error(
+      "[templateGen] GitHub selector LLM error:",
+      res.status,
+      body.slice(0, 300),
+    );
+    return null;
+  }
+
+  const data = (await res.json()) as any;
+  console.log(
+    `[templateGen] selectInstructions ok: model=${data?.model}, latencyMs=${Math.round(performance.now() - t0)}, prompt=${data?.usage?.prompt_tokens}, completion=${data?.usage?.completion_tokens}`,
+  );
+  const content = data?.choices?.[0]?.message?.content;
+  if (!content) return null;
+
+  try {
+    const cleaned = content
+      .replace(/^```json?\s*/i, "")
+      .replace(/\s*```$/i, "")
+      .trim();
+    const parsed = JSON.parse(cleaned);
+    return parsed as GithubInstructionSelection;
+  } catch {
+    const match = content.match(/\{[\s\S]*"hasAgentInstructions"[\s\S]*\}/);
+    if (match) {
+      try {
+        return JSON.parse(match[0]) as GithubInstructionSelection;
+      } catch {
+        /* fall through */
+      }
+    }
+    console.error(
+      "[templateGen] Failed to parse GitHub selector response:",
+      content.slice(0, 300),
+    );
+    return null;
+  }
+}
+
+/**
+ * For a GitHub repo URL, detect if the repo ships agent install instructions and
+ * return a ready-to-use template with those instructions as the prompt. Returns null
+ * if the repo doesn't have such instructions — caller should fall back to normal
+ * content-based generation.
+ */
+async function tryGithubPassthrough(
+  url: string,
+): Promise<GeneratedTemplate | null> {
+  const parsed = parseGithubRepoUrl(url);
+  if (!parsed) return null;
+  const { owner, repo, filePath, branch: explicitBranch } = parsed;
+
+  // Direct file link: fetch the raw file and run it through
+  // tryContentPassthrough so the user-selected file is used verbatim.
+  if (filePath) {
+    const branch = explicitBranch || "main";
+    let content: string;
+    try {
+      content = await githubFetchRaw(owner, repo, branch, filePath);
+    } catch (err: any) {
+      console.error(
+        `[templateGen] Failed to fetch ${owner}/${repo}/${filePath}:`,
+        err.message,
+      );
+      return null;
+    }
+    return await tryContentPassthrough(content);
+  }
+
+  let repoInfo: any;
+  try {
+    repoInfo = await githubApiGet(`/repos/${owner}/${repo}`);
+  } catch (err: any) {
+    console.error("[templateGen] GitHub repo lookup failed:", err.message);
+    return null;
+  }
+
+  const branch = repoInfo.default_branch || "main";
+  const repoDescription = repoInfo.description || "";
+
+  // Fetch tree + README in parallel
+  let tree: string[] = [];
+  let readme = "";
+  try {
+    const [treeData, readmeRaw] = await Promise.all([
+      githubApiGet(`/repos/${owner}/${repo}/git/trees/${branch}?recursive=1`),
+      githubFetchRaw(owner, repo, branch, "README.md").catch(() => ""),
+    ]);
+    tree = (treeData.tree || []).map((t: any) => t.path).filter(Boolean);
+    readme = readmeRaw;
+  } catch (err: any) {
+    console.error("[templateGen] Failed to fetch repo tree:", err.message);
+    return null;
+  }
+
+  // Ask LLM to locate agent instructions + produce metadata
+  const selection = await selectInstructionsViaLLM(
+    owner,
+    repo,
+    repoDescription,
+    tree,
+    readme,
+  );
+  if (!selection?.hasAgentInstructions) return null;
+
+  // Resolve the instruction content
+  let instructions: string;
+  if (selection.instructionsPath) {
+    try {
+      instructions = await githubFetchRaw(
+        owner,
+        repo,
+        branch,
+        selection.instructionsPath,
+      );
+    } catch (err: any) {
+      console.error(
+        `[templateGen] Failed to fetch ${selection.instructionsPath}:`,
+        err.message,
+      );
+      return null;
+    }
+  } else if (selection.embeddedContent) {
+    instructions = selection.embeddedContent;
+  } else {
+    return null;
+  }
+
+  const type: PassthroughType =
+    selection.passthroughType === "skill-definition"
+      ? "skill-definition"
+      : "install-instructions";
+
+  return wrapAsPassthroughTemplate(
+    instructions,
+    {
+      agentName: selection.agentName || repo,
+      description:
+        selection.description ||
+        repoDescription ||
+        `Assistant based on ${owner}/${repo}.`,
+      category: selection.category || "Work",
+      emoji: selection.emoji || "📦",
+    },
+    type,
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Pasted content passthrough — detect when user-pasted content IS agent
+// instructions or a skill definition, and use it verbatim
+// ---------------------------------------------------------------------------
+
+const PASSTHROUGH_MIN_LENGTH = 300;
+
+interface ContentPassthroughResult {
+  isPassthrough: boolean;
+  passthroughType: PassthroughType | null;
+  agentName: string | null;
+  emoji: string | null;
+  description: string | null;
+  category: string | null;
+}
+
+/** Classify pasted content: is it agent-ready, or source material to generate from? */
+async function classifyPastedContent(
+  content: string,
+): Promise<ContentPassthroughResult | null> {
+  const apiKey = process.env.BUILDER_OPENROUTER_API_KEY;
+  if (!apiKey) return null;
+
+  const truncated = content.slice(0, 8_000);
+
+  const classifierPrompt = `You are classifying pasted text to decide if it should be used VERBATIM as the prompt for a new AI agent, or treated as source material to design an agent from.
+
+Pasted content:
+---
+${truncated}
+---
+
+Two kinds of content count as "passthrough" (use verbatim, do not re-generate):
+
+Type A — install-instructions: setup choreography addressed to an AI agent
+- Second-person language: "Read this, then follow the steps", "Ask the user for API keys"
+- Setup commands: git clone, npm install, bun install, export env vars
+- Agent workflow: clone → install → configure → adopt skills → report progress
+- Clearly addressed to an AI, not to a human developer
+
+Type B — skill-definition: a complete system prompt already written for an agent
+- Often has YAML frontmatter with name: and description:
+- Direct instructions to an AI: "You are...", "You must...", "Your job is to..."
+- Section headers like BRAIN/SOUL/HEART, or THE HOOK, or rules/behavior definitions
+- A ready-to-use agent definition, not content ABOUT a topic
+
+Anything else is "source material" — an article, essay, README-for-humans, product spec, book excerpt, etc. — and should NOT be passthrough. For those, return false.
+
+If passthrough, also produce metadata:
+- agentName: memorable name derived from the content
+- emoji: single emoji that fits
+- description: 1-2 sentence third-person description
+- category: one of: Sports & Rec, Travel & Adventures, Food & Dining, Events & Occasions, Hobbies & Interests, Entertainment & Culture, Music & Creative, Kids & Family, Wellness & Fitness, Money & Investing, Work, Local, Superpowers
+
+Respond with ONLY a JSON object (no markdown fences, no explanation):
+
+{
+  "isPassthrough": true|false,
+  "passthroughType": "install-instructions" | "skill-definition" | null,
+  "agentName": string | null,
+  "emoji": string | null,
+  "description": string | null,
+  "category": string | null
+}
+
+Rules:
+- If isPassthrough is false, all other fields MUST be null.
+- When ambiguous, lean toward false. Better to over-generate than over-passthrough.
+- The content must be READY-TO-USE as an agent prompt on its own — if it's merely ABOUT agents or references them in passing, that's false.`;
+
+  const t0 = performance.now();
+  const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model: getModel(),
+      messages: [{ role: "user", content: classifierPrompt }],
+      temperature: 0.2,
+    }),
+  });
+
+  if (!res.ok) {
+    const body = await res.text();
+    console.error(
+      "[templateGen] Content classifier error:",
+      res.status,
+      body.slice(0, 300),
+    );
+    return null;
+  }
+
+  const data = (await res.json()) as any;
+  console.log(
+    `[templateGen] classifyContent ok: model=${data?.model}, latencyMs=${Math.round(performance.now() - t0)}, prompt=${data?.usage?.prompt_tokens}, completion=${data?.usage?.completion_tokens}`,
+  );
+  const content_response = data?.choices?.[0]?.message?.content;
+  if (!content_response) return null;
+
+  try {
+    const cleaned = content_response
+      .replace(/^```json?\s*/i, "")
+      .replace(/\s*```$/i, "")
+      .trim();
+    return JSON.parse(cleaned) as ContentPassthroughResult;
+  } catch {
+    const match = content_response.match(/\{[\s\S]*"isPassthrough"[\s\S]*\}/);
+    if (match) {
+      try {
+        return JSON.parse(match[0]) as ContentPassthroughResult;
+      } catch {
+        /* fall through */
+      }
+    }
+    console.error(
+      "[templateGen] Failed to parse classifier response:",
+      content_response.slice(0, 300),
+    );
+    return null;
+  }
+}
+
+/**
+ * For pasted text content, detect if it IS agent install instructions or a
+ * skill definition, and if so return a ready-to-use template using the content
+ * verbatim as the prompt. Returns null if the content is source material —
+ * caller should fall back to normal content-based generation.
+ */
+async function tryContentPassthrough(
+  content: string,
+): Promise<GeneratedTemplate | null> {
+  if (content.length < PASSTHROUGH_MIN_LENGTH) return null;
+
+  const classification = await classifyPastedContent(content);
+  if (!classification?.isPassthrough || !classification.passthroughType)
+    return null;
+
+  return wrapAsPassthroughTemplate(
+    content,
+    {
+      agentName: classification.agentName || "Assistant",
+      description: classification.description || "A Convos assistant.",
+      category: classification.category || "Work",
+      emoji: classification.emoji || "🤖",
+    },
+    classification.passthroughType,
+  );
+}
+
+/** Extract content with fallback chain: Twitter oEmbed → Exa → direct fetch. */
+async function extractUrl(url: string): Promise<string> {
+  if (isTwitterUrl(url)) {
+    try {
+      return await extractViaTweetOEmbed(url);
+    } catch (err: any) {
+      console.error("[templateGen] Tweet oEmbed failed:", err.message);
+    }
+  }
+
+  try {
+    return await extractViaExa(url);
+  } catch (err: any) {
+    console.error(
+      "[templateGen] Exa failed, trying direct fetch:",
+      err.message,
+    );
+  }
+
+  const res = await fetch(url, {
+    headers: { "User-Agent": "Mozilla/5.0 (compatible; Convos/1.0)" },
+    signal: AbortSignal.timeout(10_000),
+  });
+  if (!res.ok) throw new Error(`Failed to fetch URL (${res.status})`);
+
+  const raw = await res.text();
+  const ct = res.headers.get("content-type") || "";
+  if (ct.includes("text/html")) {
+    const text = raw
+      .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, "")
+      .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, "")
+      .replace(/<[^>]*>/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+    if (!text || text.length < 50) throw new Error("Could not extract content");
+    return text;
+  }
+  return raw;
+}
+
+// ---------------------------------------------------------------------------
+// Generation
+// ---------------------------------------------------------------------------
+
+/**
+ * Generate a template definition from any input type — short idea, long content,
+ * URL (extracted via Exa/oEmbed), PDF (native OpenRouter), or image (vision).
+ */
+export async function generateTemplate(
+  input: GenerateTemplateInput | string,
+): Promise<GeneratedTemplate> {
+  // Backward compat: string input = text
+  const opts: GenerateTemplateInput =
+    typeof input === "string" ? { text: input } : input;
+
+  const apiKey = process.env.BUILDER_OPENROUTER_API_KEY;
+  if (!apiKey) {
+    throw new Error("BUILDER_OPENROUTER_API_KEY not configured");
+  }
+  if (!SYSTEM_PROMPT) {
+    throw new Error("Template generator system prompt not loaded");
+  }
+
+  // For file paths (image / pdf), the user's typed text is a directive
+  // about how to USE the material. Empty when only a file is attached.
+  const intentText = (opts.text || "").trim();
+  const intentNote = intentText ? `\n\nUser's intent: ${intentText}` : "";
+
+  let userContent: any;
+  const model = getModel();
+
+  if (opts.imageBase64) {
+    // Image path: send as image_url for vision models
+    const mime = opts.mimeType || "image/png";
+    userContent = [
+      {
+        type: "text",
+        text: `Create an assistant based on what you see in this image. Infer the topic, purpose, and audience from the visual content.${intentNote}`,
+      },
+      {
+        type: "image_url",
+        image_url: { url: `data:${mime};base64,${opts.imageBase64}` },
+      },
+    ];
+  } else if (opts.pdfBase64) {
+    // PDF path: native support via OpenRouter
+    const filename = opts.filename || "document.pdf";
+    userContent = [
+      {
+        type: "text",
+        text: `Create an assistant based on the content of this PDF document.${intentNote}`,
+      },
+      {
+        type: "file",
+        file: {
+          filename,
+          file_data: `data:application/pdf;base64,${opts.pdfBase64}`,
+        },
+      },
+    ];
+  } else {
+    // Text path: idea, content, or URL
+    let extracted = intentText;
+
+    if (intentText && looksLikeUrl(intentText)) {
+      const url = intentText.trim();
+      try {
+        new URL(url);
+      } catch {
+        throw new Error("Invalid URL");
+      }
+
+      // For GitHub repo URLs, first try to detect + pass through agent install
+      // instructions. If found, short-circuit: the instructions IS the prompt.
+      const githubTemplate = await tryGithubPassthrough(url);
+      if (githubTemplate) return githubTemplate;
+
+      extracted = await extractUrl(url);
+    }
+
+    if (!extracted.trim()) {
+      throw new Error("No content extracted");
+    }
+
+    // Before running full generation, classify the extracted text — if it's
+    // already an agent install guide or skill definition, use it verbatim.
+    const passthroughTemplate = await tryContentPassthrough(extracted);
+    if (passthroughTemplate) return passthroughTemplate;
+
+    if (extracted.length > MAX_CONTENT_LENGTH) {
+      extracted = extracted.slice(0, MAX_CONTENT_LENGTH);
+    }
+
+    userContent = `Create an assistant based on the following content:\n\n---\n${extracted}\n---`;
+  }
+
+  const reqBody: any = {
+    model,
+    messages: [
+      { role: "system", content: SYSTEM_PROMPT },
+      { role: "user", content: userContent },
+    ],
+    temperature: 0.7,
+    // Force strict JSON output matching the GeneratedTemplate shape. The system
+    // prompt is rich with inner quotes (dialogue examples, markdown, quoted
+    // phrases) so at temp 0.7 the model occasionally emits an unescaped `"`
+    // mid-string and breaks JSON.parse. json_schema mode is OpenRouter's
+    // first-class structured-output feature and enforces both shape and
+    // valid JSON at the provider level.
+    response_format: {
+      type: "json_schema",
+      json_schema: {
+        name: "generated_template",
+        strict: true,
+        schema: {
+          type: "object",
+          properties: {
+            prompt: { type: "string" },
+            agentName: { type: "string" },
+            emoji: { type: "string" },
+            description: { type: "string" },
+            category: { type: "string" },
+            tools: { type: "array", items: { type: "string" } },
+          },
+          required: [
+            "prompt",
+            "agentName",
+            "emoji",
+            "description",
+            "category",
+            "tools",
+          ],
+          additionalProperties: false,
+        },
+      },
+    },
+  };
+
+  const t0 = performance.now();
+  const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(reqBody),
+  });
+
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(
+      `OpenRouter API error ${res.status}: ${body.slice(0, 500)}`,
+    );
+  }
+
+  const data = (await res.json()) as any;
+  console.log(
+    `[templateGen] generate ok: model=${data?.model}, latencyMs=${Math.round(performance.now() - t0)}, prompt=${data?.usage?.prompt_tokens}, completion=${data?.usage?.completion_tokens}`,
+  );
+
+  if (data?.error) {
+    throw new Error(`LLM error: ${data.error.message || "unknown"}`);
+  }
+
+  const content = data?.choices?.[0]?.message?.content;
+  if (!content) {
+    console.error(
+      "[templateGen] Empty LLM response:",
+      JSON.stringify(data).slice(0, 500),
+    );
+    throw new Error("No content in LLM response");
+  }
+
+  const parsed = parseTemplateResponse(content);
+  // Server-injects connections: [] on every successful return
+  const withConnections = { ...parsed, connections: [] as string[] };
+  return appendBrevityRail(withConnections);
+}
+
+/** Parse and validate LLM response into a GeneratedTemplate. Exported for testing. */
+export function parseTemplateResponse(
+  content: string,
+): Omit<GeneratedTemplate, "connections"> {
+  let parsed: any;
+  try {
+    const cleaned = content
+      .replace(/^```json?\s*/i, "")
+      .replace(/\s*```$/i, "")
+      .trim();
+    parsed = JSON.parse(cleaned);
+  } catch {
+    // Fallback: extract JSON block containing agentName
+    const match = content.match(/\{[\s\S]*"agentName"[\s\S]*\}/);
+    if (!match) {
+      throw new Error(
+        `Failed to parse LLM response as JSON: ${content.slice(0, 200)}`,
+      );
+    }
+    try {
+      parsed = JSON.parse(match[0]);
+    } catch {
+      throw new Error(
+        `Failed to parse extracted JSON: ${match[0].slice(0, 200)}`,
+      );
+    }
+  }
+
+  if (
+    !parsed.agentName ||
+    typeof parsed.agentName !== "string" ||
+    parsed.agentName.trim() === ""
+  ) {
+    throw new Error("LLM response missing agentName");
+  }
+
+  return {
+    agentName: parsed.agentName,
+    description: parsed.description || "",
+    prompt: parsed.prompt || "",
+    category: parsed.category || "",
+    emoji: parsed.emoji || "",
+    tools: Array.isArray(parsed.tools) ? parsed.tools : [],
+  };
+}
+
+export { BREVITY_RAIL };
