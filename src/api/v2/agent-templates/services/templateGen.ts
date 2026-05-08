@@ -27,8 +27,9 @@ import { SYSTEM_PROMPT } from "../lib/system-prompt";
 const MAX_CONTENT_LENGTH = 10_000;
 const DEFAULT_MODEL = "@preset/assistants-pro";
 
-/** Read the model from env at call time so BUILDER_MODEL override works. */
-function getModel(): string {
+/** Read the model from env at call time so BUILDER_MODEL override works.
+ *  Exported for the generate handler (needed for error-path PostHog metrics). */
+export function getModel(): string {
   return process.env.BUILDER_MODEL || DEFAULT_MODEL;
 }
 
@@ -55,6 +56,28 @@ export interface GeneratedTemplate {
   tools: string[];
   connections: string[];
 }
+
+/** Metrics from the OpenRouter LLM call — used for PostHog metering. */
+export interface GenerationMetrics {
+  model: string;
+  promptTokens: number;
+  completionTokens: number;
+  latencyMs: number;
+}
+
+/** Return type for `callGenerateTemplate` — template + LLM metrics. */
+export interface GenerationResult {
+  template: GeneratedTemplate;
+  metrics: GenerationMetrics;
+}
+
+/** Convenience constant for test mocks — realistic placeholder metrics. */
+export const DEFAULT_TEST_METRICS: GenerationMetrics = {
+  model: "@preset/assistants-pro",
+  promptTokens: 100,
+  completionTokens: 200,
+  latencyMs: 1500,
+};
 
 export interface GenerateTemplateInput {
   /** What the user typed in the composer. When sent alone, URL-shaped
@@ -770,7 +793,7 @@ async function extractUrl(url: string): Promise<string> {
  */
 export async function generateTemplate(
   input: GenerateTemplateInput | string,
-): Promise<GeneratedTemplate> {
+): Promise<GenerationResult> {
   // Backward compat: string input = text
   const opts: GenerateTemplateInput =
     typeof input === "string" ? { text: input } : input;
@@ -782,6 +805,9 @@ export async function generateTemplate(
   if (!SYSTEM_PROMPT) {
     throw new Error("Template generator system prompt not loaded");
   }
+
+  // Overall timing for all paths (including passthrough)
+  const funcStart = performance.now();
 
   // For file paths (image / pdf), the user's typed text is a directive
   // about how to USE the material. Empty when only a file is attached.
@@ -835,7 +861,16 @@ export async function generateTemplate(
       // For GitHub repo URLs, first try to detect + pass through agent install
       // instructions. If found, short-circuit: the instructions IS the prompt.
       const githubTemplate = await tryGithubPassthrough(url);
-      if (githubTemplate) return githubTemplate;
+      if (githubTemplate)
+        return {
+          template: githubTemplate,
+          metrics: {
+            model: getModel(),
+            promptTokens: 0,
+            completionTokens: 0,
+            latencyMs: Math.round(performance.now() - funcStart),
+          },
+        };
 
       extracted = await extractUrl(url);
     }
@@ -847,7 +882,16 @@ export async function generateTemplate(
     // Before running full generation, classify the extracted text — if it's
     // already an agent install guide or skill definition, use it verbatim.
     const passthroughTemplate = await tryContentPassthrough(extracted);
-    if (passthroughTemplate) return passthroughTemplate;
+    if (passthroughTemplate)
+      return {
+        template: passthroughTemplate,
+        metrics: {
+          model: getModel(),
+          promptTokens: 0,
+          completionTokens: 0,
+          latencyMs: Math.round(performance.now() - funcStart),
+        },
+      };
 
     if (extracted.length > MAX_CONTENT_LENGTH) {
       extracted = extracted.slice(0, MAX_CONTENT_LENGTH);
@@ -916,8 +960,12 @@ export async function generateTemplate(
   }
 
   const data = (await res.json()) as any;
+  const latencyMs = Math.round(performance.now() - t0);
+  const promptTokens = Number(data?.usage?.prompt_tokens ?? 0);
+  const completionTokens = Number(data?.usage?.completion_tokens ?? 0);
+  const responseModel = String(data?.model ?? model);
   console.log(
-    `[templateGen] generate ok: model=${data?.model}, latencyMs=${Math.round(performance.now() - t0)}, prompt=${data?.usage?.prompt_tokens}, completion=${data?.usage?.completion_tokens}`,
+    `[templateGen] generate ok: model=${responseModel}, latencyMs=${latencyMs}, prompt=${promptTokens}, completion=${completionTokens}`,
   );
 
   if (data?.error) {
@@ -936,7 +984,16 @@ export async function generateTemplate(
   const parsed = parseTemplateResponse(content);
   // Server-injects connections: [] on every successful return
   const withConnections = { ...parsed, connections: [] as string[] };
-  return appendBrevityRail(withConnections);
+  const finalTemplate = appendBrevityRail(withConnections);
+  return {
+    template: finalTemplate,
+    metrics: {
+      model: responseModel,
+      promptTokens,
+      completionTokens,
+      latencyMs,
+    },
+  };
 }
 
 /** Parse and validate LLM response into a GeneratedTemplate. Exported for testing. */
@@ -991,13 +1048,13 @@ export function parseTemplateResponse(
 // ---------------------------------------------------------------------------
 
 let _generateTemplateOverride:
-  | ((input: GenerateTemplateInput | string) => Promise<GeneratedTemplate>)
+  | ((input: GenerateTemplateInput | string) => Promise<GenerationResult>)
   | null = null;
 
 /** Install a test override for `generateTemplate`. Pass `null` to restore. */
 export function __resetGenerateTemplateForTests(
   override:
-    | ((input: GenerateTemplateInput | string) => Promise<GeneratedTemplate>)
+    | ((input: GenerateTemplateInput | string) => Promise<GenerationResult>)
     | null,
 ) {
   _generateTemplateOverride = override;
@@ -1009,7 +1066,7 @@ export function __resetGenerateTemplateForTests(
  */
 export async function callGenerateTemplate(
   input: GenerateTemplateInput | string,
-): Promise<GeneratedTemplate> {
+): Promise<GenerationResult> {
   if (_generateTemplateOverride) {
     return _generateTemplateOverride(input);
   }
