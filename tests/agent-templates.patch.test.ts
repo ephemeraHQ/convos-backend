@@ -14,9 +14,12 @@ import { jsonMiddleware } from "@/middleware/json";
 import { noRouteMiddleware } from "@/middleware/noRoute";
 import { pinoMiddleware } from "@/middleware/pino";
 import { createJwtToken } from "@/utils/jwt";
+import { ADMIN_ACCOUNT_ID } from "@/utils/prefixed-id";
 import { prisma } from "@/utils/prisma";
 
 type TemplateBody = Record<string, unknown>;
+
+const OTHER_ACCOUNT_ID = "bbbbbbbb-cccc-4ddd-eeee-ffffffff0001";
 
 const app = express();
 app.use(pinoMiddleware);
@@ -55,7 +58,7 @@ const seedTemplate = async (
     data: {
       id: overrides.id,
       slug: overrides.slug ?? overrides.id.replace(/_/g, "-"),
-      ownerAccountId: overrides.ownerAccountId ?? "acct_admin",
+      ownerAccountId: overrides.ownerAccountId ?? ADMIN_ACCOUNT_ID,
       forkedFromId: overrides.forkedFromId ?? null,
       agentName: overrides.agentName ?? "Patch Test Template",
       description: overrides.description ?? null,
@@ -373,7 +376,7 @@ describe("Agent template patch endpoint", () => {
     });
 
     const result = await patchTemplate(template.id, {
-      ownerAccountId: "acct_other",
+      ownerAccountId: OTHER_ACCOUNT_ID,
       version: 42,
       firstPublishedAt: "2020-01-01T00:00:00.000Z",
       forkedFromId: "tmpl_test_patch_other",
@@ -384,7 +387,7 @@ describe("Agent template patch endpoint", () => {
     expect(result.response.status).toBe(200);
     expect(result.body).toMatchObject({
       id: template.id,
-      ownerAccountId: "acct_admin",
+      ownerAccountId: ADMIN_ACCOUNT_ID,
       version: 3,
       firstPublishedAt: publishedAt.toISOString(),
       forkedFromId: null,
@@ -394,7 +397,7 @@ describe("Agent template patch endpoint", () => {
     const row = await prisma.agentTemplate.findUniqueOrThrow({
       where: { id: template.id },
     });
-    expect(row.ownerAccountId).toBe("acct_admin");
+    expect(row.ownerAccountId).toBe(ADMIN_ACCOUNT_ID);
     expect(row.version).toBe(3);
     expect(row.firstPublishedAt?.toISOString()).toBe(publishedAt.toISOString());
     expect(row.forkedFromId).toBeNull();

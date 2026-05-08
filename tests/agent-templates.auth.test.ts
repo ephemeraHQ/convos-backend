@@ -14,6 +14,7 @@ import { jsonMiddleware } from "@/middleware/json";
 import { noRouteMiddleware } from "@/middleware/noRoute";
 import { pinoMiddleware } from "@/middleware/pino";
 import { createJwtToken } from "@/utils/jwt";
+import { ADMIN_ACCOUNT_ID } from "@/utils/prefixed-id";
 import { prisma } from "@/utils/prisma";
 
 type TemplateBody = Record<string, unknown>;
@@ -35,7 +36,7 @@ const createdAt = new Date("2026-01-31T12:00:00.000Z");
 const cleanupTemplates = () =>
   prisma.agentTemplate.deleteMany({
     where: {
-      ownerAccountId: "acct_admin",
+      ownerAccountId: ADMIN_ACCOUNT_ID,
       OR: [
         { id: { startsWith: "tmpl_test_auth_" } },
         { slug: { startsWith: "auth-test-" } },
@@ -93,7 +94,7 @@ const seedTemplate = async (
     data: {
       id: `tmpl_test_auth_${label}_${kind}`,
       slug: `auth-test-${label}-${kind}`,
-      ownerAccountId: "acct_admin",
+      ownerAccountId: ADMIN_ACCOUNT_ID,
       forkedFromId: null,
       agentName: `Auth Test ${label} ${kind}`,
       description: `initial ${kind}`,
@@ -237,7 +238,7 @@ describe("Agent template write auth", () => {
     ]);
 
     const createBody = (await create.json()) as TemplateBody;
-    expect(createBody.ownerAccountId).toBe("acct_admin");
+    expect(createBody.ownerAccountId).toBe(ADMIN_ACCOUNT_ID);
 
     const patched = await prisma.agentTemplate.findUniqueOrThrow({
       where: { id: patchRow.id },

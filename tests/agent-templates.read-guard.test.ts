@@ -5,6 +5,7 @@ import { afterAll, beforeEach, describe, expect, test } from "bun:test";
 import express, { Router } from "express";
 import { agentTemplatesRouter } from "@/api/v2/agent-templates/agent-templates.router";
 import { noRouteMiddleware } from "@/middleware/noRoute";
+import { ADMIN_ACCOUNT_ID } from "@/utils/prefixed-id";
 import { prisma } from "@/utils/prisma";
 
 type ListEnvelope = {
@@ -29,7 +30,7 @@ const createTemplate = async (
     data: {
       id: overrides.id,
       slug: overrides.slug ?? overrides.id.replace(/_/g, "-"),
-      ownerAccountId: overrides.ownerAccountId ?? "acct_admin",
+      ownerAccountId: overrides.ownerAccountId ?? ADMIN_ACCOUNT_ID,
       forkedFromId: overrides.forkedFromId ?? null,
       agentName: overrides.agentName ?? `Template ${overrides.id}`,
       description: overrides.description ?? null,

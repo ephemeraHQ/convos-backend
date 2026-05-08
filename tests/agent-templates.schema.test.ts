@@ -38,7 +38,7 @@ describe("AgentTemplate schema", () => {
     const requiredFields = [
       /\bid\s+String\s+@id\b/,
       /\bslug\s+String\b/,
-      /\bownerAccountId\s+String\b/,
+      /\bownerAccountId\s+String\s+@db\.Uuid\b/,
       /\bforkedFromId\s+String\?/,
       /\bagentName\s+String\b/,
       /\bdescription\s+String\?/,
@@ -219,7 +219,7 @@ describe("AgentTemplate schema", () => {
         data: {
           id: "tmpl_test_fk_violation",
           slug: "fk-violation",
-          ownerAccountId: "acct_does_not_exist",
+          ownerAccountId: "00000000-0000-0000-0000-000000000000",
           agentName: "FK Violation",
           prompt: "This insert should fail before it is persisted.",
         },

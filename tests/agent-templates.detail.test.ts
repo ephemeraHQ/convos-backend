@@ -11,6 +11,7 @@ import {
 import express from "express";
 import { agentTemplatesRouter } from "@/api/v2/agent-templates/agent-templates.router";
 import { noRouteMiddleware } from "@/middleware/noRoute";
+import { ADMIN_ACCOUNT_ID } from "@/utils/prefixed-id";
 import { prisma } from "@/utils/prisma";
 import { slugHash } from "@/utils/slug-hash";
 
@@ -41,7 +42,7 @@ const createTemplate = async (
     data: {
       id: overrides.id,
       slug,
-      ownerAccountId: overrides.ownerAccountId ?? "acct_admin",
+      ownerAccountId: overrides.ownerAccountId ?? ADMIN_ACCOUNT_ID,
       forkedFromId: overrides.forkedFromId ?? null,
       agentName: overrides.agentName ?? `Template ${overrides.id}`,
       description: overrides.description ?? "A useful template",
@@ -112,7 +113,7 @@ describe("Agent template detail endpoint", () => {
       object: "agent_template",
       id: "tmpl_test_detail_direct",
       slug: "detail-direct",
-      ownerAccountId: "acct_admin",
+      ownerAccountId: ADMIN_ACCOUNT_ID,
       forkedFromId: null,
       agentName: "Template tmpl_test_detail_direct",
       prompt: "Prompt for tmpl_test_detail_direct",
@@ -226,7 +227,7 @@ describe("Agent template detail endpoint", () => {
       "/api/v2/agent-templates/tmpl_test_detail_expand",
     );
     expect(defaultDetail.response.status).toBe(200);
-    expect(defaultDetail.body?.ownerAccountId).toBe("acct_admin");
+    expect(defaultDetail.body?.ownerAccountId).toBe(ADMIN_ACCOUNT_ID);
     expect(defaultDetail.body).not.toHaveProperty("owner");
     expect(defaultDetail.body).not.toHaveProperty("skills");
 
@@ -237,7 +238,7 @@ describe("Agent template detail endpoint", () => {
     expect(ownerExpanded.body).not.toHaveProperty("ownerAccountId");
     const owner = ownerExpanded.body?.owner as Record<string, unknown>;
     expect(owner.object).toBe("account");
-    expect(owner.id).toBe("acct_admin");
+    expect(owner.id).toBe(ADMIN_ACCOUNT_ID);
     expect(owner.createdAt).toEqual(expect.stringMatching(isoTimestampPattern));
     expect(Object.keys(owner).sort()).toEqual(["createdAt", "id", "object"]);
 
@@ -260,7 +261,7 @@ describe("Agent template detail endpoint", () => {
     expect(combined.body).not.toHaveProperty("ownerAccountId");
     expect(combined.body?.owner).toMatchObject({
       object: "account",
-      id: "acct_admin",
+      id: ADMIN_ACCOUNT_ID,
     });
     expect(combined.body?.skills).toEqual([]);
 

@@ -6,6 +6,7 @@ import {
   expect,
   test,
 } from "bun:test";
+import { ADMIN_ACCOUNT_ID } from "@/utils/prefixed-id";
 import { prisma } from "@/utils/prisma";
 import {
   createTemplate,
@@ -23,7 +24,7 @@ let closeServer: () => Promise<void>;
 const cleanupTemplates = () =>
   prisma.agentTemplate.deleteMany({
     where: {
-      ownerAccountId: "acct_admin",
+      ownerAccountId: ADMIN_ACCOUNT_ID,
       OR: [
         { slug: { startsWith: "cross-visibility-" } },
         { agentName: { startsWith: "Cross Visibility" } },

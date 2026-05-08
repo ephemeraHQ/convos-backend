@@ -1,6 +1,7 @@
 import type { Prisma } from "@prisma/client";
 import { afterAll, beforeEach, describe, expect, test } from "bun:test";
 import { resolveAgentTemplateByIdOrHashedSlug } from "@/api/v2/agent-templates/lib/resolve-id-or-hashed-slug";
+import { ADMIN_ACCOUNT_ID } from "@/utils/prefixed-id";
 import { prisma } from "@/utils/prisma";
 import { slugHash } from "@/utils/slug-hash";
 
@@ -31,7 +32,7 @@ const createTemplate = async (
     data: {
       id: overrides.id,
       slug,
-      ownerAccountId: overrides.ownerAccountId ?? "acct_admin",
+      ownerAccountId: overrides.ownerAccountId ?? ADMIN_ACCOUNT_ID,
       forkedFromId: overrides.forkedFromId ?? null,
       agentName: overrides.agentName ?? `Template ${overrides.id}`,
       description: overrides.description ?? null,
@@ -118,7 +119,7 @@ describe("agent template id-or-hashed-slug resolver", () => {
       createTemplate({
         id: "tmpl_test_shared_a",
         slug: "shared",
-        ownerAccountId: "acct_admin",
+        ownerAccountId: ADMIN_ACCOUNT_ID,
       }),
       createTemplate({
         id: "tmpl_test_shared_b",

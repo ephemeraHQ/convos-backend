@@ -14,6 +14,7 @@ import { jsonMiddleware } from "@/middleware/json";
 import { noRouteMiddleware } from "@/middleware/noRoute";
 import { pinoMiddleware } from "@/middleware/pino";
 import { createJwtToken } from "@/utils/jwt";
+import { ADMIN_ACCOUNT_ID } from "@/utils/prefixed-id";
 import { prisma } from "@/utils/prisma";
 
 type TemplateBody = Record<string, unknown>;
@@ -32,7 +33,7 @@ const createdAt = new Date("2026-01-31T12:00:00.000Z");
 const cleanupTemplates = () =>
   prisma.agentTemplate.deleteMany({
     where: {
-      ownerAccountId: "acct_admin",
+      ownerAccountId: ADMIN_ACCOUNT_ID,
       OR: [
         { id: { startsWith: "tmpl_test_delete_" } },
         { slug: { startsWith: "delete-test-" } },
@@ -61,7 +62,7 @@ const seedTemplate = async (
     data: {
       id: overrides.id,
       slug: overrides.slug ?? overrides.id.replace(/_/g, "-"),
-      ownerAccountId: overrides.ownerAccountId ?? "acct_admin",
+      ownerAccountId: overrides.ownerAccountId ?? ADMIN_ACCOUNT_ID,
       forkedFromId: overrides.forkedFromId ?? null,
       agentName: overrides.agentName ?? "Delete Test Template",
       description: overrides.description ?? null,
@@ -264,7 +265,7 @@ describe("Agent template delete endpoint", () => {
     expect(second.body.slug).toBe("delete-test-reuse");
     expect(
       await prisma.agentTemplate.count({
-        where: { ownerAccountId: "acct_admin", slug: "delete-test-reuse" },
+        where: { ownerAccountId: ADMIN_ACCOUNT_ID, slug: "delete-test-reuse" },
       }),
     ).toBe(1);
   });
