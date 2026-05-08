@@ -11,8 +11,10 @@ import type { Server } from "node:http";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import express from "express";
 import { agentTemplatesRouter } from "@/api/v2/agent-templates/agent-templates.router";
+import { __resetPostHogForTests } from "@/api/v2/agent-templates/services/posthog";
 import {
   __resetGenerateTemplateForTests,
+  DEFAULT_TEST_METRICS,
   type GeneratedTemplate,
 } from "@/api/v2/agent-templates/services/templateGen";
 import { jsonMiddleware } from "@/middleware/json";
@@ -84,6 +86,7 @@ let server: Server;
 describe("POST /api/v2/agent-templates/generate SSE client disconnect", () => {
   beforeAll(async () => {
     setValidAgentApiKey();
+    __resetPostHogForTests(() => {});
     server = await new Promise<Server>((resolve) => {
       const s = app.listen(TEST_PORT, () => {
         resolve(s);
@@ -93,6 +96,7 @@ describe("POST /api/v2/agent-templates/generate SSE client disconnect", () => {
 
   afterAll(async () => {
     __resetGenerateTemplateForTests(null);
+    __resetPostHogForTests(null);
     restoreAgentApiKey();
     await new Promise<void>((resolve) => {
       server.close(() => {
@@ -115,7 +119,7 @@ describe("POST /api/v2/agent-templates/generate SSE client disconnect", () => {
           setTimeout(() => {
             generateSettled = true;
             _generateSettledAt = Date.now();
-            resolve(happyTemplate);
+            resolve({ template: happyTemplate, metrics: DEFAULT_TEST_METRICS });
           }, 500);
         }),
     );
@@ -168,7 +172,7 @@ describe("POST /api/v2/agent-templates/generate SSE client disconnect", () => {
       () =>
         new Promise((resolve) => {
           setTimeout(() => {
-            resolve(happyTemplate);
+            resolve({ template: happyTemplate, metrics: DEFAULT_TEST_METRICS });
           }, 16_500);
         }),
     );
@@ -218,7 +222,7 @@ describe("POST /api/v2/agent-templates/generate SSE client disconnect", () => {
       () =>
         new Promise((resolve) => {
           setTimeout(() => {
-            resolve(happyTemplate);
+            resolve({ template: happyTemplate, metrics: DEFAULT_TEST_METRICS });
           }, 500);
         }),
     );

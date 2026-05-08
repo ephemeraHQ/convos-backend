@@ -8,8 +8,10 @@ import type { Server } from "node:http";
 import { afterAll, describe, expect, test } from "bun:test";
 import express, { Router } from "express";
 import { agentTemplatesRouter } from "@/api/v2/agent-templates/agent-templates.router";
+import { __resetPostHogForTests } from "@/api/v2/agent-templates/services/posthog";
 import {
   __resetGenerateTemplateForTests,
+  DEFAULT_TEST_METRICS,
   type GeneratedTemplate,
 } from "@/api/v2/agent-templates/services/templateGen";
 import { jsonMiddleware } from "@/middleware/json";
@@ -87,6 +89,7 @@ afterAll(() => {
     process.env.AGENT_ASSETS_API_KEY = originalAgentAssetsApiKey;
   }
   __resetGenerateTemplateForTests(null);
+  __resetPostHogForTests(null);
 });
 
 describe("POST /api/v2/agent-templates/generate SSE production guard", () => {
@@ -126,7 +129,12 @@ describe("POST /api/v2/agent-templates/generate SSE production guard", () => {
       process.env.XMTP_ENV = env;
       process.env.AGENT_ASSETS_API_KEY = validAgentAssetsApiKey;
 
-      __resetGenerateTemplateForTests(() => Promise.resolve(happyTemplate));
+      __resetGenerateTemplateForTests(() =>
+        Promise.resolve({
+          template: happyTemplate,
+          metrics: DEFAULT_TEST_METRICS,
+        }),
+      );
 
       const localRouter = buildGuardedV2Router();
 
@@ -151,7 +159,12 @@ describe("POST /api/v2/agent-templates/generate SSE production guard", () => {
     delete process.env.XMTP_ENV;
     process.env.AGENT_ASSETS_API_KEY = validAgentAssetsApiKey;
 
-    __resetGenerateTemplateForTests(() => Promise.resolve(happyTemplate));
+    __resetGenerateTemplateForTests(() =>
+      Promise.resolve({
+        template: happyTemplate,
+        metrics: DEFAULT_TEST_METRICS,
+      }),
+    );
 
     const unsetRouter = buildGuardedV2Router();
 

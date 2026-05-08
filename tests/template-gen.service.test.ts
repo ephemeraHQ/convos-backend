@@ -647,7 +647,9 @@ describe("templateGen service — OpenRouter integration", () => {
       usage: { prompt_tokens: 10, completion_tokens: 5 },
     });
 
-    const result = await generateTemplate({ text: "Build me a helper" });
+    const { template: result } = await generateTemplate({
+      text: "Build me a helper",
+    });
 
     // The prompt should end with the brevity rail
     expect(result.prompt).toContain("## Runtime Reminder");
@@ -716,7 +718,7 @@ describe("templateGen service — OpenRouter integration", () => {
       return (originalMockFetch as any)(input, init);
     }) as any;
 
-    const result = await generateTemplate({ text: longText });
+    const { template: result } = await generateTemplate({ text: longText });
 
     // Count occurrences of "## Runtime Reminder" — should be exactly 1
     const matches = result.prompt.match(/## Runtime Reminder/g) || [];
@@ -748,7 +750,9 @@ describe("templateGen service — OpenRouter integration", () => {
       usage: { prompt_tokens: 10, completion_tokens: 5 },
     });
 
-    const result = await generateTemplate({ text: "Build me a bot" });
+    const { template: result } = await generateTemplate({
+      text: "Build me a bot",
+    });
 
     expect(result.agentName).toBe("MinimalBot");
     expect(result.description).toBe("");
@@ -845,7 +849,9 @@ describe("templateGen service — OpenRouter integration", () => {
       usage: { prompt_tokens: 10, completion_tokens: 5 },
     });
 
-    const result = await generateTemplate({ text: "Build me a helper" });
+    const { template: result } = await generateTemplate({
+      text: "Build me a helper",
+    });
     expect(result.connections).toEqual([]);
   });
 

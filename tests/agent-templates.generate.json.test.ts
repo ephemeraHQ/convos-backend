@@ -4,7 +4,8 @@
  * Covers VAL-M3-ROUTE-001..010, VAL-M3-JSON-001..009.
  * OpenRouter is mocked at the generateTemplate service-singleton seam
  * via __resetGenerateTemplateForTests (mirrors connections test pattern).
- * PostHog is NOT wired yet (separate feature), so we don't stub it here.
+ * PostHog capture is wired; we stub it via __resetPostHogForTests so it
+ * doesn't interfere with these assertions.
  */
 import type { Server } from "node:http";
 import {
@@ -17,9 +18,11 @@ import {
 } from "bun:test";
 import express from "express";
 import { agentTemplatesRouter } from "@/api/v2/agent-templates/agent-templates.router";
+import { __resetPostHogForTests } from "@/api/v2/agent-templates/services/posthog";
 import {
   __resetGenerateTemplateForTests,
   BREVITY_RAIL,
+  DEFAULT_TEST_METRICS,
   type GeneratedTemplate,
 } from "@/api/v2/agent-templates/services/templateGen";
 import { jsonMiddleware } from "@/middleware/json";
@@ -58,7 +61,10 @@ const mockHappy = () => {
   __resetGenerateTemplateForTests((input) => {
     generateCallCount++;
     lastGenerateInput = input;
-    return Promise.resolve(happyTemplate);
+    return Promise.resolve({
+      template: happyTemplate,
+      metrics: DEFAULT_TEST_METRICS,
+    });
   });
 };
 
@@ -72,7 +78,7 @@ const mockResolve = (template: GeneratedTemplate) => {
   __resetGenerateTemplateForTests((input) => {
     generateCallCount++;
     lastGenerateInput = input;
-    return Promise.resolve(template);
+    return Promise.resolve({ template, metrics: DEFAULT_TEST_METRICS });
   });
 };
 
@@ -140,6 +146,8 @@ let server: Server;
 describe("POST /api/v2/agent-templates/generate (JSON mode)", () => {
   beforeAll(async () => {
     setValidAgentApiKey();
+    // Stub PostHog so it doesn't make real captures during these tests
+    __resetPostHogForTests(() => {});
     server = await new Promise<Server>((resolve) => {
       const s = app.listen(TEST_PORT, () => {
         resolve(s);
@@ -149,6 +157,7 @@ describe("POST /api/v2/agent-templates/generate (JSON mode)", () => {
 
   afterAll(async () => {
     __resetGenerateTemplateForTests(null);
+    __resetPostHogForTests(null);
     restoreAgentApiKey();
     await new Promise<void>((resolve) => {
       server.close(() => {

@@ -20,14 +20,28 @@
  *   - Client disconnect: generateTemplate NOT aborted (no AbortSignal);
  *     keep-alive write errors swallowed; clearInterval always runs.
  *
+ * PostHog metering:
+ *   - On every invocation that reaches the LLM call (success OR error),
+ *     a `builder.template.generated` event is captured fire-and-forget.
+ *   - Properties: model, promptTokens, completionTokens, latencyMs,
+ *     requestId (UUID v4), authMode ("jwt" | "agentKey").
+ *   - Validation errors that 400 BEFORE the LLM call emit ZERO events.
+ *   - Missing POSTHOG_API_KEY/POSTHOG_HOST → silent no-op.
+ *
  * Error → status mapping (both modes):
  *   - Validation-class messages (Invalid URL|No content|Could not extract) → 400
  *   - All other rejections → 502
  */
 
+import { randomUUID } from "node:crypto";
 import type { Request, Response } from "express";
 import { z } from "zod";
-import { callGenerateTemplate } from "@/api/v2/agent-templates/services/templateGen";
+import { capturePostHog } from "@/api/v2/agent-templates/services/posthog";
+import {
+  callGenerateTemplate,
+  getModel,
+} from "@/api/v2/agent-templates/services/templateGen";
+import { AGENT_API_KEY_HEADER } from "@/middleware/agentAuth";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -167,6 +181,24 @@ export async function generateTemplateHandler(req: Request, res: Response) {
     return;
   }
 
+  // --- Past this point, the request WILL reach the LLM call ---
+  // Prepare PostHog metering data (capture fires on both success & error).
+  const requestId = randomUUID();
+  const startTime = performance.now();
+  const authMode: "jwt" | "agentKey" = req.header(AGENT_API_KEY_HEADER)
+    ? "agentKey"
+    : "jwt";
+
+  /** Fire PostHog capture — always fire-and-forget (non-blocking). */
+  const meter = (metrics: {
+    model: string;
+    promptTokens: number;
+    completionTokens: number;
+    latencyMs: number;
+  }) => {
+    capturePostHog({ ...metrics, requestId, authMode });
+  };
+
   // 4. Branch on Accept header — SSE vs JSON mode
   const accept = req.headers.accept || "";
   const isSSE = accept.includes("text/event-stream");
@@ -193,16 +225,27 @@ export async function generateTemplateHandler(req: Request, res: Response) {
     }, KEEPALIVE_MS);
 
     try {
-      const result = await callGenerateTemplate(coalesced);
+      const { template, metrics } = await callGenerateTemplate(coalesced);
+
+      // PostHog: success — fire-and-forget
+      meter(metrics);
 
       // Terminal success frame
       clearInterval(keepalive);
-      const data = JSON.stringify(result);
+      const data = JSON.stringify(template);
       res.write(`event: result\ndata: ${data}\n\n`);
       res.end();
     } catch (err) {
       const error = err instanceof Error ? err : new Error(String(err));
       req.log.warn({ error: error.message }, "Template generation failed");
+
+      // PostHog: error — fire-and-forget (token counts unavailable)
+      meter({
+        model: getModel(),
+        promptTokens: 0,
+        completionTokens: 0,
+        latencyMs: Math.round(performance.now() - startTime),
+      });
 
       // Terminal error frame — HTTP status is 200 (already flushed)
       clearInterval(keepalive);
@@ -217,12 +260,23 @@ export async function generateTemplateHandler(req: Request, res: Response) {
 
   // ---- JSON mode (default) ----
   try {
-    const result = await callGenerateTemplate(coalesced);
+    const { template, metrics } = await callGenerateTemplate(coalesced);
 
-    res.status(200).json(result);
+    // PostHog: success — fire-and-forget
+    meter(metrics);
+
+    res.status(200).json(template);
   } catch (err) {
     const error = err instanceof Error ? err : new Error(String(err));
     req.log.warn({ error: error.message }, "Template generation failed");
+
+    // PostHog: error — fire-and-forget (token counts unavailable)
+    meter({
+      model: getModel(),
+      promptTokens: 0,
+      completionTokens: 0,
+      latencyMs: Math.round(performance.now() - startTime),
+    });
 
     const status = errorStatus(error);
     res.status(status).json({ error: error.message });
