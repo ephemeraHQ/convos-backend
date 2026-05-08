@@ -28,9 +28,15 @@ export const BUILDER_TEMPLATE_GENERATED_EVENT = "builder.template.generated";
 
 export interface PostHogCaptureProperties extends GenerationMetrics {
   /** Fresh UUID v4 per request — correlates logs to the metering event. */
-  requestId: string;
+  requestId?: string;
   /** How the request was authenticated: "jwt" or "agentKey". */
-  authMode: "jwt" | "agentKey";
+  authMode?: "jwt" | "agentKey";
+  /** Source of the generation event — e.g. "create-job" for async job executor. */
+  source?: string;
+  /** Account ID of the job owner (set for create-job events). */
+  ownerAccountId?: string;
+  /** Input type used for generation: "text", "pdfBase64", or "imageBase64". */
+  inputType?: string;
 }
 
 // ---------------------------------------------------------------------------

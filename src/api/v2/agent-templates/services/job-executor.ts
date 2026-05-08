@@ -24,6 +24,7 @@ import { ADMIN_ACCOUNT_ID, mintTemplateId } from "@/utils/prefixed-id";
 import { prisma } from "@/utils/prisma";
 import { buildSlug } from "@/utils/slug-hash";
 import { PlaygroundClient } from "./playgroundClient";
+import { capturePostHog } from "./posthog";
 import { callGenerateTemplate, type GeneratedTemplate } from "./templateGen";
 
 // ---------------------------------------------------------------------------
@@ -282,6 +283,13 @@ export async function executeCreateJob(jobId: string): Promise<void> {
   const timeoutMs = _timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const deadline = Date.now() + timeoutMs;
 
+  // Determine input type for PostHog metering
+  const inputType: string = input.pdfBase64
+    ? "pdfBase64"
+    : input.imageBase64
+      ? "imageBase64"
+      : "text";
+
   try {
     // ── Step 1: pending → generating ──
     await updateJob(jobId, { status: "generating" });
@@ -299,7 +307,20 @@ export async function executeCreateJob(jobId: string): Promise<void> {
     if (input.imageBase64) templateInput.imageBase64 = input.imageBase64;
     if (input.mimeType) templateInput.mimeType = input.mimeType;
 
-    const { template } = await callGenerateTemplate(templateInput);
+    const genStartTime = performance.now();
+    const { template, metrics } = await callGenerateTemplate(templateInput);
+
+    // ── PostHog: fire builder.template.generated event on successful generation ──
+    // This fires BEFORE provisioning, so it captures generation success even if
+    // provisioning later fails. The event is NOT fired when generation fails
+    // (that path goes to the catch block which calls failJob without PostHog).
+    capturePostHog({
+      ...metrics,
+      source: "create-job",
+      ownerAccountId: job.ownerAccountId,
+      inputType,
+      latencyMs: Math.round(performance.now() - genStartTime),
+    });
 
     // Check timeout
     if (Date.now() >= deadline) {
