@@ -9,6 +9,7 @@ import { authRouter } from "@/api/v2/auth/auth.router";
 import { NONCE_COOKIE_NAME, signNonce } from "@/api/v2/auth/nonce-cookie";
 import { pinoMiddleware } from "@/middleware/pino";
 import { verifyJwtToken } from "@/utils/jwt";
+import { ADMIN_ACCOUNT_ID } from "@/utils/prefixed-id";
 import { prisma } from "@/utils/prisma";
 
 function makeApp() {
@@ -42,7 +43,9 @@ async function buildSiwe(nonce: string) {
 
 async function reset() {
   await prisma.authMethod.deleteMany();
-  await prisma.account.deleteMany();
+  await prisma.account.deleteMany({
+    where: { id: { not: ADMIN_ACCOUNT_ID } },
+  });
   await prisma.authNonce.deleteMany();
 }
 

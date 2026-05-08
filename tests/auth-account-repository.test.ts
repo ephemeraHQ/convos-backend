@@ -1,6 +1,7 @@
 import { AuthMethodType } from "@prisma/client";
 import { afterEach, beforeAll, describe, expect, test } from "bun:test";
 import { upsertAuthMethodAndAccount } from "@/accounts/repository";
+import { ADMIN_ACCOUNT_ID } from "@/utils/prefixed-id";
 import { prisma } from "@/utils/prisma";
 
 const ADDR_A = "0x" + "a".repeat(40);
@@ -8,7 +9,9 @@ const ADDR_B = "0x" + "b".repeat(40);
 
 async function reset() {
   await prisma.authMethod.deleteMany();
-  await prisma.account.deleteMany();
+  await prisma.account.deleteMany({
+    where: { id: { not: ADMIN_ACCOUNT_ID } },
+  });
 }
 
 describe("upsertAuthMethodAndAccount", () => {

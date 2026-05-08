@@ -7,6 +7,7 @@ import request from "supertest";
 import { authRouter } from "@/api/v2/auth/auth.router";
 import { authMiddleware, requireAccount } from "@/middleware/auth";
 import { pinoMiddleware } from "@/middleware/pino";
+import { ADMIN_ACCOUNT_ID } from "@/utils/prefixed-id";
 import { prisma } from "@/utils/prisma";
 
 function makeApp() {
@@ -23,7 +24,9 @@ function makeApp() {
 
 async function reset() {
   await prisma.authMethod.deleteMany();
-  await prisma.account.deleteMany();
+  await prisma.account.deleteMany({
+    where: { id: { not: ADMIN_ACCOUNT_ID } },
+  });
   await prisma.authNonce.deleteMany();
 }
 
