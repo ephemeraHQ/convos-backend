@@ -1,5 +1,5 @@
-import { prisma } from "@/utils/prisma";
 import logger from "@/utils/logger";
+import { prisma } from "@/utils/prisma";
 
 const NONCE_SWEEP_INTERVAL_MS = 10 * 60 * 1000;
 

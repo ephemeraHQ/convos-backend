@@ -1,5 +1,4 @@
 import { SiweMessage } from "siwe";
-
 import { SIWE_ALLOWED_CHAIN_IDS, SIWE_DOMAIN, SIWE_URI } from "@/config";
 
 const ISSUED_AT_SKEW_MS = 5 * 60 * 1000;

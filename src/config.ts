@@ -51,7 +51,10 @@ if (!process.env.SIWE_DOMAIN) {
 if (!process.env.SIWE_URI) {
   throw new Error("SIWE_URI is not configured");
 }
-if (!process.env.NONCE_HMAC_SECRET || process.env.NONCE_HMAC_SECRET.length < 64) {
+if (
+  !process.env.NONCE_HMAC_SECRET ||
+  process.env.NONCE_HMAC_SECRET.length < 64
+) {
   throw new Error(
     "NONCE_HMAC_SECRET is not configured or too short (need >= 64 chars / 32 bytes hex)",
   );
