@@ -93,3 +93,33 @@ model InviteCodeRedemption {
   @@index([inviteCodeId])
   @@index([childCodeId])
 }
+
+model Account {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  authMethods AuthMethod[]
+}
+
+model AuthMethod {
+  id          String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  accountId   String         @db.Uuid
+  type        AuthMethodType
+  externalKey String
+  addedAt     DateTime       @default(now())
+
+  account     Account        @relation(fields: [accountId], references: [id])
+
+  @@unique([type, externalKey])
+  @@index([accountId])
+}
+
+enum AuthMethodType {
+  SIWE
+}
+
+model AuthNonce {
+  nonce     String   @id
+  createdAt DateTime @default(now())
+}
