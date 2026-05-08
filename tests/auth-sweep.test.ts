@@ -19,8 +19,12 @@ describe("sweepNonces", () => {
 
     await sweepNonces();
 
-    const a = await prisma.authNonce.findUnique({ where: { nonce: "a".repeat(64) } });
-    const b = await prisma.authNonce.findUnique({ where: { nonce: "b".repeat(64) } });
+    const a = await prisma.authNonce.findUnique({
+      where: { nonce: "a".repeat(64) },
+    });
+    const b = await prisma.authNonce.findUnique({
+      where: { nonce: "b".repeat(64) },
+    });
     expect(a).toBeNull();
     expect(b).not.toBeNull();
   });

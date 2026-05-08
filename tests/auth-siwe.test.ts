@@ -41,7 +41,9 @@ describe("verifySiwe", () => {
   });
 
   test("rejects when domain mismatches", async () => {
-    const { messageStr, signature } = await buildMessage({ domain: "evil.app" });
+    const { messageStr, signature } = await buildMessage({
+      domain: "evil.app",
+    });
     await expect(
       verifySiwe({
         message: messageStr,

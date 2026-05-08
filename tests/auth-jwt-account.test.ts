@@ -1,9 +1,5 @@
 import { beforeAll, describe, expect, test } from "bun:test";
-import {
-  createJwtToken,
-  validateJWTKeys,
-  verifyJwtToken,
-} from "@/utils/jwt";
+import { createJwtToken, validateJWTKeys, verifyJwtToken } from "@/utils/jwt";
 
 beforeAll(async () => {
   await validateJWTKeys();

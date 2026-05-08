@@ -1,8 +1,5 @@
 import { afterEach, beforeAll, describe, expect, test } from "bun:test";
-import {
-  consumeNonce,
-  issueNonce,
-} from "@/api/v2/auth/auth-nonce.repository";
+import { consumeNonce, issueNonce } from "@/api/v2/auth/auth-nonce.repository";
 import { prisma } from "@/utils/prisma";
 
 describe("auth-nonce.repository", () => {

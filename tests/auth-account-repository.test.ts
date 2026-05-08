@@ -1,5 +1,5 @@
-import { afterEach, beforeAll, describe, expect, test } from "bun:test";
 import { AuthMethodType } from "@prisma/client";
+import { afterEach, beforeAll, describe, expect, test } from "bun:test";
 import { upsertAuthMethodAndAccount } from "@/accounts/repository";
 import { prisma } from "@/utils/prisma";
 
@@ -20,7 +20,9 @@ describe("upsertAuthMethodAndAccount", () => {
       type: AuthMethodType.SIWE,
       externalKey: ADDR_A,
     });
-    const account = await prisma.account.findUnique({ where: { id: accountId } });
+    const account = await prisma.account.findUnique({
+      where: { id: accountId },
+    });
     expect(account).not.toBeNull();
     const method = await prisma.authMethod.findFirst({
       where: { accountId, type: AuthMethodType.SIWE },
