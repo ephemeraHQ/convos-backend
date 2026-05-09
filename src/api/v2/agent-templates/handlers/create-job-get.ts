@@ -18,7 +18,7 @@
 
 import type { Request, Response } from "express";
 import { z } from "zod";
-import { ADMIN_ACCOUNT_ID } from "@/utils/prefixed-id";
+import { getEffectiveOwnerId } from "@/utils/auth-helpers";
 import { prisma } from "@/utils/prisma";
 
 // ---------------------------------------------------------------------------
@@ -160,8 +160,11 @@ export async function createJobGetHandler(req: Request, res: Response) {
   }
 
   // 2. Determine ownerAccountId from auth context
-  const ownerAccountId =
-    (res.locals.accountId as string | undefined) || ADMIN_ACCOUNT_ID;
+  const ownerAccountId = getEffectiveOwnerId(res);
+  if (!ownerAccountId) {
+    res.status(403).json({ error: "Account required" });
+    return;
+  }
 
   // 3. Fetch job (with optional long-polling)
   let job;

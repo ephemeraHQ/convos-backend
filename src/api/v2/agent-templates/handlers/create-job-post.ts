@@ -18,7 +18,7 @@
 import type { Request, Response } from "express";
 import { z } from "zod";
 import { executeCreateJob } from "@/api/v2/agent-templates/services/job-executor";
-import { ADMIN_ACCOUNT_ID } from "@/utils/prefixed-id";
+import { getEffectiveOwnerId } from "@/utils/auth-helpers";
 import { prisma } from "@/utils/prisma";
 
 // ---------------------------------------------------------------------------
@@ -161,8 +161,11 @@ export async function createJobPostHandler(req: Request, res: Response) {
   }
 
   // 5. Determine ownerAccountId from auth context
-  const ownerAccountId =
-    (res.locals.accountId as string | undefined) || ADMIN_ACCOUNT_ID;
+  const ownerAccountId = getEffectiveOwnerId(res);
+  if (!ownerAccountId) {
+    res.status(403).json({ error: "Account required" });
+    return;
+  }
 
   // 6. Create CreateJob row
   const input = JSON.stringify(body);

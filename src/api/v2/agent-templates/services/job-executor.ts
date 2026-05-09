@@ -6,7 +6,7 @@
  *
  * Steps:
  *   1. Set status=generating, call templateGen service
- *   2. Persist generated template as draft AgentTemplate (owner=ADMIN_ACCOUNT_ID)
+ *   2. Persist generated template as draft AgentTemplate (owner=job.ownerAccountId)
  *   3. Set status=provisioning, call PlaygroundClient.createAssistant()
  *   4. Poll PlaygroundClient.getAssistant() until joinStatus ∈ {joined, failed}
  *   5. Set status=done or failed with result/error
@@ -20,7 +20,7 @@
  *   - `__setTimeoutMsForTests(ms|null)` — override timeout for testing
  */
 
-import { ADMIN_ACCOUNT_ID, mintTemplateId } from "@/utils/prefixed-id";
+import { mintTemplateId } from "@/utils/prefixed-id";
 import { prisma } from "@/utils/prisma";
 import { buildSlug } from "@/utils/slug-hash";
 import { PlaygroundClient } from "./playgroundClient";
@@ -166,6 +166,7 @@ function deriveBaseSlug(agentName: string): string {
 /** Persist a generated template as a draft AgentTemplate. */
 async function persistDraftTemplate(
   template: GeneratedTemplate,
+  ownerAccountId: string,
 ): Promise<string> {
   const id = mintTemplateId();
   const baseSlug = deriveBaseSlug(template.agentName);
@@ -175,7 +176,7 @@ async function persistDraftTemplate(
     data: {
       id,
       slug,
-      ownerAccountId: ADMIN_ACCOUNT_ID,
+      ownerAccountId,
       forkedFromId: null,
       agentName: template.agentName,
       description: template.description || null,
@@ -329,7 +330,7 @@ export async function executeCreateJob(jobId: string): Promise<void> {
     }
 
     // ── Step 3: Persist as draft AgentTemplate ──
-    const templateId = await persistDraftTemplate(template);
+    const templateId = await persistDraftTemplate(template, job.ownerAccountId);
 
     // ── Step 4: generating → provisioning ──
     const partialResult: JobResult = {

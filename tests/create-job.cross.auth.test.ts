@@ -183,7 +183,7 @@ describe("CreateJob Cross-Area Auth", () => {
     }
 
     await cleanupJobs(ADMIN_ACCOUNT_ID, otherAccount.id);
-    await cleanupTemplates(ADMIN_ACCOUNT_ID);
+    await cleanupTemplates(ADMIN_ACCOUNT_ID, otherAccount.id);
     await prisma.account.delete({ where: { id: otherAccount.id } });
 
     await new Promise<void>((resolve) => {
@@ -198,7 +198,7 @@ describe("CreateJob Cross-Area Auth", () => {
     __resetGenerateTemplateForTests(null);
     __resetPlaygroundClientForTests(null);
     await cleanupJobs(ADMIN_ACCOUNT_ID, otherAccount.id);
-    await cleanupTemplates(ADMIN_ACCOUNT_ID);
+    await cleanupTemplates(ADMIN_ACCOUNT_ID, otherAccount.id);
   });
 
   // ── VAL-CJ-CROSS-006: Multiple users can create and poll jobs simultaneously ──

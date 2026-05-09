@@ -1096,4 +1096,39 @@ describe("CreateJob Executor — Edge Cases", () => {
     expect(job!.error).toContain("OpenRouter API error");
     expect(job!.error).toContain("429");
   });
+
+  test("template ownerAccountId matches job.ownerAccountId, not hardcoded ADMIN_ACCOUNT_ID", async () => {
+    installHappyPathMocks();
+    const { executeCreateJob } = await import(
+      "../src/api/v2/agent-templates/services/job-executor"
+    );
+
+    // Create a custom account and job with a non-admin ownerAccountId
+    const customOwner = await prisma.account.create({ data: {} });
+    const jobId = await createTestJob({
+      ownerAccountId: customOwner.id,
+    });
+    await executeCreateJob(jobId);
+
+    // The persisted template should use the job's ownerAccountId,
+    // not the hardcoded ADMIN_ACCOUNT_ID
+    const templates = await prisma.agentTemplate.findMany({
+      where: { ownerAccountId: customOwner.id },
+    });
+
+    expect(templates.length).toBeGreaterThanOrEqual(1);
+    expect(templates[0].ownerAccountId).toBe(customOwner.id);
+
+    // Verify it's NOT the admin account
+    expect(templates[0].ownerAccountId).not.toBe(ADMIN_ACCOUNT_ID);
+
+    // Cleanup
+    await prisma.agentTemplate.deleteMany({
+      where: { ownerAccountId: customOwner.id },
+    });
+    await prisma.createJob.deleteMany({
+      where: { ownerAccountId: customOwner.id },
+    });
+    await prisma.account.delete({ where: { id: customOwner.id } });
+  });
 });
