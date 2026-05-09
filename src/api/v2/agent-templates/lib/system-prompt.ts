@@ -16,9 +16,14 @@ try {
     resolve("data/template-generator-prompt.txt"),
     "utf8",
   ).trim();
-} catch {
+} catch (err) {
   // Intentionally swallowed: module must not crash on import.
   // Downstream handlers check for null and return 502.
+  // Log the failure so deployment misconfigurations are diagnosable.
+  console.error(
+    "[system-prompt] Failed to load data/template-generator-prompt.txt:",
+    err instanceof Error ? err.message : err,
+  );
 }
 
 export { SYSTEM_PROMPT };
