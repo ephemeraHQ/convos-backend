@@ -28,6 +28,7 @@ import { jsonMiddleware } from "@/middleware/json";
 import { noRouteMiddleware } from "@/middleware/noRoute";
 import { pinoMiddleware } from "@/middleware/pino";
 import { createJwtToken } from "@/utils/jwt";
+import { ADMIN_ACCOUNT_ID } from "@/utils/prefixed-id";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -407,6 +408,7 @@ describe("POST /api/v2/agent-templates/generate (SSE mode)", () => {
         Accept: "text/event-stream",
         "X-Convos-AuthToken": await createJwtToken({
           deviceId: "test-device-sse",
+          accountId: ADMIN_ACCOUNT_ID,
         }),
       },
       body: JSON.stringify({ idea: "test" }),

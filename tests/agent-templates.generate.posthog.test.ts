@@ -37,6 +37,7 @@ import { jsonMiddleware } from "@/middleware/json";
 import { noRouteMiddleware } from "@/middleware/noRoute";
 import { pinoMiddleware } from "@/middleware/pino";
 import { createJwtToken } from "@/utils/jwt";
+import { ADMIN_ACCOUNT_ID } from "@/utils/prefixed-id";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -103,6 +104,7 @@ const jwtHeaders = async () => ({
   "Content-Type": "application/json",
   "X-Convos-AuthToken": await createJwtToken({
     deviceId: "test-device-posthog",
+    accountId: ADMIN_ACCOUNT_ID,
   }),
 });
 
