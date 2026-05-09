@@ -16,14 +16,14 @@
 import { readFileSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import {
-  __resetPlaygroundClientForTests,
-  type CreateAssistantOpts,
-} from "../src/api/v2/agent-templates/services/playgroundClient";
-import {
   __resetPostHogForTests,
   BUILDER_TEMPLATE_GENERATED_EVENT,
   type PostHogCaptureProperties,
 } from "../src/api/v2/agent-templates/services/posthog";
+import {
+  __resetProvisioningClientForTests,
+  type CreateAssistantOpts,
+} from "../src/api/v2/agent-templates/services/provisioningClient";
 import {
   __resetGenerateTemplateForTests,
   DEFAULT_TEST_METRICS,
@@ -85,7 +85,7 @@ const stubPostHog = () => {
 beforeEach(() => {
   stubPostHog();
   __resetGenerateTemplateForTests(null);
-  __resetPlaygroundClientForTests(null);
+  __resetProvisioningClientForTests(null);
 });
 
 afterEach(async () => {
@@ -97,7 +97,7 @@ afterEach(async () => {
     where: { ownerAccountId: ADMIN_ACCOUNT_ID },
   });
   __resetGenerateTemplateForTests(null);
-  __resetPlaygroundClientForTests(null);
+  __resetProvisioningClientForTests(null);
   __resetPostHogForTests(null);
 });
 
@@ -113,7 +113,7 @@ function installHappyPathMocks(): void {
     }),
   );
 
-  __resetPlaygroundClientForTests({
+  __resetProvisioningClientForTests({
     createAssistant: (_opts: CreateAssistantOpts) =>
       Promise.resolve({ instanceId: "inst-test-123" }),
     getAssistant: async (instanceId: string) => ({
@@ -175,7 +175,7 @@ describe("CreateJob PostHog Metering", () => {
       throw new Error("LLM API error: model unavailable");
     });
 
-    __resetPlaygroundClientForTests({
+    __resetProvisioningClientForTests({
       createAssistant: () =>
         Promise.resolve({ instanceId: "should-not-be-called" }),
       getAssistant: (instanceId: string) =>
@@ -306,7 +306,7 @@ describe("CreateJob PostHog Metering", () => {
       }),
     );
 
-    __resetPlaygroundClientForTests({
+    __resetProvisioningClientForTests({
       createAssistant: () => {
         throw new Error("Playground returned 500");
       },

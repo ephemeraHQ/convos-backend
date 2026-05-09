@@ -7,7 +7,7 @@
  *   VAL-TB-BG-003: Twitter job publishes template (status=published, firstPublishedAt set, version=1)
  *   VAL-TB-BG-004: Twitter job composes reply text after template is published
  *   VAL-TB-BG-005: Twitter job stores result with templateId, slug, templateUrl, replyText
- *   VAL-TB-BG-006: Twitter job does NOT call PlaygroundClient
+ *   VAL-TB-BG-006: Twitter job does NOT call ProvisioningClient
  *   VAL-TB-BG-007: Twitter job transitions to failed when templateGen throws
  *   VAL-TB-BG-008: Twitter job transitions to failed with timeout error after 5 minutes
  *   VAL-TB-BG-009: Concurrent twitter + app/web jobs run independently
@@ -18,9 +18,9 @@
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import {
-  __resetPlaygroundClientForTests,
+  __resetProvisioningClientForTests,
   type CreateAssistantOpts,
-} from "../src/api/v2/agent-templates/services/playgroundClient";
+} from "../src/api/v2/agent-templates/services/provisioningClient";
 import {
   __resetGenerateTemplateForTests,
   DEFAULT_TEST_METRICS,
@@ -135,7 +135,7 @@ beforeEach(() => {
 
   // Reset test seams — use no-op defaults
   __resetGenerateTemplateForTests(null);
-  __resetPlaygroundClientForTests(null);
+  __resetProvisioningClientForTests(null);
   __resetTwitterReplyForTests(null);
 });
 
@@ -150,7 +150,7 @@ afterEach(async () => {
   });
   // Reset test seams
   __resetGenerateTemplateForTests(null);
-  __resetPlaygroundClientForTests(null);
+  __resetProvisioningClientForTests(null);
   __resetTwitterReplyForTests(null);
 });
 
@@ -174,8 +174,8 @@ function installTwitterHappyPathMocks(): void {
     });
   });
 
-  // Mock PlaygroundClient — should NOT be called for twitter jobs
-  __resetPlaygroundClientForTests({
+  // Mock ProvisioningClient — should NOT be called for twitter jobs
+  __resetProvisioningClientForTests({
     createAssistant: (opts) => {
       playgroundCreateCalls.push(opts);
       return Promise.resolve({ instanceId: "inst-should-not-be-called" });
@@ -311,7 +311,7 @@ describe("Twitter Build Executor — Happy Path", () => {
     expect(result.replyText).toContain("@alice");
   });
 
-  test("VAL-TB-BG-006: twitter job does NOT call PlaygroundClient", async () => {
+  test("VAL-TB-BG-006: twitter job does NOT call ProvisioningClient", async () => {
     installTwitterHappyPathMocks();
     const { executeCreateJob } = await import(
       "../src/api/v2/agent-templates/services/job-executor"
@@ -320,7 +320,7 @@ describe("Twitter Build Executor — Happy Path", () => {
     const jobId = await createTwitterJob();
     await executeCreateJob(jobId);
 
-    // PlaygroundClient should NOT have been called at all
+    // ProvisioningClient should NOT have been called at all
     expect(playgroundCreateCalls.length).toBe(0);
   });
 
@@ -329,7 +329,7 @@ describe("Twitter Build Executor — Happy Path", () => {
       throw new Error("LLM API error: model unavailable");
     });
 
-    __resetPlaygroundClientForTests({
+    __resetProvisioningClientForTests({
       createAssistant: (_opts) =>
         Promise.resolve({ instanceId: "should-not-be-called" }),
       getAssistant: (instanceId) =>
@@ -367,7 +367,7 @@ describe("Twitter Build Executor — Happy Path", () => {
       };
     });
 
-    __resetPlaygroundClientForTests({
+    __resetProvisioningClientForTests({
       createAssistant: () =>
         Promise.resolve({ instanceId: "should-not-be-called" }),
       getAssistant: () =>
@@ -421,8 +421,8 @@ describe("Twitter Build Executor — Happy Path", () => {
       });
     });
 
-    // Mock PlaygroundClient for app/web job
-    __resetPlaygroundClientForTests({
+    // Mock ProvisioningClient for app/web job
+    __resetProvisioningClientForTests({
       createAssistant: (opts) => {
         playgroundCreateCalls.push(opts);
         return Promise.resolve({ instanceId: "inst-concurrent" });
@@ -482,7 +482,7 @@ describe("Twitter Build Executor — Happy Path", () => {
     expect(appJob!.status).toBe("done");
     expect(appJob!.source).toBe("app");
 
-    // PlaygroundClient should have been called for app job only
+    // ProvisioningClient should have been called for app job only
     expect(playgroundCreateCalls.length).toBe(1);
   });
 
@@ -514,7 +514,7 @@ describe("Twitter Build Executor — Happy Path", () => {
       throw new Error("Generation failed");
     });
 
-    __resetPlaygroundClientForTests({
+    __resetProvisioningClientForTests({
       createAssistant: () => {
         throw new Error("Should not be called");
       },
@@ -634,7 +634,7 @@ describe("Twitter Build Executor — Additional Coverage", () => {
       });
     });
 
-    __resetPlaygroundClientForTests({
+    __resetProvisioningClientForTests({
       createAssistant: (opts) => {
         playgroundCreateCalls.push(opts);
         return Promise.resolve({ instanceId: "inst-app-test" });
@@ -664,7 +664,7 @@ describe("Twitter Build Executor — Additional Coverage", () => {
     expect(job!.status).toBe("done");
     expect(job!.source).toBe("app");
 
-    // PlaygroundClient should have been called
+    // ProvisioningClient should have been called
     expect(playgroundCreateCalls.length).toBe(1);
 
     // Result should have app/web format

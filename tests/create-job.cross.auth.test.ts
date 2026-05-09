@@ -23,11 +23,11 @@ import {
   __resetJobExecutorForTests,
   __setPollIntervalMsForTests,
 } from "@/api/v2/agent-templates/services/job-executor";
-import {
-  __resetPlaygroundClientForTests,
-  type CreateAssistantOpts,
-} from "@/api/v2/agent-templates/services/playgroundClient";
 import { __resetPostHogForTests } from "@/api/v2/agent-templates/services/posthog";
+import {
+  __resetProvisioningClientForTests,
+  type CreateAssistantOpts,
+} from "@/api/v2/agent-templates/services/provisioningClient";
 import {
   __resetGenerateTemplateForTests,
   DEFAULT_TEST_METRICS,
@@ -133,7 +133,7 @@ function installHappyPathMocks(): void {
     }),
   );
 
-  __resetPlaygroundClientForTests({
+  __resetProvisioningClientForTests({
     createAssistant: (_opts: CreateAssistantOpts) =>
       Promise.resolve({ instanceId: "inst-auth-123" }),
     getAssistant: async (instanceId: string) => ({
@@ -172,7 +172,7 @@ describe("CreateJob Cross-Area Auth", () => {
   afterAll(async () => {
     __resetJobExecutorForTests(null);
     __resetGenerateTemplateForTests(null);
-    __resetPlaygroundClientForTests(null);
+    __resetProvisioningClientForTests(null);
     __resetPostHogForTests(null);
     __setPollIntervalMsForTests(null);
 
@@ -196,7 +196,7 @@ describe("CreateJob Cross-Area Auth", () => {
   beforeEach(async () => {
     process.env.AGENT_ASSETS_API_KEY = validAgentAssetsApiKey;
     __resetGenerateTemplateForTests(null);
-    __resetPlaygroundClientForTests(null);
+    __resetProvisioningClientForTests(null);
     await cleanupJobs(ADMIN_ACCOUNT_ID, otherAccount.id);
     await cleanupTemplates(ADMIN_ACCOUNT_ID, otherAccount.id);
   });

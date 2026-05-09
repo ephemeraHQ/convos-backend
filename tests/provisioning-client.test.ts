@@ -1,5 +1,5 @@
 /**
- * Unit tests for PlaygroundClient service.
+ * Unit tests for ProvisioningClient service.
  *
  * Validates VAL-CJ-PG-001 through VAL-CJ-PG-008:
  *   - PG-001: Service file exists with createAssistant + getAssistant methods
@@ -17,9 +17,9 @@
 
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import {
-  __resetPlaygroundClientForTests,
-  PlaygroundClient,
-} from "../src/api/v2/agent-templates/services/playgroundClient";
+  __resetProvisioningClientForTests,
+  ProvisioningClient,
+} from "../src/api/v2/agent-templates/services/provisioningClient";
 
 // ---------------------------------------------------------------------------
 // Mock fetch
@@ -37,7 +37,7 @@ beforeEach(() => {
 
 afterEach(() => {
   globalThis.fetch = originalFetch;
-  __resetPlaygroundClientForTests(null);
+  __resetProvisioningClientForTests(null);
   delete process.env.PLAYGROUND_API_URL;
   delete process.env.PLAYGROUND_API_KEY;
 });
@@ -55,10 +55,10 @@ function setEnv(url = "https://playground.example.com", key = "pg-test-key") {
 // VAL-CJ-PG-001: Service file exists with required methods
 // ---------------------------------------------------------------------------
 
-describe("PlaygroundClient", () => {
+describe("ProvisioningClient", () => {
   test("exports createAssistant and getAssistant methods", () => {
-    expect(typeof PlaygroundClient.createAssistant).toBe("function");
-    expect(typeof PlaygroundClient.getAssistant).toBe("function");
+    expect(typeof ProvisioningClient.createAssistant).toBe("function");
+    expect(typeof ProvisioningClient.getAssistant).toBe("function");
   });
 });
 
@@ -66,7 +66,7 @@ describe("PlaygroundClient", () => {
 // VAL-CJ-PG-002: Uses Bearer token from PLAYGROUND_API_KEY
 // ---------------------------------------------------------------------------
 
-describe("PlaygroundClient — Bearer auth (VAL-CJ-PG-002)", () => {
+describe("ProvisioningClient — Bearer auth (VAL-CJ-PG-002)", () => {
   test("createAssistant sends Authorization: Bearer <PLAYGROUND_API_KEY>", async () => {
     setEnv("https://playground.example.com", "my-secret-key");
 
@@ -79,7 +79,7 @@ describe("PlaygroundClient — Bearer auth (VAL-CJ-PG-002)", () => {
       ),
     );
 
-    await PlaygroundClient.createAssistant({
+    await ProvisioningClient.createAssistant({
       name: "Test",
       instructions: "Be helpful",
       joinUrl: "xmtp:https://relay.example.com/join",
@@ -110,7 +110,7 @@ describe("PlaygroundClient — Bearer auth (VAL-CJ-PG-002)", () => {
       ),
     );
 
-    await PlaygroundClient.getAssistant("inst-1");
+    await ProvisioningClient.getAssistant("inst-1");
 
     expect(mockFetch).toHaveBeenCalledTimes(1);
     const [, init] = mockFetch.mock.calls[0];
@@ -124,7 +124,7 @@ describe("PlaygroundClient — Bearer auth (VAL-CJ-PG-002)", () => {
 // VAL-CJ-PG-003: createAssistant sends correct POST body shape
 // ---------------------------------------------------------------------------
 
-describe("PlaygroundClient — POST body shape (VAL-CJ-PG-003)", () => {
+describe("ProvisioningClient — POST body shape (VAL-CJ-PG-003)", () => {
   test("sends POST to <baseURL>/api/assistants with required fields", async () => {
     setEnv("https://playground.example.com");
 
@@ -137,7 +137,7 @@ describe("PlaygroundClient — POST body shape (VAL-CJ-PG-003)", () => {
       ),
     );
 
-    await PlaygroundClient.createAssistant({
+    await ProvisioningClient.createAssistant({
       name: "Math Tutor",
       instructions: "Help with math problems",
       joinUrl: "xmtp:https://relay.example.com/join",
@@ -168,7 +168,7 @@ describe("PlaygroundClient — POST body shape (VAL-CJ-PG-003)", () => {
       ),
     );
 
-    await PlaygroundClient.createAssistant({
+    await ProvisioningClient.createAssistant({
       name: "Tutor",
       instructions: "Be helpful",
       joinUrl: "xmtp:https://relay.example.com/join",
@@ -199,7 +199,7 @@ describe("PlaygroundClient — POST body shape (VAL-CJ-PG-003)", () => {
       ),
     );
 
-    await PlaygroundClient.createAssistant({
+    await ProvisioningClient.createAssistant({
       name: "Simple",
       instructions: "Hi",
       joinUrl: "xmtp:https://relay.example.com/join",
@@ -223,7 +223,7 @@ describe("PlaygroundClient — POST body shape (VAL-CJ-PG-003)", () => {
       ),
     );
 
-    await PlaygroundClient.createAssistant({
+    await ProvisioningClient.createAssistant({
       name: "Test",
       instructions: "Be helpful",
       joinUrl: "xmtp:https://relay.example.com/join",
@@ -240,7 +240,7 @@ describe("PlaygroundClient — POST body shape (VAL-CJ-PG-003)", () => {
 // VAL-CJ-PG-004: createAssistant returns { instanceId } on 200
 // ---------------------------------------------------------------------------
 
-describe("PlaygroundClient — returns instanceId (VAL-CJ-PG-004)", () => {
+describe("ProvisioningClient — returns instanceId (VAL-CJ-PG-004)", () => {
   test("createAssistant returns { instanceId } on 200", async () => {
     setEnv();
 
@@ -253,7 +253,7 @@ describe("PlaygroundClient — returns instanceId (VAL-CJ-PG-004)", () => {
       ),
     );
 
-    const result = await PlaygroundClient.createAssistant({
+    const result = await ProvisioningClient.createAssistant({
       name: "Test",
       instructions: "Hi",
       joinUrl: "xmtp:https://relay.example.com/join",
@@ -267,7 +267,7 @@ describe("PlaygroundClient — returns instanceId (VAL-CJ-PG-004)", () => {
 // VAL-CJ-PG-005: getAssistant returns full status object
 // ---------------------------------------------------------------------------
 
-describe("PlaygroundClient — getAssistant returns full status (VAL-CJ-PG-005)", () => {
+describe("ProvisioningClient — getAssistant returns full status (VAL-CJ-PG-005)", () => {
   test("getAssistant returns object with all fields", async () => {
     setEnv();
 
@@ -290,7 +290,7 @@ describe("PlaygroundClient — getAssistant returns full status (VAL-CJ-PG-005)"
       ),
     );
 
-    const result = await PlaygroundClient.getAssistant("inst-full");
+    const result = await ProvisioningClient.getAssistant("inst-full");
 
     expect(result.instanceId).toBe("inst-full");
     expect(result.joinStatus).toBe("joined");
@@ -323,7 +323,7 @@ describe("PlaygroundClient — getAssistant returns full status (VAL-CJ-PG-005)"
       ),
     );
 
-    const result = await PlaygroundClient.getAssistant("inst-fail");
+    const result = await ProvisioningClient.getAssistant("inst-fail");
 
     expect(result.joinStatus).toBe("failed");
     expect(result.joinFailureReason).toBe("Timeout waiting for acceptance");
@@ -337,7 +337,7 @@ describe("PlaygroundClient — getAssistant returns full status (VAL-CJ-PG-005)"
 // VAL-CJ-PG-006: Throws on non-2xx responses with status and body
 // ---------------------------------------------------------------------------
 
-describe("PlaygroundClient — non-2xx error handling (VAL-CJ-PG-006)", () => {
+describe("ProvisioningClient — non-2xx error handling (VAL-CJ-PG-006)", () => {
   test("createAssistant throws on 401 with status and body", async () => {
     setEnv();
 
@@ -351,7 +351,7 @@ describe("PlaygroundClient — non-2xx error handling (VAL-CJ-PG-006)", () => {
     );
 
     try {
-      await PlaygroundClient.createAssistant({
+      await ProvisioningClient.createAssistant({
         name: "Test",
         instructions: "Hi",
         joinUrl: "xmtp:https://relay.example.com/join",
@@ -375,7 +375,7 @@ describe("PlaygroundClient — non-2xx error handling (VAL-CJ-PG-006)", () => {
     );
 
     try {
-      await PlaygroundClient.createAssistant({
+      await ProvisioningClient.createAssistant({
         name: "Test",
         instructions: "Hi",
         joinUrl: "xmtp:https://relay.example.com/join",
@@ -400,7 +400,7 @@ describe("PlaygroundClient — non-2xx error handling (VAL-CJ-PG-006)", () => {
     );
 
     try {
-      await PlaygroundClient.getAssistant("nonexistent-id");
+      await ProvisioningClient.getAssistant("nonexistent-id");
       expect.unreachable("Should have thrown");
     } catch (err: any) {
       expect(err.message).toContain("404");
@@ -421,7 +421,7 @@ describe("PlaygroundClient — non-2xx error handling (VAL-CJ-PG-006)", () => {
     );
 
     try {
-      await PlaygroundClient.getAssistant("inst-1");
+      await ProvisioningClient.getAssistant("inst-1");
       expect.unreachable("Should have thrown");
     } catch (err: any) {
       expect(err.message).toContain("400");
@@ -434,7 +434,7 @@ describe("PlaygroundClient — non-2xx error handling (VAL-CJ-PG-006)", () => {
 // VAL-CJ-PG-007: Configurable base URL
 // ---------------------------------------------------------------------------
 
-describe("PlaygroundClient — configurable base URL (VAL-CJ-PG-007)", () => {
+describe("ProvisioningClient — configurable base URL (VAL-CJ-PG-007)", () => {
   test("createAssistant uses PLAYGROUND_API_URL as base", async () => {
     setEnv("https://custom-playground.example.org");
 
@@ -447,7 +447,7 @@ describe("PlaygroundClient — configurable base URL (VAL-CJ-PG-007)", () => {
       ),
     );
 
-    await PlaygroundClient.createAssistant({
+    await ProvisioningClient.createAssistant({
       name: "Test",
       instructions: "Hi",
       joinUrl: "xmtp:https://relay.example.com/join",
@@ -473,7 +473,7 @@ describe("PlaygroundClient — configurable base URL (VAL-CJ-PG-007)", () => {
       ),
     );
 
-    await PlaygroundClient.getAssistant("inst-1");
+    await ProvisioningClient.getAssistant("inst-1");
 
     const [reqUrl] = mockFetch.mock.calls[0];
     expect(reqUrl).toBe(
@@ -486,7 +486,7 @@ describe("PlaygroundClient — configurable base URL (VAL-CJ-PG-007)", () => {
     process.env.PLAYGROUND_API_KEY = "key";
 
     try {
-      await PlaygroundClient.createAssistant({
+      await ProvisioningClient.createAssistant({
         name: "Test",
         instructions: "Hi",
         joinUrl: "xmtp:https://relay.example.com/join",
@@ -502,7 +502,7 @@ describe("PlaygroundClient — configurable base URL (VAL-CJ-PG-007)", () => {
     delete process.env.PLAYGROUND_API_KEY;
 
     try {
-      await PlaygroundClient.createAssistant({
+      await ProvisioningClient.createAssistant({
         name: "Test",
         instructions: "Hi",
         joinUrl: "xmtp:https://relay.example.com/join",
@@ -518,7 +518,7 @@ describe("PlaygroundClient — configurable base URL (VAL-CJ-PG-007)", () => {
 // VAL-CJ-PG-008: Handles network errors gracefully
 // ---------------------------------------------------------------------------
 
-describe("PlaygroundClient — network error handling (VAL-CJ-PG-008)", () => {
+describe("ProvisioningClient — network error handling (VAL-CJ-PG-008)", () => {
   test("createAssistant throws descriptive error on network failure", async () => {
     setEnv();
 
@@ -527,7 +527,7 @@ describe("PlaygroundClient — network error handling (VAL-CJ-PG-008)", () => {
     });
 
     try {
-      await PlaygroundClient.createAssistant({
+      await ProvisioningClient.createAssistant({
         name: "Test",
         instructions: "Hi",
         joinUrl: "xmtp:https://relay.example.com/join",
@@ -546,7 +546,7 @@ describe("PlaygroundClient — network error handling (VAL-CJ-PG-008)", () => {
     });
 
     try {
-      await PlaygroundClient.getAssistant("inst-1");
+      await ProvisioningClient.getAssistant("inst-1");
       expect.unreachable("Should have thrown");
     } catch (err: any) {
       expect(err.message).toMatch(/network|connect|fetch failed|unreachable/i);
@@ -558,7 +558,7 @@ describe("PlaygroundClient — network error handling (VAL-CJ-PG-008)", () => {
 // Lazy initialization — env vars read at call time, not import time
 // ---------------------------------------------------------------------------
 
-describe("PlaygroundClient — lazy initialization", () => {
+describe("ProvisioningClient — lazy initialization", () => {
   test("reads env vars at call time, not at import time", async () => {
     // Set env AFTER import (this file was imported at the top)
     setEnv("https://lazy-playground.example.com", "lazy-key");
@@ -572,7 +572,7 @@ describe("PlaygroundClient — lazy initialization", () => {
       ),
     );
 
-    await PlaygroundClient.createAssistant({
+    await ProvisioningClient.createAssistant({
       name: "Lazy",
       instructions: "Test lazy init",
       joinUrl: "xmtp:https://relay.example.com/join",
@@ -597,7 +597,7 @@ describe("PlaygroundClient — lazy initialization", () => {
       ),
     );
 
-    await PlaygroundClient.createAssistant({
+    await ProvisioningClient.createAssistant({
       name: "First",
       instructions: "First call",
       joinUrl: "xmtp:https://relay.example.com/join",
@@ -613,7 +613,7 @@ describe("PlaygroundClient — lazy initialization", () => {
     process.env.PLAYGROUND_API_URL = "https://second.example.com";
     process.env.PLAYGROUND_API_KEY = "second-key";
 
-    await PlaygroundClient.createAssistant({
+    await ProvisioningClient.createAssistant({
       name: "Second",
       instructions: "Second call",
       joinUrl: "xmtp:https://relay.example.com/join",
@@ -628,12 +628,12 @@ describe("PlaygroundClient — lazy initialization", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Test seam — __resetPlaygroundClientForTests
+// Test seam — __resetProvisioningClientForTests
 // ---------------------------------------------------------------------------
 
-describe("PlaygroundClient — test seam", () => {
-  test("__resetPlaygroundClientForTests exists and is callable", () => {
-    expect(typeof __resetPlaygroundClientForTests).toBe("function");
+describe("ProvisioningClient — test seam", () => {
+  test("__resetProvisioningClientForTests exists and is callable", () => {
+    expect(typeof __resetProvisioningClientForTests).toBe("function");
   });
 
   test("test seam with override creates mock behavior", async () => {
@@ -647,11 +647,11 @@ describe("PlaygroundClient — test seam", () => {
       }) => Promise<{ instanceId: string }>
     >(() => Promise.resolve({ instanceId: "seam-inst" }));
 
-    __resetPlaygroundClientForTests({
+    __resetProvisioningClientForTests({
       createAssistant: mockCreate,
     });
 
-    const result = await PlaygroundClient.createAssistant({
+    const result = await ProvisioningClient.createAssistant({
       name: "Seam",
       instructions: "Test seam",
       joinUrl: "xmtp:https://relay.example.com/join",
@@ -665,12 +665,12 @@ describe("PlaygroundClient — test seam", () => {
     setEnv();
 
     // First set an override
-    __resetPlaygroundClientForTests({
+    __resetProvisioningClientForTests({
       createAssistant: () => Promise.resolve({ instanceId: "override-inst" }),
     });
 
     // Then reset
-    __resetPlaygroundClientForTests(null);
+    __resetProvisioningClientForTests(null);
 
     mockFetch.mockImplementation(() =>
       Promise.resolve(
@@ -681,7 +681,7 @@ describe("PlaygroundClient — test seam", () => {
       ),
     );
 
-    const result = await PlaygroundClient.createAssistant({
+    const result = await ProvisioningClient.createAssistant({
       name: "Reset",
       instructions: "After reset",
       joinUrl: "xmtp:https://relay.example.com/join",

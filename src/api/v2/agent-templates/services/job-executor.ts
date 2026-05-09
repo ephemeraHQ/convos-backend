@@ -5,17 +5,17 @@
  *
  * app/web source:
  *   pending → generating → provisioning → done|failed
- *   (generate → persist draft → provision via PlaygroundClient → poll → done)
+ *   (generate → persist draft → provision via ProvisioningClient → poll → done)
  *
  * twitter source:
  *   pending → generating → done|failed
- *   (generate → publish template → compose reply → done — no PlaygroundClient)
+ *   (generate → publish template → compose reply → done — no ProvisioningClient)
  *
  * Steps (app/web):
  *   1. Set status=generating, call templateGen service
  *   2. Persist generated template as draft AgentTemplate (owner=job.ownerAccountId)
- *   3. Set status=provisioning, call PlaygroundClient.createAssistant()
- *   4. Poll PlaygroundClient.getAssistant() until joinStatus ∈ {joined, failed}
+ *   3. Set status=provisioning, call ProvisioningClient.createAssistant()
+ *   4. Poll ProvisioningClient.getAssistant() until joinStatus ∈ {joined, failed}
  *   5. Set status=done or failed with result/error
  *   6. Set expiresAt on terminal jobs (TTL 24h)
  *
@@ -37,8 +37,8 @@
 import { mintTemplateId } from "@/utils/prefixed-id";
 import { prisma } from "@/utils/prisma";
 import { buildSlug } from "@/utils/slug-hash";
-import { PlaygroundClient } from "./playgroundClient";
 import { capturePostHog } from "./posthog";
+import { ProvisioningClient } from "./provisioningClient";
 import { callGenerateTemplate, type GeneratedTemplate } from "./templateGen";
 import { composeReply, type ReplyInput } from "./twitterReply";
 
@@ -280,12 +280,12 @@ async function persistPublishedTemplate(
 }
 
 // ---------------------------------------------------------------------------
-// Type from PlaygroundClient
+// Type from ProvisioningClient
 // ---------------------------------------------------------------------------
 
-/** Inferred return type of PlaygroundClient.getAssistant(). */
+/** Inferred return type of ProvisioningClient.getAssistant(). */
 type GetAssistantResult = Awaited<
-  ReturnType<typeof PlaygroundClient.getAssistant>
+  ReturnType<typeof ProvisioningClient.getAssistant>
 >;
 
 // ---------------------------------------------------------------------------
@@ -293,7 +293,7 @@ type GetAssistantResult = Awaited<
 // ---------------------------------------------------------------------------
 
 /**
- * Poll PlaygroundClient.getAssistant() until joinStatus reaches a terminal
+ * Poll ProvisioningClient.getAssistant() until joinStatus reaches a terminal
  * state ("joined" or "failed"), or the deadline passes.
  *
  * Returns the final GetAssistantResult, or throws on timeout.
@@ -303,7 +303,7 @@ async function pollUntilTerminal(
   deadline: number,
 ): Promise<GetAssistantResult> {
   while (Date.now() < deadline) {
-    const result = await PlaygroundClient.getAssistant(instanceId);
+    const result = await ProvisioningClient.getAssistant(instanceId);
 
     if (result.joinStatus === "joined" || result.joinStatus === "failed") {
       return result;
@@ -335,7 +335,7 @@ async function pollUntilTerminal(
  * - Generates template using idea text
  * - Publishes template (not draft)
  * - Composes reply tweet
- * - Does NOT call PlaygroundClient
+ * - Does NOT call ProvisioningClient
  */
 async function executeTwitterJob(
   jobId: string,
@@ -495,7 +495,7 @@ async function executeAppWebJob(
     return;
   }
 
-  // ── Step 5: Call PlaygroundClient.createAssistant ──
+  // ── Step 5: Call ProvisioningClient.createAssistant ──
   const createOpts: {
     name: string;
     instructions: string;
@@ -508,7 +508,7 @@ async function executeAppWebJob(
     metadata: { source: "create-job" },
   };
 
-  const { instanceId } = await PlaygroundClient.createAssistant(createOpts);
+  const { instanceId } = await ProvisioningClient.createAssistant(createOpts);
 
   // ── Step 6: Poll until terminal ──
   const finalStatus = await pollUntilTerminal(instanceId, deadline);

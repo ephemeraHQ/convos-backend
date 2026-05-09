@@ -117,9 +117,7 @@ describe("POST /api/v2/agent-templates/create-job — twitter source", () => {
       },
     });
     // Mock moderation to allow by default
-    __resetTwitterModerationForTests(() =>
-      Promise.resolve({ allowed: true }),
-    );
+    __resetTwitterModerationForTests(() => Promise.resolve({ allowed: true }));
     await new Promise<void>((resolve) => {
       server = app.listen(TEST_PORT, () => {
         resolve();
@@ -146,9 +144,7 @@ describe("POST /api/v2/agent-templates/create-job — twitter source", () => {
   beforeEach(async () => {
     process.env.AGENT_ASSETS_API_KEY = validAgentAssetsApiKey;
     // Reset moderation to allow by default
-    __resetTwitterModerationForTests(() =>
-      Promise.resolve({ allowed: true }),
-    );
+    __resetTwitterModerationForTests(() => Promise.resolve({ allowed: true }));
     await cleanupJobs();
   });
 

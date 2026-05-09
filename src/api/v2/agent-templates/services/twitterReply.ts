@@ -21,7 +21,7 @@
  *   TEMPLATE_SITE_URL          — base URL for templates (default: https://convos.org/assistants)
  *
  * Test seam: __resetTwitterReplyForTests(override | null) mirrors the
- * singleton-override pattern used by templateGen, PlaygroundClient, and PostHog.
+ * singleton-override pattern used by templateGen, ProvisioningClient, and PostHog.
  */
 
 // ---------------------------------------------------------------------------

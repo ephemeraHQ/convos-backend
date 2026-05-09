@@ -1,5 +1,5 @@
 /**
- * PlaygroundClient — HTTP client for the assistant-runtime-playground API.
+ * ProvisioningClient — HTTP client for the assistant-runtime-playground API.
  *
  * Methods:
  *   createAssistant({ name, instructions, joinUrl, profileImage?, metadata? })
@@ -11,7 +11,7 @@
  * Base URL: PLAYGROUND_API_URL env var.
  * Lazy init: env vars are read at call time, not at import time.
  *
- * Test seam: `__resetPlaygroundClientForTests(override | null)` mirrors the
+ * Test seam: `__resetProvisioningClientForTests(override | null)` mirrors the
  * `__resetGenerateTemplateForTests` / `__resetPostHogForTests` pattern.
  */
 
@@ -41,7 +41,7 @@ export interface GetAssistantResult {
   destroyedAt?: string | null;
 }
 
-export interface PlaygroundClientOverride {
+export interface ProvisioningClientOverride {
   createAssistant?: (
     opts: CreateAssistantOpts,
   ) => Promise<CreateAssistantResult>;
@@ -76,23 +76,23 @@ function getApiKey(): string {
 // Test seam — singleton override pattern
 // ---------------------------------------------------------------------------
 
-let _override: PlaygroundClientOverride | null = null;
+let _override: ProvisioningClientOverride | null = null;
 
 /**
- * Install a test override for PlaygroundClient methods.
+ * Install a test override for ProvisioningClient methods.
  * Pass `null` to restore normal behaviour.
  */
-export function __resetPlaygroundClientForTests(
-  override: PlaygroundClientOverride | null,
+export function __resetProvisioningClientForTests(
+  override: ProvisioningClientOverride | null,
 ): void {
   _override = override;
 }
 
 // ---------------------------------------------------------------------------
-// PlaygroundClient
+// ProvisioningClient
 // ---------------------------------------------------------------------------
 
-export const PlaygroundClient = {
+export const ProvisioningClient = {
   /**
    * Create an assistant instance on the playground.
    *
@@ -138,14 +138,14 @@ export const PlaygroundClient = {
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
       throw new Error(
-        `PlaygroundClient: network error calling POST /api/assistants — ${message}`,
+        `ProvisioningClient: network error calling POST /api/assistants — ${message}`,
       );
     }
 
     if (!response.ok) {
       const responseBody = await response.text().catch(() => "");
       throw new Error(
-        `PlaygroundClient: POST /api/assistants returned ${response.status} — ${responseBody}`,
+        `ProvisioningClient: POST /api/assistants returned ${response.status} — ${responseBody}`,
       );
     }
 
@@ -182,14 +182,14 @@ export const PlaygroundClient = {
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
       throw new Error(
-        `PlaygroundClient: network error calling GET /api/assistants/${instanceId} — ${message}`,
+        `ProvisioningClient: network error calling GET /api/assistants/${instanceId} — ${message}`,
       );
     }
 
     if (!response.ok) {
       const responseBody = await response.text().catch(() => "");
       throw new Error(
-        `PlaygroundClient: GET /api/assistants/${instanceId} returned ${response.status} — ${responseBody}`,
+        `ProvisioningClient: GET /api/assistants/${instanceId} returned ${response.status} — ${responseBody}`,
       );
     }
 

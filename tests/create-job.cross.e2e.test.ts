@@ -41,13 +41,13 @@ import {
   __setTimeoutMsForTests,
 } from "@/api/v2/agent-templates/services/job-executor";
 import {
-  __resetPlaygroundClientForTests,
-  type CreateAssistantOpts,
-} from "@/api/v2/agent-templates/services/playgroundClient";
-import {
   __resetPostHogForTests,
   type PostHogCaptureProperties,
 } from "@/api/v2/agent-templates/services/posthog";
+import {
+  __resetProvisioningClientForTests,
+  type CreateAssistantOpts,
+} from "@/api/v2/agent-templates/services/provisioningClient";
 import {
   __resetGenerateTemplateForTests,
   DEFAULT_TEST_METRICS,
@@ -157,7 +157,7 @@ function installHappyPathMocks(opts?: {
 
   let remainingIntermediate = opts?.intermediatePolls ?? 0;
 
-  __resetPlaygroundClientForTests({
+  __resetProvisioningClientForTests({
     createAssistant: (_opts: CreateAssistantOpts) =>
       Promise.resolve({ instanceId: "inst-e2e-123" }),
     getAssistant: async (instanceId: string) => {
@@ -188,7 +188,7 @@ function installGenerationFailureMock(): void {
     throw new Error("OpenRouter API error 500: internal server error");
   });
 
-  __resetPlaygroundClientForTests({
+  __resetProvisioningClientForTests({
     createAssistant: () =>
       Promise.resolve({ instanceId: "should-not-be-called" }),
     getAssistant: (instanceId: string) =>
@@ -208,7 +208,7 @@ function installProvisioningFailureMock(failureReason?: string): void {
     }),
   );
 
-  __resetPlaygroundClientForTests({
+  __resetProvisioningClientForTests({
     createAssistant: (_opts: CreateAssistantOpts) =>
       Promise.resolve({ instanceId: "inst-e2e-fail" }),
     getAssistant: async (instanceId: string) => ({
@@ -230,10 +230,10 @@ function installPlaygroundPostFailureMock(): void {
     }),
   );
 
-  __resetPlaygroundClientForTests({
+  __resetProvisioningClientForTests({
     createAssistant: () => {
       throw new Error(
-        "PlaygroundClient: POST /api/assistants returned 500 — Internal Server Error",
+        "ProvisioningClient: POST /api/assistants returned 500 — Internal Server Error",
       );
     },
     getAssistant: () => {
@@ -268,7 +268,7 @@ describe("CreateJob Cross-Area E2E", () => {
   afterAll(async () => {
     __resetJobExecutorForTests(null);
     __resetGenerateTemplateForTests(null);
-    __resetPlaygroundClientForTests(null);
+    __resetProvisioningClientForTests(null);
     __resetPostHogForTests(null);
     __setPollIntervalMsForTests(null);
     __setTimeoutMsForTests(null);
@@ -292,7 +292,7 @@ describe("CreateJob Cross-Area E2E", () => {
     process.env.XMTP_ENV = "dev";
     capturedPostHog = [];
     __resetGenerateTemplateForTests(null);
-    __resetPlaygroundClientForTests(null);
+    __resetProvisioningClientForTests(null);
     __setTimeoutMsForTests(null);
     await cleanupJobs();
     await cleanupTemplates();
@@ -448,7 +448,7 @@ describe("CreateJob Cross-Area E2E", () => {
       }),
     );
 
-    __resetPlaygroundClientForTests({
+    __resetProvisioningClientForTests({
       createAssistant: (_opts: CreateAssistantOpts) =>
         Promise.resolve({ instanceId: "inst-stuck" }),
       getAssistant: async (instanceId: string) => ({
@@ -638,7 +638,7 @@ describe("CreateJob Cross-Area E2E", () => {
       }),
     );
 
-    __resetPlaygroundClientForTests({
+    __resetProvisioningClientForTests({
       createAssistant: (_opts: CreateAssistantOpts) =>
         Promise.resolve({ instanceId: "inst-timeout" }),
       getAssistant: async (instanceId: string) => ({
@@ -930,7 +930,7 @@ describe("CreateJob Cross-Area E2E", () => {
 
     let provisioningStarted = false;
 
-    __resetPlaygroundClientForTests({
+    __resetProvisioningClientForTests({
       createAssistant: (_opts: CreateAssistantOpts) => {
         provisioningStarted = true;
         return Promise.resolve({ instanceId: "inst-ph-timing" });

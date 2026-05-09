@@ -17,7 +17,7 @@
  *   TWITTER_MODERATION_MODEL   — model override (default: anthropic/claude-3-5-haiku-20241022)
  *
  * Test seam: __resetTwitterModerationForTests(override | null) mirrors the
- * singleton-override pattern used by templateGen, PlaygroundClient, and PostHog.
+ * singleton-override pattern used by templateGen, ProvisioningClient, and PostHog.
  */
 
 // ---------------------------------------------------------------------------

@@ -11,7 +11,7 @@
  *   - BG-007: Job transitions to done when joinStatus is "joined"
  *   - BG-008: Job transitions to failed when joinStatus is "failed"
  *   - BG-009: Job transitions to failed when templateGen throws
- *   - BG-010: Job transitions to failed when PlaygroundClient POST throws
+ *   - BG-010: Job transitions to failed when ProvisioningClient POST throws
  *   - BG-011: Job transitions to failed when playground is unreachable
  *   - BG-012: 5-minute timeout
  *   - BG-013: Job sets expiresAt when reaching terminal state
@@ -26,9 +26,9 @@
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import {
-  __resetPlaygroundClientForTests,
+  __resetProvisioningClientForTests,
   type CreateAssistantOpts,
-} from "../src/api/v2/agent-templates/services/playgroundClient";
+} from "../src/api/v2/agent-templates/services/provisioningClient";
 import {
   __resetGenerateTemplateForTests,
   DEFAULT_TEST_METRICS,
@@ -111,7 +111,7 @@ beforeEach(() => {
 
   // Reset test seams — use no-op defaults
   __resetGenerateTemplateForTests(null);
-  __resetPlaygroundClientForTests(null);
+  __resetProvisioningClientForTests(null);
 });
 
 afterEach(async () => {
@@ -125,7 +125,7 @@ afterEach(async () => {
   });
   // Reset test seams
   __resetGenerateTemplateForTests(null);
-  __resetPlaygroundClientForTests(null);
+  __resetProvisioningClientForTests(null);
 });
 
 // ---------------------------------------------------------------------------
@@ -154,8 +154,8 @@ function installHappyPathMocks(opts?: {
   // Mutable counter for intermediate polls
   let remainingIntermediate = opts?.intermediatePolls ?? 0;
 
-  // Mock PlaygroundClient — no intermediate polls by default for faster tests
-  __resetPlaygroundClientForTests({
+  // Mock ProvisioningClient — no intermediate polls by default for faster tests
+  __resetProvisioningClientForTests({
     createAssistant: (opts_create) => {
       playgroundCreateCalls.push(opts_create);
       return Promise.resolve({ instanceId: "inst-test-123" });
@@ -266,7 +266,7 @@ describe("CreateJob Executor — Happy Path", () => {
     // templateGen was called (proves generating phase ran)
     expect(templateGenCalls.length).toBe(1);
 
-    // PlaygroundClient.createAssistant was called (proves provisioning phase ran)
+    // ProvisioningClient.createAssistant was called (proves provisioning phase ran)
     expect(playgroundCreateCalls.length).toBe(1);
 
     // Result has templateId (set during generating → provisioning transition)
@@ -335,7 +335,7 @@ describe("CreateJob Executor — Happy Path", () => {
       });
     });
 
-    __resetPlaygroundClientForTests({
+    __resetProvisioningClientForTests({
       createAssistant: (opts) => {
         playgroundCreateCalls.push(opts);
         return Promise.resolve({ instanceId: "inst-poll-test" });
@@ -421,7 +421,7 @@ describe("CreateJob Executor — Happy Path", () => {
       });
     });
 
-    __resetPlaygroundClientForTests({
+    __resetProvisioningClientForTests({
       createAssistant: (opts) => {
         playgroundCreateCalls.push(opts);
         return Promise.resolve({ instanceId: "inst-fail-test" });
@@ -453,7 +453,7 @@ describe("CreateJob Executor — Happy Path", () => {
       throw new Error("LLM API error: model unavailable");
     });
 
-    __resetPlaygroundClientForTests({
+    __resetProvisioningClientForTests({
       createAssistant: (_opts) =>
         Promise.resolve({ instanceId: "should-not-be-called" }),
       getAssistant: (instanceId) =>
@@ -476,7 +476,7 @@ describe("CreateJob Executor — Happy Path", () => {
     expect(job!.error).toContain("LLM API error");
   });
 
-  test("VAL-CJ-BG-010: job transitions to failed when PlaygroundClient POST throws", async () => {
+  test("VAL-CJ-BG-010: job transitions to failed when ProvisioningClient POST throws", async () => {
     __resetGenerateTemplateForTests((input) => {
       templateGenCalls.push(
         typeof input === "string"
@@ -489,10 +489,10 @@ describe("CreateJob Executor — Happy Path", () => {
       });
     });
 
-    __resetPlaygroundClientForTests({
+    __resetProvisioningClientForTests({
       createAssistant: () => {
         throw new Error(
-          "PlaygroundClient: POST /api/assistants returned 500 — Internal Server Error",
+          "ProvisioningClient: POST /api/assistants returned 500 — Internal Server Error",
         );
       },
       getAssistant: (instanceId) =>
@@ -528,14 +528,14 @@ describe("CreateJob Executor — Happy Path", () => {
       });
     });
 
-    __resetPlaygroundClientForTests({
+    __resetProvisioningClientForTests({
       createAssistant: () => {
         throw new Error(
-          "PlaygroundClient: network error calling POST /api/assistants — fetch failed",
+          "ProvisioningClient: network error calling POST /api/assistants — fetch failed",
         );
       },
       getAssistant: () => {
-        throw new Error("PlaygroundClient: network error — fetch failed");
+        throw new Error("ProvisioningClient: network error — fetch failed");
       },
     });
 
@@ -566,7 +566,7 @@ describe("CreateJob Executor — Happy Path", () => {
     });
 
     // Playground never returns terminal state
-    __resetPlaygroundClientForTests({
+    __resetProvisioningClientForTests({
       createAssistant: (opts) => {
         playgroundCreateCalls.push(opts);
         return Promise.resolve({ instanceId: "inst-timeout-test" });
@@ -632,7 +632,7 @@ describe("CreateJob Executor — Happy Path", () => {
       throw new Error("Generation failed");
     });
 
-    __resetPlaygroundClientForTests({
+    __resetProvisioningClientForTests({
       createAssistant: () => {
         throw new Error("Should not be called");
       },
@@ -681,7 +681,7 @@ describe("CreateJob Executor — Happy Path", () => {
       });
     });
 
-    __resetPlaygroundClientForTests({
+    __resetProvisioningClientForTests({
       createAssistant: (opts) => {
         playgroundCreateCalls.push(opts);
         return Promise.resolve({ instanceId: "inst-concurrent" });
@@ -749,7 +749,7 @@ describe("CreateJob Executor — Happy Path", () => {
     // templateGen was called (generating phase)
     expect(templateGenCalls.length).toBe(1);
 
-    // PlaygroundClient.createAssistant was called (provisioning phase)
+    // ProvisioningClient.createAssistant was called (provisioning phase)
     expect(playgroundCreateCalls.length).toBe(1);
 
     // Result contains data from both phases:
@@ -767,7 +767,7 @@ describe("CreateJob Executor — Happy Path", () => {
       throw new Error("Template generation error");
     });
 
-    __resetPlaygroundClientForTests({
+    __resetProvisioningClientForTests({
       createAssistant: () => {
         throw new Error("Should not be called");
       },
@@ -788,7 +788,7 @@ describe("CreateJob Executor — Happy Path", () => {
     expect(job!.status).toBe("failed");
     expect(job!.error).toContain("Template generation error");
 
-    // PlaygroundClient.createAssistant was NOT called (provisioning never started)
+    // ProvisioningClient.createAssistant was NOT called (provisioning never started)
     expect(playgroundCreateCalls.length).toBe(0);
   });
 
@@ -805,7 +805,7 @@ describe("CreateJob Executor — Happy Path", () => {
       });
     });
 
-    __resetPlaygroundClientForTests({
+    __resetProvisioningClientForTests({
       createAssistant: () => {
         throw new Error("Playground returned 500");
       },
@@ -965,7 +965,7 @@ describe("CreateJob Executor — Edge Cases", () => {
       });
     });
 
-    __resetPlaygroundClientForTests({
+    __resetProvisioningClientForTests({
       createAssistant: (opts) => {
         playgroundCreateCalls.push(opts);
         return Promise.resolve({ instanceId: "inst-fail-reason" });
@@ -1005,7 +1005,7 @@ describe("CreateJob Executor — Edge Cases", () => {
       });
     });
 
-    __resetPlaygroundClientForTests({
+    __resetProvisioningClientForTests({
       createAssistant: () => {
         throw new Error("Playground returned 500");
       },
@@ -1075,7 +1075,7 @@ describe("CreateJob Executor — Edge Cases", () => {
       throw new Error("OpenRouter API error 429: Rate limit exceeded");
     });
 
-    __resetPlaygroundClientForTests({
+    __resetProvisioningClientForTests({
       createAssistant: () => {
         throw new Error("Should not be called");
       },
