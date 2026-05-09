@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import type { Server } from "node:http";
 import type { Prisma } from "@prisma/client";
 import {
@@ -14,7 +15,7 @@ import { jsonMiddleware } from "@/middleware/json";
 import { noRouteMiddleware } from "@/middleware/noRoute";
 import { pinoMiddleware } from "@/middleware/pino";
 import { createJwtToken } from "@/utils/jwt";
-import { ADMIN_ACCOUNT_ID } from "@/utils/prefixed-id";
+import { ADMIN_ACCOUNT_ID } from "@/utils/constants";
 import { prisma } from "@/utils/prisma";
 
 type TemplateBody = Record<string, unknown>;
@@ -33,10 +34,16 @@ const publishedAt = new Date("2026-02-01T12:00:00.000Z");
 const createdAt = new Date("2026-01-31T12:00:00.000Z");
 const isoTimestampPattern = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$/;
 
-const cleanupTemplates = () =>
-  prisma.agentTemplate.deleteMany({
-    where: { id: { startsWith: "tmpl_test_patch_" } },
-  });
+const testTemplateIds: string[] = [];
+
+const cleanupTemplates = async () => {
+  if (testTemplateIds.length > 0) {
+    await prisma.agentTemplate.deleteMany({
+      where: { id: { in: testTemplateIds } },
+    });
+  }
+  testTemplateIds.length = 0;
+};
 
 const makeAuthHeaders = async () => ({
   "Content-Type": "application/json",
@@ -47,18 +54,18 @@ const makeAuthHeaders = async () => ({
 });
 
 const seedTemplate = async (
-  overrides: Partial<Prisma.AgentTemplateUncheckedCreateInput> & {
-    id: string;
-  },
+  overrides: Partial<Prisma.AgentTemplateUncheckedCreateInput> = {},
 ) => {
+  const id = overrides.id ?? randomUUID();
+  testTemplateIds.push(id);
   const status = overrides.status ?? "draft";
   const defaultFirstPublishedAt =
     status === "draft" ? null : new Date(publishedAt);
 
   return prisma.agentTemplate.create({
     data: {
-      id: overrides.id,
-      slug: overrides.slug ?? overrides.id.replace(/_/g, "-"),
+      id,
+      slug: overrides.slug ?? `patch-test-${id.slice(0, 8)}`,
       ownerAccountId: overrides.ownerAccountId ?? ADMIN_ACCOUNT_ID,
       forkedFromId: overrides.forkedFromId ?? null,
       agentName: overrides.agentName ?? "Patch Test Template",
@@ -141,7 +148,8 @@ describe("Agent template patch endpoint", () => {
   });
 
   test("returns 404 for an unknown template id", async () => {
-    const { body, response } = await patchTemplate("tmpl_test_patch_missing", {
+    const missingId = randomUUID();
+    const { body, response } = await patchTemplate(missingId, {
       description: "x",
     });
 
@@ -151,7 +159,6 @@ describe("Agent template patch endpoint", () => {
 
   test("updates content fields immediately without bumping version or firstPublishedAt", async () => {
     const template = await seedTemplate({
-      id: "tmpl_test_patch_content",
       slug: "patch-test-content",
       status: "published",
       firstPublishedAt: publishedAt,
@@ -197,7 +204,6 @@ describe("Agent template patch endpoint", () => {
 
   test("allows valid pre-publish slug patches and enforces the 64 character boundary", async () => {
     const template = await seedTemplate({
-      id: "tmpl_test_patch_slug",
       slug: "patch-test-old",
     });
     const maxLengthSlug = "a".repeat(64);
@@ -228,11 +234,9 @@ describe("Agent template patch endpoint", () => {
 
   test("validates draft slug patches and leaves the row unchanged on invalid or conflicting slugs", async () => {
     await seedTemplate({
-      id: "tmpl_test_patch_slug_taken",
       slug: "patch-test-taken",
     });
     const template = await seedTemplate({
-      id: "tmpl_test_patch_slug_invalid",
       slug: "patch-test-original",
     });
 
@@ -259,7 +263,6 @@ describe("Agent template patch endpoint", () => {
 
   test("rejects slug changes after first publish and preserves the existing slug", async () => {
     const template = await seedTemplate({
-      id: "tmpl_test_patch_slug_immutable",
       slug: "patch-test-immutable",
       status: "published",
       firstPublishedAt: publishedAt,
@@ -279,7 +282,6 @@ describe("Agent template patch endpoint", () => {
 
   test("applies the allowed post-publish status transition matrix", async () => {
     const published = await seedTemplate({
-      id: "tmpl_test_patch_status_published",
       slug: "patch-test-status-published",
       status: "published",
     });
@@ -303,7 +305,6 @@ describe("Agent template patch endpoint", () => {
     expect(publishedToArchived.body.status).toBe("archived");
 
     const unlisted = await seedTemplate({
-      id: "tmpl_test_patch_status_unlisted",
       slug: "patch-test-status-unlisted",
       status: "unlisted",
     });
@@ -320,7 +321,6 @@ describe("Agent template patch endpoint", () => {
     expect(archivedToPublished.body.status).toBe("published");
 
     const archived = await seedTemplate({
-      id: "tmpl_test_patch_status_archived",
       slug: "patch-test-status-archived",
       status: "archived",
     });
@@ -334,7 +334,6 @@ describe("Agent template patch endpoint", () => {
   test("rejects status transitions into draft after publish and out of draft via PATCH", async () => {
     for (const status of ["published", "unlisted", "archived"] as const) {
       const template = await seedTemplate({
-        id: `tmpl_test_patch_to_draft_${status}`,
         slug: `patch-test-to-draft-${status}`,
         status,
       });
@@ -350,7 +349,6 @@ describe("Agent template patch endpoint", () => {
 
     for (const target of ["published", "unlisted", "archived"] as const) {
       const template = await seedTemplate({
-        id: `tmpl_test_patch_from_draft_${target}`,
         slug: `patch-test-from-draft-${target}`,
         status: "draft",
         firstPublishedAt: null,
@@ -368,7 +366,6 @@ describe("Agent template patch endpoint", () => {
 
   test("ignores server-pinned fields and keeps the database row unchanged", async () => {
     const template = await seedTemplate({
-      id: "tmpl_test_patch_pinned",
       slug: "patch-test-pinned",
       status: "published",
       firstPublishedAt: publishedAt,
@@ -376,13 +373,14 @@ describe("Agent template patch endpoint", () => {
       createdAt,
     });
 
+    const fakeOtherId = randomUUID();
     const result = await patchTemplate(template.id, {
       ownerAccountId: OTHER_ACCOUNT_ID,
       version: 42,
       firstPublishedAt: "2020-01-01T00:00:00.000Z",
-      forkedFromId: "tmpl_test_patch_other",
+      forkedFromId: fakeOtherId,
       createdAt: "2000-01-01T00:00:00.000Z",
-      id: "tmpl_test_patch_other",
+      id: fakeOtherId,
     });
 
     expect(result.response.status).toBe(200);
@@ -405,14 +403,13 @@ describe("Agent template patch endpoint", () => {
     expect(row.createdAt.toISOString()).toBe(createdAt.toISOString());
     expect(
       await prisma.agentTemplate.findUnique({
-        where: { id: "tmpl_test_patch_other" },
+        where: { id: fakeOtherId },
       }),
     ).toBeNull();
   });
 
   test("returns the full template object and preserves it on an empty body no-op", async () => {
     const template = await seedTemplate({
-      id: "tmpl_test_patch_empty",
       slug: "patch-test-empty",
       status: "published",
       firstPublishedAt: publishedAt,

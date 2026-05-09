@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import type { Server } from "node:http";
 import type { Prisma } from "@prisma/client";
 import {
@@ -14,7 +15,7 @@ import { jsonMiddleware } from "@/middleware/json";
 import { noRouteMiddleware } from "@/middleware/noRoute";
 import { pinoMiddleware } from "@/middleware/pino";
 import { createJwtToken } from "@/utils/jwt";
-import { ADMIN_ACCOUNT_ID } from "@/utils/prefixed-id";
+import { ADMIN_ACCOUNT_ID } from "@/utils/constants";
 import { prisma } from "@/utils/prisma";
 
 type TemplateBody = Record<string, unknown>;
@@ -33,17 +34,25 @@ const validAgentAssetsApiKey =
   "test-agent-assets-api-key-that-is-at-least-32-characters";
 const createdAt = new Date("2026-01-31T12:00:00.000Z");
 
-const cleanupTemplates = () =>
-  prisma.agentTemplate.deleteMany({
+const testTemplateIds: string[] = [];
+
+const cleanupTemplates = async () => {
+  if (testTemplateIds.length > 0) {
+    await prisma.agentTemplate.deleteMany({
+      where: { id: { in: testTemplateIds } },
+    });
+  }
+  await prisma.agentTemplate.deleteMany({
     where: {
       ownerAccountId: ADMIN_ACCOUNT_ID,
       OR: [
-        { id: { startsWith: "tmpl_test_auth_" } },
         { slug: { startsWith: "auth-test-" } },
         { agentName: { startsWith: "Auth Test" } },
       ],
     },
   });
+  testTemplateIds.length = 0;
+};
 
 const restoreAgentAssetsApiKey = () => {
   if (originalAgentAssetsApiKey === undefined) {
@@ -90,10 +99,12 @@ const seedTemplate = async (
   label: string,
   kind: string,
   overrides: Partial<Prisma.AgentTemplateUncheckedCreateInput> = {},
-) =>
-  prisma.agentTemplate.create({
+) => {
+  const id = randomUUID();
+  testTemplateIds.push(id);
+  return prisma.agentTemplate.create({
     data: {
-      id: `tmpl_test_auth_${label}_${kind}`,
+      id,
       slug: `auth-test-${label}-${kind}`,
       ownerAccountId: ADMIN_ACCOUNT_ID,
       forkedFromId: null,
@@ -113,6 +124,7 @@ const seedTemplate = async (
       ...overrides,
     },
   });
+};
 
 const postTemplate = async (
   label: string,

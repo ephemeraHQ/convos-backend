@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import type { Server } from "node:http";
 import type { Prisma } from "@prisma/client";
@@ -5,7 +6,7 @@ import { afterAll, beforeEach, describe, expect, test } from "bun:test";
 import express, { Router } from "express";
 import { agentTemplatesRouter } from "@/api/v2/agent-templates/agent-templates.router";
 import { noRouteMiddleware } from "@/middleware/noRoute";
-import { ADMIN_ACCOUNT_ID } from "@/utils/prefixed-id";
+import { ADMIN_ACCOUNT_ID } from "@/utils/constants";
 import { prisma } from "@/utils/prisma";
 
 type ListEnvelope = {
@@ -16,25 +17,31 @@ type ListEnvelope = {
 
 const originalXMTPEnv = process.env.XMTP_ENV;
 
-const cleanupTemplates = () =>
-  prisma.agentTemplate.deleteMany({
-    where: { id: { startsWith: "tmpl_test_" } },
-  });
+const testTemplateIds: string[] = [];
+
+const cleanupTemplates = async () => {
+  if (testTemplateIds.length > 0) {
+    await prisma.agentTemplate.deleteMany({
+      where: { id: { in: testTemplateIds } },
+    });
+  }
+  testTemplateIds.length = 0;
+};
 
 const createTemplate = async (
-  overrides: Partial<Prisma.AgentTemplateUncheckedCreateInput> & {
-    id: string;
-  },
-) =>
-  prisma.agentTemplate.create({
+  overrides: Partial<Prisma.AgentTemplateUncheckedCreateInput> = {},
+) => {
+  const id = overrides.id ?? randomUUID();
+  testTemplateIds.push(id);
+  return prisma.agentTemplate.create({
     data: {
-      id: overrides.id,
-      slug: overrides.slug ?? overrides.id.replace(/_/g, "-"),
+      id,
+      slug: overrides.slug ?? `guard-${id.slice(0, 8)}`,
       ownerAccountId: overrides.ownerAccountId ?? ADMIN_ACCOUNT_ID,
       forkedFromId: overrides.forkedFromId ?? null,
-      agentName: overrides.agentName ?? `Template ${overrides.id}`,
+      agentName: overrides.agentName ?? `Template ${id}`,
       description: overrides.description ?? null,
-      prompt: overrides.prompt ?? `Prompt for ${overrides.id}`,
+      prompt: overrides.prompt ?? `Prompt for ${id}`,
       category: overrides.category ?? null,
       emoji: overrides.emoji ?? null,
       avatarUrl: overrides.avatarUrl ?? null,
@@ -48,6 +55,7 @@ const createTemplate = async (
       createdAt: overrides.createdAt ?? new Date("2026-01-21T00:00:00.000Z"),
     },
   });
+};
 
 const restoreXMTPEnv = () => {
   if (originalXMTPEnv === undefined) {
@@ -134,14 +142,15 @@ describe("Agent template read production guard", () => {
 
   test("production unmounts list, detail, hashed-slug, query, and underscore read paths through noRouteMiddleware", async () => {
     await withGuardedServer("production", async (baseURL) => {
+      const fakeUuid = randomUUID();
       const paths = [
         "/api/v2/agent-templates",
         "/api/v2/agent-templates/",
-        "/api/v2/agent-templates/tmpl_anything",
+        `/api/v2/agent-templates/${fakeUuid}`,
         "/api/v2/agent-templates/slug.aaaaa",
         "/api/v2/agent-templates?limit=20",
         "/api/v2/agent_templates",
-        "/api/v2/agent_templates/tmpl_anything",
+        `/api/v2/agent_templates/${fakeUuid}`,
       ];
 
       const responses = await Promise.all(
@@ -160,8 +169,7 @@ describe("Agent template read production guard", () => {
   });
 
   test("dev, staging, local, unset, and mixed-case Production keep the list route reachable", async () => {
-    await createTemplate({
-      id: "tmpl_test_read_guard_reachable",
+    const tmpl = await createTemplate({
       slug: "read-guard-reachable",
     });
 
@@ -187,15 +195,11 @@ describe("Agent template read production guard", () => {
           "hasMore",
           "nextCursor",
         ]);
-        expect(
-          body.data.some((row) => row.id === "tmpl_test_read_guard_reachable"),
-        ).toBe(true);
+        expect(body.data.some((row) => row.id === tmpl.id)).toBe(true);
 
         const underscoreResponses = await Promise.all([
           fetch(`${baseURL}/api/v2/agent_templates`),
-          fetch(
-            `${baseURL}/api/v2/agent_templates/tmpl_test_read_guard_reachable`,
-          ),
+          fetch(`${baseURL}/api/v2/agent_templates/${tmpl.id}`),
         ]);
 
         expect(underscoreResponses.map((res) => res.status)).toEqual([

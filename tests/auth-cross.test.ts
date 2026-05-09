@@ -23,7 +23,7 @@ import { jsonMiddleware } from "@/middleware/json";
 import { noRouteMiddleware } from "@/middleware/noRoute";
 import { pinoMiddleware } from "@/middleware/pino";
 import { createJwtToken } from "@/utils/jwt";
-import { ADMIN_ACCOUNT_ID } from "@/utils/prefixed-id";
+import { ADMIN_ACCOUNT_ID } from "@/utils/constants";
 import { prisma } from "@/utils/prisma";
 
 // ---------------------------------------------------------------------------
@@ -366,7 +366,7 @@ describe("Cross-area auth flows", () => {
 
     // PATCH /agent-templates/:id
     const patchResponse = await fetch(
-      `${baseURL}/api/v2/agent-templates/tmpl_fake`,
+      `${baseURL}/api/v2/agent-templates/00000000-0000-4000-8000-000000000000`,
       {
         method: "PATCH",
         headers: await jwtOnlyHeaders(),
@@ -377,7 +377,7 @@ describe("Cross-area auth flows", () => {
 
     // DELETE /agent-templates/:id
     const deleteResponse = await fetch(
-      `${baseURL}/api/v2/agent-templates/tmpl_fake`,
+      `${baseURL}/api/v2/agent-templates/00000000-0000-4000-8000-000000000000`,
       {
         method: "DELETE",
         headers: await jwtOnlyHeaders(),
@@ -387,7 +387,7 @@ describe("Cross-area auth flows", () => {
 
     // POST /agent-templates/:id/publish
     const publishResponse = await fetch(
-      `${baseURL}/api/v2/agent-templates/tmpl_fake/publish`,
+      `${baseURL}/api/v2/agent-templates/00000000-0000-4000-8000-000000000000/publish`,
       {
         method: "POST",
         headers: await jwtOnlyHeaders(),

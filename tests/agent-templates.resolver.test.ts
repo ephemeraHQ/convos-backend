@@ -1,17 +1,25 @@
+import { randomUUID } from "node:crypto";
 import type { Prisma } from "@prisma/client";
 import { afterAll, beforeEach, describe, expect, test } from "bun:test";
 import { resolveAgentTemplateByIdOrHashedSlug } from "@/api/v2/agent-templates/lib/resolve-id-or-hashed-slug";
-import { ADMIN_ACCOUNT_ID } from "@/utils/prefixed-id";
+import { ADMIN_ACCOUNT_ID } from "@/utils/constants";
 import { prisma } from "@/utils/prisma";
 import { slugHash } from "@/utils/slug-hash";
 
+const OTHER_OWNER_ID = "bbbbbbbb-cccc-4ddd-eeee-ffffffff0002";
+
+const testIds: string[] = [];
+
 const cleanup = async () => {
+  if (testIds.length > 0) {
+    await prisma.agentTemplate.deleteMany({
+      where: { id: { in: testIds } },
+    });
+  }
   await prisma.agentTemplate.deleteMany({
-    where: { id: { startsWith: "tmpl_test_" } },
+    where: { ownerAccountId: OTHER_OWNER_ID },
   });
-  await prisma.account.deleteMany({
-    where: { id: { startsWith: "acct_test_" } },
-  });
+  await prisma.account.deleteMany({ where: { id: OTHER_OWNER_ID } });
 };
 
 const createAccount = (id: string) =>
@@ -22,21 +30,21 @@ const createAccount = (id: string) =>
   });
 
 const createTemplate = async (
-  overrides: Partial<Prisma.AgentTemplateUncheckedCreateInput> & {
-    id: string;
-  },
+  overrides: Partial<Prisma.AgentTemplateUncheckedCreateInput>,
 ) => {
-  const slug = overrides.slug ?? overrides.id.replace(/_/g, "-");
+  const id = overrides.id ?? randomUUID();
+  testIds.push(id);
+  const slug = overrides.slug ?? id.replace(/-/g, "").slice(0, 12);
 
   return prisma.agentTemplate.create({
     data: {
-      id: overrides.id,
+      id,
       slug,
       ownerAccountId: overrides.ownerAccountId ?? ADMIN_ACCOUNT_ID,
       forkedFromId: overrides.forkedFromId ?? null,
-      agentName: overrides.agentName ?? `Template ${overrides.id}`,
+      agentName: overrides.agentName ?? `Template ${id}`,
       description: overrides.description ?? null,
-      prompt: overrides.prompt ?? `Prompt for ${overrides.id}`,
+      prompt: overrides.prompt ?? `Prompt for ${id}`,
       category: overrides.category ?? null,
       emoji: overrides.emoji ?? null,
       avatarUrl: overrides.avatarUrl ?? null,
@@ -59,22 +67,17 @@ describe("agent template id-or-hashed-slug resolver", () => {
 
   beforeEach(async () => {
     await cleanup();
+    testIds.length = 0;
   });
 
-  test("resolves direct tmpl_ ids and never falls back to bare slug lookups", async () => {
-    await createTemplate({
-      id: "tmpl_test_resolver_id",
-      slug: "unrelated",
-    });
-    await createTemplate({
-      id: "tmpl_test_resolver_bare",
-      slug: "brewski",
-    });
+  test("resolves direct UUID ids and never falls back to bare slug lookups", async () => {
+    const tmplId = await createTemplate({ slug: "unrelated" });
+    const tmplBare = await createTemplate({ slug: "brewski" });
 
     const byId = await resolveAgentTemplateByIdOrHashedSlug({
-      idOrHashedSlug: "tmpl_test_resolver_id",
+      idOrHashedSlug: tmplId.id,
     });
-    expect(byId?.id).toBe("tmpl_test_resolver_id");
+    expect(byId?.id).toBe(tmplId.id);
 
     const bareSlug = await resolveAgentTemplateByIdOrHashedSlug({
       idOrHashedSlug: "brewski",
@@ -83,16 +86,13 @@ describe("agent template id-or-hashed-slug resolver", () => {
   });
 
   test("splits hashed slugs on the last dot and validates hash syntax exactly", async () => {
-    await createTemplate({
-      id: "tmpl_test_resolver_hash",
-      slug: "my-thing",
-    });
+    const tmpl = await createTemplate({ slug: "my-thing" });
 
-    const correctHash = slugHash("tmpl_test_resolver_hash");
+    const correctHash = slugHash(tmpl.id);
     const valid = await resolveAgentTemplateByIdOrHashedSlug({
       idOrHashedSlug: `my-thing.${correctHash}`,
     });
-    expect(valid?.id).toBe("tmpl_test_resolver_hash");
+    expect(valid?.id).toBe(tmpl.id);
 
     const extraBaseDot = await resolveAgentTemplateByIdOrHashedSlug({
       idOrHashedSlug: `extra.my-thing.${correctHash}`,
@@ -114,35 +114,33 @@ describe("agent template id-or-hashed-slug resolver", () => {
   });
 
   test("resolves duplicate base slugs by each owner's hash and rejects collisions", async () => {
-    await createAccount("acct_test_resolver_owner");
-    await Promise.all([
+    await createAccount(OTHER_OWNER_ID);
+    const [tmplA, tmplB] = await Promise.all([
       createTemplate({
-        id: "tmpl_test_shared_a",
         slug: "shared",
         ownerAccountId: ADMIN_ACCOUNT_ID,
       }),
       createTemplate({
-        id: "tmpl_test_shared_b",
         slug: "shared",
-        ownerAccountId: "acct_test_resolver_owner",
+        ownerAccountId: OTHER_OWNER_ID,
       }),
     ]);
 
-    const hashA = slugHash("tmpl_test_shared_a");
-    const hashB = slugHash("tmpl_test_shared_b");
+    const hashA = slugHash(tmplA.id);
+    const hashB = slugHash(tmplB.id);
 
     const rowA = await resolveAgentTemplateByIdOrHashedSlug({
       idOrHashedSlug: `shared.${hashA}`,
     });
-    expect(rowA?.id).toBe("tmpl_test_shared_a");
+    expect(rowA?.id).toBe(tmplA.id);
 
     const rowB = await resolveAgentTemplateByIdOrHashedSlug({
       idOrHashedSlug: `shared.${hashB}`,
     });
-    expect(rowB?.id).toBe("tmpl_test_shared_b");
+    expect(rowB?.id).toBe(tmplB.id);
 
     const wrongHash = await resolveAgentTemplateByIdOrHashedSlug({
-      idOrHashedSlug: `shared.${slugHash("tmpl_test_shared_c")}`,
+      idOrHashedSlug: `shared.${slugHash(randomUUID())}`,
     });
     expect(wrongHash).toBeNull();
 
@@ -154,96 +152,80 @@ describe("agent template id-or-hashed-slug resolver", () => {
   });
 
   test("enforces public status visibility for both id and hashed-slug inputs", async () => {
-    await Promise.all([
-      createTemplate({
-        id: "tmpl_test_resolver_draft",
-        slug: "resolver-draft",
-        status: "draft",
-        firstPublishedAt: null,
-      }),
-      createTemplate({
-        id: "tmpl_test_resolver_unlisted",
-        slug: "resolver-unlisted",
-        status: "unlisted",
-      }),
-      createTemplate({
-        id: "tmpl_test_resolver_archived",
-        slug: "resolver-archived",
-        status: "archived",
-      }),
-    ]);
+    const draft = await createTemplate({
+      slug: "resolver-draft",
+      status: "draft",
+      firstPublishedAt: null,
+    });
+    const unlisted = await createTemplate({
+      slug: "resolver-unlisted",
+      status: "unlisted",
+    });
+    const archived = await createTemplate({
+      slug: "resolver-archived",
+      status: "archived",
+    });
 
     const draftById = await resolveAgentTemplateByIdOrHashedSlug({
-      idOrHashedSlug: "tmpl_test_resolver_draft",
+      idOrHashedSlug: draft.id,
     });
     expect(draftById).toBeNull();
 
     const draftByHash = await resolveAgentTemplateByIdOrHashedSlug({
-      idOrHashedSlug: `resolver-draft.${slugHash("tmpl_test_resolver_draft")}`,
+      idOrHashedSlug: `resolver-draft.${slugHash(draft.id)}`,
     });
     expect(draftByHash).toBeNull();
 
     const visibleFixtures = [
-      {
-        id: "tmpl_test_resolver_unlisted",
-        slug: "resolver-unlisted",
-        status: "unlisted",
-      },
-      {
-        id: "tmpl_test_resolver_archived",
-        slug: "resolver-archived",
-        status: "archived",
-      },
+      { tmpl: unlisted, slug: "resolver-unlisted", status: "unlisted" },
+      { tmpl: archived, slug: "resolver-archived", status: "archived" },
     ] as const;
 
     for (const fixture of visibleFixtures) {
       const byId = await resolveAgentTemplateByIdOrHashedSlug({
-        idOrHashedSlug: fixture.id,
+        idOrHashedSlug: fixture.tmpl.id,
       });
       expect(byId?.status).toBe(fixture.status);
 
       const byHash = await resolveAgentTemplateByIdOrHashedSlug({
-        idOrHashedSlug: `${fixture.slug}.${slugHash(fixture.id)}`,
+        idOrHashedSlug: `${fixture.slug}.${slugHash(fixture.tmpl.id)}`,
       });
       expect(byHash?.status).toBe(fixture.status);
     }
   });
 
-  test("keeps tmpl_ anchored at the start and rejects hashes from different ids", async () => {
-    await Promise.all([
-      createTemplate({
-        id: "tmpl_test_prefixed_slug",
-        slug: "something-tmpl_inside",
-      }),
-      createTemplate({
-        id: "tmpl_test_hash_a",
-        slug: "aaa",
-      }),
-      createTemplate({
-        id: "tmpl_test_hash_b",
-        slug: "bbb",
-      }),
-    ]);
+  test("rejects hashes from different ids", async () => {
+    const tmplPrefixedSlug = await createTemplate({
+      slug: "something-inside",
+    });
+    const tmplHashA = await createTemplate({
+      slug: "aaa",
+    });
+    const tmplHashB = await createTemplate({
+      slug: "bbb",
+    });
 
+    // Hashed slug with matching id resolves correctly
     const prefixedSlug = await resolveAgentTemplateByIdOrHashedSlug({
-      idOrHashedSlug: `something-tmpl_inside.${slugHash(
-        "tmpl_test_prefixed_slug",
-      )}`,
+      idOrHashedSlug: `something-inside.${slugHash(tmplPrefixedSlug.id)}`,
     });
-    expect(prefixedSlug?.id).toBe("tmpl_test_prefixed_slug");
+    expect(prefixedSlug?.id).toBe(tmplPrefixedSlug.id);
 
+    // Direct UUID lookup still works
     const prefixedId = await resolveAgentTemplateByIdOrHashedSlug({
-      idOrHashedSlug: "tmpl_test_prefixed_slug",
+      idOrHashedSlug: tmplPrefixedSlug.id,
     });
-    expect(prefixedId?.id).toBe("tmpl_test_prefixed_slug");
+    expect(prefixedId?.id).toBe(tmplPrefixedSlug.id);
 
+    // Hash from tmplHashA on slug "bbb" (which belongs to tmplHashB) → null
     const hashAOnB = await resolveAgentTemplateByIdOrHashedSlug({
-      idOrHashedSlug: `bbb.${slugHash("tmpl_test_hash_a")}`,
+      idOrHashedSlug: `bbb.${slugHash(tmplHashA.id)}`,
     });
     expect(hashAOnB).toBeNull();
 
+    // Hash from tmplHashB on slug "aaa" (which belongs to tmplHashA) → null
     const hashBOnA = await resolveAgentTemplateByIdOrHashedSlug({
-      idOrHashedSlug: `aaa.${slugHash("tmpl_test_hash_b")}`,
+      idOrHashedSlug: `aaa.${slugHash(tmplHashB.id)}`,
     });
     expect(hashBOnA).toBeNull();
   });

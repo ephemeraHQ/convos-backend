@@ -6,7 +6,7 @@ import {
   expect,
   test,
 } from "bun:test";
-import { ADMIN_ACCOUNT_ID } from "@/utils/prefixed-id";
+import { ADMIN_ACCOUNT_ID } from "@/utils/constants";
 import { prisma } from "@/utils/prisma";
 import {
   agentKeyHeaders,

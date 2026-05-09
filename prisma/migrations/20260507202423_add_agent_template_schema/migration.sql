@@ -3,10 +3,10 @@ CREATE TYPE "PublishStatus" AS ENUM ('draft', 'published', 'unlisted', 'archived
 
 -- CreateTable
 CREATE TABLE "AgentTemplate" (
-    "id" TEXT NOT NULL,
+    "id" UUID NOT NULL DEFAULT gen_random_uuid(),
     "slug" TEXT NOT NULL,
     "ownerAccountId" UUID NOT NULL,
-    "forkedFromId" TEXT,
+    "forkedFromId" UUID,
     "agentName" TEXT NOT NULL,
     "description" TEXT,
     "prompt" TEXT NOT NULL,

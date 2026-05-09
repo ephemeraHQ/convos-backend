@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import type { Server } from "node:http";
 import type { Prisma } from "@prisma/client";
 import {
@@ -14,7 +15,7 @@ import { jsonMiddleware } from "@/middleware/json";
 import { noRouteMiddleware } from "@/middleware/noRoute";
 import { pinoMiddleware } from "@/middleware/pino";
 import { createJwtToken } from "@/utils/jwt";
-import { ADMIN_ACCOUNT_ID } from "@/utils/prefixed-id";
+import { ADMIN_ACCOUNT_ID } from "@/utils/constants";
 import { prisma } from "@/utils/prisma";
 
 type TemplateBody = Record<string, unknown>;
@@ -30,17 +31,25 @@ const baseURL = "http://localhost:4018";
 const publishedAt = new Date("2026-02-01T12:00:00.000Z");
 const createdAt = new Date("2026-01-31T12:00:00.000Z");
 
-const cleanupTemplates = () =>
-  prisma.agentTemplate.deleteMany({
+const testTemplateIds: string[] = [];
+
+const cleanupTemplates = async () => {
+  if (testTemplateIds.length > 0) {
+    await prisma.agentTemplate.deleteMany({
+      where: { id: { in: testTemplateIds } },
+    });
+  }
+  await prisma.agentTemplate.deleteMany({
     where: {
       ownerAccountId: ADMIN_ACCOUNT_ID,
       OR: [
-        { id: { startsWith: "tmpl_test_delete_" } },
         { slug: { startsWith: "delete-test-" } },
         { agentName: { startsWith: "Delete Test" } },
       ],
     },
   });
+  testTemplateIds.length = 0;
+};
 
 const makeAuthHeaders = async () => ({
   "Content-Type": "application/json",
@@ -51,18 +60,18 @@ const makeAuthHeaders = async () => ({
 });
 
 const seedTemplate = async (
-  overrides: Partial<Prisma.AgentTemplateUncheckedCreateInput> & {
-    id: string;
-  },
+  overrides: Partial<Prisma.AgentTemplateUncheckedCreateInput> = {},
 ) => {
+  const id = overrides.id ?? randomUUID();
+  testTemplateIds.push(id);
   const status = overrides.status ?? "draft";
   const defaultFirstPublishedAt =
     status === "draft" ? null : new Date(publishedAt);
 
   return prisma.agentTemplate.create({
     data: {
-      id: overrides.id,
-      slug: overrides.slug ?? overrides.id.replace(/_/g, "-"),
+      id,
+      slug: overrides.slug ?? `delete-test-${id.slice(0, 8)}`,
       ownerAccountId: overrides.ownerAccountId ?? ADMIN_ACCOUNT_ID,
       forkedFromId: overrides.forkedFromId ?? null,
       agentName: overrides.agentName ?? "Delete Test Template",
@@ -129,7 +138,8 @@ describe("Agent template delete endpoint", () => {
   });
 
   test("returns 404 for an unknown template id", async () => {
-    const { body, response } = await deleteTemplate("tmpl_test_delete_missing");
+    const missingId = randomUUID();
+    const { body, response } = await deleteTemplate(missingId);
 
     expect(response.status).toBe(404);
     expect(body.error).toBeDefined();
@@ -137,7 +147,6 @@ describe("Agent template delete endpoint", () => {
 
   test("hard-deletes a draft and returns the exact JSON tombstone shape", async () => {
     const template = await seedTemplate({
-      id: "tmpl_test_delete_draft",
       slug: "delete-test-draft",
     });
 
@@ -158,7 +167,6 @@ describe("Agent template delete endpoint", () => {
 
   test("rejects deleting a published row with ALREADY_PUBLISHED and preserves it", async () => {
     const template = await seedTemplate({
-      id: "tmpl_test_delete_published",
       slug: "delete-test-published",
       status: "published",
       firstPublishedAt: publishedAt,
@@ -181,7 +189,6 @@ describe("Agent template delete endpoint", () => {
 
   test("rejects deleting an unlisted formerly published row", async () => {
     const template = await seedTemplate({
-      id: "tmpl_test_delete_unlisted",
       slug: "delete-test-unlisted",
       status: "unlisted",
       firstPublishedAt: publishedAt,
@@ -198,7 +205,6 @@ describe("Agent template delete endpoint", () => {
 
   test("rejects deleting an archived formerly published row", async () => {
     const template = await seedTemplate({
-      id: "tmpl_test_delete_archived",
       slug: "delete-test-archived",
       status: "archived",
       firstPublishedAt: publishedAt,
@@ -215,11 +221,9 @@ describe("Agent template delete endpoint", () => {
 
   test("keeps forked children and clears forkedFromId when deleting a draft parent", async () => {
     const parent = await seedTemplate({
-      id: "tmpl_test_delete_parent",
       slug: "delete-test-parent",
     });
     const child = await seedTemplate({
-      id: "tmpl_test_delete_child",
       slug: "delete-test-child",
       forkedFromId: parent.id,
     });

@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import type { Server } from "node:http";
 import type { Prisma } from "@prisma/client";
 import {
@@ -11,7 +12,7 @@ import {
 import express from "express";
 import { agentTemplatesRouter } from "@/api/v2/agent-templates/agent-templates.router";
 import { noRouteMiddleware } from "@/middleware/noRoute";
-import { ADMIN_ACCOUNT_ID } from "@/utils/prefixed-id";
+import { ADMIN_ACCOUNT_ID } from "@/utils/constants";
 import { prisma } from "@/utils/prisma";
 import { slugHash } from "@/utils/slug-hash";
 
@@ -28,25 +29,24 @@ const isoTimestampPattern = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$/;
 
 const cleanupTemplates = () =>
   prisma.agentTemplate.deleteMany({
-    where: { id: { startsWith: "tmpl_test_" } },
+    where: { ownerAccountId: ADMIN_ACCOUNT_ID },
   });
 
 const createTemplate = async (
-  overrides: Partial<Prisma.AgentTemplateUncheckedCreateInput> & {
-    id: string;
-  },
+  overrides: Partial<Prisma.AgentTemplateUncheckedCreateInput>,
 ) => {
-  const slug = overrides.slug ?? overrides.id.replace(/_/g, "-");
+  const id = overrides.id ?? randomUUID();
+  const slug = overrides.slug ?? id.replace(/-/g, "").slice(0, 12);
 
   return prisma.agentTemplate.create({
     data: {
-      id: overrides.id,
+      id,
       slug,
       ownerAccountId: overrides.ownerAccountId ?? ADMIN_ACCOUNT_ID,
       forkedFromId: overrides.forkedFromId ?? null,
-      agentName: overrides.agentName ?? `Template ${overrides.id}`,
+      agentName: overrides.agentName ?? `Template ${id}`,
       description: overrides.description ?? "A useful template",
-      prompt: overrides.prompt ?? `Prompt for ${overrides.id}`,
+      prompt: overrides.prompt ?? `Prompt for ${id}`,
       category: overrides.category ?? "utility",
       emoji: overrides.emoji ?? "🤖",
       avatarUrl: overrides.avatarUrl ?? null,
@@ -95,8 +95,7 @@ describe("Agent template detail endpoint", () => {
   });
 
   test("resolves a published template by direct id with public camelCase shape", async () => {
-    await createTemplate({
-      id: "tmpl_test_detail_direct",
+    const tmpl = await createTemplate({
       slug: "detail-direct",
       featured: true,
       tools: ["web"],
@@ -104,19 +103,19 @@ describe("Agent template detail endpoint", () => {
     });
 
     const { body, response } = await readDetail(
-      "/api/v2/agent-templates/tmpl_test_detail_direct",
+      `/api/v2/agent-templates/${tmpl.id}`,
     );
 
     expect(response.status).toBe(200);
     expect(response.headers.get("content-type")).toContain("application/json");
     expect(body).toMatchObject({
       object: "agent_template",
-      id: "tmpl_test_detail_direct",
+      id: tmpl.id,
       slug: "detail-direct",
       ownerAccountId: ADMIN_ACCOUNT_ID,
       forkedFromId: null,
-      agentName: "Template tmpl_test_detail_direct",
-      prompt: "Prompt for tmpl_test_detail_direct",
+      agentName: `Template ${tmpl.id}`,
+      prompt: `Prompt for ${tmpl.id}`,
       category: "utility",
       emoji: "🤖",
       tools: ["web"],
@@ -134,23 +133,22 @@ describe("Agent template detail endpoint", () => {
     expect(body?.firstPublishedAt).toMatch(isoTimestampPattern);
 
     const snakeResponse = await fetch(
-      `${baseURL}/api/v2/agent_templates/tmpl_test_detail_direct`,
+      `${baseURL}/api/v2/agent_templates/${tmpl.id}`,
     );
     expect(snakeResponse.status).toBe(404);
   });
 
   test("resolves by hashed slug and rejects slug-only or mismatched hash lookups", async () => {
-    await createTemplate({
-      id: "tmpl_test_detail_brewski",
+    const tmpl = await createTemplate({
       slug: "brewski",
     });
 
-    const hash = slugHash("tmpl_test_detail_brewski");
+    const hash = slugHash(tmpl.id);
     const hashed = await readDetail(`/api/v2/agent-templates/brewski.${hash}`);
 
     expect(hashed.response.status).toBe(200);
     expect(hashed.body).toMatchObject({
-      id: "tmpl_test_detail_brewski",
+      id: tmpl.id,
       slug: "brewski",
     });
 
@@ -164,53 +162,40 @@ describe("Agent template detail endpoint", () => {
   });
 
   test("hides drafts but returns unlisted and archived templates by id and hashed slug", async () => {
-    await Promise.all([
-      createTemplate({
-        id: "tmpl_test_detail_draft",
-        slug: "detail-draft",
-        status: "draft",
-        firstPublishedAt: null,
-      }),
-      createTemplate({
-        id: "tmpl_test_detail_unlisted",
-        slug: "detail-unlisted",
-        status: "unlisted",
-      }),
-      createTemplate({
-        id: "tmpl_test_detail_archived",
-        slug: "detail-archived",
-        status: "archived",
-      }),
-    ]);
+    const draft = await createTemplate({
+      slug: "detail-draft",
+      status: "draft",
+      firstPublishedAt: null,
+    });
+    const unlisted = await createTemplate({
+      slug: "detail-unlisted",
+      status: "unlisted",
+    });
+    const archived = await createTemplate({
+      slug: "detail-archived",
+      status: "archived",
+    });
 
     for (const path of [
-      "/api/v2/agent-templates/tmpl_test_detail_draft",
-      `/api/v2/agent-templates/detail-draft.${slugHash(
-        "tmpl_test_detail_draft",
-      )}`,
+      `/api/v2/agent-templates/${draft.id}`,
+      `/api/v2/agent-templates/detail-draft.${slugHash(draft.id)}`,
     ]) {
       const response = await fetch(`${baseURL}${path}`);
       expect(response.status).toBe(404);
     }
 
     for (const fixture of [
-      {
-        id: "tmpl_test_detail_unlisted",
-        slug: "detail-unlisted",
-        status: "unlisted",
-      },
-      {
-        id: "tmpl_test_detail_archived",
-        slug: "detail-archived",
-        status: "archived",
-      },
+      { tmpl: unlisted, slug: "detail-unlisted", status: "unlisted" },
+      { tmpl: archived, slug: "detail-archived", status: "archived" },
     ]) {
-      const byId = await readDetail(`/api/v2/agent-templates/${fixture.id}`);
+      const byId = await readDetail(
+        `/api/v2/agent-templates/${fixture.tmpl.id}`,
+      );
       expect(byId.response.status).toBe(200);
       expect(byId.body?.status).toBe(fixture.status);
 
       const byHash = await readDetail(
-        `/api/v2/agent-templates/${fixture.slug}.${slugHash(fixture.id)}`,
+        `/api/v2/agent-templates/${fixture.slug}.${slugHash(fixture.tmpl.id)}`,
       );
       expect(byHash.response.status).toBe(200);
       expect(byHash.body?.status).toBe(fixture.status);
@@ -218,13 +203,12 @@ describe("Agent template detail endpoint", () => {
   });
 
   test("supports owner and skills expansions while ignoring unknown expansion values", async () => {
-    await createTemplate({
-      id: "tmpl_test_detail_expand",
+    const tmpl = await createTemplate({
       slug: "detail-expand",
     });
 
     const defaultDetail = await readDetail(
-      "/api/v2/agent-templates/tmpl_test_detail_expand",
+      `/api/v2/agent-templates/${tmpl.id}`,
     );
     expect(defaultDetail.response.status).toBe(200);
     expect(defaultDetail.body?.ownerAccountId).toBe(ADMIN_ACCOUNT_ID);
@@ -232,7 +216,7 @@ describe("Agent template detail endpoint", () => {
     expect(defaultDetail.body).not.toHaveProperty("skills");
 
     const ownerExpanded = await readDetail(
-      "/api/v2/agent-templates/tmpl_test_detail_expand?expand[]=owner",
+      `/api/v2/agent-templates/${tmpl.id}?expand[]=owner`,
     );
     expect(ownerExpanded.response.status).toBe(200);
     expect(ownerExpanded.body).not.toHaveProperty("ownerAccountId");
@@ -243,19 +227,19 @@ describe("Agent template detail endpoint", () => {
     expect(Object.keys(owner).sort()).toEqual(["createdAt", "id", "object"]);
 
     const skillsExpanded = await readDetail(
-      "/api/v2/agent-templates/tmpl_test_detail_expand?expand[]=skills",
+      `/api/v2/agent-templates/${tmpl.id}?expand[]=skills`,
     );
     expect(skillsExpanded.response.status).toBe(200);
     expect(skillsExpanded.body?.skills).toEqual([]);
 
     const skillsFilesExpanded = await readDetail(
-      "/api/v2/agent-templates/tmpl_test_detail_expand?expand[]=skills.files",
+      `/api/v2/agent-templates/${tmpl.id}?expand[]=skills.files`,
     );
     expect(skillsFilesExpanded.response.status).toBe(200);
     expect(skillsFilesExpanded.body?.skills).toEqual([]);
 
     const combined = await readDetail(
-      "/api/v2/agent-templates/tmpl_test_detail_expand?expand[]=owner&expand[]=skills",
+      `/api/v2/agent-templates/${tmpl.id}?expand[]=owner&expand[]=skills`,
     );
     expect(combined.response.status).toBe(200);
     expect(combined.body).not.toHaveProperty("ownerAccountId");
@@ -266,7 +250,7 @@ describe("Agent template detail endpoint", () => {
     expect(combined.body?.skills).toEqual([]);
 
     const unknown = await readDetail(
-      "/api/v2/agent-templates/tmpl_test_detail_expand?expand[]=bogus",
+      `/api/v2/agent-templates/${tmpl.id}?expand[]=bogus`,
     );
     expect(unknown.response.status).toBe(200);
     expect(unknown.body).toEqual(defaultDetail.body);

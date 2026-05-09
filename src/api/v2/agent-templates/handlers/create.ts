@@ -3,7 +3,6 @@ import type { Request, Response } from "express";
 import { z } from "zod";
 import { serializeAgentTemplate } from "@/api/v2/agent-templates/lib/serialize-agent-template";
 import { getEffectiveOwnerId } from "@/utils/auth-helpers";
-import { mintTemplateId } from "@/utils/prefixed-id";
 import { prisma } from "@/utils/prisma";
 import { validateSlug } from "@/utils/reserved-slugs";
 
@@ -93,7 +92,6 @@ const createTemplateRow = (args: {
 }) =>
   prisma.agentTemplate.create({
     data: {
-      id: mintTemplateId(),
       slug: args.slug,
       ownerAccountId: args.ownerAccountId,
       forkedFromId: null,

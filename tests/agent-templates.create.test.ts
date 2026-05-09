@@ -13,7 +13,7 @@ import { jsonMiddleware } from "@/middleware/json";
 import { noRouteMiddleware } from "@/middleware/noRoute";
 import { pinoMiddleware } from "@/middleware/pino";
 import { createJwtToken } from "@/utils/jwt";
-import { ADMIN_ACCOUNT_ID } from "@/utils/prefixed-id";
+import { ADMIN_ACCOUNT_ID } from "@/utils/constants";
 import { prisma } from "@/utils/prisma";
 
 type TemplateBody = Record<string, unknown>;
@@ -65,7 +65,11 @@ const createTemplate = async (body: Record<string, unknown>) => {
 
 const expectTemplateShape = (body: TemplateBody) => {
   expect(body.object).toBe("agent_template");
-  expect(body.id).toEqual(expect.stringMatching(/^tmpl_[A-Za-z0-9]+$/));
+  expect(body.id).toEqual(
+    expect.stringMatching(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i,
+    ),
+  );
   expect(body.ownerAccountId).toBe(ADMIN_ACCOUNT_ID);
   expect(body.status).toBe("draft");
   expect(body.version).toBe(1);
@@ -158,7 +162,7 @@ describe("Agent template create endpoint", () => {
       status: "published",
       version: 99,
       firstPublishedAt: "2020-01-01T00:00:00.000Z",
-      forkedFromId: "tmpl_fake",
+      forkedFromId: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
     });
 
     expect(response.status).toBe(201);

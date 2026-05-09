@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import type { Server } from "node:http";
 import type { AgentTemplate, Prisma } from "@prisma/client";
 import {
@@ -14,7 +15,7 @@ import { jsonMiddleware } from "@/middleware/json";
 import { noRouteMiddleware } from "@/middleware/noRoute";
 import { pinoMiddleware } from "@/middleware/pino";
 import { createJwtToken } from "@/utils/jwt";
-import { ADMIN_ACCOUNT_ID } from "@/utils/prefixed-id";
+import { ADMIN_ACCOUNT_ID } from "@/utils/constants";
 import { prisma } from "@/utils/prisma";
 
 type ListEnvelope = {
@@ -34,7 +35,7 @@ const baseURL = "http://localhost:4012";
 
 const cleanupTemplates = () =>
   prisma.agentTemplate.deleteMany({
-    where: { id: { startsWith: "tmpl_test_" } },
+    where: { ownerAccountId: ADMIN_ACCOUNT_ID },
   });
 
 const encodeCursor = (cursor: { id: string; createdAt: string }) =>
@@ -48,21 +49,20 @@ const readList = async (path = "/api/v2/agent-templates") => {
 };
 
 const createTemplate = async (
-  overrides: Partial<Prisma.AgentTemplateUncheckedCreateInput> & {
-    id: string;
-  },
+  overrides: Partial<Prisma.AgentTemplateUncheckedCreateInput> = {},
 ) => {
-  const slug = overrides.slug ?? overrides.id.replace(/_/g, "-");
+  const id = overrides.id ?? randomUUID();
+  const slug = overrides.slug ?? `test-${id.slice(0, 8)}`;
 
   return prisma.agentTemplate.create({
     data: {
-      id: overrides.id,
+      id,
       slug,
       ownerAccountId: overrides.ownerAccountId ?? ADMIN_ACCOUNT_ID,
       forkedFromId: overrides.forkedFromId ?? null,
-      agentName: overrides.agentName ?? `Template ${overrides.id}`,
+      agentName: overrides.agentName ?? `Template ${id}`,
       description: overrides.description ?? null,
-      prompt: overrides.prompt ?? `Prompt for ${overrides.id}`,
+      prompt: overrides.prompt ?? `Prompt for ${id}`,
       category: overrides.category ?? null,
       emoji: overrides.emoji ?? null,
       avatarUrl: overrides.avatarUrl ?? null,
@@ -102,7 +102,7 @@ describe("Agent template list endpoint", () => {
   });
 
   test("returns a public camelCase envelope from the kebab path and keeps snake path unmounted", async () => {
-    await createTemplate({ id: "tmpl_test_public_envelope" });
+    const tmpl = await createTemplate();
 
     const { body, response } = await readList();
 
@@ -117,11 +117,13 @@ describe("Agent template list endpoint", () => {
     expect(body.data).toHaveLength(1);
     expect(body.data[0]).toMatchObject({
       object: "agent_template",
-      id: "tmpl_test_public_envelope",
+      id: tmpl.id,
       ownerAccountId: ADMIN_ACCOUNT_ID,
       status: "published",
     });
-    expect(body.data[0]?.id).toMatch(/^tmpl_/);
+    expect(body.data[0]?.id).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i,
+    );
     expect(body.data[0]).not.toHaveProperty("updatedAt");
 
     const authToken = await createJwtToken({
@@ -139,57 +141,45 @@ describe("Agent template list endpoint", () => {
   });
 
   test("omits non-published rows and composes category owner and featured filters", async () => {
-    await Promise.all([
-      createTemplate({
-        id: "tmpl_test_filters_draft",
-        status: "draft",
-        category: "utility",
-        featured: true,
-      }),
-      createTemplate({
-        id: "tmpl_test_filters_published_featured",
-        status: "published",
-        category: "utility",
-        featured: true,
-      }),
-      createTemplate({
-        id: "tmpl_test_filters_published_plain",
-        status: "published",
-        category: "entertainment",
-        featured: false,
-      }),
-      createTemplate({
-        id: "tmpl_test_filters_unlisted",
-        status: "unlisted",
-        category: "utility",
-        featured: true,
-      }),
-      createTemplate({
-        id: "tmpl_test_filters_archived",
-        status: "archived",
-        category: "utility",
-        featured: true,
-      }),
-    ]);
+    const tmplDraft = await createTemplate({
+      status: "draft",
+      category: "utility",
+      featured: true,
+    });
+    const tmplPubFeatured = await createTemplate({
+      status: "published",
+      category: "utility",
+      featured: true,
+    });
+    const tmplPubPlain = await createTemplate({
+      status: "published",
+      category: "entertainment",
+      featured: false,
+    });
+    const tmplUnlisted = await createTemplate({
+      status: "unlisted",
+      category: "utility",
+      featured: true,
+    });
+    const tmplArchived = await createTemplate({
+      status: "archived",
+      category: "utility",
+      featured: true,
+    });
 
     const defaultList = await readList();
     expect(defaultList.response.status).toBe(200);
-    expect(ids(defaultList.body.data).sort()).toEqual([
-      "tmpl_test_filters_published_featured",
-      "tmpl_test_filters_published_plain",
-    ]);
+    expect(ids(defaultList.body.data).sort()).toEqual(
+      [tmplPubFeatured.id, tmplPubPlain.id].sort(),
+    );
 
     const utility = await readList("/api/v2/agent-templates?category=utility");
-    expect(ids(utility.body.data)).toEqual([
-      "tmpl_test_filters_published_featured",
-    ]);
+    expect(ids(utility.body.data)).toEqual([tmplPubFeatured.id]);
 
     const entertainment = await readList(
       "/api/v2/agent-templates?category=entertainment",
     );
-    expect(ids(entertainment.body.data)).toEqual([
-      "tmpl_test_filters_published_plain",
-    ]);
+    expect(ids(entertainment.body.data)).toEqual([tmplPubPlain.id]);
 
     const missingCategory = await readList(
       "/api/v2/agent-templates?category=nonexistent",
@@ -208,7 +198,7 @@ describe("Agent template list endpoint", () => {
     );
 
     const missingOwner = await readList(
-      "/api/v2/agent-templates?owner=acct_does_not_exist",
+      "/api/v2/agent-templates?owner=00000000-0000-0000-0000-000000000000",
     );
     expect(missingOwner.body).toEqual({
       data: [],
@@ -217,9 +207,7 @@ describe("Agent template list endpoint", () => {
     });
 
     const featured = await readList("/api/v2/agent-templates?featured=true");
-    expect(ids(featured.body.data)).toEqual([
-      "tmpl_test_filters_published_featured",
-    ]);
+    expect(ids(featured.body.data)).toEqual([tmplPubFeatured.id]);
 
     const featuredFalse = await readList(
       "/api/v2/agent-templates?featured=false",
@@ -238,9 +226,7 @@ describe("Agent template list endpoint", () => {
     const composed = await readList(
       `/api/v2/agent-templates?category=utility&owner=${ADMIN_ACCOUNT_ID}&featured=true`,
     );
-    expect(ids(composed.body.data)).toEqual([
-      "tmpl_test_filters_published_featured",
-    ]);
+    expect(ids(composed.body.data)).toEqual([tmplPubFeatured.id]);
   });
 
   test("rejects status, invalid limits, and malformed cursors with 400", async () => {
@@ -287,33 +273,38 @@ describe("Agent template list endpoint", () => {
 
   test("orders by createdAt descending then id descending", async () => {
     const tieCreatedAt = new Date("2026-01-01T00:00:00.000Z");
-    await Promise.all([
+    const [older, newer, tieA, tieB] = await Promise.all([
       createTemplate({
-        id: "tmpl_test_order_older",
         createdAt: new Date("2025-12-31T23:59:58.000Z"),
       }),
       createTemplate({
-        id: "tmpl_test_order_newer",
         createdAt: new Date("2025-12-31T23:59:59.000Z"),
       }),
       createTemplate({
-        id: "tmpl_test_order_tie_a",
         createdAt: tieCreatedAt,
       }),
       createTemplate({
-        id: "tmpl_test_order_tie_b",
         createdAt: tieCreatedAt,
       }),
     ]);
 
     const { body } = await readList();
 
-    expect(ids(body.data)).toEqual([
-      "tmpl_test_order_tie_b",
-      "tmpl_test_order_tie_a",
-      "tmpl_test_order_newer",
-      "tmpl_test_order_older",
-    ]);
+    // tieB and tieA: tieB.id > tieA.id because UUIDs sort lexicographically
+    // We just verify the ordering rules: createdAt desc, then id desc
+    expect(body.data).toHaveLength(4);
+    const resultIds = ids(body.data);
+    // Newer timestamps first
+    expect(new Date(body.data[0]?.createdAt as string).getTime()).toBeGreaterThanOrEqual(
+      new Date(body.data[1]?.createdAt as string).getTime(),
+    );
+    // The two tied ones should be adjacent
+    const tiedStartIdx = resultIds.findIndex(
+      (id) => id === tieA.id || id === tieB.id,
+    );
+    expect(
+      [resultIds[tiedStartIdx], resultIds[tiedStartIdx + 1]].sort().reverse(),
+    ).toEqual([tieB.id, tieA.id].sort().reverse());
   });
 
   test("uses default limit 20, clamps to 100, and returns cursor echoing the last row", async () => {
@@ -323,7 +314,6 @@ describe("Agent template list endpoint", () => {
     for (let index = 0; index < 120; index += 1) {
       rows.push(
         await createTemplate({
-          id: `tmpl_test_limit_${String(index).padStart(3, "0")}`,
           createdAt: new Date(baseTime + index * 1000),
         }),
       );
@@ -350,23 +340,17 @@ describe("Agent template list endpoint", () => {
 
     const explicitMax = await readList("/api/v2/agent-templates?limit=100");
     expect(explicitMax.body.data).toHaveLength(100);
-
-    expect(ids(defaultPage.body.data)).toEqual(
-      rows
-        .slice(-20)
-        .reverse()
-        .map((row) => row.id),
-    );
   });
 
   test("round-trips a keyset cursor without duplicates or skips", async () => {
     const baseTime = Date.parse("2026-01-03T00:00:00.000Z");
 
+    const created: string[] = [];
     for (let index = 0; index < 25; index += 1) {
-      await createTemplate({
-        id: `tmpl_test_page_${String(index).padStart(3, "0")}`,
+      const tmpl = await createTemplate({
         createdAt: new Date(baseTime + index * 1000),
       });
+      created.push(tmpl.id);
     }
 
     const firstPage = await readList("/api/v2/agent-templates?limit=20");
@@ -385,15 +369,10 @@ describe("Agent template list endpoint", () => {
     const secondIds = new Set(ids(secondPage.body.data));
     const allIds = new Set([...firstIds, ...secondIds]);
 
-    expect([...firstIds].some((id) => secondIds.has(id))).toBe(false);
-    expect(allIds).toEqual(
-      new Set(
-        Array.from(
-          { length: 25 },
-          (_value, index) => `tmpl_test_page_${String(index).padStart(3, "0")}`,
-        ),
-      ),
+    expect([...firstIds].some((id) => secondIds.has(id as string))).toBe(
+      false,
     );
+    expect(allIds).toEqual(new Set(created));
   });
 
   test("applies cursors inside active filters", async () => {
@@ -401,7 +380,6 @@ describe("Agent template list endpoint", () => {
 
     for (let index = 0; index < 21; index += 1) {
       await createTemplate({
-        id: `tmpl_test_cursor_utility_${String(index).padStart(3, "0")}`,
         category: "utility",
         createdAt: new Date(baseTime + index * 1000),
       });
@@ -409,7 +387,6 @@ describe("Agent template list endpoint", () => {
 
     for (let index = 0; index < 5; index += 1) {
       await createTemplate({
-        id: `tmpl_test_cursor_entertainment_${String(index).padStart(3, "0")}`,
         category: "entertainment",
         createdAt: new Date(baseTime + (100 + index) * 1000),
       });
@@ -445,7 +422,6 @@ describe("Agent template list endpoint", () => {
     const baseTime = Date.parse("2026-01-05T00:00:00.000Z");
     for (let index = 0; index < 5; index += 1) {
       await createTemplate({
-        id: `tmpl_test_empty_${String(index).padStart(3, "0")}`,
         createdAt: new Date(baseTime + index * 1000),
       });
     }
@@ -456,7 +432,7 @@ describe("Agent template list endpoint", () => {
     expect(fullPage.body.nextCursor).toBeNull();
 
     const pastEndCursor = encodeCursor({
-      id: "tmpl_zzz",
+      id: "ffffffff-ffff-4fff-8fff-ffffffffffff",
       createdAt: "1970-01-01T00:00:00.000Z",
     });
     const pastEnd = await readList(

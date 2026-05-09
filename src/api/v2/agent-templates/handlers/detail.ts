@@ -32,6 +32,9 @@ const parseExpandValues = (query: z.infer<typeof querySchema>) => [
   ...toArray(query["expand[]"]),
 ];
 
+const uuidPattern =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 export async function detailHandler(req: Request, res: Response) {
   const parsedParams = paramsSchema.safeParse(req.params);
   if (!parsedParams.success) {
@@ -57,7 +60,7 @@ export async function detailHandler(req: Request, res: Response) {
     // If not found, check if it's a draft template accessible to the caller
     if (
       template === null &&
-      parsedParams.data.idOrHashedSlug.startsWith("tmpl_")
+      uuidPattern.test(parsedParams.data.idOrHashedSlug)
     ) {
       const accountId = res.locals.accountId as string | undefined;
       const isApiKeyListener =

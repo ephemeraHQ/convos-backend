@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import type { Server } from "node:http";
 import type { Prisma } from "@prisma/client";
 import {
@@ -14,7 +15,7 @@ import { jsonMiddleware } from "@/middleware/json";
 import { noRouteMiddleware } from "@/middleware/noRoute";
 import { pinoMiddleware } from "@/middleware/pino";
 import { createJwtToken } from "@/utils/jwt";
-import { ADMIN_ACCOUNT_ID } from "@/utils/prefixed-id";
+import { ADMIN_ACCOUNT_ID } from "@/utils/constants";
 import { prisma } from "@/utils/prisma";
 
 type TemplateBody = Record<string, unknown>;
@@ -31,10 +32,16 @@ const publishedAt = new Date("2026-02-01T12:00:00.000Z");
 const createdAt = new Date("2026-01-31T12:00:00.000Z");
 const isoTimestampPattern = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$/;
 
-const cleanupTemplates = () =>
-  prisma.agentTemplate.deleteMany({
-    where: { id: { startsWith: "tmpl_test_publish_" } },
-  });
+const testTemplateIds: string[] = [];
+
+const cleanupTemplates = async () => {
+  if (testTemplateIds.length > 0) {
+    await prisma.agentTemplate.deleteMany({
+      where: { id: { in: testTemplateIds } },
+    });
+  }
+  testTemplateIds.length = 0;
+};
 
 const makeAuthHeaders = async () => ({
   "Content-Type": "application/json",
@@ -45,18 +52,18 @@ const makeAuthHeaders = async () => ({
 });
 
 const seedTemplate = async (
-  overrides: Partial<Prisma.AgentTemplateUncheckedCreateInput> & {
-    id: string;
-  },
+  overrides: Partial<Prisma.AgentTemplateUncheckedCreateInput> = {},
 ) => {
+  const id = overrides.id ?? randomUUID();
+  testTemplateIds.push(id);
   const status = overrides.status ?? "draft";
   const defaultFirstPublishedAt =
     status === "draft" ? null : new Date(publishedAt);
 
   return prisma.agentTemplate.create({
     data: {
-      id: overrides.id,
-      slug: overrides.slug ?? overrides.id.replace(/_/g, "-"),
+      id,
+      slug: overrides.slug ?? `publish-test-${id.slice(0, 8)}`,
       ownerAccountId: overrides.ownerAccountId ?? ADMIN_ACCOUNT_ID,
       forkedFromId: overrides.forkedFromId ?? null,
       agentName: overrides.agentName ?? "Publish Test Template",
@@ -144,9 +151,8 @@ describe("Agent template publish endpoint", () => {
   });
 
   test("returns 404 for an unknown template id", async () => {
-    const { body, response } = await publishTemplate(
-      "tmpl_test_publish_missing",
-    );
+    const missingId = randomUUID();
+    const { body, response } = await publishTemplate(missingId);
 
     expect(response.status).toBe(404);
     expect(body.error).toBeDefined();
@@ -154,7 +160,6 @@ describe("Agent template publish endpoint", () => {
 
   test("first publish defaults draft to published, sets firstPublishedAt, and keeps version 1", async () => {
     const template = await seedTemplate({
-      id: "tmpl_test_publish_default",
       slug: "publish-test-default",
     });
     const startedAt = Date.now();
@@ -185,7 +190,6 @@ describe("Agent template publish endpoint", () => {
 
   test("first publish honors status=unlisted without bumping version", async () => {
     const template = await seedTemplate({
-      id: "tmpl_test_publish_unlisted_first",
       slug: "publish-test-unlisted-first",
     });
 
@@ -213,7 +217,6 @@ describe("Agent template publish endpoint", () => {
   test("first publish rejects invalid status params and leaves draft rows unchanged", async () => {
     for (const status of ["draft", "archived", "garbage"]) {
       const template = await seedTemplate({
-        id: `tmpl_test_publish_invalid_${status}`,
         slug: `publish-test-invalid-${status}`,
       });
 
@@ -238,7 +241,6 @@ describe("Agent template publish endpoint", () => {
 
   test("subsequent publish increments version and preserves published status and firstPublishedAt", async () => {
     const template = await seedTemplate({
-      id: "tmpl_test_publish_subsequent",
       slug: "publish-test-subsequent",
       status: "published",
       firstPublishedAt: publishedAt,
@@ -266,7 +268,6 @@ describe("Agent template publish endpoint", () => {
   test("subsequent publish preserves unlisted and archived statuses while bumping version", async () => {
     for (const status of ["unlisted", "archived"] as const) {
       const template = await seedTemplate({
-        id: `tmpl_test_publish_preserve_${status}`,
         slug: `publish-test-preserve-${status}`,
         status,
         firstPublishedAt: publishedAt,
@@ -296,7 +297,6 @@ describe("Agent template publish endpoint", () => {
 
   test("subsequent publish ignores status=unlisted and keeps the current status", async () => {
     const template = await seedTemplate({
-      id: "tmpl_test_publish_ignore_status_param",
       slug: "publish-test-ignore-status-param",
       status: "published",
       firstPublishedAt: publishedAt,

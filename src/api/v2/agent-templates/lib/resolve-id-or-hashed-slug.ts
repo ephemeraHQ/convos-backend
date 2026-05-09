@@ -10,13 +10,16 @@ const visibleStatuses = [
 
 const hashPattern = /^[0-9a-z]{5}$/;
 
+const uuidPattern =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 export async function resolveAgentTemplateByIdOrHashedSlug(args: {
   idOrHashedSlug: string;
   slugHasher?: (id: string) => string;
 }) {
   const slugHasher = args.slugHasher ?? slugHash;
 
-  if (args.idOrHashedSlug.startsWith("tmpl_")) {
+  if (uuidPattern.test(args.idOrHashedSlug)) {
     return prisma.agentTemplate.findFirst({
       where: {
         id: args.idOrHashedSlug,

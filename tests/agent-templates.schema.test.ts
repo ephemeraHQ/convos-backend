@@ -36,10 +36,10 @@ describe("AgentTemplate schema", () => {
     const agentTemplateBlock = getSchemaBlock("model", "AgentTemplate");
 
     const requiredFields = [
-      /\bid\s+String\s+@id\b/,
+      /\bid\s+String\s+@id\s+@default\(uuid\(\)\)\s+@db\.Uuid\b/,
       /\bslug\s+String\b/,
       /\bownerAccountId\s+String\s+@db\.Uuid\b/,
-      /\bforkedFromId\s+String\?/,
+      /\bforkedFromId\s+String\?\s+@db\.Uuid/,
       /\bagentName\s+String\b/,
       /\bdescription\s+String\?/,
       /\bprompt\s+String\s+@db\.Text\b/,
@@ -217,7 +217,7 @@ describe("AgentTemplate schema", () => {
     try {
       await prisma.agentTemplate.create({
         data: {
-          id: "tmpl_test_fk_violation",
+          id: "00000000-0000-4000-8000-000000000099",
           slug: "fk-violation",
           ownerAccountId: "00000000-0000-0000-0000-000000000000",
           agentName: "FK Violation",

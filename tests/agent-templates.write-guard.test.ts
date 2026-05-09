@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import type { Server } from "node:http";
 import { afterAll, beforeEach, describe, expect, test } from "bun:test";
@@ -7,7 +8,7 @@ import { jsonMiddleware } from "@/middleware/json";
 import { noRouteMiddleware } from "@/middleware/noRoute";
 import { pinoMiddleware } from "@/middleware/pino";
 import { createJwtToken } from "@/utils/jwt";
-import { ADMIN_ACCOUNT_ID } from "@/utils/prefixed-id";
+import { ADMIN_ACCOUNT_ID } from "@/utils/constants";
 import { prisma } from "@/utils/prisma";
 
 const originalXMTPEnv = process.env.XMTP_ENV;
@@ -17,7 +18,6 @@ const cleanupTemplates = () =>
     where: {
       ownerAccountId: ADMIN_ACCOUNT_ID,
       OR: [
-        { id: { startsWith: "tmpl_test_write_guard_" } },
         { slug: { startsWith: "write-guard-" } },
         { agentName: { startsWith: "Write Guard" } },
       ],
@@ -126,25 +126,26 @@ describe("Agent template write production guard", () => {
   test("production unmounts POST, PATCH, DELETE, and publish through noRouteMiddleware", async () => {
     await withGuardedServer("production", async (baseURL) => {
       const headers = await authHeaders();
+      const fakeUuid = randomUUID();
       const requests = [
         fetch(`${baseURL}/api/v2/agent-templates`, {
           method: "POST",
           headers,
           body: createBody("production-post"),
         }),
-        fetch(`${baseURL}/api/v2/agent-templates/tmpl_test_write_guard_patch`, {
+        fetch(`${baseURL}/api/v2/agent-templates/${fakeUuid}`, {
           method: "PATCH",
           headers,
           body: JSON.stringify({ description: "blocked" }),
         }),
-        fetch(
-          `${baseURL}/api/v2/agent-templates/tmpl_test_write_guard_delete`,
-          { method: "DELETE", headers },
-        ),
-        fetch(
-          `${baseURL}/api/v2/agent-templates/tmpl_test_write_guard_publish/publish`,
-          { method: "POST", headers },
-        ),
+        fetch(`${baseURL}/api/v2/agent-templates/${fakeUuid}`, {
+          method: "DELETE",
+          headers,
+        }),
+        fetch(`${baseURL}/api/v2/agent-templates/${fakeUuid}/publish`, {
+          method: "POST",
+          headers,
+        }),
       ];
 
       const responses = await Promise.all(requests);
@@ -181,7 +182,9 @@ describe("Agent template write production guard", () => {
         const authedBody = (await authed.json()) as { id?: string };
         expect(authed.status).toBe(201);
         expect(typeof authedBody.id).toBe("string");
-        expect(authedBody.id).toMatch(/^tmpl_/);
+        expect(authedBody.id).toMatch(
+          /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i,
+        );
 
         const unauthed = await fetch(`${baseURL}/api/v2/agent-templates`, {
           method: "POST",

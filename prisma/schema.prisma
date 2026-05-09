@@ -111,10 +111,10 @@ enum PublishStatus {
 }
 
 model AgentTemplate {
-  id               String        @id
+  id               String        @id @default(uuid()) @db.Uuid
   slug             String
   ownerAccountId   String        @db.Uuid
-  forkedFromId     String?
+  forkedFromId     String?       @db.Uuid
   agentName        String
   description      String?
   prompt           String        @db.Text

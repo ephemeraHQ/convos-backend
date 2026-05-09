@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import type { Server } from "node:http";
 import type { Prisma } from "@prisma/client";
 import {
@@ -11,7 +12,7 @@ import {
 import express from "express";
 import { agentTemplatesRouter } from "@/api/v2/agent-templates/agent-templates.router";
 import { noRouteMiddleware } from "@/middleware/noRoute";
-import { ADMIN_ACCOUNT_ID } from "@/utils/prefixed-id";
+import { ADMIN_ACCOUNT_ID } from "@/utils/constants";
 import { prisma } from "@/utils/prisma";
 
 type JsonObject = Record<string, unknown>;
@@ -41,29 +42,35 @@ const forbiddenKeys = [
 const hasOwn = (value: object, key: string) =>
   Object.prototype.hasOwnProperty.call(value, key);
 
-const cleanupTemplates = () =>
-  prisma.agentTemplate.deleteMany({
-    where: { id: { startsWith: "tmpl_test_" } },
-  });
+const testTemplateIds: string[] = [];
+
+const cleanupTemplates = async () => {
+  if (testTemplateIds.length > 0) {
+    await prisma.agentTemplate.deleteMany({
+      where: { id: { in: testTemplateIds } },
+    });
+  }
+  testTemplateIds.length = 0;
+};
 
 const createTemplate = async (
-  overrides: Partial<Prisma.AgentTemplateUncheckedCreateInput> & {
-    id: string;
-  },
+  overrides: Partial<Prisma.AgentTemplateUncheckedCreateInput> = {},
 ) => {
+  const id = overrides.id ?? randomUUID();
+  testTemplateIds.push(id);
   const firstPublishedAt = hasOwn(overrides, "firstPublishedAt")
     ? overrides.firstPublishedAt
     : new Date("2026-01-20T00:00:00.000Z");
 
   return prisma.agentTemplate.create({
     data: {
-      id: overrides.id,
-      slug: overrides.slug ?? overrides.id.replace(/_/g, "-"),
+      id,
+      slug: overrides.slug ?? `conv-${id.slice(0, 8)}`,
       ownerAccountId: overrides.ownerAccountId ?? ADMIN_ACCOUNT_ID,
       forkedFromId: overrides.forkedFromId ?? null,
-      agentName: overrides.agentName ?? `Template ${overrides.id}`,
+      agentName: overrides.agentName ?? `Template ${id}`,
       description: overrides.description ?? "Convention fixture",
-      prompt: overrides.prompt ?? `Prompt for ${overrides.id}`,
+      prompt: overrides.prompt ?? `Prompt for ${id}`,
       category: overrides.category ?? "conventions",
       emoji: overrides.emoji ?? "🤖",
       avatarUrl: overrides.avatarUrl ?? null,
@@ -171,13 +178,11 @@ describe("Agent template read response conventions", () => {
   });
 
   test("serializes list and detail bodies with camelCase keys, discriminators, booleans, and Z timestamps", async () => {
-    await createTemplate({
-      id: "tmpl_test_conventions_parent",
+    const parent = await createTemplate({
       category: "parent-only",
     });
-    await createTemplate({
-      id: "tmpl_test_conventions_child",
-      forkedFromId: "tmpl_test_conventions_parent",
+    const child = await createTemplate({
+      forkedFromId: parent.id,
       featured: true,
       tools: ["web"],
       connections: ["github"],
@@ -187,7 +192,7 @@ describe("Agent template read response conventions", () => {
 
     const list = await readJson("/api/v2/agent-templates?category=conventions");
     const detail = await readJson(
-      "/api/v2/agent-templates/tmpl_test_conventions_child",
+      `/api/v2/agent-templates/${child.id}`,
     );
 
     expect(list.response.status).toBe(200);
@@ -206,9 +211,9 @@ describe("Agent template read response conventions", () => {
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({
       object: "agent_template",
-      id: "tmpl_test_conventions_child",
+      id: child.id,
       ownerAccountId: ADMIN_ACCOUNT_ID,
-      forkedFromId: "tmpl_test_conventions_parent",
+      forkedFromId: parent.id,
       featured: true,
       status: "published",
     });
@@ -224,24 +229,23 @@ describe("Agent template read response conventions", () => {
     expectTimestampValues(detail.body);
     expect(detail.body).toMatchObject({
       object: "agent_template",
-      id: "tmpl_test_conventions_child",
+      id: child.id,
       ownerAccountId: ADMIN_ACCOUNT_ID,
-      forkedFromId: "tmpl_test_conventions_parent",
+      forkedFromId: parent.id,
       featured: true,
     });
     expect(detail.body).not.toHaveProperty("owner");
   });
 
   test("expands owner as a minimal account resource and preserves null firstPublishedAt", async () => {
-    await createTemplate({
-      id: "tmpl_test_conventions_owner_expand",
+    const tmpl = await createTemplate({
       slug: "conventions-owner-expand",
       status: "unlisted",
       firstPublishedAt: null,
     });
 
     const { body, response } = await readJson(
-      "/api/v2/agent-templates/tmpl_test_conventions_owner_expand?expand[]=owner",
+      `/api/v2/agent-templates/${tmpl.id}?expand[]=owner`,
     );
 
     expect(response.status).toBe(200);
@@ -261,10 +265,11 @@ describe("Agent template read response conventions", () => {
   });
 
   test("returns JSON content type and parseable JSON bodies for read errors", async () => {
+    const fakeUuid = randomUUID();
     const cases = [
       { path: "/api/v2/agent-templates?status=draft", status: 400 },
       { path: "/api/v2/agent-templates?cursor=!!!", status: 400 },
-      { path: "/api/v2/agent-templates/tmpl_test_missing", status: 404 },
+      { path: `/api/v2/agent-templates/${fakeUuid}`, status: 404 },
       { path: "/api/v2/agent-templates/missing.aaaaa", status: 404 },
     ];
 
@@ -282,13 +287,11 @@ describe("Agent template read response conventions", () => {
   });
 
   test("keeps underscore read paths unmounted", async () => {
-    await createTemplate({ id: "tmpl_test_conventions_underscore" });
+    const tmpl = await createTemplate();
 
     const responses = await Promise.all([
       fetch(`${baseURL}/api/v2/agent_templates`),
-      fetch(
-        `${baseURL}/api/v2/agent_templates/tmpl_test_conventions_underscore`,
-      ),
+      fetch(`${baseURL}/api/v2/agent_templates/${tmpl.id}`),
     ]);
 
     expect(responses.map((response) => response.status)).toEqual([404, 404]);
