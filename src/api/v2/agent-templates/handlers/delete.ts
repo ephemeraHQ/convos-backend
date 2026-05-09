@@ -34,11 +34,20 @@ export async function deleteHandler(req: Request, res: Response) {
   try {
     const template = await prisma.agentTemplate.findUnique({
       where: { id: parsedParams.data.id },
-      select: { id: true, firstPublishedAt: true },
+      select: { id: true, ownerAccountId: true, firstPublishedAt: true },
     });
 
     if (template === null) {
       res.status(404).json({ error: "Agent template not found" });
+      return;
+    }
+
+    // Ownership guard: reject if caller is not the owner AND not an API key listener
+    const callerAccountId = res.locals.accountId as string | undefined;
+    const isApiKeyListener =
+      (res.locals.isApiKeyListener as boolean | undefined) ?? false;
+    if (template.ownerAccountId !== callerAccountId && !isApiKeyListener) {
+      res.status(403).json({ error: "Not authorized to delete this template" });
       return;
     }
 

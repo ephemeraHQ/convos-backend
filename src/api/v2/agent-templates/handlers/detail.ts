@@ -49,9 +49,32 @@ export async function detailHandler(req: Request, res: Response) {
   }
 
   try {
-    const template = await resolveAgentTemplateByIdOrHashedSlug({
+    // First try to resolve via the standard path (published/unlisted/archived only)
+    let template = await resolveAgentTemplateByIdOrHashedSlug({
       idOrHashedSlug: parsedParams.data.idOrHashedSlug,
     });
+
+    // If not found, check if it's a draft template accessible to the caller
+    if (
+      template === null &&
+      parsedParams.data.idOrHashedSlug.startsWith("tmpl_")
+    ) {
+      const accountId = res.locals.accountId as string | undefined;
+      const isApiKeyListener =
+        (res.locals.isApiKeyListener as boolean | undefined) ?? false;
+
+      const draftTemplate = await prisma.agentTemplate.findUnique({
+        where: { id: parsedParams.data.idOrHashedSlug },
+      });
+
+      if (draftTemplate !== null && draftTemplate.status === "draft") {
+        // Draft is only visible to the owner or API key listener
+        if (draftTemplate.ownerAccountId === accountId || isApiKeyListener) {
+          template = draftTemplate;
+        }
+        // If not authorized, template stays null → 404
+      }
+    }
 
     if (template === null) {
       res.status(404).json({ error: "Agent template not found" });

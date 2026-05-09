@@ -7,6 +7,13 @@ import { serializeAgentTemplate } from "../lib/serialize-agent-template";
 const DEFAULT_LIMIT = 20;
 const MAX_LIMIT = 100;
 
+const VALID_STATUS_FILTERS = [
+  "draft",
+  "published",
+  "unlisted",
+  "archived",
+] as const;
+
 const querySchema = z
   .object({
     category: z.string().optional(),
@@ -14,6 +21,7 @@ const querySchema = z
     featured: z.string().optional(),
     limit: z.string().optional(),
     owner: z.string().optional(),
+    status: z.string().optional(),
   })
   .passthrough();
 
@@ -90,9 +98,35 @@ const decodeCursor = (cursor: string | undefined) => {
 };
 
 export async function listHandler(req: Request, res: Response) {
-  if (Object.prototype.hasOwnProperty.call(req.query, "status")) {
-    sendInvalidQuery(res, "status filter is not supported");
-    return;
+  const accountId = res.locals.accountId as string | undefined;
+  const isApiKeyListener =
+    (res.locals.isApiKeyListener as boolean | undefined) ?? false;
+  const isAuthenticated = accountId !== undefined;
+
+  // Status filter handling
+  const hasStatusFilter = Object.prototype.hasOwnProperty.call(
+    req.query,
+    "status",
+  );
+  const statusFilter = req.query.status as string | undefined;
+
+  if (hasStatusFilter) {
+    // Unauthenticated users cannot use the status filter
+    if (!isAuthenticated) {
+      sendInvalidQuery(res, "status filter requires authentication");
+      return;
+    }
+
+    // Validate the status filter value
+    if (
+      statusFilter === undefined ||
+      !VALID_STATUS_FILTERS.includes(
+        statusFilter as (typeof VALID_STATUS_FILTERS)[number],
+      )
+    ) {
+      sendInvalidQuery(res, "Invalid status filter value");
+      return;
+    }
   }
 
   const parsed = querySchema.safeParse(req.query);
@@ -113,34 +147,90 @@ export async function listHandler(req: Request, res: Response) {
     return;
   }
 
-  const where: Prisma.AgentTemplateWhereInput = {
-    status: "published",
-  };
+  // Build the where clause based on auth status
+  const where: Prisma.AgentTemplateWhereInput = {};
+
+  if (hasStatusFilter && statusFilter) {
+    // Authenticated user with status filter: show their own templates with that status
+    // API key listeners see all templates with that status (admin-like access)
+    if (isApiKeyListener) {
+      where.status = statusFilter as Prisma.EnumPublishStatusFilter;
+    } else {
+      // Regular authenticated user: own templates with the requested status
+      where.AND = [
+        { status: statusFilter as Prisma.EnumPublishStatusFilter },
+        { ownerAccountId: accountId },
+      ];
+    }
+  } else if (isAuthenticated) {
+    // Authenticated user without status filter:
+    // Published templates from any owner + own drafts/unlisted/archived
+    if (isApiKeyListener) {
+      // API key listener sees everything (admin-like access)
+      // No status filter needed
+    } else {
+      where.OR = [
+        { status: "published" },
+        {
+          status: { in: ["draft", "unlisted", "archived"] },
+          ownerAccountId: accountId,
+        },
+      ];
+    }
+  } else {
+    // Unauthenticated: only published templates
+    where.status = "published";
+  }
 
   if (parsed.data.category !== undefined) {
     where.category = parsed.data.category;
   }
 
+  // The `owner` filter must compose with the visibility OR clause.
+  // If there's a visibility OR clause, we need to apply ownerAccountId
+  // as an additional AND constraint within each OR branch.
   if (parsed.data.owner !== undefined) {
-    where.ownerAccountId = parsed.data.owner;
+    // Validate that the owner value looks like a UUID to prevent Prisma errors
+    const UUID_RE =
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    if (!UUID_RE.test(parsed.data.owner)) {
+      // Return empty results for non-UUID owner values instead of a 500 error
+      where.AND = [{ id: "never_match" }];
+    } else {
+      const ownerFilter = { ownerAccountId: parsed.data.owner };
+      if (where.OR) {
+        // Apply owner filter to each OR branch by converting to AND inside each
+        where.OR = where.OR.map((branch) => ({
+          AND: [branch, ownerFilter],
+        }));
+      } else {
+        where.ownerAccountId = parsed.data.owner;
+      }
+    }
   }
 
   if (parsed.data.featured === "true") {
     where.featured = true;
   }
 
+  // Cursor pagination: compose with existing AND/OR clauses
   if (cursor !== null) {
-    where.AND = [
-      {
-        OR: [
-          { createdAt: { lt: cursor.createdAt } },
-          {
-            createdAt: cursor.createdAt,
-            id: { lt: cursor.id },
-          },
-        ],
-      },
-    ];
+    const cursorFilter = {
+      OR: [
+        { createdAt: { lt: cursor.createdAt } },
+        {
+          createdAt: cursor.createdAt,
+          id: { lt: cursor.id },
+        },
+      ],
+    };
+
+    if (where.AND) {
+      // Already have an AND clause from visibility rules — append cursor filter
+      (where.AND as Prisma.AgentTemplateWhereInput[]).push(cursorFilter);
+    } else {
+      where.AND = [cursorFilter];
+    }
   }
 
   try {

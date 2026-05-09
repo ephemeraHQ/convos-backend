@@ -254,13 +254,12 @@ describe("requireAccount chained on agent-templates write routes", () => {
     // The pattern should be: authOrAgentApiKeyAuth, requireAccount, handler
     const requireAccountCount = (source.match(/requireAccount/g) ?? []).length;
 
-    // 6 write routes + 1 import = 7 occurrences
-    expect(requireAccountCount).toBe(7);
+    // 4 write routes (POST, PATCH, DELETE, PUBLISH) + 1 import = 5 occurrences
+    // (generate and create-job routes are on separate branches)
+    expect(requireAccountCount).toBe(5);
 
     // Verify read routes do NOT have requireAccount
     expect(source).not.toContain("requireAccount, listHandler");
     expect(source).not.toContain("requireAccount, detailHandler");
-    // create-job GET is a read route but requires auth - verify no requireAccount
-    expect(source).not.toContain("requireAccount, createJobGetHandler");
   });
 });

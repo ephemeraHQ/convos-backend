@@ -2,9 +2,11 @@ import { Prisma } from "@prisma/client";
 import type { Request, Response } from "express";
 import { z } from "zod";
 import { serializeAgentTemplate } from "@/api/v2/agent-templates/lib/serialize-agent-template";
-import { ADMIN_ACCOUNT_ID, mintTemplateId } from "@/utils/prefixed-id";
+import { getEffectiveOwnerId } from "@/utils/auth-helpers";
+import { mintTemplateId } from "@/utils/prefixed-id";
 import { prisma } from "@/utils/prisma";
 import { validateSlug } from "@/utils/reserved-slugs";
+
 const MAX_AUTO_SLUG_ATTEMPTS = 50;
 
 const bodySchema = z
@@ -69,10 +71,13 @@ const isSlugUniqueConstraintError = (error: unknown) => {
   return typeof target === "string" && target.includes("slug");
 };
 
-const hasSlugConflict = async (args: { slug: string }) => {
+const hasSlugConflict = async (args: {
+  ownerAccountId: string;
+  slug: string;
+}) => {
   const existing = await prisma.agentTemplate.findFirst({
     where: {
-      ownerAccountId: ADMIN_ACCOUNT_ID,
+      ownerAccountId: args.ownerAccountId,
       slug: args.slug,
     },
     select: { id: true },
@@ -81,12 +86,16 @@ const hasSlugConflict = async (args: { slug: string }) => {
   return existing !== null;
 };
 
-const createTemplateRow = (args: { body: CreateBody; slug: string }) =>
+const createTemplateRow = (args: {
+  body: CreateBody;
+  slug: string;
+  ownerAccountId: string;
+}) =>
   prisma.agentTemplate.create({
     data: {
       id: mintTemplateId(),
       slug: args.slug,
-      ownerAccountId: ADMIN_ACCOUNT_ID,
+      ownerAccountId: args.ownerAccountId,
       forkedFromId: null,
       agentName: args.body.agentName,
       description: args.body.description ?? null,
@@ -107,6 +116,7 @@ const createWithExplicitSlug = async (args: {
   body: CreateBody;
   res: Response;
   slug: string;
+  ownerAccountId: string;
 }) => {
   const validation = validateSlug(args.slug);
   if (!validation.valid) {
@@ -114,13 +124,22 @@ const createWithExplicitSlug = async (args: {
     return null;
   }
 
-  if (await hasSlugConflict({ slug: validation.slug })) {
+  if (
+    await hasSlugConflict({
+      ownerAccountId: args.ownerAccountId,
+      slug: validation.slug,
+    })
+  ) {
     sendSlugConflict(args.res);
     return null;
   }
 
   try {
-    return await createTemplateRow({ body: args.body, slug: validation.slug });
+    return await createTemplateRow({
+      body: args.body,
+      slug: validation.slug,
+      ownerAccountId: args.ownerAccountId,
+    });
   } catch (error) {
     if (isSlugUniqueConstraintError(error)) {
       sendSlugConflict(args.res);
@@ -134,6 +153,7 @@ const createWithExplicitSlug = async (args: {
 const createWithAutoSlug = async (args: {
   body: CreateBody;
   res: Response;
+  ownerAccountId: string;
 }) => {
   const baseSlug = deriveSlugFromAgentName(args.body.agentName);
   const baseValidation = validateSlug(baseSlug);
@@ -161,7 +181,12 @@ const createWithAutoSlug = async (args: {
       return null;
     }
 
-    if (await hasSlugConflict({ slug: candidateValidation.slug })) {
+    if (
+      await hasSlugConflict({
+        ownerAccountId: args.ownerAccountId,
+        slug: candidateValidation.slug,
+      })
+    ) {
       continue;
     }
 
@@ -169,6 +194,7 @@ const createWithAutoSlug = async (args: {
       return await createTemplateRow({
         body: args.body,
         slug: candidateValidation.slug,
+        ownerAccountId: args.ownerAccountId,
       });
     } catch (error) {
       if (isSlugUniqueConstraintError(error)) {
@@ -193,14 +219,25 @@ export async function createHandler(req: Request, res: Response) {
     return;
   }
 
+  const ownerAccountId = getEffectiveOwnerId(res);
+  if (!ownerAccountId) {
+    res.status(403).json({ error: "Account required" });
+    return;
+  }
+
   try {
     const template =
       parsed.data.slug === undefined
-        ? await createWithAutoSlug({ body: parsed.data, res })
+        ? await createWithAutoSlug({
+            body: parsed.data,
+            res,
+            ownerAccountId,
+          })
         : await createWithExplicitSlug({
             body: parsed.data,
             res,
             slug: parsed.data.slug,
+            ownerAccountId,
           });
 
     if (template === null) {

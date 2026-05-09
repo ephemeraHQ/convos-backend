@@ -176,6 +176,15 @@ export async function patchHandler(req: Request, res: Response) {
       return;
     }
 
+    // Ownership guard: reject if caller is not the owner AND not an API key listener
+    const callerAccountId = res.locals.accountId as string | undefined;
+    const isApiKeyListener =
+      (res.locals.isApiKeyListener as boolean | undefined) ?? false;
+    if (template.ownerAccountId !== callerAccountId && !isApiKeyListener) {
+      res.status(403).json({ error: "Not authorized to modify this template" });
+      return;
+    }
+
     const data: Prisma.AgentTemplateUncheckedUpdateInput = {};
     applyContentFields(data, parsedBody.data);
 

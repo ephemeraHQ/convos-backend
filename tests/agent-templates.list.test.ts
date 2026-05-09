@@ -10,7 +10,9 @@ import {
 } from "bun:test";
 import express from "express";
 import { agentTemplatesRouter } from "@/api/v2/agent-templates/agent-templates.router";
+import { jsonMiddleware } from "@/middleware/json";
 import { noRouteMiddleware } from "@/middleware/noRoute";
+import { pinoMiddleware } from "@/middleware/pino";
 import { createJwtToken } from "@/utils/jwt";
 import { ADMIN_ACCOUNT_ID } from "@/utils/prefixed-id";
 import { prisma } from "@/utils/prisma";
@@ -22,6 +24,8 @@ type ListEnvelope = {
 };
 
 const app = express();
+app.use(pinoMiddleware);
+app.use(jsonMiddleware);
 app.use("/api/v2/agent-templates", agentTemplatesRouter);
 app.use(noRouteMiddleware);
 
@@ -196,7 +200,9 @@ describe("Agent template list endpoint", () => {
       nextCursor: null,
     });
 
-    const owner = await readList(`/api/v2/agent-templates?owner=${ADMIN_ACCOUNT_ID}`);
+    const owner = await readList(
+      `/api/v2/agent-templates?owner=${ADMIN_ACCOUNT_ID}`,
+    );
     expect(ids(owner.body.data).sort()).toEqual(
       ids(defaultList.body.data).sort(),
     );
