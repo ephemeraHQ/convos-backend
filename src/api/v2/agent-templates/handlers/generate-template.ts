@@ -76,7 +76,12 @@ const deriveBaseSlug = (agentName: string): string =>
     .replace(/^-+|-+$/g, "")
     .slice(0, 48);
 
-/** Persist a generated template as a draft AgentTemplate. */
+/** Persist a generated template as a draft AgentTemplate.
+ *
+ *  The `id` is DB-generated via `gen_random_uuid()` (Prisma `@default(dbgenerated())`),
+ *  so we create the row first without an explicit `id`, then derive the stable
+ *  slug hash from the DB-returned ID and patch the slug in a single follow-up UPDATE.
+ */
 const persistDraftTemplate = async (
   template: {
     agentName: string;
@@ -89,14 +94,12 @@ const persistDraftTemplate = async (
   },
   ownerAccountId: string,
 ) => {
-  const id = randomUUID();
   const baseSlug = deriveBaseSlug(template.agentName);
-  const slug = buildSlug(baseSlug, id);
 
-  return prisma.agentTemplate.create({
+  // Create without id — DB generates gen_random_uuid()
+  const row = await prisma.agentTemplate.create({
     data: {
-      id,
-      slug,
+      slug: `${baseSlug}`, // temporary; patched below
       ownerAccountId,
       forkedFromId: null,
       agentName: template.agentName,
@@ -112,6 +115,13 @@ const persistDraftTemplate = async (
       status: "draft",
       featured: false,
     },
+  });
+
+  // Derive the stable slug hash from the DB-generated ID and update
+  const slug = buildSlug(baseSlug, row.id);
+  return prisma.agentTemplate.update({
+    where: { id: row.id },
+    data: { slug },
   });
 };
 
