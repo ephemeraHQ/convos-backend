@@ -38,6 +38,7 @@ agentTemplatesRouter.post(
 agentTemplatesRouter.get(
   "/create-job/:jobId",
   authOrAgentApiKeyAuth,
+  requireAccount,
   createJobGetHandler,
 );
 agentTemplatesRouter.patch(
