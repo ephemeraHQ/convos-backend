@@ -72,7 +72,7 @@ describe("agent template id-or-hashed-slug resolver", () => {
 
   test("resolves direct UUID ids and never falls back to bare slug lookups", async () => {
     const tmplId = await createTemplate({ slug: "unrelated" });
-    const tmplBare = await createTemplate({ slug: "brewski" });
+    await createTemplate({ slug: "brewski" });
 
     const byId = await resolveAgentTemplateByIdOrHashedSlug({
       idOrHashedSlug: tmplId.id,

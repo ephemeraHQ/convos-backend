@@ -19,7 +19,12 @@ const bodySchema = z
     connections: z.array(z.string()).optional(),
     description: z.string().nullable().optional(),
     emoji: z.string().nullable().optional(),
-    prompt: z.string().optional(),
+    prompt: z
+      .string()
+      .refine((value) => value.trim().length > 0, {
+        message: "prompt must not be empty",
+      })
+      .optional(),
     slug: z.string().optional(),
     status: statusSchema.optional(),
     tools: z.array(z.string()).optional(),

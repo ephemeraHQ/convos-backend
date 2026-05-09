@@ -95,7 +95,7 @@ export async function detailHandler(req: Request, res: Response) {
         })
       : undefined;
 
-    if (owner === null) {
+    if (expandOwner && owner === null) {
       req.log.error(
         { ownerAccountId: template.ownerAccountId, templateId: template.id },
         "Agent template owner account not found",

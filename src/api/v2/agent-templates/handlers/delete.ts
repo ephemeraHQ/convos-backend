@@ -1,4 +1,3 @@
-import { Prisma } from "@prisma/client";
 import type { Request, Response } from "express";
 import { z } from "zod";
 import { prisma } from "@/utils/prisma";
@@ -16,10 +15,6 @@ const sendAlreadyPublished = (res: Response) => {
     },
   });
 };
-
-const isMissingRowError = (error: unknown) =>
-  error instanceof Prisma.PrismaClientKnownRequestError &&
-  error.code === "P2025";
 
 export async function deleteHandler(req: Request, res: Response) {
   const parsedParams = paramsSchema.safeParse(req.params);
@@ -56,17 +51,25 @@ export async function deleteHandler(req: Request, res: Response) {
       return;
     }
 
-    try {
-      await prisma.agentTemplate.delete({
-        where: { id: template.id },
-      });
-    } catch (error) {
-      if (isMissingRowError(error)) {
-        res.status(404).json({ error: "Agent template not found" });
-        return;
-      }
+    // Atomic delete: a concurrent publish could set firstPublishedAt between
+    // the read above and the delete here, so re-check the invariant in the
+    // delete WHERE clause and return 409 if a publish slipped in.
+    const deleted = await prisma.agentTemplate.deleteMany({
+      where: { id: template.id, firstPublishedAt: null },
+    });
 
-      throw error;
+    if (deleted.count === 0) {
+      const stillExists = await prisma.agentTemplate.findUnique({
+        where: { id: template.id },
+        select: { id: true },
+      });
+
+      if (stillExists !== null) {
+        sendAlreadyPublished(res);
+      } else {
+        res.status(404).json({ error: "Agent template not found" });
+      }
+      return;
     }
 
     res.status(200).json({
