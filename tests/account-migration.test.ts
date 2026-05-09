@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { prisma } from "@/utils/prisma";
-import { ADMIN_ACCOUNT_ID } from "@/utils/prefixed-id";
+import { ADMIN_ACCOUNT_ID } from "@/utils/constants";
 
 type AccountColumn = {
   column_name: string;
@@ -32,7 +32,7 @@ describe("Account migration", () => {
     >`
       SELECT id, "createdAt", "updatedAt"
       FROM "Account"
-      WHERE id = ${ADMIN_ACCOUNT_ID}
+      WHERE id = ${ADMIN_ACCOUNT_ID}::uuid
     `;
 
     expect(rows).toHaveLength(1);

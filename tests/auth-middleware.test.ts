@@ -16,7 +16,7 @@ import { jsonMiddleware } from "@/middleware/json";
 import { pinoMiddleware } from "@/middleware/pino";
 import { getEffectiveOwnerId } from "@/utils/auth-helpers";
 import { createJwtToken } from "@/utils/jwt";
-import { ADMIN_ACCOUNT_ID } from "@/utils/prefixed-id";
+import { ADMIN_ACCOUNT_ID } from "@/utils/constants";
 
 // ---------------------------------------------------------------------------
 // Test helpers
