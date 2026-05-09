@@ -147,12 +147,12 @@ async function _moderateContent(input: string): Promise<ModerationResult> {
   const prompt = buildModerationPrompt(input);
   const model = getModel();
 
-  try {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => {
-      controller.abort();
-    }, MODERATION_TIMEOUT_MS);
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => {
+    controller.abort();
+  }, MODERATION_TIMEOUT_MS);
 
+  try {
     const res = await fetch(OPENROUTER_URL, {
       method: "POST",
       headers: {
@@ -167,8 +167,6 @@ async function _moderateContent(input: string): Promise<ModerationResult> {
       }),
       signal: controller.signal,
     });
-
-    clearTimeout(timeoutId);
 
     if (!res.ok) {
       const body = await res.text().catch(() => "");
@@ -194,5 +192,7 @@ async function _moderateContent(input: string): Promise<ModerationResult> {
       `[twitterModeration] Error during moderation, failing open: ${message}`,
     );
     return { allowed: true }; // fail open on network errors, timeouts, etc.
+  } finally {
+    clearTimeout(timeoutId);
   }
 }

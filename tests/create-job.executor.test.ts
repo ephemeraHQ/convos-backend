@@ -1107,30 +1107,32 @@ describe("CreateJob Executor — Edge Cases", () => {
 
     // Create a custom account and job with a non-admin ownerAccountId
     const customOwner = await prisma.account.create({ data: {} });
-    const jobId = await createTestJob({
-      ownerAccountId: customOwner.id,
-    });
-    await executeCreateJob(jobId);
+    try {
+      const jobId = await createTestJob({
+        ownerAccountId: customOwner.id,
+      });
+      await executeCreateJob(jobId);
 
-    // The persisted template should use the job's ownerAccountId,
-    // not the hardcoded ADMIN_ACCOUNT_ID
-    const templates = await prisma.agentTemplate.findMany({
-      where: { ownerAccountId: customOwner.id },
-    });
+      // The persisted template should use the job's ownerAccountId,
+      // not the hardcoded ADMIN_ACCOUNT_ID
+      const templates = await prisma.agentTemplate.findMany({
+        where: { ownerAccountId: customOwner.id },
+      });
 
-    expect(templates.length).toBeGreaterThanOrEqual(1);
-    expect(templates[0].ownerAccountId).toBe(customOwner.id);
+      expect(templates.length).toBeGreaterThanOrEqual(1);
+      expect(templates[0].ownerAccountId).toBe(customOwner.id);
 
-    // Verify it's NOT the admin account
-    expect(templates[0].ownerAccountId).not.toBe(ADMIN_ACCOUNT_ID);
-
-    // Cleanup
-    await prisma.agentTemplate.deleteMany({
-      where: { ownerAccountId: customOwner.id },
-    });
-    await prisma.createJob.deleteMany({
-      where: { ownerAccountId: customOwner.id },
-    });
-    await prisma.account.delete({ where: { id: customOwner.id } });
+      // Verify it's NOT the admin account
+      expect(templates[0].ownerAccountId).not.toBe(ADMIN_ACCOUNT_ID);
+    } finally {
+      // Always clean up the custom account row even if assertions above failed
+      await prisma.agentTemplate.deleteMany({
+        where: { ownerAccountId: customOwner.id },
+      });
+      await prisma.createJob.deleteMany({
+        where: { ownerAccountId: customOwner.id },
+      });
+      await prisma.account.delete({ where: { id: customOwner.id } });
+    }
   });
 });

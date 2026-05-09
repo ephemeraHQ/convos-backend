@@ -43,9 +43,8 @@ const isTerminal = (status: string): boolean =>
 
 const waitMsSchema = z
   .string()
-  .transform((val) => parseInt(val, 10))
-  .refine((val) => !isNaN(val), "wait_ms must be a number")
-  .refine((val) => val >= 0, "wait_ms must be non-negative");
+  .regex(/^\d+$/, "wait_ms must be a non-negative integer")
+  .transform((val) => Number.parseInt(val, 10));
 
 // ---------------------------------------------------------------------------
 // Long-polling helper
@@ -92,13 +91,20 @@ async function waitForTerminalStatus(
     );
   }
 
-  // Timeout — return current status
-  return prisma.createJob.findFirst({
+  // Timeout — return current status, but treat already-expired jobs as missing
+  // so the GET handler returns 404 instead of leaking an expired job.
+  const finalJob = await prisma.createJob.findFirst({
     where: {
       id: jobId,
       ownerAccountId,
     },
   });
+
+  if (finalJob && finalJob.expiresAt && finalJob.expiresAt < new Date()) {
+    return null;
+  }
+
+  return finalJob;
 }
 
 // ---------------------------------------------------------------------------

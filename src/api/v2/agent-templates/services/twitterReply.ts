@@ -243,12 +243,12 @@ async function _composeReply(input: ReplyInput): Promise<ReplyResult> {
   const prompt = buildReplyPrompt(input);
   const model = getModel();
 
-  try {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => {
-      controller.abort();
-    }, REPLY_TIMEOUT_MS);
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => {
+    controller.abort();
+  }, REPLY_TIMEOUT_MS);
 
+  try {
     const res = await fetch(OPENROUTER_URL, {
       method: "POST",
       headers: {
@@ -263,8 +263,6 @@ async function _composeReply(input: ReplyInput): Promise<ReplyResult> {
       }),
       signal: controller.signal,
     });
-
-    clearTimeout(timeoutId);
 
     if (!res.ok) {
       const body = await res.text().catch(() => "");
@@ -301,5 +299,7 @@ async function _composeReply(input: ReplyInput): Promise<ReplyResult> {
       `[twitterReply] Error during reply composition, using fallback: ${message}`,
     );
     return { replyText: buildDeterministicFallback(input) };
+  } finally {
+    clearTimeout(timeoutId);
   }
 }

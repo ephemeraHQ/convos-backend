@@ -25,7 +25,18 @@ import {
 // ---------------------------------------------------------------------------
 
 const originalFetch = globalThis.fetch;
+const originalBuilderOpenRouterKey = process.env.BUILDER_OPENROUTER_API_KEY;
+const originalTwitterReplyModel = process.env.TWITTER_REPLY_MODEL;
+const originalTemplateSiteUrl = process.env.TEMPLATE_SITE_URL;
 let mockFetch: ReturnType<typeof mock<typeof fetch>>;
+
+const restoreOrDelete = (name: string, original: string | undefined) => {
+  if (original === undefined) {
+    delete process.env[name];
+  } else {
+    process.env[name] = original;
+  }
+};
 
 beforeEach(() => {
   mockFetch = mock<typeof fetch>(() =>
@@ -37,9 +48,9 @@ beforeEach(() => {
 afterEach(() => {
   globalThis.fetch = originalFetch;
   __resetTwitterReplyForTests(null);
-  delete process.env.BUILDER_OPENROUTER_API_KEY;
-  delete process.env.TWITTER_REPLY_MODEL;
-  delete process.env.TEMPLATE_SITE_URL;
+  restoreOrDelete("BUILDER_OPENROUTER_API_KEY", originalBuilderOpenRouterKey);
+  restoreOrDelete("TWITTER_REPLY_MODEL", originalTwitterReplyModel);
+  restoreOrDelete("TEMPLATE_SITE_URL", originalTemplateSiteUrl);
 });
 
 // ---------------------------------------------------------------------------

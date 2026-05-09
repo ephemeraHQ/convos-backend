@@ -26,6 +26,8 @@ import {
 // ---------------------------------------------------------------------------
 
 const originalFetch = globalThis.fetch;
+const originalProvisioningApiUrl = process.env.PROVISIONING_API_URL;
+const originalProvisioningApiKey = process.env.PROVISIONING_API_KEY;
 let mockFetch: ReturnType<typeof mock<typeof fetch>>;
 
 beforeEach(() => {
@@ -38,8 +40,16 @@ beforeEach(() => {
 afterEach(() => {
   globalThis.fetch = originalFetch;
   __resetProvisioningClientForTests(null);
-  delete process.env.PROVISIONING_API_URL;
-  delete process.env.PROVISIONING_API_KEY;
+  if (originalProvisioningApiUrl === undefined) {
+    delete process.env.PROVISIONING_API_URL;
+  } else {
+    process.env.PROVISIONING_API_URL = originalProvisioningApiUrl;
+  }
+  if (originalProvisioningApiKey === undefined) {
+    delete process.env.PROVISIONING_API_KEY;
+  } else {
+    process.env.PROVISIONING_API_KEY = originalProvisioningApiKey;
+  }
 });
 
 // ---------------------------------------------------------------------------

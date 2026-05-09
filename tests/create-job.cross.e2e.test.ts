@@ -277,7 +277,11 @@ describe("CreateJob Cross-Area E2E", () => {
     } else {
       process.env.AGENT_ASSETS_API_KEY = originalAgentAssetsApiKey;
     }
-    process.env.XMTP_ENV = originalXMTPEnv;
+    if (originalXMTPEnv === undefined) {
+      delete process.env.XMTP_ENV;
+    } else {
+      process.env.XMTP_ENV = originalXMTPEnv;
+    }
     await cleanupJobs();
     await cleanupTemplates();
     await new Promise<void>((resolve) => {
