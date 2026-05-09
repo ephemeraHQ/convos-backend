@@ -56,15 +56,13 @@ function buildTestApp(middlewares: express.RequestHandler[]) {
   app.post("/test", (_req, res: Response) => {
     res.json({
       accountId: res.locals.accountId ?? null,
-      isApiKeyListener:
-        (res.locals.isApiKeyListener as boolean | undefined) ?? false,
+      isApiKeyListener: res.locals.isApiKeyListener ?? false,
     });
   });
   app.get("/test", (_req, res: Response) => {
     res.json({
       accountId: res.locals.accountId ?? null,
-      isApiKeyListener:
-        (res.locals.isApiKeyListener as boolean | undefined) ?? false,
+      isApiKeyListener: res.locals.isApiKeyListener ?? false,
     });
   });
   return app;

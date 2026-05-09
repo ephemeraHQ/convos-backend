@@ -6,6 +6,9 @@ declare namespace Express {
     accountId?: string;
     // Set by authMiddleware (JWT auth). Not set for appCheckOnlyMiddleware routes.
     deviceId?: string;
+    // Set by authOrAgentApiKeyAuth when authenticated via X-Agent-API-Key header.
+    // Indicates the request is acting as the admin/listener identity rather than a real user.
+    isApiKeyListener?: boolean;
     jwtMetadata?: {
       notificationExtensionOnly?: boolean;
     };
