@@ -60,6 +60,7 @@ const jwtHeaders = async (token?: string) => ({
     token ??
     (await createJwtToken({
       deviceId: "test-device-agent-templates-auth",
+      accountId: ADMIN_ACCOUNT_ID,
     })),
 });
 

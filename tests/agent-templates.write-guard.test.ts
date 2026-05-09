@@ -86,6 +86,7 @@ const authHeaders = async () => ({
   "Content-Type": "application/json",
   "X-Convos-AuthToken": await createJwtToken({
     deviceId: "test-device-agent-templates-write-guard",
+    accountId: ADMIN_ACCOUNT_ID,
   }),
 });
 

@@ -8,6 +8,7 @@
  *   - requireAccount rejects when res.locals.accountId is undefined (VAL-AUTH-ID-004)
  */
 
+import { readFileSync } from "node:fs";
 import type { Server } from "node:http";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import express, { type Response } from "express";
@@ -232,5 +233,34 @@ describe("getEffectiveOwnerId utility", () => {
     } as unknown as Response;
 
     expect(getEffectiveOwnerId(mockRes)).toBeUndefined();
+  });
+});
+
+describe("requireAccount chained on agent-templates write routes", () => {
+  test("router source chains requireAccount on all write routes", () => {
+    const source = readFileSync(
+      new URL(
+        "../src/api/v2/agent-templates/agent-templates.router.ts",
+        import.meta.url,
+      ),
+      "utf8",
+    );
+
+    // Check that requireAccount is imported
+    expect(source).toContain("requireAccount");
+    expect(source).toContain('from "@/middleware/auth"');
+
+    // Check that requireAccount appears after authOrAgentApiKeyAuth on write routes
+    // The pattern should be: authOrAgentApiKeyAuth, requireAccount, handler
+    const requireAccountCount = (source.match(/requireAccount/g) ?? []).length;
+
+    // 6 write routes + 1 import = 7 occurrences
+    expect(requireAccountCount).toBe(7);
+
+    // Verify read routes do NOT have requireAccount
+    expect(source).not.toContain("requireAccount, listHandler");
+    expect(source).not.toContain("requireAccount, detailHandler");
+    // create-job GET is a read route but requires auth - verify no requireAccount
+    expect(source).not.toContain("requireAccount, createJobGetHandler");
   });
 });

@@ -5,6 +5,7 @@ import { jsonMiddleware } from "@/middleware/json";
 import { noRouteMiddleware } from "@/middleware/noRoute";
 import { pinoMiddleware } from "@/middleware/pino";
 import { createJwtToken } from "@/utils/jwt";
+import { ADMIN_ACCOUNT_ID } from "@/utils/prefixed-id";
 import { buildSlug } from "@/utils/slug-hash";
 
 export type TemplateBody = Record<string, unknown>;
@@ -46,6 +47,7 @@ export const jwtHeaders = async () => ({
   "Content-Type": "application/json",
   "X-Convos-AuthToken": await createJwtToken({
     deviceId: "test-device-agent-templates-cross",
+    accountId: ADMIN_ACCOUNT_ID,
   }),
 });
 
