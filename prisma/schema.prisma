@@ -111,7 +111,7 @@ enum PublishStatus {
 }
 
 model AgentTemplate {
-  id               String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  id               String        @id @default(uuid()) @db.Uuid
   slug             String
   ownerAccountId   String        @db.Uuid
   forkedFromId     String?       @db.Uuid

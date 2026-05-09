@@ -36,7 +36,7 @@ describe("AgentTemplate schema", () => {
     const agentTemplateBlock = getSchemaBlock("model", "AgentTemplate");
 
     const requiredFields = [
-      /\bid\s+String\s+@id\s+@default\(dbgenerated\("gen_random_uuid\(\)"\)\)\s+@db\.Uuid\b/,
+      /\bid\s+String\s+@id\s+@default\(uuid\(\)\)\s+@db\.Uuid\b/,
       /\bslug\s+String\b/,
       /\bownerAccountId\s+String\s+@db\.Uuid\b/,
       /\bforkedFromId\s+String\?\s+@db\.Uuid/,
