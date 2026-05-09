@@ -889,7 +889,9 @@ describe("CreateJob Executor — Edge Cases", () => {
         status: "done",
         input: JSON.stringify({ text: "test", joinUrl: "https://example.com" }),
         ownerAccountId: ADMIN_ACCOUNT_ID,
-        result: JSON.stringify({ templateId: "00000000-0000-4000-8000-000000000099" }),
+        result: JSON.stringify({
+          templateId: "00000000-0000-4000-8000-000000000099",
+        }),
       },
     });
 

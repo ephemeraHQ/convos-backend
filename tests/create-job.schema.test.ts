@@ -38,7 +38,7 @@ describe("CreateJob schema", () => {
     const createJobBlock = getSchemaBlock("model", "CreateJob");
 
     const requiredFields = [
-      /\bid\s+String\s+@id\s+@default\(dbgenerated\("gen_random_uuid\(\)::text"\)\)/,
+      /\bid\s+String\s+@id\s+@default\(uuid\(\)\)/,
       /\bstatus\s+CreateJobStatus\s+@default\(value:\s*pending\)/,
       /\binput\s+String\b/,
       /\bownerAccountId\s+String\s+@db\.Uuid\b/,

@@ -215,22 +215,21 @@ function getTemplateSiteUrl(): string {
 
 /** Persist a generated template as a draft AgentTemplate.
  *
- *  The `id` is DB-generated via `gen_random_uuid()` (Prisma `@default(dbgenerated())`),
- *  so we create the row without an explicit `id`, then derive the stable
- *  slug hash from the DB-returned ID and patch the slug in a follow-up UPDATE.
- *  A temporary random suffix is used on the initial slug to avoid unique-constraint
- *  collisions when multiple templates share the same base name and owner.
+ *  The `id` is generated client-side via `randomUUID()` so the stable slug
+ *  hash can be computed before the INSERT — single write, no follow-up UPDATE.
  */
 async function persistDraftTemplate(
   template: GeneratedTemplate,
   ownerAccountId: string,
 ): Promise<string> {
   const baseSlug = deriveBaseSlug(template.agentName);
+  const id = randomUUID();
+  const slug = buildSlug(baseSlug, id);
 
-  // Create without id — DB generates gen_random_uuid()
-  const row = await prisma.agentTemplate.create({
+  await prisma.agentTemplate.create({
     data: {
-      slug: `${baseSlug}-tmp-${randomUUID().slice(0, 8)}`, // temporary; patched below
+      id,
+      slug,
       ownerAccountId,
       forkedFromId: null,
       agentName: template.agentName,
@@ -248,32 +247,26 @@ async function persistDraftTemplate(
     },
   });
 
-  // Derive the stable slug hash from the DB-generated ID and update
-  const slug = buildSlug(baseSlug, row.id);
-  await prisma.agentTemplate.update({
-    where: { id: row.id },
-    data: { slug },
-  });
-
-  return row.id;
+  return id;
 }
 
 /** Persist a generated template as a PUBLISHED AgentTemplate.
  *
- *  Same DB-generated `id` approach as persistDraftTemplate — create first,
- *  then patch the slug from the DB-returned ID. A temporary random suffix
- *  avoids unique-constraint collisions on the slug.
+ *  Same client-side `id` approach as persistDraftTemplate — generate the
+ *  UUID first, compute the slug, then single INSERT.
  */
 async function persistPublishedTemplate(
   template: GeneratedTemplate,
   ownerAccountId: string,
 ): Promise<{ id: string; slug: string }> {
   const baseSlug = deriveBaseSlug(template.agentName);
+  const id = randomUUID();
+  const slug = buildSlug(baseSlug, id);
 
-  // Create without id — DB generates gen_random_uuid()
-  const row = await prisma.agentTemplate.create({
+  await prisma.agentTemplate.create({
     data: {
-      slug: `${baseSlug}-tmp-${randomUUID().slice(0, 8)}`, // temporary; patched below
+      id,
+      slug,
       ownerAccountId,
       forkedFromId: null,
       agentName: template.agentName,
@@ -291,14 +284,7 @@ async function persistPublishedTemplate(
     },
   });
 
-  // Derive the stable slug hash from the DB-generated ID and update
-  const slug = buildSlug(baseSlug, row.id);
-  await prisma.agentTemplate.update({
-    where: { id: row.id },
-    data: { slug },
-  });
-
-  return { id: row.id, slug };
+  return { id, slug };
 }
 
 // ---------------------------------------------------------------------------

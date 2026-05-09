@@ -56,8 +56,8 @@ import {
 import { jsonMiddleware } from "@/middleware/json";
 import { noRouteMiddleware } from "@/middleware/noRoute";
 import { pinoMiddleware } from "@/middleware/pino";
-import { createJwtToken } from "@/utils/jwt";
 import { ADMIN_ACCOUNT_ID } from "@/utils/constants";
+import { createJwtToken } from "@/utils/jwt";
 import { prisma } from "@/utils/prisma";
 
 // ---------------------------------------------------------------------------
@@ -616,7 +616,9 @@ describe("CreateJob Cross-Area E2E", () => {
         status: "done",
         input: JSON.stringify({ text: "test", joinUrl: "https://example.com" }),
         ownerAccountId: ADMIN_ACCOUNT_ID,
-        result: JSON.stringify({ templateId: "00000000-0000-4000-8000-000000000099" }),
+        result: JSON.stringify({
+          templateId: "00000000-0000-4000-8000-000000000099",
+        }),
         expiresAt: new Date(Date.now() - 1000), // 1 second ago
       },
     });
