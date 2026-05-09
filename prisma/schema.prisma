@@ -173,16 +173,28 @@ enum CreateJobStatus {
   failed
 }
 
+enum CreateJobSource {
+  app
+  web
+  twitter
+}
+
 model CreateJob {
-  id             String          @id @default(uuid())
-  status         CreateJobStatus @default(value: pending)
-  input          String
-  ownerAccountId String          @db.Uuid
-  result         String?
-  error          String?
-  createdAt      DateTime        @default(now())
-  updatedAt      DateTime        @updatedAt
-  expiresAt      DateTime?
+  id                   String          @id @default(uuid())
+  status               CreateJobStatus @default(value: pending)
+  source               CreateJobSource @default(value: app)
+  input                String
+  metadata             String?
+  joinUrl              String?
+  ownerAccountId       String          @db.Uuid
+  playgroundInstanceId String?
+  conversationId       String?
+  inboxId              String?
+  result               String?
+  error                String?
+  createdAt            DateTime        @default(now())
+  updatedAt            DateTime        @updatedAt
+  expiresAt            DateTime?
 
   owner Account @relation(fields: [ownerAccountId], references: [id])
 
