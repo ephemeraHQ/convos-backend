@@ -99,7 +99,7 @@ const persistDraftTemplate = async (
   // Create without id — DB generates gen_random_uuid()
   const row = await prisma.agentTemplate.create({
     data: {
-      slug: `${baseSlug}`, // temporary; patched below
+      slug: `${baseSlug}-tmp-${randomUUID().slice(0, 8)}`, // temporary; patched below
       ownerAccountId,
       forkedFromId: null,
       agentName: template.agentName,
