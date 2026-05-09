@@ -1,5 +1,5 @@
 /**
- * ProvisioningClient — HTTP client for the assistant-runtime-playground API.
+ * ProvisioningClient — HTTP client for the assistant-runtime-provisioning API.
  *
  * Methods:
  *   createAssistant({ name, instructions, joinUrl, profileImage?, metadata? })
@@ -7,8 +7,8 @@
  *   getAssistant(instanceId)
  *     → GET /api/assistants/:instanceId → { instanceId, joinStatus, inboxId?, ... }
  *
- * Auth: Bearer token from PLAYGROUND_API_KEY env var.
- * Base URL: PLAYGROUND_API_URL env var.
+ * Auth: Bearer token from PROVISIONING_API_KEY env var.
+ * Base URL: PROVISIONING_API_URL env var.
  * Lazy init: env vars are read at call time, not at import time.
  *
  * Test seam: `__resetProvisioningClientForTests(override | null)` mirrors the
@@ -53,20 +53,20 @@ export interface ProvisioningClientOverride {
 // ---------------------------------------------------------------------------
 
 function getBaseUrl(): string {
-  const url = process.env.PLAYGROUND_API_URL;
+  const url = process.env.PROVISIONING_API_URL;
   if (!url) {
     throw new Error(
-      "PLAYGROUND_API_URL is not configured. Set the environment variable to the playground base URL.",
+      "PROVISIONING_API_URL is not configured. Set the environment variable to the provisioning base URL.",
     );
   }
   return url;
 }
 
 function getApiKey(): string {
-  const key = process.env.PLAYGROUND_API_KEY;
+  const key = process.env.PROVISIONING_API_KEY;
   if (!key) {
     throw new Error(
-      "PLAYGROUND_API_KEY is not configured. Set the environment variable to your playground API key.",
+      "PROVISIONING_API_KEY is not configured. Set the environment variable to your provisioning API key.",
     );
   }
   return key;
@@ -94,7 +94,7 @@ export function __resetProvisioningClientForTests(
 
 export const ProvisioningClient = {
   /**
-   * Create an assistant instance on the playground.
+   * Create an assistant instance on the provisioning service.
    *
    * POST /api/assistants with JSON body { name, instructions, joinUrl, profileImage?, metadata? }
    * Returns { instanceId } on success.
@@ -154,7 +154,7 @@ export const ProvisioningClient = {
   },
 
   /**
-   * Get the status of an assistant instance on the playground.
+   * Get the status of an assistant instance on the provisioning service.
    *
    * GET /api/assistants/:instanceId
    * Returns the full status object with joinStatus, inboxId, etc.

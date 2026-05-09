@@ -210,7 +210,7 @@ describe("GET /api/v2/agent-templates/create-job/:jobId", () => {
   test("includes result when status is done", async () => {
     const resultData = {
       templateId: "tmpl_test123",
-      playgroundInstanceId: "inst-456",
+      provisioningInstanceId: "inst-456",
       conversationId: "conv-789",
       inboxId: "inbox-012",
     };
@@ -403,7 +403,7 @@ describe("GET /api/v2/agent-templates/create-job/:jobId", () => {
   test("done job result includes template and instance details", async () => {
     const resultData = {
       templateId: "tmpl_abc123",
-      playgroundInstanceId: "inst-456",
+      provisioningInstanceId: "inst-456",
       conversationId: "conv-789",
       inboxId: "inbox-012",
     };
@@ -417,7 +417,7 @@ describe("GET /api/v2/agent-templates/create-job/:jobId", () => {
     const result = body.result as Record<string, unknown>;
 
     expect(result.templateId).toBe("tmpl_abc123");
-    expect(result.playgroundInstanceId).toBe("inst-456");
+    expect(result.provisioningInstanceId).toBe("inst-456");
     expect(result.conversationId).toBe("conv-789");
     expect(result.inboxId).toBe("inbox-012");
   });
@@ -427,12 +427,12 @@ describe("GET /api/v2/agent-templates/create-job/:jobId", () => {
   test("failed job error includes descriptive message", async () => {
     const job = await seedJob({
       status: "failed",
-      error: "Playground join failed: Instance rejected the invitation",
+      error: "Provisioning join failed: Instance rejected the invitation",
     });
 
     const response = await getJobStatus(job.id, await jwtHeaders());
     const body = (await response.json()) as Record<string, unknown>;
 
-    expect(body.error).toContain("Playground join failed");
+    expect(body.error).toContain("Provisioning join failed");
   });
 });

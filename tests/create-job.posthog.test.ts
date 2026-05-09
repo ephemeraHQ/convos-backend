@@ -308,7 +308,7 @@ describe("CreateJob PostHog Metering", () => {
 
     __resetProvisioningClientForTests({
       createAssistant: () => {
-        throw new Error("Playground returned 500");
+        throw new Error("Provisioning returned 500");
       },
       getAssistant: () => {
         throw new Error("Should not be called");

@@ -25,7 +25,7 @@ const ADMIN_ACCOUNT_ID = "48a05ef4-4a71-57a0-957f-a3d410992b31";
  *   VAL-TB-SCHEMA-002 — CreateJob.source column defaults to "app"
  *   VAL-TB-SCHEMA-003 — CreateJob.metadata column is nullable JSON text
  *   VAL-TB-SCHEMA-004 — CreateJob.joinUrl is nullable
- *   VAL-TB-SCHEMA-005 — CreateJob.playgroundInstanceId, conversationId, inboxId are nullable
+ *   VAL-TB-SCHEMA-005 — CreateJob.provisioningInstanceId, conversationId, inboxId are nullable
  *   VAL-TB-SCHEMA-006 — Migration adds source + metadata columns and adds nullable joinUrl/instance columns
  *   VAL-TB-SCHEMA-007 — Existing CreateJob rows default to source="app" after migration
  */
@@ -149,11 +149,11 @@ describe("Twitter-build schema changes", () => {
     await prisma.$executeRaw`DELETE FROM "CreateJob" WHERE id = ${result[0].id}`;
   });
 
-  // ── VAL-TB-SCHEMA-005: CreateJob.playgroundInstanceId, conversationId, inboxId are nullable ──
+  // ── VAL-TB-SCHEMA-005: CreateJob.provisioningInstanceId, conversationId, inboxId are nullable ──
 
-  test("playgroundInstanceId, conversationId, inboxId are nullable in Prisma schema", () => {
+  test("provisioningInstanceId, conversationId, inboxId are nullable in Prisma schema", () => {
     const createJobBlock = getSchemaBlock("model", "CreateJob");
-    expect(createJobBlock).toMatch(/\bplaygroundInstanceId\s+String\?/);
+    expect(createJobBlock).toMatch(/\bprovisioningInstanceId\s+String\?/);
     expect(createJobBlock).toMatch(/\bconversationId\s+String\?/);
     expect(createJobBlock).toMatch(/\binboxId\s+String\?/);
   });
@@ -162,17 +162,17 @@ describe("Twitter-build schema changes", () => {
     const result = await prisma.$queryRaw<
       Array<{
         id: string;
-        playgroundInstanceId: string | null;
+        provisioningInstanceId: string | null;
         conversationId: string | null;
         inboxId: string | null;
       }>
     >`
-      INSERT INTO "CreateJob" ("status", "input", "ownerAccountId", "source", "playgroundInstanceId", "conversationId", "inboxId", "createdAt", "updatedAt")
+      INSERT INTO "CreateJob" ("status", "input", "ownerAccountId", "source", "provisioningInstanceId", "conversationId", "inboxId", "createdAt", "updatedAt")
       VALUES ('pending', '{}', ${ADMIN_ACCOUNT_ID}::uuid, 'twitter', NULL, NULL, NULL, NOW(), NOW())
-      RETURNING id, "playgroundInstanceId", "conversationId", "inboxId"
+      RETURNING id, "provisioningInstanceId", "conversationId", "inboxId"
     `;
 
-    expect(result[0].playgroundInstanceId).toBeNull();
+    expect(result[0].provisioningInstanceId).toBeNull();
     expect(result[0].conversationId).toBeNull();
     expect(result[0].inboxId).toBeNull();
 
@@ -196,7 +196,7 @@ describe("Twitter-build schema changes", () => {
       FROM information_schema.columns
       WHERE table_schema = 'public'
         AND table_name = 'CreateJob'
-        AND column_name IN ('source', 'metadata', 'joinUrl', 'playgroundInstanceId', 'conversationId', 'inboxId')
+        AND column_name IN ('source', 'metadata', 'joinUrl', 'provisioningInstanceId', 'conversationId', 'inboxId')
       ORDER BY column_name
     `;
 
@@ -217,8 +217,8 @@ describe("Twitter-build schema changes", () => {
     expect(joinUrl.is_nullable).toBe("YES");
     expect(joinUrl.data_type).toBe("text");
 
-    // playgroundInstanceId: nullable text
-    const pgInst = colMap.get("playgroundInstanceId")!;
+    // provisioningInstanceId: nullable text
+    const pgInst = colMap.get("provisioningInstanceId")!;
     expect(pgInst.is_nullable).toBe("YES");
     expect(pgInst.data_type).toBe("text");
 
@@ -318,20 +318,20 @@ describe("Twitter-build schema changes", () => {
         source: string;
         metadata: string;
         joinUrl: string | null;
-        playgroundInstanceId: string | null;
+        provisioningInstanceId: string | null;
         conversationId: string | null;
         inboxId: string | null;
       }>
     >`
-      INSERT INTO "CreateJob" ("status", "input", "ownerAccountId", "source", "metadata", "joinUrl", "playgroundInstanceId", "conversationId", "inboxId", "createdAt", "updatedAt")
+      INSERT INTO "CreateJob" ("status", "input", "ownerAccountId", "source", "metadata", "joinUrl", "provisioningInstanceId", "conversationId", "inboxId", "createdAt", "updatedAt")
       VALUES ('pending', '{}', ${ADMIN_ACCOUNT_ID}::uuid, 'twitter', ${metadata}, NULL, NULL, NULL, NULL, NOW(), NOW())
-      RETURNING id, source, metadata, "joinUrl", "playgroundInstanceId", "conversationId", "inboxId"
+      RETURNING id, source, metadata, "joinUrl", "provisioningInstanceId", "conversationId", "inboxId"
     `;
 
     expect(result[0].source).toBe("twitter");
     expect(result[0].metadata).toBe(metadata);
     expect(result[0].joinUrl).toBeNull();
-    expect(result[0].playgroundInstanceId).toBeNull();
+    expect(result[0].provisioningInstanceId).toBeNull();
     expect(result[0].conversationId).toBeNull();
     expect(result[0].inboxId).toBeNull();
 

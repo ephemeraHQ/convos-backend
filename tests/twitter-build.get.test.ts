@@ -189,7 +189,7 @@ describe("GET /api/v2/agent-templates/create-job/:jobId — twitter source", () 
 
   // ── VAL-TB-GET-002: GET for twitter source does NOT include instance fields ──
 
-  test("done twitter job result does NOT include playgroundInstanceId, conversationId, inboxId", async () => {
+  test("done twitter job result does NOT include provisioningInstanceId, conversationId, inboxId", async () => {
     // The executor stores only twitter fields, but let's test with an
     // explicitly minimal result to verify the GET handler filters correctly
     const twitterResult = {
@@ -212,7 +212,7 @@ describe("GET /api/v2/agent-templates/create-job/:jobId — twitter source", () 
     const result = body.result as Record<string, unknown>;
 
     // Twitter result should NOT have these fields
-    expect(result.playgroundInstanceId).toBeUndefined();
+    expect(result.provisioningInstanceId).toBeUndefined();
     expect(result.conversationId).toBeUndefined();
     expect(result.inboxId).toBeUndefined();
   });
@@ -220,7 +220,7 @@ describe("GET /api/v2/agent-templates/create-job/:jobId — twitter source", () 
   test("done app/web job result does NOT include twitter-specific fields", async () => {
     const appResult = {
       templateId: "tmpl_app_789",
-      playgroundInstanceId: "inst-456",
+      provisioningInstanceId: "inst-456",
       conversationId: "conv-789",
       inboxId: "inbox-012",
     };
@@ -253,7 +253,7 @@ describe("GET /api/v2/agent-templates/create-job/:jobId — twitter source", () 
       expect(result.replyText).toBeUndefined();
 
       // App/web result SHOULD have instance fields
-      expect(result.playgroundInstanceId).toBe("inst-456");
+      expect(result.provisioningInstanceId).toBe("inst-456");
       expect(result.conversationId).toBe("conv-789");
       expect(result.inboxId).toBe("inbox-012");
     } finally {

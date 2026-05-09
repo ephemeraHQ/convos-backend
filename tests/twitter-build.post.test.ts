@@ -462,7 +462,7 @@ describe("POST /api/v2/agent-templates/create-job — twitter source", () => {
     expect(job!.error).toBeNull();
   });
 
-  test("creates job with null playgroundInstanceId for twitter source", async () => {
+  test("creates job with null provisioningInstanceId for twitter source", async () => {
     const response = await postTwitterJob(validMetadata, await jwtHeaders());
     const body = (await response.json()) as { jobId: string };
 
@@ -470,7 +470,7 @@ describe("POST /api/v2/agent-templates/create-job — twitter source", () => {
       where: { id: body.jobId },
     });
 
-    expect(job!.playgroundInstanceId).toBeNull();
+    expect(job!.provisioningInstanceId).toBeNull();
     expect(job!.conversationId).toBeNull();
     expect(job!.inboxId).toBeNull();
   });

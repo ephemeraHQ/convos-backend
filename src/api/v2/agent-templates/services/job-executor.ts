@@ -81,7 +81,7 @@ interface TwitterMetadata {
 /** Result stored in CreateJob.result when status=done (app/web source). */
 interface AppWebJobResult {
   templateId: string;
-  playgroundInstanceId: string;
+  provisioningInstanceId: string;
   conversationId?: string | null;
   inboxId?: string | null;
 }
@@ -104,7 +104,7 @@ const TTL_MS = 24 * 60 * 60 * 1000;
 /** Default timeout for the entire job execution: 5 minutes. */
 const DEFAULT_TIMEOUT_MS = 5 * 60 * 1000;
 
-/** Polling interval when waiting for playground joinStatus. */
+/** Polling interval when waiting for provisioning joinStatus. */
 const POLL_INTERVAL_MS = 2_000;
 
 /** Default template site URL for published templates. */
@@ -137,7 +137,7 @@ export function __setTimeoutMsForTests(ms: number | null): void {
 }
 
 /**
- * Override the polling interval for playground status checks in tests.
+ * Override the polling interval for provisioning status checks in tests.
  * Pass `null` to restore the default 2-second interval.
  */
 export function __setPollIntervalMsForTests(ms: number | null): void {
@@ -289,7 +289,7 @@ type GetAssistantResult = Awaited<
 >;
 
 // ---------------------------------------------------------------------------
-// Playground polling
+// Provisioning polling
 // ---------------------------------------------------------------------------
 
 /**
@@ -320,7 +320,7 @@ async function pollUntilTerminal(
   }
 
   throw new Error(
-    "Generation took too long — timed out waiting for playground instance",
+    "Generation took too long — timed out waiting for provisioning instance",
   );
 }
 
@@ -481,7 +481,7 @@ async function executeAppWebJob(
   // ── Step 4: generating → provisioning ──
   const partialResult: AppWebJobResult = {
     templateId,
-    playgroundInstanceId: "",
+    provisioningInstanceId: "",
   };
 
   await updateJob(jobId, {
@@ -517,7 +517,7 @@ async function executeAppWebJob(
   if (finalStatus.joinStatus === "joined") {
     const result: AppWebJobResult = {
       templateId,
-      playgroundInstanceId: instanceId,
+      provisioningInstanceId: instanceId,
       conversationId: finalStatus.conversationId ?? null,
       inboxId: finalStatus.inboxId ?? null,
     };
@@ -533,7 +533,7 @@ async function executeAppWebJob(
   } else {
     // joinStatus === "failed"
     const errorMsg =
-      finalStatus.joinFailureReason || "Playground instance failed to join";
+      finalStatus.joinFailureReason || "Provisioning instance failed to join";
     await failJob(jobId, errorMsg);
   }
 }
@@ -626,7 +626,7 @@ export async function executeCreateJob(jobId: string): Promise<void> {
     const message = err instanceof Error ? err.message : String(err);
 
     // If we're in generating, the failure is from templateGen
-    // If we're in provisioning, the failure is from playground
+    // If we're in provisioning, the failure is from the provisioning service
     // The error message is descriptive enough on its own
     await failJob(jobId, message);
   }

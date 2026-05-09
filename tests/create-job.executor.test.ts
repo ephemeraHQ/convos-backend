@@ -12,7 +12,7 @@
  *   - BG-008: Job transitions to failed when joinStatus is "failed"
  *   - BG-009: Job transitions to failed when templateGen throws
  *   - BG-010: Job transitions to failed when ProvisioningClient POST throws
- *   - BG-011: Job transitions to failed when playground is unreachable
+ *   - BG-011: Job transitions to failed when provisioning service is unreachable
  *   - BG-012: 5-minute timeout
  *   - BG-013: Job sets expiresAt when reaching terminal state
  *   - BG-014: Concurrent jobs execute independently
@@ -101,13 +101,13 @@ interface GenerateTemplateInput_Record {
   mimeType?: string;
 }
 
-// Track playground create calls for assertion
-let playgroundCreateCalls: CreateAssistantOpts[] = [];
+// Track provisioning create calls for assertion
+let provisioningCreateCalls: CreateAssistantOpts[] = [];
 
 beforeEach(() => {
   // Reset tracking
   templateGenCalls = [];
-  playgroundCreateCalls = [];
+  provisioningCreateCalls = [];
 
   // Reset test seams — use no-op defaults
   __resetGenerateTemplateForTests(null);
@@ -157,7 +157,7 @@ function installHappyPathMocks(opts?: {
   // Mock ProvisioningClient — no intermediate polls by default for faster tests
   __resetProvisioningClientForTests({
     createAssistant: (opts_create) => {
-      playgroundCreateCalls.push(opts_create);
+      provisioningCreateCalls.push(opts_create);
       return Promise.resolve({ instanceId: "inst-test-123" });
     },
     getAssistant: async (instanceId: string) => {
@@ -267,14 +267,14 @@ describe("CreateJob Executor — Happy Path", () => {
     expect(templateGenCalls.length).toBe(1);
 
     // ProvisioningClient.createAssistant was called (proves provisioning phase ran)
-    expect(playgroundCreateCalls.length).toBe(1);
+    expect(provisioningCreateCalls.length).toBe(1);
 
     // Result has templateId (set during generating → provisioning transition)
     const result = JSON.parse(job!.result!);
     expect(result.templateId).toBeDefined();
 
-    // Result has playgroundInstanceId (set during provisioning → done transition)
-    expect(result.playgroundInstanceId).toBe("inst-test-123");
+    // Result has provisioningInstanceId (set during provisioning → done transition)
+    expect(result.provisioningInstanceId).toBe("inst-test-123");
   });
 
   test("VAL-CJ-BG-004: job persists generated template as draft AgentTemplate", async () => {
@@ -313,8 +313,8 @@ describe("CreateJob Executor — Happy Path", () => {
 
     await executeCreateJob(jobId);
 
-    expect(playgroundCreateCalls.length).toBe(1);
-    const call = playgroundCreateCalls[0];
+    expect(provisioningCreateCalls.length).toBe(1);
+    const call = provisioningCreateCalls[0];
     expect(call.name).toBe("Math Tutor");
     expect(call.instructions).toContain("helpful math tutor");
     expect(call.joinUrl).toBe("xmtp:https://relay.example.com/join");
@@ -337,7 +337,7 @@ describe("CreateJob Executor — Happy Path", () => {
 
     __resetProvisioningClientForTests({
       createAssistant: (opts) => {
-        playgroundCreateCalls.push(opts);
+        provisioningCreateCalls.push(opts);
         return Promise.resolve({ instanceId: "inst-poll-test" });
       },
       getAssistant: async (instanceId) => {
@@ -403,7 +403,7 @@ describe("CreateJob Executor — Happy Path", () => {
     // Result should contain template and instance details
     const result = JSON.parse(job!.result!);
     expect(result.templateId).toBeDefined();
-    expect(result.playgroundInstanceId).toBe("inst-test-123");
+    expect(result.provisioningInstanceId).toBe("inst-test-123");
     expect(result.conversationId).toBe("conv-test-789");
     expect(result.inboxId).toBe("inbox-test-456");
   });
@@ -423,7 +423,7 @@ describe("CreateJob Executor — Happy Path", () => {
 
     __resetProvisioningClientForTests({
       createAssistant: (opts) => {
-        playgroundCreateCalls.push(opts);
+        provisioningCreateCalls.push(opts);
         return Promise.resolve({ instanceId: "inst-fail-test" });
       },
       getAssistant: async (instanceId) => ({
@@ -515,7 +515,7 @@ describe("CreateJob Executor — Happy Path", () => {
     expect(job!.error).toContain("500");
   });
 
-  test("VAL-CJ-BG-011: job transitions to failed when playground is unreachable", async () => {
+  test("VAL-CJ-BG-011: job transitions to failed when provisioning service is unreachable", async () => {
     __resetGenerateTemplateForTests((input) => {
       templateGenCalls.push(
         typeof input === "string"
@@ -565,10 +565,10 @@ describe("CreateJob Executor — Happy Path", () => {
       });
     });
 
-    // Playground never returns terminal state
+    // Provisioning service never returns terminal state
     __resetProvisioningClientForTests({
       createAssistant: (opts) => {
-        playgroundCreateCalls.push(opts);
+        provisioningCreateCalls.push(opts);
         return Promise.resolve({ instanceId: "inst-timeout-test" });
       },
       getAssistant: async (instanceId) => {
@@ -683,7 +683,7 @@ describe("CreateJob Executor — Happy Path", () => {
 
     __resetProvisioningClientForTests({
       createAssistant: (opts) => {
-        playgroundCreateCalls.push(opts);
+        provisioningCreateCalls.push(opts);
         return Promise.resolve({ instanceId: "inst-concurrent" });
       },
       getAssistant: async (instanceId) => ({
@@ -750,14 +750,14 @@ describe("CreateJob Executor — Happy Path", () => {
     expect(templateGenCalls.length).toBe(1);
 
     // ProvisioningClient.createAssistant was called (provisioning phase)
-    expect(playgroundCreateCalls.length).toBe(1);
+    expect(provisioningCreateCalls.length).toBe(1);
 
     // Result contains data from both phases:
     // - templateId from generating → provisioning transition
-    // - playgroundInstanceId, conversationId, inboxId from provisioning → done
+    // - provisioningInstanceId, conversationId, inboxId from provisioning → done
     const result = JSON.parse(job!.result!);
     expect(result.templateId).toMatch(/^tmpl_/);
-    expect(result.playgroundInstanceId).toBe("inst-test-123");
+    expect(result.provisioningInstanceId).toBe("inst-test-123");
     expect(result.conversationId).toBe("conv-test-789");
     expect(result.inboxId).toBe("inbox-test-456");
   });
@@ -789,10 +789,10 @@ describe("CreateJob Executor — Happy Path", () => {
     expect(job!.error).toContain("Template generation error");
 
     // ProvisioningClient.createAssistant was NOT called (provisioning never started)
-    expect(playgroundCreateCalls.length).toBe(0);
+    expect(provisioningCreateCalls.length).toBe(0);
   });
 
-  test("VAL-CJ-BG-016: job can transition from provisioning to failed (playground POST error)", async () => {
+  test("VAL-CJ-BG-016: job can transition from provisioning to failed (provisioning POST error)", async () => {
     __resetGenerateTemplateForTests((input) => {
       templateGenCalls.push(
         typeof input === "string"
@@ -807,7 +807,7 @@ describe("CreateJob Executor — Happy Path", () => {
 
     __resetProvisioningClientForTests({
       createAssistant: () => {
-        throw new Error("Playground returned 500");
+        throw new Error("Provisioning returned 500");
       },
       getAssistant: () => {
         throw new Error("Should not be called");
@@ -824,7 +824,7 @@ describe("CreateJob Executor — Happy Path", () => {
     // Job should have gone through generating and provisioning before failing
     const job = await getJobStatus(jobId);
     expect(job!.status).toBe("failed");
-    expect(job!.error).toContain("Playground returned 500");
+    expect(job!.error).toContain("Provisioning returned 500");
 
     // templateGen was called (generating phase ran)
     expect(templateGenCalls.length).toBe(1);
@@ -870,9 +870,9 @@ describe("CreateJob Executor — Happy Path", () => {
 
     await executeCreateJob(jobId);
 
-    // Verify the playground was called with the correct joinUrl
-    expect(playgroundCreateCalls.length).toBe(1);
-    expect(playgroundCreateCalls[0].joinUrl).toBe(customJoinUrl);
+    // Verify the provisioning service was called with the correct joinUrl
+    expect(provisioningCreateCalls.length).toBe(1);
+    expect(provisioningCreateCalls[0].joinUrl).toBe(customJoinUrl);
   });
 });
 
@@ -949,7 +949,7 @@ describe("CreateJob Executor — Edge Cases", () => {
 
     expect(result.conversationId).toBe("conv-test-789");
     expect(result.inboxId).toBe("inbox-test-456");
-    expect(result.playgroundInstanceId).toBe("inst-test-123");
+    expect(result.provisioningInstanceId).toBe("inst-test-123");
   });
 
   test("error includes joinFailureReason when joinStatus=failed", async () => {
@@ -967,7 +967,7 @@ describe("CreateJob Executor — Edge Cases", () => {
 
     __resetProvisioningClientForTests({
       createAssistant: (opts) => {
-        playgroundCreateCalls.push(opts);
+        provisioningCreateCalls.push(opts);
         return Promise.resolve({ instanceId: "inst-fail-reason" });
       },
       getAssistant: async (instanceId) => ({
@@ -1007,7 +1007,7 @@ describe("CreateJob Executor — Edge Cases", () => {
 
     __resetProvisioningClientForTests({
       createAssistant: () => {
-        throw new Error("Playground returned 500");
+        throw new Error("Provisioning returned 500");
       },
       getAssistant: () => {
         throw new Error("Should not be called");
@@ -1034,7 +1034,7 @@ describe("CreateJob Executor — Edge Cases", () => {
     expect(templates[0].status).toBe("draft");
   });
 
-  test("playground receives metadata with source=create-job", async () => {
+  test("provisioning receives metadata with source=create-job", async () => {
     installHappyPathMocks();
     const { executeCreateJob } = await import(
       "../src/api/v2/agent-templates/services/job-executor"
@@ -1043,8 +1043,8 @@ describe("CreateJob Executor — Edge Cases", () => {
     const jobId = await createTestJob();
     await executeCreateJob(jobId);
 
-    expect(playgroundCreateCalls.length).toBe(1);
-    expect(playgroundCreateCalls[0].metadata).toMatchObject({
+    expect(provisioningCreateCalls.length).toBe(1);
+    expect(provisioningCreateCalls[0].metadata).toMatchObject({
       source: "create-job",
     });
   });

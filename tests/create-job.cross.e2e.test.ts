@@ -14,7 +14,7 @@
  *   CROSS-012: 5-minute timeout triggers failed state
  *   CROSS-013: Large base64 payload completes full flow
  *   CROSS-014: Job that fails during provisioning still has persisted template
- *   CROSS-015: Done job result contains playground instance details
+ *   CROSS-015: Done job result contains provisioning instance details
  *   CROSS-016: Failed job result includes joinFailureReason
  *   CROSS-017: GET polling observes all intermediate states in order
  *   CROSS-018: Retry after failed job creates new independent job
@@ -222,7 +222,7 @@ function installProvisioningFailureMock(failureReason?: string): void {
   });
 }
 
-function installPlaygroundPostFailureMock(): void {
+function installProvisioningPostFailureMock(): void {
   __resetGenerateTemplateForTests(() =>
     Promise.resolve({
       template: MOCK_TEMPLATE,
@@ -326,7 +326,7 @@ describe("CreateJob Cross-Area E2E", () => {
       status: string;
       result?: {
         templateId: string;
-        playgroundInstanceId: string;
+        provisioningInstanceId: string;
         conversationId?: string | null;
         inboxId?: string | null;
       };
@@ -335,7 +335,7 @@ describe("CreateJob Cross-Area E2E", () => {
     expect(getBody.status).toBe("done");
     expect(getBody.result).toBeDefined();
     expect(getBody.result!.templateId).toMatch(/^tmpl_/);
-    expect(getBody.result!.playgroundInstanceId).toBe("inst-e2e-123");
+    expect(getBody.result!.provisioningInstanceId).toBe("inst-e2e-123");
     expect(getBody.result!.conversationId).toBe("conv-e2e-789");
     expect(getBody.result!.inboxId).toBe("inbox-e2e-456");
 
@@ -439,7 +439,7 @@ describe("CreateJob Cross-Area E2E", () => {
   // ── VAL-CJ-CROSS-005: Long-polling times out and returns current status ──
 
   test("CROSS-005: long-polling times out and returns current non-terminal status", async () => {
-    // Use a mock that keeps the playground in "starting" state —
+    // Use a mock that keeps the provisioning service in "starting" state —
     // this means the job will stay in provisioning
     __resetGenerateTemplateForTests(() =>
       Promise.resolve({
@@ -704,7 +704,7 @@ describe("CreateJob Cross-Area E2E", () => {
   // ── VAL-CJ-CROSS-014: Job that fails during provisioning still has persisted template ──
 
   test("CROSS-014: template persists even when provisioning fails", async () => {
-    installPlaygroundPostFailureMock();
+    installProvisioningPostFailureMock();
     const headers = await jwtHeaders();
 
     const postRes = await postCreateJob(
@@ -734,7 +734,7 @@ describe("CreateJob Cross-Area E2E", () => {
     expect(templates[0].agentName).toBe("Math Tutor");
   });
 
-  // ── VAL-CJ-CROSS-015: Done job result contains playground instance details ──
+  // ── VAL-CJ-CROSS-015: Done job result contains provisioning instance details ──
 
   test("CROSS-015: done result contains instanceId, inboxId, conversationId, joinStatus", async () => {
     installHappyPathMocks();
@@ -751,14 +751,14 @@ describe("CreateJob Cross-Area E2E", () => {
       status: string;
       result?: {
         templateId: string;
-        playgroundInstanceId: string;
+        provisioningInstanceId: string;
         conversationId?: string | null;
         inboxId?: string | null;
       };
     };
 
     expect(getBody.status).toBe("done");
-    expect(getBody.result!.playgroundInstanceId).toBe("inst-e2e-123");
+    expect(getBody.result!.provisioningInstanceId).toBe("inst-e2e-123");
     expect(getBody.result!.conversationId).toBe("conv-e2e-789");
     expect(getBody.result!.inboxId).toBe("inbox-e2e-456");
     expect(getBody.result!.templateId).toMatch(/^tmpl_/);
@@ -766,7 +766,7 @@ describe("CreateJob Cross-Area E2E", () => {
 
   // ── VAL-CJ-CROSS-016: Failed job result includes joinFailureReason ──
 
-  test("CROSS-016: failed job error includes joinFailureReason from playground", async () => {
+  test("CROSS-016: failed job error includes joinFailureReason from provisioning", async () => {
     installProvisioningFailureMock("Timeout waiting for acceptance");
     const headers = await jwtHeaders();
 

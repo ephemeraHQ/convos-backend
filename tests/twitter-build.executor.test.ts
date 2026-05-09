@@ -121,8 +121,8 @@ const MOCK_TEMPLATE: GeneratedTemplate = {
 // Track templateGen calls for assertion
 let templateGenCalls: Array<Record<string, string | undefined>> = [];
 
-// Track playground create calls for assertion
-let playgroundCreateCalls: CreateAssistantOpts[] = [];
+// Track provisioning create calls for assertion
+let provisioningCreateCalls: CreateAssistantOpts[] = [];
 
 // Track reply calls for assertion
 let replyCalls: ReplyInput[] = [];
@@ -130,7 +130,7 @@ let replyCalls: ReplyInput[] = [];
 beforeEach(() => {
   // Reset tracking
   templateGenCalls = [];
-  playgroundCreateCalls = [];
+  provisioningCreateCalls = [];
   replyCalls = [];
 
   // Reset test seams — use no-op defaults
@@ -177,7 +177,7 @@ function installTwitterHappyPathMocks(): void {
   // Mock ProvisioningClient — should NOT be called for twitter jobs
   __resetProvisioningClientForTests({
     createAssistant: (opts) => {
-      playgroundCreateCalls.push(opts);
+      provisioningCreateCalls.push(opts);
       return Promise.resolve({ instanceId: "inst-should-not-be-called" });
     },
     getAssistant: (instanceId) =>
@@ -216,8 +216,8 @@ describe("Twitter Build Executor — Happy Path", () => {
     const job = await getJobStatus(jobId);
     expect(job!.status).toBe("done");
 
-    // Verify it did NOT enter provisioning — playground was not called
-    expect(playgroundCreateCalls.length).toBe(0);
+    // Verify it did NOT enter provisioning — provisioning service was not called
+    expect(provisioningCreateCalls.length).toBe(0);
   });
 
   test("VAL-TB-BG-002: twitter job calls templateGen with idea text from metadata", async () => {
@@ -321,7 +321,7 @@ describe("Twitter Build Executor — Happy Path", () => {
     await executeCreateJob(jobId);
 
     // ProvisioningClient should NOT have been called at all
-    expect(playgroundCreateCalls.length).toBe(0);
+    expect(provisioningCreateCalls.length).toBe(0);
   });
 
   test("VAL-TB-BG-007: twitter job transitions to failed when templateGen throws", async () => {
@@ -424,7 +424,7 @@ describe("Twitter Build Executor — Happy Path", () => {
     // Mock ProvisioningClient for app/web job
     __resetProvisioningClientForTests({
       createAssistant: (opts) => {
-        playgroundCreateCalls.push(opts);
+        provisioningCreateCalls.push(opts);
         return Promise.resolve({ instanceId: "inst-concurrent" });
       },
       getAssistant: (instanceId) =>
@@ -483,7 +483,7 @@ describe("Twitter Build Executor — Happy Path", () => {
     expect(appJob!.source).toBe("app");
 
     // ProvisioningClient should have been called for app job only
-    expect(playgroundCreateCalls.length).toBe(1);
+    expect(provisioningCreateCalls.length).toBe(1);
   });
 
   test("VAL-TB-BG-010: twitter job sets expiresAt on terminal state (done)", async () => {
@@ -636,7 +636,7 @@ describe("Twitter Build Executor — Additional Coverage", () => {
 
     __resetProvisioningClientForTests({
       createAssistant: (opts) => {
-        playgroundCreateCalls.push(opts);
+        provisioningCreateCalls.push(opts);
         return Promise.resolve({ instanceId: "inst-app-test" });
       },
       getAssistant: (instanceId) =>
@@ -665,11 +665,11 @@ describe("Twitter Build Executor — Additional Coverage", () => {
     expect(job!.source).toBe("app");
 
     // ProvisioningClient should have been called
-    expect(playgroundCreateCalls.length).toBe(1);
+    expect(provisioningCreateCalls.length).toBe(1);
 
     // Result should have app/web format
     const result = JSON.parse(job!.result!);
-    expect(result.playgroundInstanceId).toBe("inst-app-test");
+    expect(result.provisioningInstanceId).toBe("inst-app-test");
     expect(result.conversationId).toBe("conv-app");
     expect(result.inboxId).toBe("inbox-app");
 

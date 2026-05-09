@@ -3,12 +3,12 @@
  *
  * Validates VAL-CJ-PG-001 through VAL-CJ-PG-008:
  *   - PG-001: Service file exists with createAssistant + getAssistant methods
- *   - PG-002: Uses Bearer token from PLAYGROUND_API_KEY
+ *   - PG-002: Uses Bearer token from PROVISIONING_API_KEY
  *   - PG-003: createAssistant sends correct POST body shape
  *   - PG-004: createAssistant returns { instanceId } on 200
  *   - PG-005: getAssistant returns full status object with all fields
  *   - PG-006: Throws on non-2xx with status code and body
- *   - PG-007: Configurable base URL via PLAYGROUND_API_URL
+ *   - PG-007: Configurable base URL via PROVISIONING_API_URL
  *   - PG-008: Handles network errors gracefully
  *   - Lazy initialization: env vars read at call time, not import time
  */
@@ -38,17 +38,17 @@ beforeEach(() => {
 afterEach(() => {
   globalThis.fetch = originalFetch;
   __resetProvisioningClientForTests(null);
-  delete process.env.PLAYGROUND_API_URL;
-  delete process.env.PLAYGROUND_API_KEY;
+  delete process.env.PROVISIONING_API_URL;
+  delete process.env.PROVISIONING_API_KEY;
 });
 
 // ---------------------------------------------------------------------------
 // Helper: set env vars
 // ---------------------------------------------------------------------------
 
-function setEnv(url = "https://playground.example.com", key = "pg-test-key") {
-  process.env.PLAYGROUND_API_URL = url;
-  process.env.PLAYGROUND_API_KEY = key;
+function setEnv(url = "https://provisioning.example.com", key = "pg-test-key") {
+  process.env.PROVISIONING_API_URL = url;
+  process.env.PROVISIONING_API_KEY = key;
 }
 
 // ---------------------------------------------------------------------------
@@ -63,12 +63,12 @@ describe("ProvisioningClient", () => {
 });
 
 // ---------------------------------------------------------------------------
-// VAL-CJ-PG-002: Uses Bearer token from PLAYGROUND_API_KEY
+// VAL-CJ-PG-002: Uses Bearer token from PROVISIONING_API_KEY
 // ---------------------------------------------------------------------------
 
 describe("ProvisioningClient — Bearer auth (VAL-CJ-PG-002)", () => {
-  test("createAssistant sends Authorization: Bearer <PLAYGROUND_API_KEY>", async () => {
-    setEnv("https://playground.example.com", "my-secret-key");
+  test("createAssistant sends Authorization: Bearer <PROVISIONING_API_KEY>", async () => {
+    setEnv("https://provisioning.example.com", "my-secret-key");
 
     mockFetch.mockImplementation(() =>
       Promise.resolve(
@@ -92,8 +92,8 @@ describe("ProvisioningClient — Bearer auth (VAL-CJ-PG-002)", () => {
     });
   });
 
-  test("getAssistant sends Authorization: Bearer <PLAYGROUND_API_KEY>", async () => {
-    setEnv("https://playground.example.com", "another-key");
+  test("getAssistant sends Authorization: Bearer <PROVISIONING_API_KEY>", async () => {
+    setEnv("https://provisioning.example.com", "another-key");
 
     mockFetch.mockImplementation(() =>
       Promise.resolve(
@@ -126,7 +126,7 @@ describe("ProvisioningClient — Bearer auth (VAL-CJ-PG-002)", () => {
 
 describe("ProvisioningClient — POST body shape (VAL-CJ-PG-003)", () => {
   test("sends POST to <baseURL>/api/assistants with required fields", async () => {
-    setEnv("https://playground.example.com");
+    setEnv("https://provisioning.example.com");
 
     mockFetch.mockImplementation(() =>
       Promise.resolve(
@@ -145,7 +145,7 @@ describe("ProvisioningClient — POST body shape (VAL-CJ-PG-003)", () => {
 
     expect(mockFetch).toHaveBeenCalledTimes(1);
     const [reqUrl, init] = mockFetch.mock.calls[0];
-    expect(reqUrl).toBe("https://playground.example.com/api/assistants");
+    expect(reqUrl).toBe("https://provisioning.example.com/api/assistants");
     expect(init?.method).toBe("POST");
 
     const body = JSON.parse((init?.body as string) || "{}");
@@ -157,7 +157,7 @@ describe("ProvisioningClient — POST body shape (VAL-CJ-PG-003)", () => {
   });
 
   test("includes profileImage and metadata when provided", async () => {
-    setEnv("https://playground.example.com");
+    setEnv("https://provisioning.example.com");
 
     mockFetch.mockImplementation(() =>
       Promise.resolve(
@@ -188,7 +188,7 @@ describe("ProvisioningClient — POST body shape (VAL-CJ-PG-003)", () => {
   });
 
   test("omits profileImage and metadata when not provided", async () => {
-    setEnv("https://playground.example.com");
+    setEnv("https://provisioning.example.com");
 
     mockFetch.mockImplementation(() =>
       Promise.resolve(
@@ -212,7 +212,7 @@ describe("ProvisioningClient — POST body shape (VAL-CJ-PG-003)", () => {
   });
 
   test("sends Content-Type: application/json header", async () => {
-    setEnv("https://playground.example.com");
+    setEnv("https://provisioning.example.com");
 
     mockFetch.mockImplementation(() =>
       Promise.resolve(
@@ -435,8 +435,8 @@ describe("ProvisioningClient — non-2xx error handling (VAL-CJ-PG-006)", () => 
 // ---------------------------------------------------------------------------
 
 describe("ProvisioningClient — configurable base URL (VAL-CJ-PG-007)", () => {
-  test("createAssistant uses PLAYGROUND_API_URL as base", async () => {
-    setEnv("https://custom-playground.example.org");
+  test("createAssistant uses PROVISIONING_API_URL as base", async () => {
+    setEnv("https://custom-provisioning.example.org");
 
     mockFetch.mockImplementation(() =>
       Promise.resolve(
@@ -454,11 +454,13 @@ describe("ProvisioningClient — configurable base URL (VAL-CJ-PG-007)", () => {
     });
 
     const [reqUrl] = mockFetch.mock.calls[0];
-    expect(reqUrl).toBe("https://custom-playground.example.org/api/assistants");
+    expect(reqUrl).toBe(
+      "https://custom-provisioning.example.org/api/assistants",
+    );
   });
 
-  test("getAssistant uses PLAYGROUND_API_URL as base", async () => {
-    setEnv("https://custom-playground.example.org");
+  test("getAssistant uses PROVISIONING_API_URL as base", async () => {
+    setEnv("https://custom-provisioning.example.org");
 
     mockFetch.mockImplementation(() =>
       Promise.resolve(
@@ -477,13 +479,13 @@ describe("ProvisioningClient — configurable base URL (VAL-CJ-PG-007)", () => {
 
     const [reqUrl] = mockFetch.mock.calls[0];
     expect(reqUrl).toBe(
-      "https://custom-playground.example.org/api/assistants/inst-1",
+      "https://custom-provisioning.example.org/api/assistants/inst-1",
     );
   });
 
-  test("throws when PLAYGROUND_API_URL is not set", async () => {
-    delete process.env.PLAYGROUND_API_URL;
-    process.env.PLAYGROUND_API_KEY = "key";
+  test("throws when PROVISIONING_API_URL is not set", async () => {
+    delete process.env.PROVISIONING_API_URL;
+    process.env.PROVISIONING_API_KEY = "key";
 
     try {
       await ProvisioningClient.createAssistant({
@@ -493,13 +495,13 @@ describe("ProvisioningClient — configurable base URL (VAL-CJ-PG-007)", () => {
       });
       expect.unreachable("Should have thrown");
     } catch (err: any) {
-      expect(err.message).toContain("PLAYGROUND_API_URL");
+      expect(err.message).toContain("PROVISIONING_API_URL");
     }
   });
 
-  test("throws when PLAYGROUND_API_KEY is not set", async () => {
-    process.env.PLAYGROUND_API_URL = "https://playground.example.com";
-    delete process.env.PLAYGROUND_API_KEY;
+  test("throws when PROVISIONING_API_KEY is not set", async () => {
+    process.env.PROVISIONING_API_URL = "https://provisioning.example.com";
+    delete process.env.PROVISIONING_API_KEY;
 
     try {
       await ProvisioningClient.createAssistant({
@@ -509,7 +511,7 @@ describe("ProvisioningClient — configurable base URL (VAL-CJ-PG-007)", () => {
       });
       expect.unreachable("Should have thrown");
     } catch (err: any) {
-      expect(err.message).toContain("PLAYGROUND_API_KEY");
+      expect(err.message).toContain("PROVISIONING_API_KEY");
     }
   });
 });
@@ -561,7 +563,7 @@ describe("ProvisioningClient — network error handling (VAL-CJ-PG-008)", () => 
 describe("ProvisioningClient — lazy initialization", () => {
   test("reads env vars at call time, not at import time", async () => {
     // Set env AFTER import (this file was imported at the top)
-    setEnv("https://lazy-playground.example.com", "lazy-key");
+    setEnv("https://lazy-provisioning.example.com", "lazy-key");
 
     mockFetch.mockImplementation(() =>
       Promise.resolve(
@@ -579,7 +581,7 @@ describe("ProvisioningClient — lazy initialization", () => {
     });
 
     const [reqUrl, init] = mockFetch.mock.calls[0];
-    expect(reqUrl).toBe("https://lazy-playground.example.com/api/assistants");
+    expect(reqUrl).toBe("https://lazy-provisioning.example.com/api/assistants");
     expect(init?.headers).toMatchObject({
       Authorization: "Bearer lazy-key",
     });
@@ -610,8 +612,8 @@ describe("ProvisioningClient — lazy initialization", () => {
     });
 
     // Change env var
-    process.env.PLAYGROUND_API_URL = "https://second.example.com";
-    process.env.PLAYGROUND_API_KEY = "second-key";
+    process.env.PROVISIONING_API_URL = "https://second.example.com";
+    process.env.PROVISIONING_API_KEY = "second-key";
 
     await ProvisioningClient.createAssistant({
       name: "Second",

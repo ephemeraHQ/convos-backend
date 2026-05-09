@@ -204,7 +204,7 @@ async function getJobFields(jobId: string) {
 // Mock tracking
 // ---------------------------------------------------------------------------
 
-let playgroundCreateCalls: CreateAssistantOpts[] = [];
+let provisioningCreateCalls: CreateAssistantOpts[] = [];
 
 // ---------------------------------------------------------------------------
 // Mock installation
@@ -220,7 +220,7 @@ function installAppWebHappyPathMocks(): void {
 
   __resetProvisioningClientForTests({
     createAssistant: (opts) => {
-      playgroundCreateCalls.push(opts);
+      provisioningCreateCalls.push(opts);
       return Promise.resolve({ instanceId: "inst-cross-app-123" });
     },
     getAssistant: (instanceId) =>
@@ -245,7 +245,7 @@ function installAllSourceHappyPathMocks(): void {
 
   __resetProvisioningClientForTests({
     createAssistant: (opts) => {
-      playgroundCreateCalls.push(opts);
+      provisioningCreateCalls.push(opts);
       return Promise.resolve({ instanceId: "inst-cross-all-123" });
     },
     getAssistant: (instanceId) =>
@@ -305,7 +305,7 @@ describe("Twitter Build — Cross-Source Integration", () => {
     __resetGenerateTemplateForTests(null);
     __resetProvisioningClientForTests(null);
     __resetTwitterReplyForTests(null);
-    playgroundCreateCalls = [];
+    provisioningCreateCalls = [];
     await cleanupJobs();
     await cleanupTemplates();
   });
@@ -326,14 +326,14 @@ describe("Twitter Build — Cross-Source Integration", () => {
       expect(job!.status).toBe("done");
 
       // ProvisioningClient should have been called
-      expect(playgroundCreateCalls.length).toBe(1);
-      expect(playgroundCreateCalls[0].joinUrl).toBe(
+      expect(provisioningCreateCalls.length).toBe(1);
+      expect(provisioningCreateCalls[0].joinUrl).toBe(
         "xmtp:https://relay.example.com/join",
       );
 
       // Result should have app/web format with instance details
       const result = JSON.parse(job!.result!);
-      expect(result.playgroundInstanceId).toBe("inst-cross-app-123");
+      expect(result.provisioningInstanceId).toBe("inst-cross-app-123");
       expect(result.conversationId).toBe("conv-cross-app");
       expect(result.inboxId).toBe("inbox-cross-app");
       expect(result.templateId).toMatch(/^tmpl_/);
@@ -357,15 +357,15 @@ describe("Twitter Build — Cross-Source Integration", () => {
       expect(job!.status).toBe("done");
 
       // ProvisioningClient should have been called
-      expect(playgroundCreateCalls.length).toBe(1);
+      expect(provisioningCreateCalls.length).toBe(1);
 
       // Result should have instance details
       const result = JSON.parse(job!.result!);
-      expect(result.playgroundInstanceId).toBe("inst-cross-app-123");
+      expect(result.provisioningInstanceId).toBe("inst-cross-app-123");
     });
 
     test("app source job follows pending → generating → provisioning → done", async () => {
-      // Add a delay in playground getAssistant to slow provisioning enough
+      // Add a delay in provisioning getAssistant to slow provisioning enough
       // to observe the intermediate "provisioning" state
       let getAssistantCallCount = 0;
       __resetGenerateTemplateForTests(() =>
@@ -377,7 +377,7 @@ describe("Twitter Build — Cross-Source Integration", () => {
 
       __resetProvisioningClientForTests({
         createAssistant: (opts) => {
-          playgroundCreateCalls.push(opts);
+          provisioningCreateCalls.push(opts);
           return Promise.resolve({ instanceId: "inst-cross-app-123" });
         },
         getAssistant: async (instanceId) => {
@@ -428,7 +428,7 @@ describe("Twitter Build — Cross-Source Integration", () => {
       await executorPromise;
 
       // Must have gone through the provisioning phase (proven by ProvisioningClient call)
-      expect(playgroundCreateCalls.length).toBe(1);
+      expect(provisioningCreateCalls.length).toBe(1);
       expect(getAssistantCallCount).toBeGreaterThanOrEqual(1);
     });
   });
@@ -566,19 +566,19 @@ describe("Twitter Build — Cross-Source Integration", () => {
       expect(twitterResult.templateUrl).toBeDefined();
       expect(twitterResult.replyText).toBeDefined();
 
-      // App result has templateId, playgroundInstanceId, conversationId, inboxId
+      // App result has templateId, provisioningInstanceId, conversationId, inboxId
       expect(appResult.templateId).toBeDefined();
-      expect(appResult.playgroundInstanceId).toBeDefined();
+      expect(appResult.provisioningInstanceId).toBeDefined();
       expect(appResult.conversationId).toBeDefined();
       expect(appResult.inboxId).toBeDefined();
 
-      // Web result has templateId, playgroundInstanceId, conversationId, inboxId
+      // Web result has templateId, provisioningInstanceId, conversationId, inboxId
       expect(webResult.templateId).toBeDefined();
-      expect(webResult.playgroundInstanceId).toBeDefined();
+      expect(webResult.provisioningInstanceId).toBeDefined();
     });
 
     test("coexisting jobs use different state machines", async () => {
-      let playgroundCreateCallCount = 0;
+      let provisioningCreateCallCount = 0;
       let twitterReplyCallCount = 0;
 
       __resetGenerateTemplateForTests(() =>
@@ -590,8 +590,8 @@ describe("Twitter Build — Cross-Source Integration", () => {
 
       __resetProvisioningClientForTests({
         createAssistant: (opts) => {
-          playgroundCreateCallCount++;
-          playgroundCreateCalls.push(opts);
+          provisioningCreateCallCount++;
+          provisioningCreateCalls.push(opts);
           return Promise.resolve({ instanceId: "inst-cross-all-123" });
         },
         getAssistant: (instanceId) =>
@@ -627,7 +627,7 @@ describe("Twitter Build — Cross-Source Integration", () => {
       const twitterJob = await getJobFields(twitterJobId);
       const appJob = await getJobFields(appJobId);
 
-      // Twitter job should be done without provisioning (proven by no playground call for it)
+      // Twitter job should be done without provisioning (proven by no provisioning call for it)
       expect(twitterJob!.status).toBe("done");
       expect(twitterJob!.source).toBe("twitter");
 
@@ -636,17 +636,17 @@ describe("Twitter Build — Cross-Source Integration", () => {
       expect(twitterResult.replyText).toBeDefined();
       expect(twitterResult.slug).toBeDefined();
 
-      // App job should be done with provisioning (proven by playground call)
+      // App job should be done with provisioning (proven by provisioning call)
       expect(appJob!.status).toBe("done");
       expect(appJob!.source).toBe("app");
 
       // App result should have instance fields (not twitter fields)
       const appResult = JSON.parse(appJob!.result!);
-      expect(appResult.playgroundInstanceId).toBeDefined();
+      expect(appResult.provisioningInstanceId).toBeDefined();
 
-      // Exactly 1 playground create call (for the app job only)
+      // Exactly 1 provisioning create call (for the app job only)
       // and 1 twitter reply call (for the twitter job only)
-      expect(playgroundCreateCallCount).toBe(1);
+      expect(provisioningCreateCallCount).toBe(1);
       expect(twitterReplyCallCount).toBe(1);
     });
   });
@@ -824,7 +824,7 @@ describe("Twitter Build — Cross-Source Integration", () => {
 
       // Result should have the exact same fields as pre-twitter-build
       expect(result).toHaveProperty("templateId");
-      expect(result).toHaveProperty("playgroundInstanceId");
+      expect(result).toHaveProperty("provisioningInstanceId");
       expect(result).toHaveProperty("conversationId");
       expect(result).toHaveProperty("inboxId");
 
@@ -906,7 +906,7 @@ describe("Twitter Build — Cross-Source Integration", () => {
 
       __resetProvisioningClientForTests({
         createAssistant: (opts) => {
-          playgroundCreateCalls.push(opts);
+          provisioningCreateCalls.push(opts);
           return Promise.resolve({ instanceId: "inst-ind-123" });
         },
         getAssistant: (instanceId) =>
@@ -959,8 +959,8 @@ describe("Twitter Build — Cross-Source Integration", () => {
       expect(appJob!.source).toBe("app");
 
       // ProvisioningClient should have been called for app job only
-      expect(playgroundCreateCalls.length).toBe(1);
-      expect(playgroundCreateCalls[0].joinUrl).toBe(
+      expect(provisioningCreateCalls.length).toBe(1);
+      expect(provisioningCreateCalls[0].joinUrl).toBe(
         "xmtp:https://relay.example.com/join",
       );
     });

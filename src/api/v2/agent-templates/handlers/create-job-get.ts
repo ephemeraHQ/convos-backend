@@ -13,9 +13,9 @@
  * Cross-account access returns 404 (not 403 — don't leak job existence).
  *
  * Twitter source done jobs: result includes { templateId, slug, templateUrl, replyText }
- *   - Does NOT include playgroundInstanceId, conversationId, inboxId
+ *   - Does NOT include provisioningInstanceId, conversationId, inboxId
  *
- * App/web source done jobs: result includes { templateId, playgroundInstanceId, conversationId?, inboxId? }
+ * App/web source done jobs: result includes { templateId, provisioningInstanceId, conversationId?, inboxId? }
  *   - Does NOT include slug, templateUrl, replyText
  *
  * Auth: authOrAgentApiKeyAuth
@@ -117,7 +117,7 @@ interface JobStatusResponse {
 /** Fields that should be included in app/web source results. */
 const APP_WEB_RESULT_FIELDS = new Set([
   "templateId",
-  "playgroundInstanceId",
+  "provisioningInstanceId",
   "conversationId",
   "inboxId",
 ]);
@@ -133,7 +133,7 @@ const TWITTER_RESULT_FIELDS = new Set([
 /**
  * Filter result fields based on source type.
  * - Twitter source: includes templateId, slug, templateUrl, replyText
- * - App/web source: includes templateId, playgroundInstanceId, conversationId, inboxId
+ * - App/web source: includes templateId, provisioningInstanceId, conversationId, inboxId
  */
 const filterResultFields = (
   rawResult: Record<string, unknown>,
