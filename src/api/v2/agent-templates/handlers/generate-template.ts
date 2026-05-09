@@ -38,8 +38,7 @@
  */
 
 import { randomUUID } from "node:crypto";
-import type { Request, Response } from "express";
-import { z } from "zod";
+import type { Request, Response } from "express";import { z } from "zod";
 import { serializeAgentTemplate } from "@/api/v2/agent-templates/lib/serialize-agent-template";
 import { capturePostHog } from "@/api/v2/agent-templates/services/posthog";
 import {
@@ -48,7 +47,6 @@ import {
 } from "@/api/v2/agent-templates/services/templateGen";
 import { AGENT_API_KEY_HEADER } from "@/middleware/agentAuth";
 import { getEffectiveOwnerId } from "@/utils/auth-helpers";
-import { mintTemplateId } from "@/utils/prefixed-id";
 import { prisma } from "@/utils/prisma";
 import { buildSlug } from "@/utils/slug-hash";
 
@@ -91,7 +89,7 @@ const persistDraftTemplate = async (
   },
   ownerAccountId: string,
 ) => {
-  const id = mintTemplateId();
+  const id = randomUUID();
   const baseSlug = deriveBaseSlug(template.agentName);
   const slug = buildSlug(baseSlug, id);
 

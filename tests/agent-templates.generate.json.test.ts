@@ -32,7 +32,7 @@ import { jsonMiddleware } from "@/middleware/json";
 import { noRouteMiddleware } from "@/middleware/noRoute";
 import { pinoMiddleware } from "@/middleware/pino";
 import { createJwtToken } from "@/utils/jwt";
-import { ADMIN_ACCOUNT_ID } from "@/utils/prefixed-id";
+import { ADMIN_ACCOUNT_ID } from "@/utils/constants";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -92,7 +92,7 @@ const mockResolve = (template: GeneratedTemplate) => {
 
 const FAKE_PERSISTED = (template: GeneratedTemplate, ownerAccountId: string) =>
   Promise.resolve({
-    id: "tmpl_fakePersistedId1234567890ab",
+    id: "00000000-0000-4000-8000-000000000099",
     slug: "brewski.abcde",
     ownerAccountId,
     forkedFromId: null,

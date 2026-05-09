@@ -22,7 +22,7 @@ import {
   DEFAULT_TEST_METRICS,
   type GeneratedTemplate,
 } from "@/api/v2/agent-templates/services/templateGen";
-import { ADMIN_ACCOUNT_ID } from "@/utils/prefixed-id";
+import { ADMIN_ACCOUNT_ID } from "@/utils/constants";
 import { prisma } from "@/utils/prisma";
 import {
   createTemplate,
@@ -143,7 +143,9 @@ describe("Cross-area E2E: Generate → Create → Publish → List → Hashed-sl
 
     expect(createResponse.status).toBe(201);
     expect(created.object).toBe("agent_template");
-    expect((created.id as string).startsWith("tmpl_")).toBe(true);
+    expect((created.id as string)).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i,
+    );
     expect(created.ownerAccountId).toBe(ADMIN_ACCOUNT_ID);
     expect(created.status).toBe("draft");
     expect(created.version).toBe(1);

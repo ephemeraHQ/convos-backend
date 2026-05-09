@@ -29,7 +29,7 @@ import { jsonMiddleware } from "@/middleware/json";
 import { noRouteMiddleware } from "@/middleware/noRoute";
 import { pinoMiddleware } from "@/middleware/pino";
 import { createJwtToken } from "@/utils/jwt";
-import { ADMIN_ACCOUNT_ID } from "@/utils/prefixed-id";
+import { ADMIN_ACCOUNT_ID } from "@/utils/constants";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -68,7 +68,7 @@ const mockReject = (error: Error) => {
 
 const FAKE_PERSISTED = (template: GeneratedTemplate, ownerAccountId: string) =>
   Promise.resolve({
-    id: "tmpl_fakePersistedId1234567890ab",
+    id: "00000000-0000-4000-8000-000000000099",
     slug: "brewski.abcde",
     ownerAccountId,
     forkedFromId: null,
@@ -235,7 +235,7 @@ describe("POST /api/v2/agent-templates/generate (SSE mode)", () => {
 
     // Serialized AgentTemplate shape (not raw GeneratedTemplate)
     expect(parsed.object).toBe("agent_template");
-    expect(parsed.id).toBe("tmpl_fakePersistedId1234567890ab");
+    expect(parsed.id).toBe("00000000-0000-4000-8000-000000000099");
     expect(parsed.slug).toBe("brewski.abcde");
     expect(parsed.ownerAccountId).toBe(ADMIN_ACCOUNT_ID);
     expect(parsed.agentName).toBe("Brewski");

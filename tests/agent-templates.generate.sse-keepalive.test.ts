@@ -58,7 +58,7 @@ const happyTemplate: GeneratedTemplate = {
 
 const FAKE_PERSISTED = (template: GeneratedTemplate, ownerAccountId: string) =>
   Promise.resolve({
-    id: "tmpl_fakePersistedId1234567890ab",
+    id: "00000000-0000-4000-8000-000000000099",
     slug: "slowbot.abcde",
     ownerAccountId,
     forkedFromId: null,
