@@ -65,7 +65,7 @@ const baseURL = `http://localhost:${TEST_PORT}`;
 // Helpers
 // ---------------------------------------------------------------------------
 
-const jwtHeaders = async (accountId?: string) => ({
+const jwtHeaders = async (accountId: string = ADMIN_ACCOUNT_ID) => ({
   "Content-Type": "application/json",
   "X-Convos-AuthToken": await createJwtToken({
     deviceId: "test-device-create-job-get",

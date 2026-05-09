@@ -63,6 +63,7 @@ const jwtHeaders = async () => ({
   "Content-Type": "application/json",
   "X-Convos-AuthToken": await createJwtToken({
     deviceId: "test-device-create-job-validation",
+    accountId: ADMIN_ACCOUNT_ID,
   }),
 });
 
