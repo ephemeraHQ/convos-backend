@@ -11,6 +11,7 @@ import type { Server } from "node:http";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import express from "express";
 import { agentTemplatesRouter } from "@/api/v2/agent-templates/agent-templates.router";
+import { __resetPersistForTests } from "@/api/v2/agent-templates/handlers/generate-template";
 import { __resetPostHogForTests } from "@/api/v2/agent-templates/services/posthog";
 import {
   __resetGenerateTemplateForTests,
@@ -41,6 +42,32 @@ const happyTemplate: GeneratedTemplate = {
   tools: ["Search"],
   connections: [],
 };
+
+// ---------------------------------------------------------------------------
+// Mock persistDraftTemplate at the module-singleton seam
+// ---------------------------------------------------------------------------
+
+const FAKE_PERSISTED = (template: GeneratedTemplate, ownerAccountId: string) =>
+  Promise.resolve({
+    id: "tmpl_fakePersistedId1234567890ab",
+    slug: "disconnectbot.abcde",
+    ownerAccountId,
+    forkedFromId: null,
+    agentName: template.agentName,
+    description: template.description || null,
+    prompt: template.prompt,
+    category: template.category || null,
+    emoji: template.emoji || null,
+    avatarUrl: null,
+    tools: template.tools,
+    connections: template.connections,
+    version: 1,
+    firstPublishedAt: null,
+    status: "draft",
+    featured: false,
+    createdAt: new Date("2026-05-08T00:00:00Z"),
+    updatedAt: new Date("2026-05-08T00:00:00Z"),
+  });
 
 // Track whether generateTemplate settled
 let generateSettled = false;
@@ -87,6 +114,8 @@ describe("POST /api/v2/agent-templates/generate SSE client disconnect", () => {
   beforeAll(async () => {
     setValidAgentApiKey();
     __resetPostHogForTests(() => {});
+    // Stub persist so no real database writes occur
+    __resetPersistForTests(FAKE_PERSISTED);
     server = await new Promise<Server>((resolve) => {
       const s = app.listen(TEST_PORT, () => {
         resolve(s);
@@ -97,6 +126,7 @@ describe("POST /api/v2/agent-templates/generate SSE client disconnect", () => {
   afterAll(async () => {
     __resetGenerateTemplateForTests(null);
     __resetPostHogForTests(null);
+    __resetPersistForTests(null);
     restoreAgentApiKey();
     await new Promise<void>((resolve) => {
       server.close(() => {

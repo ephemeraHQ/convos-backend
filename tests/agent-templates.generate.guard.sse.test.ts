@@ -5,9 +5,10 @@
  * and VAL-M3-GUARD-002 (non-production envs mount the route).
  */
 import type { Server } from "node:http";
-import { afterAll, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import express, { Router } from "express";
 import { agentTemplatesRouter } from "@/api/v2/agent-templates/agent-templates.router";
+import { __resetPersistForTests } from "@/api/v2/agent-templates/handlers/generate-template";
 import { __resetPostHogForTests } from "@/api/v2/agent-templates/services/posthog";
 import {
   __resetGenerateTemplateForTests,
@@ -31,6 +32,32 @@ const happyTemplate: GeneratedTemplate = {
   tools: [],
   connections: [],
 };
+
+// ---------------------------------------------------------------------------
+// Mock persistDraftTemplate at the module-singleton seam
+// ---------------------------------------------------------------------------
+
+const FAKE_PERSISTED = (template: GeneratedTemplate, ownerAccountId: string) =>
+  Promise.resolve({
+    id: "tmpl_fakePersistedId1234567890ab",
+    slug: "guardbot.abcde",
+    ownerAccountId,
+    forkedFromId: null,
+    agentName: template.agentName,
+    description: template.description || null,
+    prompt: template.prompt,
+    category: template.category || null,
+    emoji: template.emoji || null,
+    avatarUrl: null,
+    tools: template.tools,
+    connections: template.connections,
+    version: 1,
+    firstPublishedAt: null,
+    status: "draft",
+    featured: false,
+    createdAt: new Date("2026-05-08T00:00:00Z"),
+    updatedAt: new Date("2026-05-08T00:00:00Z"),
+  });
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -90,9 +117,16 @@ afterAll(() => {
   }
   __resetGenerateTemplateForTests(null);
   __resetPostHogForTests(null);
+  __resetPersistForTests(null);
 });
 
 describe("POST /api/v2/agent-templates/generate SSE production guard", () => {
+  beforeAll(() => {
+    // Stub PostHog and persist so no real captures or database writes occur
+    __resetPostHogForTests(() => {});
+    __resetPersistForTests(FAKE_PERSISTED);
+  });
+
   // -----------------------------------------------------------------------
   // VAL-M3-GUARD-001: XMTP_ENV=production → 404 for SSE Accept too
   // -----------------------------------------------------------------------

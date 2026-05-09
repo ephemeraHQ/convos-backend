@@ -6,6 +6,8 @@
  * via __resetGenerateTemplateForTests (mirrors connections test pattern).
  * PostHog capture is wired; we stub it via __resetPostHogForTests so it
  * doesn't interfere with these assertions.
+ * Template persistence is mocked via __resetPersistForTests so no real
+ * database writes occur during these unit tests.
  */
 import type { Server } from "node:http";
 import {
@@ -18,6 +20,7 @@ import {
 } from "bun:test";
 import express from "express";
 import { agentTemplatesRouter } from "@/api/v2/agent-templates/agent-templates.router";
+import { __resetPersistForTests } from "@/api/v2/agent-templates/handlers/generate-template";
 import { __resetPostHogForTests } from "@/api/v2/agent-templates/services/posthog";
 import {
   __resetGenerateTemplateForTests,
@@ -82,6 +85,32 @@ const mockResolve = (template: GeneratedTemplate) => {
     return Promise.resolve({ template, metrics: DEFAULT_TEST_METRICS });
   });
 };
+
+// ---------------------------------------------------------------------------
+// Mock persistDraftTemplate at the module-singleton seam
+// ---------------------------------------------------------------------------
+
+const FAKE_PERSISTED = (template: GeneratedTemplate, ownerAccountId: string) =>
+  Promise.resolve({
+    id: "tmpl_fakePersistedId1234567890ab",
+    slug: "brewski.abcde",
+    ownerAccountId,
+    forkedFromId: null,
+    agentName: template.agentName,
+    description: template.description || null,
+    prompt: template.prompt,
+    category: template.category || null,
+    emoji: template.emoji || null,
+    avatarUrl: null,
+    tools: template.tools,
+    connections: template.connections,
+    version: 1,
+    firstPublishedAt: null,
+    status: "draft",
+    featured: false,
+    createdAt: new Date("2026-05-08T00:00:00Z"),
+    updatedAt: new Date("2026-05-08T00:00:00Z"),
+  });
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -150,6 +179,8 @@ describe("POST /api/v2/agent-templates/generate (JSON mode)", () => {
     setValidAgentApiKey();
     // Stub PostHog so it doesn't make real captures during these tests
     __resetPostHogForTests(() => {});
+    // Stub persist so no real database writes occur
+    __resetPersistForTests(FAKE_PERSISTED);
     server = await new Promise<Server>((resolve) => {
       const s = app.listen(TEST_PORT, () => {
         resolve(s);
@@ -160,6 +191,7 @@ describe("POST /api/v2/agent-templates/generate (JSON mode)", () => {
   afterAll(async () => {
     __resetGenerateTemplateForTests(null);
     __resetPostHogForTests(null);
+    __resetPersistForTests(null);
     restoreAgentApiKey();
     await new Promise<void>((resolve) => {
       server.close(() => {
@@ -444,21 +476,32 @@ describe("POST /api/v2/agent-templates/generate (JSON mode)", () => {
   });
 
   // -----------------------------------------------------------------------
-  // VAL-M3-JSON-002: Response shape is camelCase
+  // VAL-M3-JSON-002: Response shape is serialized AgentTemplate
   // -----------------------------------------------------------------------
-  test("response keys are exactly the camelCase set", async () => {
+  test("response keys match serialized AgentTemplate shape", async () => {
     const res = await postGenerate({ idea: "test" }, agentKeyHeaders());
     expect(res.status).toBe(200);
     const body = (await res.json()) as Record<string, unknown>;
     const sortedKeys = Object.keys(body).sort();
     expect(sortedKeys).toEqual([
       "agentName",
+      "avatarUrl",
       "category",
       "connections",
+      "createdAt",
       "description",
       "emoji",
+      "featured",
+      "firstPublishedAt",
+      "forkedFromId",
+      "id",
+      "object",
+      "ownerAccountId",
       "prompt",
+      "slug",
+      "status",
       "tools",
+      "version",
     ]);
   });
 
@@ -474,8 +517,9 @@ describe("POST /api/v2/agent-templates/generate (JSON mode)", () => {
 
   // -----------------------------------------------------------------------
   // VAL-M3-JSON-004: Soft defaults for non-name fields
+  // Empty strings become null in persisted templates (nullable DB columns)
   // -----------------------------------------------------------------------
-  test("empty strings and empty arrays are preserved (soft defaults)", async () => {
+  test("empty strings become null for nullable fields (soft defaults)", async () => {
     const softTemplate: GeneratedTemplate = {
       agentName: "X",
       description: "",
@@ -491,7 +535,11 @@ describe("POST /api/v2/agent-templates/generate (JSON mode)", () => {
     expect(res.status).toBe(200);
     const body = (await res.json()) as Record<string, unknown>;
     expect(body.agentName).toBe("X");
-    expect(body.description).toBe("");
+    // Empty strings for nullable columns are stored as null
+    expect(body.description).toBeNull();
+    expect(body.category).toBeNull();
+    expect(body.emoji).toBeNull();
+    // prompt is required (non-nullable), preserved as-is
     expect(body.prompt).toBe("");
     expect(body.tools).toEqual([]);
   });

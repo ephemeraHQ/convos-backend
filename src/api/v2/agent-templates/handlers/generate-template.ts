@@ -1,10 +1,14 @@
 /**
  * Handler for POST /api/v2/agent-templates/generate (JSON + SSE modes).
  *
- * Auth via `authOrAgentApiKeyAuth`. Validation runs BEFORE any branch on
- * `Accept` so bad inputs always return JSON 400. Legacy field coalescing
- * accepts `text|idea|content|url`. Body limits: MAX_TEXT_LEN=50_000,
+ * Auth via `authOrAgentApiKeyAuth` + `requireAccount`. Validation runs BEFORE
+ * any branch on `Accept` so bad inputs always return JSON 400. Legacy field
+ * coalescing accepts `text|idea|content|url`. Body limits: MAX_TEXT_LEN=50_000,
  * MAX_BASE64_LEN=35_000_000.
+ *
+ * On success, the generated template is persisted as a draft AgentTemplate
+ * with `ownerAccountId` from `getEffectiveOwnerId(res)`, then returned in
+ * serialized form (including id, slug, ownerAccountId, etc.).
  *
  * Accept header routing:
  *   - Contains `text/event-stream` substring → SSE mode
@@ -14,7 +18,7 @@
  *   - Headers: Content-Type: text/event-stream, Cache-Control: no-cache,
  *     Connection: keep-alive; flushHeaders() called before any data.
  *   - Keep-alive: `:\n\n` comment every 15 000 ms while pending.
- *   - Success: `event: result\ndata: <camelCase JSON>\n\n`, then res.end().
+ *   - Success: `event: result\ndata: <serialized template JSON>\n\n`, then res.end().
  *   - Error:   `event: error\ndata: {"error":"...","status":<int>}\n\n`, then res.end().
  *   - HTTP status line is always 200 (headers flushed before terminal frame).
  *   - Client disconnect: generateTemplate NOT aborted (no AbortSignal);
@@ -24,7 +28,7 @@
  *   - On every invocation that reaches the LLM call (success OR error),
  *     a `builder.template.generated` event is captured fire-and-forget.
  *   - Properties: model, promptTokens, completionTokens, latencyMs,
- *     requestId (UUID v4), authMode ("jwt" | "agentKey").
+ *     requestId (UUID v4), authMode ("jwt" | "agentKey"), ownerAccountId.
  *   - Validation errors that 400 BEFORE the LLM call emit ZERO events.
  *   - Missing POSTHOG_API_KEY/POSTHOG_HOST → silent no-op.
  *
@@ -36,12 +40,17 @@
 import { randomUUID } from "node:crypto";
 import type { Request, Response } from "express";
 import { z } from "zod";
+import { serializeAgentTemplate } from "@/api/v2/agent-templates/lib/serialize-agent-template";
 import { capturePostHog } from "@/api/v2/agent-templates/services/posthog";
 import {
   callGenerateTemplate,
   getModel,
 } from "@/api/v2/agent-templates/services/templateGen";
 import { AGENT_API_KEY_HEADER } from "@/middleware/agentAuth";
+import { getEffectiveOwnerId } from "@/utils/auth-helpers";
+import { mintTemplateId } from "@/utils/prefixed-id";
+import { prisma } from "@/utils/prisma";
+import { buildSlug } from "@/utils/slug-hash";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -56,6 +65,112 @@ const MAX_BASE64_LEN = 35_000_000;
  */
 const VALIDATION_ERROR_RE =
   /^(Invalid URL|No content extracted|Could not extract)/i;
+
+// ---------------------------------------------------------------------------
+// Template persistence
+// ---------------------------------------------------------------------------
+
+/** Derive a slug-safe base from an agent name. */
+const deriveBaseSlug = (agentName: string): string =>
+  agentName
+    .toLowerCase()
+    .replace(/[^a-z0-9-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 48);
+
+/** Persist a generated template as a draft AgentTemplate. */
+const persistDraftTemplate = async (
+  template: {
+    agentName: string;
+    description: string;
+    prompt: string;
+    category: string;
+    emoji: string;
+    tools: string[];
+    connections: string[];
+  },
+  ownerAccountId: string,
+) => {
+  const id = mintTemplateId();
+  const baseSlug = deriveBaseSlug(template.agentName);
+  const slug = buildSlug(baseSlug, id);
+
+  return prisma.agentTemplate.create({
+    data: {
+      id,
+      slug,
+      ownerAccountId,
+      forkedFromId: null,
+      agentName: template.agentName,
+      description: template.description || null,
+      prompt: template.prompt,
+      category: template.category || null,
+      emoji: template.emoji || null,
+      avatarUrl: null,
+      tools: template.tools,
+      connections: template.connections,
+      version: 1,
+      firstPublishedAt: null,
+      status: "draft",
+      featured: false,
+    },
+  });
+};
+
+// ---------------------------------------------------------------------------
+// Test seam for persistDraftTemplate
+// ---------------------------------------------------------------------------
+
+/** Shape returned by the persist test seam — subset that serializeAgentTemplate needs. */
+export interface PersistedTemplateForTests {
+  id: string;
+  slug: string;
+  ownerAccountId: string;
+  forkedFromId: string | null;
+  agentName: string;
+  description: string | null;
+  prompt: string;
+  category: string | null;
+  emoji: string | null;
+  avatarUrl: string | null;
+  tools: string[];
+  connections: string[];
+  version: number;
+  firstPublishedAt: Date | null;
+  status: string;
+  featured: boolean;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+let _persistOverride:
+  | ((
+      template: Parameters<typeof persistDraftTemplate>[0],
+      ownerAccountId: string,
+    ) => Promise<PersistedTemplateForTests>)
+  | null = null;
+
+/**
+ * Install a test override for the template persistence step.
+ * Pass `null` to restore normal behaviour (uses prisma).
+ *
+ * The override receives the generated template + ownerAccountId
+ * and must return an object matching PersistedTemplateForTests.
+ */
+export function __resetPersistForTests(
+  override: typeof _persistOverride,
+): void {
+  _persistOverride = override;
+}
+
+/** Internal: delegates to override if installed, otherwise prisma. */
+const doPersist = (
+  template: Parameters<typeof persistDraftTemplate>[0],
+  ownerAccountId: string,
+) =>
+  _persistOverride
+    ? _persistOverride(template, ownerAccountId)
+    : persistDraftTemplate(template, ownerAccountId);
 
 // ---------------------------------------------------------------------------
 // Zod schema — validates & coalesces the request body
@@ -182,6 +297,13 @@ export async function generateTemplateHandler(req: Request, res: Response) {
   }
 
   // --- Past this point, the request WILL reach the LLM call ---
+  // Resolve the effective owner for template persistence.
+  const ownerAccountId = getEffectiveOwnerId(res);
+  if (!ownerAccountId) {
+    res.status(403).json({ error: "Account required" });
+    return;
+  }
+
   // Prepare PostHog metering data (capture fires on both success & error).
   const requestId = randomUUID();
   const startTime = performance.now();
@@ -196,7 +318,7 @@ export async function generateTemplateHandler(req: Request, res: Response) {
     completionTokens: number;
     latencyMs: number;
   }) => {
-    capturePostHog({ ...metrics, requestId, authMode });
+    capturePostHog({ ...metrics, requestId, authMode, ownerAccountId });
   };
 
   // 4. Branch on Accept header — SSE vs JSON mode
@@ -227,12 +349,17 @@ export async function generateTemplateHandler(req: Request, res: Response) {
     try {
       const { template, metrics } = await callGenerateTemplate(coalesced);
 
+      // Persist as draft with the authenticated account as owner
+      const persisted = await doPersist(template, ownerAccountId);
+
       // PostHog: success — fire-and-forget
       meter(metrics);
 
-      // Terminal success frame
+      // Terminal success frame — return serialized persisted template
       clearInterval(keepalive);
-      const data = JSON.stringify(template);
+      const data = JSON.stringify(
+        serializeAgentTemplate(persisted as Parameters<typeof serializeAgentTemplate>[0]),
+      );
       res.write(`event: result\ndata: ${data}\n\n`);
       res.end();
     } catch (err) {
@@ -262,10 +389,19 @@ export async function generateTemplateHandler(req: Request, res: Response) {
   try {
     const { template, metrics } = await callGenerateTemplate(coalesced);
 
+    // Persist as draft with the authenticated account as owner
+    const persisted = await doPersist(template, ownerAccountId);
+
     // PostHog: success — fire-and-forget
     meter(metrics);
 
-    res.status(200).json(template);
+    res
+      .status(200)
+      .json(
+        serializeAgentTemplate(
+          persisted as Parameters<typeof serializeAgentTemplate>[0],
+        ),
+      );
   } catch (err) {
     const error = err instanceof Error ? err : new Error(String(err));
     req.log.warn({ error: error.message }, "Template generation failed");

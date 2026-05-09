@@ -31,6 +31,12 @@ export interface PostHogCaptureProperties extends GenerationMetrics {
   requestId: string;
   /** How the request was authenticated: "jwt" or "agentKey". */
   authMode: "jwt" | "agentKey";
+  /** Source of the generation event — e.g. "create-job" for async job executor. */
+  source?: string;
+  /** Account ID of the template/job owner. */
+  ownerAccountId?: string;
+  /** Input type used for generation: "text", "pdfBase64", or "imageBase64". */
+  inputType?: string;
 }
 
 // ---------------------------------------------------------------------------

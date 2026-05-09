@@ -7,6 +7,7 @@ import { requireAccount } from "@/middleware/auth";
 import { createHandler } from "./handlers/create";
 import { deleteHandler } from "./handlers/delete";
 import { detailHandler } from "./handlers/detail";
+import { generateTemplateHandler } from "./handlers/generate-template";
 import { listHandler } from "./handlers/list";
 import { patchHandler } from "./handlers/patch";
 import { publishHandler } from "./handlers/publish";
@@ -19,6 +20,12 @@ agentTemplatesRouter.post(
   authOrAgentApiKeyAuth,
   requireAccount,
   createHandler,
+);
+agentTemplatesRouter.post(
+  "/generate",
+  authOrAgentApiKeyAuth,
+  requireAccount,
+  generateTemplateHandler,
 );
 agentTemplatesRouter.patch(
   "/:id",

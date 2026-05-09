@@ -7,14 +7,44 @@
  */
 import { readFileSync } from "node:fs";
 import type { Server } from "node:http";
-import { afterAll, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import express, { Router } from "express";
 import { agentTemplatesRouter } from "@/api/v2/agent-templates/agent-templates.router";
+import { __resetPersistForTests } from "@/api/v2/agent-templates/handlers/generate-template";
+import {
+  type GeneratedTemplate,
+} from "@/api/v2/agent-templates/services/templateGen";
 import { noRouteMiddleware } from "@/middleware/noRoute";
 
 const TEST_PORT = 4016;
 const originalXMTPEnv = process.env.XMTP_ENV;
 const originalAgentAssetsApiKey = process.env.AGENT_ASSETS_API_KEY;
+
+// ---------------------------------------------------------------------------
+// Mock persistDraftTemplate at the module-singleton seam
+// ---------------------------------------------------------------------------
+
+const FAKE_PERSISTED = (template: GeneratedTemplate, ownerAccountId: string) =>
+  Promise.resolve({
+    id: "tmpl_fakePersistedId1234567890ab",
+    slug: "guardbot.abcde",
+    ownerAccountId,
+    forkedFromId: null,
+    agentName: template.agentName,
+    description: template.description || null,
+    prompt: template.prompt,
+    category: template.category || null,
+    emoji: template.emoji || null,
+    avatarUrl: null,
+    tools: template.tools,
+    connections: template.connections,
+    version: 1,
+    firstPublishedAt: null,
+    status: "draft",
+    featured: false,
+    createdAt: new Date("2026-05-08T00:00:00Z"),
+    updatedAt: new Date("2026-05-08T00:00:00Z"),
+  });
 
 afterAll(() => {
   process.env.XMTP_ENV = originalXMTPEnv;
@@ -23,6 +53,7 @@ afterAll(() => {
   } else {
     process.env.AGENT_ASSETS_API_KEY = originalAgentAssetsApiKey;
   }
+  __resetPersistForTests(null);
 });
 
 const buildGuardedV2Router = () => {
@@ -62,6 +93,11 @@ const withServer = async (
 };
 
 describe("POST /api/v2/agent-templates/generate production guard", () => {
+  beforeAll(() => {
+    // Stub persist so no real database writes occur
+    __resetPersistForTests(FAKE_PERSISTED);
+  });
+
   test("XMTP_ENV=production → POST /generate returns 404", async () => {
     process.env.XMTP_ENV = "production";
 

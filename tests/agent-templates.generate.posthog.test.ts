@@ -23,6 +23,7 @@ import {
 } from "bun:test";
 import express from "express";
 import { agentTemplatesRouter } from "@/api/v2/agent-templates/agent-templates.router";
+import { __resetPersistForTests } from "@/api/v2/agent-templates/handlers/generate-template";
 import {
   __resetPostHogForTests,
   BUILDER_TEMPLATE_GENERATED_EVENT,
@@ -79,6 +80,32 @@ const mockHappy = () => {
 const mockReject = (error: Error) => {
   __resetGenerateTemplateForTests(() => Promise.reject(error));
 };
+
+// ---------------------------------------------------------------------------
+// Mock persistDraftTemplate at the module-singleton seam
+// ---------------------------------------------------------------------------
+
+const FAKE_PERSISTED = (template: GeneratedTemplate, ownerAccountId: string) =>
+  Promise.resolve({
+    id: "tmpl_fakePersistedId1234567890ab",
+    slug: "brewski.abcde",
+    ownerAccountId,
+    forkedFromId: null,
+    agentName: template.agentName,
+    description: template.description || null,
+    prompt: template.prompt,
+    category: template.category || null,
+    emoji: template.emoji || null,
+    avatarUrl: null,
+    tools: template.tools,
+    connections: template.connections,
+    version: 1,
+    firstPublishedAt: null,
+    status: "draft",
+    featured: false,
+    createdAt: new Date("2026-05-08T00:00:00Z"),
+    updatedAt: new Date("2026-05-08T00:00:00Z"),
+  });
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -146,6 +173,8 @@ let server: Server;
 describe("PostHog metering for POST /api/v2/agent-templates/generate", () => {
   beforeAll(async () => {
     setValidAgentApiKey();
+    // Stub persist so no real database writes occur
+    __resetPersistForTests(FAKE_PERSISTED);
     server = await new Promise<Server>((resolve) => {
       const s = app.listen(TEST_PORT, () => {
         resolve(s);
@@ -156,6 +185,7 @@ describe("PostHog metering for POST /api/v2/agent-templates/generate", () => {
   afterAll(async () => {
     __resetGenerateTemplateForTests(null);
     __resetPostHogForTests(null);
+    __resetPersistForTests(null);
     restoreAgentApiKey();
     await new Promise<void>((resolve) => {
       server.close(() => {
@@ -211,6 +241,7 @@ describe("PostHog metering for POST /api/v2/agent-templates/generate", () => {
     expect(typeof props.requestId).toBe("string");
     expect(UUID_V4_RE.test(props.requestId)).toBe(true);
     expect(["jwt", "agentKey"]).toContain(props.authMode);
+    expect(props.ownerAccountId).toBe(ADMIN_ACCOUNT_ID);
   });
 
   test("error: properties include all required keys with correct types", async () => {
@@ -227,6 +258,7 @@ describe("PostHog metering for POST /api/v2/agent-templates/generate", () => {
     expect(typeof props.requestId).toBe("string");
     expect(UUID_V4_RE.test(props.requestId)).toBe(true);
     expect(["jwt", "agentKey"]).toContain(props.authMode);
+    expect(props.ownerAccountId).toBe(ADMIN_ACCOUNT_ID);
   });
 
   test("success: metrics from the service are passed through", async () => {
@@ -306,6 +338,7 @@ describe("PostHog metering for POST /api/v2/agent-templates/generate", () => {
 
     expect(capturedPostHog.length).toBe(1);
     expect(capturedPostHog[0].authMode).toBe("jwt");
+    expect(capturedPostHog[0].ownerAccountId).toBe(ADMIN_ACCOUNT_ID);
   });
 
   test("Agent API key auth produces authMode='agentKey'", async () => {
@@ -314,6 +347,7 @@ describe("PostHog metering for POST /api/v2/agent-templates/generate", () => {
 
     expect(capturedPostHog.length).toBe(1);
     expect(capturedPostHog[0].authMode).toBe("agentKey");
+    expect(capturedPostHog[0].ownerAccountId).toBe(ADMIN_ACCOUNT_ID);
   });
 
   // ---------------------------------------------------------------------
@@ -372,6 +406,7 @@ describe("PostHog metering for POST /api/v2/agent-templates/generate", () => {
     expect(res.status).toBe(200);
     expect(capturedPostHog.length).toBe(1);
     expect(capturedPostHog[0].authMode).toBe("agentKey");
+    expect(capturedPostHog[0].ownerAccountId).toBe(ADMIN_ACCOUNT_ID);
   });
 
   test("SSE error also emits one PostHog capture", async () => {

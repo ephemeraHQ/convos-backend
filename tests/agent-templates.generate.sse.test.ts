@@ -18,6 +18,7 @@ import {
 } from "bun:test";
 import express from "express";
 import { agentTemplatesRouter } from "@/api/v2/agent-templates/agent-templates.router";
+import { __resetPersistForTests } from "@/api/v2/agent-templates/handlers/generate-template";
 import { __resetPostHogForTests } from "@/api/v2/agent-templates/services/posthog";
 import {
   __resetGenerateTemplateForTests,
@@ -60,6 +61,32 @@ const mockHappy = () => {
 const mockReject = (error: Error) => {
   __resetGenerateTemplateForTests(() => Promise.reject(error));
 };
+
+// ---------------------------------------------------------------------------
+// Mock persistDraftTemplate at the module-singleton seam
+// ---------------------------------------------------------------------------
+
+const FAKE_PERSISTED = (template: GeneratedTemplate, ownerAccountId: string) =>
+  Promise.resolve({
+    id: "tmpl_fakePersistedId1234567890ab",
+    slug: "brewski.abcde",
+    ownerAccountId,
+    forkedFromId: null,
+    agentName: template.agentName,
+    description: template.description || null,
+    prompt: template.prompt,
+    category: template.category || null,
+    emoji: template.emoji || null,
+    avatarUrl: null,
+    tools: template.tools,
+    connections: template.connections,
+    version: 1,
+    firstPublishedAt: null,
+    status: "draft",
+    featured: false,
+    createdAt: new Date("2026-05-08T00:00:00Z"),
+    updatedAt: new Date("2026-05-08T00:00:00Z"),
+  });
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -130,7 +157,10 @@ let server: Server;
 describe("POST /api/v2/agent-templates/generate (SSE mode)", () => {
   beforeAll(async () => {
     setValidAgentApiKey();
+    // Stub PostHog so it doesn't make real captures during these tests
     __resetPostHogForTests(() => {});
+    // Stub persist so no real database writes occur
+    __resetPersistForTests(FAKE_PERSISTED);
     server = await new Promise<Server>((resolve) => {
       const s = app.listen(TEST_PORT, () => {
         resolve(s);
@@ -141,6 +171,7 @@ describe("POST /api/v2/agent-templates/generate (SSE mode)", () => {
   afterAll(async () => {
     __resetGenerateTemplateForTests(null);
     __resetPostHogForTests(null);
+    __resetPersistForTests(null);
     restoreAgentApiKey();
     await new Promise<void>((resolve) => {
       server.close(() => {
@@ -187,7 +218,7 @@ describe("POST /api/v2/agent-templates/generate (SSE mode)", () => {
   // -----------------------------------------------------------------------
   // VAL-M3-SSE-002: Terminal success frame
   // -----------------------------------------------------------------------
-  test("success emits event: result frame with camelCase JSON and connections: []", async () => {
+  test("success emits event: result frame with serialized AgentTemplate JSON", async () => {
     const res = await postGenerateSSE({ idea: "test" });
     expect(res.status).toBe(200);
 
@@ -202,12 +233,25 @@ describe("POST /api/v2/agent-templates/generate (SSE mode)", () => {
     expect(dataMatch).not.toBeNull();
     const parsed = JSON.parse(dataMatch![1]);
 
-    // Same shape as JSON mode
+    // Serialized AgentTemplate shape (not raw GeneratedTemplate)
+    expect(parsed.object).toBe("agent_template");
+    expect(parsed.id).toBe("tmpl_fakePersistedId1234567890ab");
+    expect(parsed.slug).toBe("brewski.abcde");
+    expect(parsed.ownerAccountId).toBe(ADMIN_ACCOUNT_ID);
     expect(parsed.agentName).toBe("Brewski");
-    expect(parsed.connections).toEqual([]);
+    expect(parsed.description).toBe("A cheery brewing buddy");
+    expect(parsed.prompt).toBe("You help people brew coffee");
     expect(parsed.category).toBe("Food & Dining");
     expect(parsed.emoji).toBe("☕");
     expect(parsed.tools).toEqual(["Search"]);
+    expect(parsed.connections).toEqual([]);
+    expect(parsed.version).toBe(1);
+    expect(parsed.status).toBe("draft");
+    expect(parsed.featured).toBe(false);
+    expect(parsed.forkedFromId).toBeNull();
+    expect(parsed.avatarUrl).toBeNull();
+    expect(parsed.firstPublishedAt).toBeNull();
+    expect(parsed.createdAt).toBe("2026-05-08T00:00:00.000Z");
 
     // No snake_case keys
     const keys = Object.keys(parsed);
