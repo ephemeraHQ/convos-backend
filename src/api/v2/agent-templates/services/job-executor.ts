@@ -34,7 +34,7 @@
  *   - `__setTimeoutMsForTests(ms|null)` — override timeout for testing
  */
 
-import { mintTemplateId } from "@/utils/prefixed-id";
+import { randomUUID } from "node:crypto";
 import { prisma } from "@/utils/prisma";
 import { buildSlug } from "@/utils/slug-hash";
 import { capturePostHog } from "./posthog";
@@ -218,7 +218,7 @@ async function persistDraftTemplate(
   template: GeneratedTemplate,
   ownerAccountId: string,
 ): Promise<string> {
-  const id = mintTemplateId();
+  const id = randomUUID();
   const baseSlug = deriveBaseSlug(template.agentName);
   const slug = buildSlug(baseSlug, id);
 
@@ -251,7 +251,7 @@ async function persistPublishedTemplate(
   template: GeneratedTemplate,
   ownerAccountId: string,
 ): Promise<{ id: string; slug: string }> {
-  const id = mintTemplateId();
+  const id = randomUUID();
   const baseSlug = deriveBaseSlug(template.agentName);
   const slug = buildSlug(baseSlug, id);
 

@@ -25,7 +25,7 @@ import { jsonMiddleware } from "@/middleware/json";
 import { noRouteMiddleware } from "@/middleware/noRoute";
 import { pinoMiddleware } from "@/middleware/pino";
 import { createJwtToken } from "@/utils/jwt";
-import { ADMIN_ACCOUNT_ID } from "@/utils/prefixed-id";
+import { ADMIN_ACCOUNT_ID } from "@/utils/constants";
 import { prisma } from "@/utils/prisma";
 
 // ---------------------------------------------------------------------------
@@ -160,7 +160,7 @@ describe("GET /api/v2/agent-templates/create-job/:jobId — twitter source", () 
 
   test("done job result includes templateId, slug, templateUrl, replyText", async () => {
     const twitterResult = {
-      templateId: "tmpl_twitter_123",
+      templateId: "00000000-1234-4000-8000-000000000123",
       slug: "math-tutor.abcde",
       templateUrl: "https://convos.org/assistants/math-tutor.abcde",
       replyText:
@@ -179,7 +179,7 @@ describe("GET /api/v2/agent-templates/create-job/:jobId — twitter source", () 
     expect(body.status).toBe("done");
 
     const result = body.result as Record<string, unknown>;
-    expect(result.templateId).toBe("tmpl_twitter_123");
+    expect(result.templateId).toBe("00000000-1234-4000-8000-000000000123");
     expect(result.slug).toBe("math-tutor.abcde");
     expect(result.templateUrl).toBe(
       "https://convos.org/assistants/math-tutor.abcde",
@@ -193,7 +193,7 @@ describe("GET /api/v2/agent-templates/create-job/:jobId — twitter source", () 
     // The executor stores only twitter fields, but let's test with an
     // explicitly minimal result to verify the GET handler filters correctly
     const twitterResult = {
-      templateId: "tmpl_twitter_456",
+      templateId: "00000000-4567-4000-8000-000000000456",
       slug: "tutor.abcde",
       templateUrl: "https://convos.org/assistants/tutor.abcde",
       replyText:
@@ -219,7 +219,7 @@ describe("GET /api/v2/agent-templates/create-job/:jobId — twitter source", () 
 
   test("done app/web job result does NOT include twitter-specific fields", async () => {
     const appResult = {
-      templateId: "tmpl_app_789",
+      templateId: "00000000-7890-4000-8000-000000000789",
       provisioningInstanceId: "inst-456",
       conversationId: "conv-789",
       inboxId: "inbox-012",
@@ -298,7 +298,7 @@ describe("GET /api/v2/agent-templates/create-job/:jobId — twitter source", () 
 
   test("wait_ms returns immediately when twitter job is terminal", async () => {
     const twitterResult = {
-      templateId: "tmpl_done",
+      templateId: "00000000-done-4000-8000-000000000001",
       slug: "done.fghij",
       templateUrl: "https://convos.org/assistants/done.fghij",
       replyText: "@alice Done!",
@@ -326,7 +326,7 @@ describe("GET /api/v2/agent-templates/create-job/:jobId — twitter source", () 
 
   test("returns 404 for expired twitter source job", async () => {
     const twitterResult = {
-      templateId: "tmpl_expired",
+      templateId: "00000000-exp1-4000-8000-000000000002",
       slug: "expired.klmno",
       templateUrl: "https://convos.org/assistants/expired.klmno",
       replyText: "@alice Expired",

@@ -29,7 +29,7 @@ import {
   DEFAULT_TEST_METRICS,
   type GeneratedTemplate,
 } from "../src/api/v2/agent-templates/services/templateGen";
-import { ADMIN_ACCOUNT_ID } from "../src/utils/prefixed-id";
+import { ADMIN_ACCOUNT_ID } from "../src/utils/constants";
 import { prisma } from "../src/utils/prisma";
 
 // ---------------------------------------------------------------------------

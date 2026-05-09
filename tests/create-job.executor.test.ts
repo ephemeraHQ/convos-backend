@@ -34,7 +34,7 @@ import {
   DEFAULT_TEST_METRICS,
   type GeneratedTemplate,
 } from "../src/api/v2/agent-templates/services/templateGen";
-import { ADMIN_ACCOUNT_ID } from "../src/utils/prefixed-id";
+import { ADMIN_ACCOUNT_ID } from "../src/utils/constants";
 import { prisma } from "../src/utils/prisma";
 
 // ---------------------------------------------------------------------------
@@ -756,7 +756,7 @@ describe("CreateJob Executor — Happy Path", () => {
     // - templateId from generating → provisioning transition
     // - provisioningInstanceId, conversationId, inboxId from provisioning → done
     const result = JSON.parse(job!.result!);
-    expect(result.templateId).toMatch(/^tmpl_/);
+    expect(result.templateId).toMatch(/^[0-9a-f]{8}-/);
     expect(result.provisioningInstanceId).toBe("inst-test-123");
     expect(result.conversationId).toBe("conv-test-789");
     expect(result.inboxId).toBe("inbox-test-456");
@@ -889,7 +889,7 @@ describe("CreateJob Executor — Edge Cases", () => {
         status: "done",
         input: JSON.stringify({ text: "test", joinUrl: "https://example.com" }),
         ownerAccountId: ADMIN_ACCOUNT_ID,
-        result: JSON.stringify({ templateId: "tmpl_test" }),
+        result: JSON.stringify({ templateId: "00000000-0000-4000-8000-000000000099" }),
       },
     });
 
@@ -926,7 +926,7 @@ describe("CreateJob Executor — Edge Cases", () => {
 
     const result = JSON.parse(job!.result!);
     expect(result.templateId).toBeDefined();
-    expect(result.templateId).toMatch(/^tmpl_/);
+    expect(result.templateId).toMatch(/^[0-9a-f]{8}-/);
 
     // Verify the template actually exists
     const template = await prisma.agentTemplate.findUnique({

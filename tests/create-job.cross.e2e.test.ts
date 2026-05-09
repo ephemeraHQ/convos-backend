@@ -57,7 +57,7 @@ import { jsonMiddleware } from "@/middleware/json";
 import { noRouteMiddleware } from "@/middleware/noRoute";
 import { pinoMiddleware } from "@/middleware/pino";
 import { createJwtToken } from "@/utils/jwt";
-import { ADMIN_ACCOUNT_ID } from "@/utils/prefixed-id";
+import { ADMIN_ACCOUNT_ID } from "@/utils/constants";
 import { prisma } from "@/utils/prisma";
 
 // ---------------------------------------------------------------------------
@@ -334,7 +334,7 @@ describe("CreateJob Cross-Area E2E", () => {
 
     expect(getBody.status).toBe("done");
     expect(getBody.result).toBeDefined();
-    expect(getBody.result!.templateId).toMatch(/^tmpl_/);
+    expect(getBody.result!.templateId).toMatch(/^[0-9a-f]{8}-/);
     expect(getBody.result!.provisioningInstanceId).toBe("inst-e2e-123");
     expect(getBody.result!.conversationId).toBe("conv-e2e-789");
     expect(getBody.result!.inboxId).toBe("inbox-e2e-456");
@@ -616,7 +616,7 @@ describe("CreateJob Cross-Area E2E", () => {
         status: "done",
         input: JSON.stringify({ text: "test", joinUrl: "https://example.com" }),
         ownerAccountId: ADMIN_ACCOUNT_ID,
-        result: JSON.stringify({ templateId: "tmpl_test" }),
+        result: JSON.stringify({ templateId: "00000000-0000-4000-8000-000000000099" }),
         expiresAt: new Date(Date.now() - 1000), // 1 second ago
       },
     });
@@ -761,7 +761,7 @@ describe("CreateJob Cross-Area E2E", () => {
     expect(getBody.result!.provisioningInstanceId).toBe("inst-e2e-123");
     expect(getBody.result!.conversationId).toBe("conv-e2e-789");
     expect(getBody.result!.inboxId).toBe("inbox-e2e-456");
-    expect(getBody.result!.templateId).toMatch(/^tmpl_/);
+    expect(getBody.result!.templateId).toMatch(/^[0-9a-f]{8}-/);
   });
 
   // ── VAL-CJ-CROSS-016: Failed job result includes joinFailureReason ──
@@ -903,7 +903,7 @@ describe("CreateJob Cross-Area E2E", () => {
     };
 
     expect(getBody.status).toBe("done");
-    expect(getBody.result!.templateId).toMatch(/^tmpl_/);
+    expect(getBody.result!.templateId).toMatch(/^[0-9a-f]{8}-/);
 
     // Verify the template exists in the database
     const template = await prisma.agentTemplate.findUnique({

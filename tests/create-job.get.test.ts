@@ -36,7 +36,7 @@ import { jsonMiddleware } from "@/middleware/json";
 import { noRouteMiddleware } from "@/middleware/noRoute";
 import { pinoMiddleware } from "@/middleware/pino";
 import { createJwtToken } from "@/utils/jwt";
-import { ADMIN_ACCOUNT_ID } from "@/utils/prefixed-id";
+import { ADMIN_ACCOUNT_ID } from "@/utils/constants";
 import { prisma } from "@/utils/prisma";
 
 // ---------------------------------------------------------------------------
@@ -209,7 +209,7 @@ describe("GET /api/v2/agent-templates/create-job/:jobId", () => {
 
   test("includes result when status is done", async () => {
     const resultData = {
-      templateId: "tmpl_test123",
+      templateId: "00000000-0000-4000-8000-000000000123",
       provisioningInstanceId: "inst-456",
       conversationId: "conv-789",
       inboxId: "inbox-012",
@@ -402,7 +402,7 @@ describe("GET /api/v2/agent-templates/create-job/:jobId", () => {
 
   test("done job result includes template and instance details", async () => {
     const resultData = {
-      templateId: "tmpl_abc123",
+      templateId: "00000000-0000-4000-8000-000000000abc",
       provisioningInstanceId: "inst-456",
       conversationId: "conv-789",
       inboxId: "inbox-012",
@@ -416,7 +416,7 @@ describe("GET /api/v2/agent-templates/create-job/:jobId", () => {
     const body = (await response.json()) as Record<string, unknown>;
     const result = body.result as Record<string, unknown>;
 
-    expect(result.templateId).toBe("tmpl_abc123");
+    expect(result.templateId).toBe("00000000-0000-4000-8000-000000000abc");
     expect(result.provisioningInstanceId).toBe("inst-456");
     expect(result.conversationId).toBe("conv-789");
     expect(result.inboxId).toBe("inbox-012");

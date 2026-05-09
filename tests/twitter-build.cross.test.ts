@@ -40,7 +40,7 @@ import { jsonMiddleware } from "@/middleware/json";
 import { noRouteMiddleware } from "@/middleware/noRoute";
 import { pinoMiddleware } from "@/middleware/pino";
 import { createJwtToken } from "@/utils/jwt";
-import { ADMIN_ACCOUNT_ID } from "@/utils/prefixed-id";
+import { ADMIN_ACCOUNT_ID } from "@/utils/constants";
 import { prisma } from "@/utils/prisma";
 
 // ---------------------------------------------------------------------------
@@ -336,7 +336,7 @@ describe("Twitter Build — Cross-Source Integration", () => {
       expect(result.provisioningInstanceId).toBe("inst-cross-app-123");
       expect(result.conversationId).toBe("conv-cross-app");
       expect(result.inboxId).toBe("inbox-cross-app");
-      expect(result.templateId).toMatch(/^tmpl_/);
+      expect(result.templateId).toMatch(/^[0-9a-f]{8}-/);
 
       // No twitter-specific fields in result
       expect(result.slug).toBeUndefined();

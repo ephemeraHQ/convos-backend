@@ -30,7 +30,7 @@ import {
   __resetTwitterReplyForTests,
   type ReplyInput,
 } from "../src/api/v2/agent-templates/services/twitterReply";
-import { ADMIN_ACCOUNT_ID } from "../src/utils/prefixed-id";
+import { ADMIN_ACCOUNT_ID } from "../src/utils/constants";
 import { prisma } from "../src/utils/prisma";
 
 // ---------------------------------------------------------------------------
@@ -303,7 +303,7 @@ describe("Twitter Build Executor — Happy Path", () => {
 
     const result = JSON.parse(job!.result!);
     expect(result.templateId).toBeDefined();
-    expect(result.templateId).toMatch(/^tmpl_/);
+    expect(result.templateId).toMatch(/^[0-9a-f]{8}-/);
     expect(result.slug).toBeDefined();
     expect(result.templateUrl).toBeDefined();
     expect(result.templateUrl).toContain(result.slug);

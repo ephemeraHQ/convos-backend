@@ -33,7 +33,7 @@ import { jsonMiddleware } from "@/middleware/json";
 import { noRouteMiddleware } from "@/middleware/noRoute";
 import { pinoMiddleware } from "@/middleware/pino";
 import { createJwtToken } from "@/utils/jwt";
-import { ADMIN_ACCOUNT_ID } from "@/utils/prefixed-id";
+import { ADMIN_ACCOUNT_ID } from "@/utils/constants";
 import { prisma } from "@/utils/prisma";
 
 // ---------------------------------------------------------------------------
