@@ -12,6 +12,6 @@ import type { Response } from "express";
  * that per-account ownership works when SIWE-authenticated users create
  * resources.
  */
-export function getEffectiveOwnerId(res: Response): string | undefined {
-  return res.locals.accountId as string | undefined;
+export function getEffectiveOwnerId(res: Response) {
+  return res.locals.accountId;
 }

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { prisma } from "@/utils/prisma";
 import { ADMIN_ACCOUNT_ID } from "@/utils/constants";
+import { prisma } from "@/utils/prisma";
 
 type AccountColumn = {
   column_name: string;

@@ -8,7 +8,7 @@ export const RESERVED_SLUGS = new Set([
   "skills",
 ]);
 
-export const SLUG_REGEX = /^[a-z0-9][a-z0-9-]*$/;
+export const SLUG_REGEX = /^[a-z0-9]+(-[a-z0-9]+)*$/;
 export const MAX_SLUG_LENGTH = 64;
 
 export type SlugValidationErrorReason =
@@ -41,7 +41,7 @@ export function validateSlug(slug: string): SlugValidationResult {
     return {
       valid: false,
       reason: "invalid_format",
-      message: "Slug must match ^[a-z0-9][a-z0-9-]*$",
+      message: "Slug must match ^[a-z0-9]+(-[a-z0-9]+)*$",
     };
   }
 

@@ -15,8 +15,8 @@ import { requireAccount } from "@/middleware/auth";
 import { jsonMiddleware } from "@/middleware/json";
 import { pinoMiddleware } from "@/middleware/pino";
 import { getEffectiveOwnerId } from "@/utils/auth-helpers";
-import { createJwtToken } from "@/utils/jwt";
 import { ADMIN_ACCOUNT_ID } from "@/utils/constants";
+import { createJwtToken } from "@/utils/jwt";
 
 // ---------------------------------------------------------------------------
 // Test helpers
@@ -55,14 +55,14 @@ function buildTestApp(middlewares: express.RequestHandler[]) {
   app.use(...middlewares);
   app.post("/test", (_req, res: Response) => {
     res.json({
-      accountId: (res.locals.accountId as string | undefined) ?? null,
+      accountId: res.locals.accountId ?? null,
       isApiKeyListener:
         (res.locals.isApiKeyListener as boolean | undefined) ?? false,
     });
   });
   app.get("/test", (_req, res: Response) => {
     res.json({
-      accountId: (res.locals.accountId as string | undefined) ?? null,
+      accountId: res.locals.accountId ?? null,
       isApiKeyListener:
         (res.locals.isApiKeyListener as boolean | undefined) ?? false,
     });
@@ -256,5 +256,3 @@ describe("getEffectiveOwnerId utility", () => {
     expect(getEffectiveOwnerId(mockRes)).toBeUndefined();
   });
 });
-
-

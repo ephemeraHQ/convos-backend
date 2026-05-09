@@ -61,6 +61,10 @@ describe("reserved slug utilities", () => {
     expectInvalidSlug("Brewski", "invalid_format");
     expectInvalidSlug("-leading", "invalid_format");
     expectInvalidSlug("", "invalid_format");
+    expectInvalidSlug("trailing-", "invalid_format");
+    expectInvalidSlug("agent--double", "invalid_format");
+    expectInvalidSlug("a-", "invalid_format");
+    expectInvalidSlug("-", "invalid_format");
   });
 
   test("validateSlug enforces the 64 character max length", () => {
