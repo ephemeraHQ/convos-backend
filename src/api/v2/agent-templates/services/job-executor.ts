@@ -1,16 +1,30 @@
 /**
  * CreateJob background executor.
  *
- * Executes the full state machine:
- *   pending → generating → provisioning → done|failed
+ * Executes the full state machine, branching on source:
  *
- * Steps:
+ * app/web source:
+ *   pending → generating → provisioning → done|failed
+ *   (generate → persist draft → provision via PlaygroundClient → poll → done)
+ *
+ * twitter source:
+ *   pending → generating → done|failed
+ *   (generate → publish template → compose reply → done — no PlaygroundClient)
+ *
+ * Steps (app/web):
  *   1. Set status=generating, call templateGen service
  *   2. Persist generated template as draft AgentTemplate (owner=job.ownerAccountId)
  *   3. Set status=provisioning, call PlaygroundClient.createAssistant()
  *   4. Poll PlaygroundClient.getAssistant() until joinStatus ∈ {joined, failed}
  *   5. Set status=done or failed with result/error
  *   6. Set expiresAt on terminal jobs (TTL 24h)
+ *
+ * Steps (twitter):
+ *   1. Set status=generating, call templateGen service with idea text
+ *   2. Persist generated template as PUBLISHED AgentTemplate (status=published, firstPublishedAt set, version=1)
+ *   3. Compose reply tweet via twitterReply service
+ *   4. Set status=done with result { templateId, slug, templateUrl, replyText }
+ *   5. Set expiresAt on terminal jobs (TTL 24h)
  *
  * Timeout: 5 minutes for the entire execution.
  * Fire-and-forget from POST handler: `void executeCreateJob(jobId).catch(...)`
@@ -26,6 +40,7 @@ import { buildSlug } from "@/utils/slug-hash";
 import { PlaygroundClient } from "./playgroundClient";
 import { capturePostHog } from "./posthog";
 import { callGenerateTemplate, type GeneratedTemplate } from "./templateGen";
+import { composeReply, type ReplyInput } from "./twitterReply";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -35,21 +50,48 @@ export interface JobExecutorOverride {
   executeJob?: (jobId: string) => Promise<void>;
 }
 
-/** Parsed input from the CreateJob.input JSON column. */
-interface JobInput {
+/** Parsed input from the CreateJob.input JSON column (app/web source). */
+interface AppWebJobInput {
   text?: string;
   pdfBase64?: string;
   imageBase64?: string;
   mimeType?: string;
   joinUrl: string;
+  source?: string;
 }
 
-/** Result stored in CreateJob.result when status=done. */
-interface JobResult {
+/** Parsed input from the CreateJob.input JSON column (twitter source). */
+interface TwitterJobInput {
+  source: "twitter";
+  metadata: {
+    idea: string;
+    twitterHandle: string;
+    tweetId: string;
+  };
+  joinUrl?: string | null;
+}
+
+/** Parsed metadata from the CreateJob.metadata JSON column (twitter source). */
+interface TwitterMetadata {
+  idea: string;
+  twitterHandle: string;
+  tweetId: string;
+}
+
+/** Result stored in CreateJob.result when status=done (app/web source). */
+interface AppWebJobResult {
   templateId: string;
   playgroundInstanceId: string;
   conversationId?: string | null;
   inboxId?: string | null;
+}
+
+/** Result stored in CreateJob.result when status=done (twitter source). */
+interface TwitterJobResult {
+  templateId: string;
+  slug: string;
+  templateUrl: string;
+  replyText: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -64,6 +106,9 @@ const DEFAULT_TIMEOUT_MS = 5 * 60 * 1000;
 
 /** Polling interval when waiting for playground joinStatus. */
 const POLL_INTERVAL_MS = 2_000;
+
+/** Default template site URL for published templates. */
+const DEFAULT_TEMPLATE_SITE_URL = "https://convos.org/assistants";
 
 // ---------------------------------------------------------------------------
 // Test seams
@@ -163,6 +208,11 @@ function deriveBaseSlug(agentName: string): string {
     .slice(0, 48);
 }
 
+/** Get template site URL from env. */
+function getTemplateSiteUrl(): string {
+  return process.env.TEMPLATE_SITE_URL || DEFAULT_TEMPLATE_SITE_URL;
+}
+
 /** Persist a generated template as a draft AgentTemplate. */
 async function persistDraftTemplate(
   template: GeneratedTemplate,
@@ -194,6 +244,39 @@ async function persistDraftTemplate(
   });
 
   return id;
+}
+
+/** Persist a generated template as a PUBLISHED AgentTemplate. */
+async function persistPublishedTemplate(
+  template: GeneratedTemplate,
+  ownerAccountId: string,
+): Promise<{ id: string; slug: string }> {
+  const id = mintTemplateId();
+  const baseSlug = deriveBaseSlug(template.agentName);
+  const slug = buildSlug(baseSlug, id);
+
+  await prisma.agentTemplate.create({
+    data: {
+      id,
+      slug,
+      ownerAccountId,
+      forkedFromId: null,
+      agentName: template.agentName,
+      description: template.description || null,
+      prompt: template.prompt,
+      category: template.category || null,
+      emoji: template.emoji || null,
+      avatarUrl: null,
+      tools: template.tools,
+      connections: template.connections,
+      version: 1,
+      firstPublishedAt: new Date(),
+      status: "published",
+      featured: false,
+    },
+  });
+
+  return { id, slug };
 }
 
 // ---------------------------------------------------------------------------
@@ -242,13 +325,229 @@ async function pollUntilTerminal(
 }
 
 // ---------------------------------------------------------------------------
+// Twitter executor
+// ---------------------------------------------------------------------------
+
+/**
+ * Execute a twitter source job.
+ *
+ * State machine: pending → generating → done|failed
+ * - Generates template using idea text
+ * - Publishes template (not draft)
+ * - Composes reply tweet
+ * - Does NOT call PlaygroundClient
+ */
+async function executeTwitterJob(
+  jobId: string,
+  ownerAccountId: string,
+  metadata: TwitterMetadata,
+  deadline: number,
+): Promise<void> {
+  // ── Step 1: pending → generating ──
+  await updateJob(jobId, { status: "generating" });
+
+  // Check timeout
+  if (Date.now() >= deadline) {
+    await failJob(jobId, "Generation took too long — timed out");
+    return;
+  }
+
+  // ── Step 2: Call templateGen with idea text ──
+  const genStartTime = performance.now();
+  const { template, metrics } = await callGenerateTemplate({
+    text: metadata.idea,
+  });
+
+  // ── PostHog: fire builder.template.generated event with source="twitter" ──
+  capturePostHog({
+    ...metrics,
+    source: "twitter",
+    ownerAccountId,
+    inputType: "idea",
+    latencyMs: Math.round(performance.now() - genStartTime),
+  });
+
+  // Check timeout
+  if (Date.now() >= deadline) {
+    await failJob(jobId, "Generation took too long — timed out");
+    return;
+  }
+
+  // ── Step 3: Persist as PUBLISHED AgentTemplate ──
+  const { id: templateId, slug } = await persistPublishedTemplate(
+    template,
+    ownerAccountId,
+  );
+
+  // ── Step 4: Compose reply tweet ──
+  const templateUrl = `${getTemplateSiteUrl()}/${slug}`;
+
+  // Get first sentence from description or prompt for reply
+  const descriptionText = template.description || template.prompt || "";
+  const firstSentence =
+    descriptionText.split(/[.!?]/, 1)[0]?.trim() ||
+    descriptionText.slice(0, 100);
+
+  const replyInput: ReplyInput = {
+    handle: metadata.twitterHandle,
+    agentName: template.agentName,
+    firstSentence,
+    templateUrl,
+    slug,
+  };
+
+  const { replyText } = await composeReply(replyInput);
+
+  // ── Step 5: Set status=done with twitter result ──
+  const result: TwitterJobResult = {
+    templateId,
+    slug,
+    templateUrl,
+    replyText,
+  };
+
+  await prisma.createJob.update({
+    where: { id: jobId },
+    data: {
+      status: "done",
+      result: JSON.stringify(result),
+      expiresAt: new Date(Date.now() + TTL_MS),
+    },
+  });
+}
+
+// ---------------------------------------------------------------------------
+// App/web executor
+// ---------------------------------------------------------------------------
+
+/**
+ * Execute an app/web source job.
+ *
+ * State machine: pending → generating → provisioning → done|failed
+ */
+async function executeAppWebJob(
+  jobId: string,
+  ownerAccountId: string,
+  input: AppWebJobInput,
+  deadline: number,
+): Promise<void> {
+  // Determine input type for PostHog metering
+  const inputType: string = input.pdfBase64
+    ? "pdfBase64"
+    : input.imageBase64
+      ? "imageBase64"
+      : "text";
+
+  // ── Step 1: pending → generating ──
+  await updateJob(jobId, { status: "generating" });
+
+  // Check timeout
+  if (Date.now() >= deadline) {
+    await failJob(jobId, "Generation took too long — timed out");
+    return;
+  }
+
+  // ── Step 2: Call templateGen ──
+  const templateInput: Record<string, string | undefined> = {};
+  if (input.text) templateInput.text = input.text;
+  if (input.pdfBase64) templateInput.pdfBase64 = input.pdfBase64;
+  if (input.imageBase64) templateInput.imageBase64 = input.imageBase64;
+  if (input.mimeType) templateInput.mimeType = input.mimeType;
+
+  const genStartTime = performance.now();
+  const { template, metrics } = await callGenerateTemplate(templateInput);
+
+  // ── PostHog: fire builder.template.generated event on successful generation ──
+  // This fires BEFORE provisioning, so it captures generation success even if
+  // provisioning later fails. The event is NOT fired when generation fails
+  // (that path goes to the catch block which calls failJob without PostHog).
+  capturePostHog({
+    ...metrics,
+    source: "create-job",
+    ownerAccountId,
+    inputType,
+    latencyMs: Math.round(performance.now() - genStartTime),
+  });
+
+  // Check timeout
+  if (Date.now() >= deadline) {
+    await failJob(jobId, "Generation took too long — timed out");
+    return;
+  }
+
+  // ── Step 3: Persist as draft AgentTemplate ──
+  const templateId = await persistDraftTemplate(template, ownerAccountId);
+
+  // ── Step 4: generating → provisioning ──
+  const partialResult: AppWebJobResult = {
+    templateId,
+    playgroundInstanceId: "",
+  };
+
+  await updateJob(jobId, {
+    status: "provisioning",
+    result: JSON.stringify(partialResult),
+  });
+
+  // Check timeout
+  if (Date.now() >= deadline) {
+    await failJob(jobId, "Generation took too long — timed out");
+    return;
+  }
+
+  // ── Step 5: Call PlaygroundClient.createAssistant ──
+  const createOpts: {
+    name: string;
+    instructions: string;
+    joinUrl: string;
+    metadata?: Record<string, unknown>;
+  } = {
+    name: template.agentName,
+    instructions: template.prompt,
+    joinUrl: input.joinUrl,
+    metadata: { source: "create-job" },
+  };
+
+  const { instanceId } = await PlaygroundClient.createAssistant(createOpts);
+
+  // ── Step 6: Poll until terminal ──
+  const finalStatus = await pollUntilTerminal(instanceId, deadline);
+
+  // ── Step 7: Transition to done or failed ──
+  if (finalStatus.joinStatus === "joined") {
+    const result: AppWebJobResult = {
+      templateId,
+      playgroundInstanceId: instanceId,
+      conversationId: finalStatus.conversationId ?? null,
+      inboxId: finalStatus.inboxId ?? null,
+    };
+
+    await prisma.createJob.update({
+      where: { id: jobId },
+      data: {
+        status: "done",
+        result: JSON.stringify(result),
+        expiresAt: new Date(Date.now() + TTL_MS),
+      },
+    });
+  } else {
+    // joinStatus === "failed"
+    const errorMsg =
+      finalStatus.joinFailureReason || "Playground instance failed to join";
+    await failJob(jobId, errorMsg);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Executor
 // ---------------------------------------------------------------------------
 
 /**
  * Execute a create-job asynchronously.
  *
- * State machine: pending → generating → provisioning → done|failed
+ * Branches on source:
+ *   - app/web: pending → generating → provisioning → done|failed
+ *   - twitter: pending → generating → done|failed
  *
  * The POST handler calls this as fire-and-forget:
  * `void executeCreateJob(jobId).catch(...)`
@@ -272,10 +571,24 @@ export async function executeCreateJob(jobId: string): Promise<void> {
     return;
   }
 
+  // Determine source from the job's source column
+  const source: string = job.source;
+
+  // Parse metadata for twitter source
+  let twitterMetadata: TwitterMetadata | null = null;
+  if (source === "twitter" && job.metadata) {
+    try {
+      twitterMetadata = JSON.parse(job.metadata) as TwitterMetadata;
+    } catch {
+      await failJob(jobId, "Invalid job metadata — could not parse JSON");
+      return;
+    }
+  }
+
   // Parse input
-  let input: JobInput;
+  let input: AppWebJobInput | TwitterJobInput;
   try {
-    input = JSON.parse(job.input) as JobInput;
+    input = JSON.parse(job.input) as AppWebJobInput | TwitterJobInput;
   } catch {
     await failJob(jobId, "Invalid job input — could not parse JSON");
     return;
@@ -284,111 +597,30 @@ export async function executeCreateJob(jobId: string): Promise<void> {
   const timeoutMs = _timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const deadline = Date.now() + timeoutMs;
 
-  // Determine input type for PostHog metering
-  const inputType: string = input.pdfBase64
-    ? "pdfBase64"
-    : input.imageBase64
-      ? "imageBase64"
-      : "text";
-
   try {
-    // ── Step 1: pending → generating ──
-    await updateJob(jobId, { status: "generating" });
-
-    // Check timeout
-    if (Date.now() >= deadline) {
-      await failJob(jobId, "Generation took too long — timed out");
-      return;
-    }
-
-    // ── Step 2: Call templateGen ──
-    const templateInput: Record<string, string | undefined> = {};
-    if (input.text) templateInput.text = input.text;
-    if (input.pdfBase64) templateInput.pdfBase64 = input.pdfBase64;
-    if (input.imageBase64) templateInput.imageBase64 = input.imageBase64;
-    if (input.mimeType) templateInput.mimeType = input.mimeType;
-
-    const genStartTime = performance.now();
-    const { template, metrics } = await callGenerateTemplate(templateInput);
-
-    // ── PostHog: fire builder.template.generated event on successful generation ──
-    // This fires BEFORE provisioning, so it captures generation success even if
-    // provisioning later fails. The event is NOT fired when generation fails
-    // (that path goes to the catch block which calls failJob without PostHog).
-    capturePostHog({
-      ...metrics,
-      source: "create-job",
-      ownerAccountId: job.ownerAccountId,
-      inputType,
-      latencyMs: Math.round(performance.now() - genStartTime),
-    });
-
-    // Check timeout
-    if (Date.now() >= deadline) {
-      await failJob(jobId, "Generation took too long — timed out");
-      return;
-    }
-
-    // ── Step 3: Persist as draft AgentTemplate ──
-    const templateId = await persistDraftTemplate(template, job.ownerAccountId);
-
-    // ── Step 4: generating → provisioning ──
-    const partialResult: JobResult = {
-      templateId,
-      playgroundInstanceId: "",
-    };
-
-    await updateJob(jobId, {
-      status: "provisioning",
-      result: JSON.stringify(partialResult),
-    });
-
-    // Check timeout
-    if (Date.now() >= deadline) {
-      await failJob(jobId, "Generation took too long — timed out");
-      return;
-    }
-
-    // ── Step 5: Call PlaygroundClient.createAssistant ──
-    const createOpts: {
-      name: string;
-      instructions: string;
-      joinUrl: string;
-      metadata?: Record<string, unknown>;
-    } = {
-      name: template.agentName,
-      instructions: template.prompt,
-      joinUrl: input.joinUrl,
-      metadata: { source: "create-job" },
-    };
-
-    const { instanceId } = await PlaygroundClient.createAssistant(createOpts);
-
-    // ── Step 6: Poll until terminal ──
-    const finalStatus = await pollUntilTerminal(instanceId, deadline);
-
-    // ── Step 7: Transition to done or failed ──
-    if (finalStatus.joinStatus === "joined") {
-      const result: JobResult = {
-        templateId,
-        playgroundInstanceId: instanceId,
-        conversationId: finalStatus.conversationId ?? null,
-        inboxId: finalStatus.inboxId ?? null,
-      };
-
-      await prisma.createJob.update({
-        where: { id: jobId },
-        data: {
-          status: "done",
-          result: JSON.stringify(result),
-          expiresAt: new Date(Date.now() + TTL_MS),
-        },
-      });
+    // Branch on source
+    if (source === "twitter") {
+      if (!twitterMetadata) {
+        await failJob(
+          jobId,
+          "Twitter source job missing metadata (idea, twitterHandle, tweetId)",
+        );
+        return;
+      }
+      await executeTwitterJob(
+        jobId,
+        job.ownerAccountId,
+        twitterMetadata,
+        deadline,
+      );
     } else {
-      // joinStatus === "failed"
-      const errorMsg =
-        finalStatus.joinFailureReason || "Playground instance failed to join";
-      await failJob(jobId, errorMsg);
+      // app/web source
+      await executeAppWebJob(
+        jobId,
+        job.ownerAccountId,
+        input as AppWebJobInput,
+        deadline,
+      );
     }
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);

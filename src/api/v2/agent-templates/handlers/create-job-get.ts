@@ -12,6 +12,12 @@
  * Expired jobs (expiresAt < NOW()) return 404.
  * Cross-account access returns 404 (not 403 — don't leak job existence).
  *
+ * Twitter source done jobs: result includes { templateId, slug, templateUrl, replyText }
+ *   - Does NOT include playgroundInstanceId, conversationId, inboxId
+ *
+ * App/web source done jobs: result includes { templateId, playgroundInstanceId, conversationId?, inboxId? }
+ *   - Does NOT include slug, templateUrl, replyText
+ *
  * Auth: authOrAgentApiKeyAuth
  * Production guard: XMTP_ENV !== "production" (in v2/index.ts)
  */
@@ -52,6 +58,7 @@ async function waitForTerminalStatus(
 ): Promise<{
   id: string;
   status: string;
+  source: string;
   result: string | null;
   error: string | null;
   expiresAt: Date | null;
@@ -107,9 +114,46 @@ interface JobStatusResponse {
   updatedAt: string;
 }
 
+/** Fields that should be included in app/web source results. */
+const APP_WEB_RESULT_FIELDS = new Set([
+  "templateId",
+  "playgroundInstanceId",
+  "conversationId",
+  "inboxId",
+]);
+
+/** Fields that should be included in twitter source results. */
+const TWITTER_RESULT_FIELDS = new Set([
+  "templateId",
+  "slug",
+  "templateUrl",
+  "replyText",
+]);
+
+/**
+ * Filter result fields based on source type.
+ * - Twitter source: includes templateId, slug, templateUrl, replyText
+ * - App/web source: includes templateId, playgroundInstanceId, conversationId, inboxId
+ */
+const filterResultFields = (
+  rawResult: Record<string, unknown>,
+  source: string,
+): Record<string, unknown> => {
+  const allowedFields =
+    source === "twitter" ? TWITTER_RESULT_FIELDS : APP_WEB_RESULT_FIELDS;
+  const filtered: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(rawResult)) {
+    if (allowedFields.has(key)) {
+      filtered[key] = value;
+    }
+  }
+  return filtered;
+};
+
 const buildResponse = (job: {
   id: string;
   status: string;
+  source: string;
   result: string | null;
   error: string | null;
   createdAt: Date;
@@ -124,7 +168,8 @@ const buildResponse = (job: {
 
   if (job.status === "done" && job.result) {
     try {
-      response.result = JSON.parse(job.result);
+      const rawResult = JSON.parse(job.result) as Record<string, unknown>;
+      response.result = filterResultFields(rawResult, job.source);
     } catch {
       response.result = job.result;
     }
