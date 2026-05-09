@@ -9,6 +9,7 @@
  */
 
 import type { Server } from "node:http";
+import type { CreateJobStatus } from "@prisma/client";
 import {
   afterAll,
   beforeAll,
@@ -25,7 +26,6 @@ import { noRouteMiddleware } from "@/middleware/noRoute";
 import { pinoMiddleware } from "@/middleware/pino";
 import { createJwtToken } from "@/utils/jwt";
 import { ADMIN_ACCOUNT_ID } from "@/utils/prefixed-id";
-import type { CreateJobStatus } from "@prisma/client";
 import { prisma } from "@/utils/prisma";
 
 // ---------------------------------------------------------------------------
@@ -91,7 +91,7 @@ const seedTwitterJob = async (
 ) => {
   return prisma.createJob.create({
     data: {
-      status: (overrides.status as CreateJobStatus) ?? ("pending" as CreateJobStatus),
+      status: (overrides.status ?? "pending") as CreateJobStatus,
       source: "twitter",
       input: JSON.stringify({
         source: "twitter",
