@@ -8,6 +8,7 @@
  *   - requireAccount rejects when res.locals.accountId is undefined (VAL-AUTH-ID-004)
  */
 
+import type { Server } from "node:http";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import express, { type Response } from "express";
 import { authOrAgentApiKeyAuth } from "@/middleware/agentAuth";
@@ -43,6 +44,20 @@ type LocalsBody = {
   accountId: string | null;
   isApiKeyListener: boolean;
 };
+
+async function startTestServer(app: express.Application) {
+  const server: Server = await new Promise((resolve, reject) => {
+    const s = app.listen(0, () => {
+      resolve(s);
+    });
+    s.once("error", reject);
+  });
+  const address = server.address();
+  if (!address || typeof address === "string") {
+    throw new Error("Unable to determine server port");
+  }
+  return { server, baseURL: `http://127.0.0.1:${address.port}` };
+}
 
 /**
  * Build a test app that captures res.locals after the middleware chain.
@@ -88,10 +103,10 @@ describe("authOrAgentApiKeyAuth identity resolution", () => {
   // VAL-AUTH-ID-001: API key auth sets res.locals.accountId = ADMIN_ACCOUNT_ID
   test("sets accountId to ADMIN_ACCOUNT_ID when API key auth is used", async () => {
     const app = buildTestApp([authOrAgentApiKeyAuth]);
-    const server = app.listen(4030);
+    const { server, baseURL } = await startTestServer(app);
 
     try {
-      const response = await fetch("http://localhost:4030/test", {
+      const response = await fetch(`${baseURL}/test`, {
         method: "POST",
         headers: agentKeyHeaders(),
       });
@@ -107,10 +122,10 @@ describe("authOrAgentApiKeyAuth identity resolution", () => {
   // VAL-AUTH-ID-002: API key auth sets res.locals.isApiKeyListener = true
   test("sets isApiKeyListener = true when API key auth is used", async () => {
     const app = buildTestApp([authOrAgentApiKeyAuth]);
-    const server = app.listen(4030);
+    const { server, baseURL } = await startTestServer(app);
 
     try {
-      const response = await fetch("http://localhost:4030/test", {
+      const response = await fetch(`${baseURL}/test`, {
         method: "POST",
         headers: agentKeyHeaders(),
       });
@@ -126,10 +141,10 @@ describe("authOrAgentApiKeyAuth identity resolution", () => {
   // VAL-AUTH-ID-002 (negative case): JWT auth does NOT set isApiKeyListener
   test("does NOT set isApiKeyListener when JWT auth is used", async () => {
     const app = buildTestApp([authOrAgentApiKeyAuth]);
-    const server = app.listen(4030);
+    const { server, baseURL } = await startTestServer(app);
 
     try {
-      const response = await fetch("http://localhost:4030/test", {
+      const response = await fetch(`${baseURL}/test`, {
         method: "POST",
         headers: await jwtHeaders(ADMIN_ACCOUNT_ID),
       });
@@ -145,10 +160,10 @@ describe("authOrAgentApiKeyAuth identity resolution", () => {
   // VAL-AUTH-ID-003: JWT auth sets accountId from the JWT payload
   test("sets accountId from JWT payload when JWT auth is used", async () => {
     const app = buildTestApp([authOrAgentApiKeyAuth]);
-    const server = app.listen(4030);
+    const { server, baseURL } = await startTestServer(app);
 
     try {
-      const response = await fetch("http://localhost:4030/test", {
+      const response = await fetch(`${baseURL}/test`, {
         method: "POST",
         headers: await jwtHeaders(ADMIN_ACCOUNT_ID),
       });
@@ -164,10 +179,10 @@ describe("authOrAgentApiKeyAuth identity resolution", () => {
   // JWT without accountId still authenticates (accountId is undefined)
   test("JWT without accountId authenticates but accountId is null", async () => {
     const app = buildTestApp([authOrAgentApiKeyAuth]);
-    const server = app.listen(4030);
+    const { server, baseURL } = await startTestServer(app);
 
     try {
-      const response = await fetch("http://localhost:4030/test", {
+      const response = await fetch(`${baseURL}/test`, {
         method: "POST",
         headers: await jwtHeaders(), // no accountId
       });
@@ -183,11 +198,11 @@ describe("authOrAgentApiKeyAuth identity resolution", () => {
   // VAL-AUTH-ID-004: requireAccount rejects when accountId is undefined
   test("requireAccount rejects (403) when accountId is undefined", async () => {
     const app = buildTestApp([authOrAgentApiKeyAuth, requireAccount]);
-    const server = app.listen(4030);
+    const { server, baseURL } = await startTestServer(app);
 
     try {
       // JWT without accountId → authOrAgentApiKeyAuth passes but accountId is null
-      const response = await fetch("http://localhost:4030/test", {
+      const response = await fetch(`${baseURL}/test`, {
         method: "POST",
         headers: await jwtHeaders(), // no accountId
       });
@@ -203,10 +218,10 @@ describe("authOrAgentApiKeyAuth identity resolution", () => {
   // requireAccount does NOT reject API key requests (accountId is set by middleware)
   test("requireAccount passes when API key auth sets accountId", async () => {
     const app = buildTestApp([authOrAgentApiKeyAuth, requireAccount]);
-    const server = app.listen(4030);
+    const { server, baseURL } = await startTestServer(app);
 
     try {
-      const response = await fetch("http://localhost:4030/test", {
+      const response = await fetch(`${baseURL}/test`, {
         method: "POST",
         headers: agentKeyHeaders(),
       });
@@ -222,10 +237,10 @@ describe("authOrAgentApiKeyAuth identity resolution", () => {
   // requireAccount passes when JWT auth with accountId sets accountId
   test("requireAccount passes when JWT auth with accountId sets accountId", async () => {
     const app = buildTestApp([authOrAgentApiKeyAuth, requireAccount]);
-    const server = app.listen(4030);
+    const { server, baseURL } = await startTestServer(app);
 
     try {
-      const response = await fetch("http://localhost:4030/test", {
+      const response = await fetch(`${baseURL}/test`, {
         method: "POST",
         headers: await jwtHeaders(ADMIN_ACCOUNT_ID),
       });

@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   isReservedSlug,
+  isValidSlug,
   RESERVED_SLUGS,
   validateSlug,
   type SlugValidationErrorReason,
@@ -79,5 +80,14 @@ describe("reserved slug utilities", () => {
       expect(result.reason).toBe("reserved");
       expect(result.message).toContain("reserved");
     }
+  });
+
+  test("isValidSlug returns true for valid slugs and false for invalid/reserved", () => {
+    expect(isValidSlug("foo-bar")).toBe(true);
+    expect(isValidSlug("abc123")).toBe(true);
+    expect(isValidSlug("UPPER")).toBe(false);
+    expect(isValidSlug("trailing-")).toBe(false);
+    expect(isValidSlug("generate")).toBe(false);
+    expect(isValidSlug("a".repeat(65))).toBe(false);
   });
 });

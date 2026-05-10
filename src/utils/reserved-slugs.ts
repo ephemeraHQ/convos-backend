@@ -24,10 +24,20 @@ export type SlugValidationResult =
       message: string;
     };
 
+/**
+ * True if `slug` is in the reserved-slug set.
+ * Comparison is case-sensitive — callers must pass a lowercase slug.
+ */
 export function isReservedSlug(slug: string): boolean {
   return RESERVED_SLUGS.has(slug);
 }
 
+/**
+ * Validate a slug against length, format, and reserved-word constraints.
+ * Checks run in order: `too_long` → `invalid_format` → `reserved`.
+ * Format: lowercase alphanumeric segments separated by single hyphens
+ * (matches `SLUG_REGEX`).
+ */
 export function validateSlug(slug: string): SlugValidationResult {
   if (slug.length > MAX_SLUG_LENGTH) {
     return {
@@ -56,6 +66,7 @@ export function validateSlug(slug: string): SlugValidationResult {
   return { valid: true, slug };
 }
 
+/** Convenience boolean wrapper around `validateSlug`. */
 export function isValidSlug(slug: string): boolean {
   return validateSlug(slug).valid;
 }
