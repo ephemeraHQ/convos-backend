@@ -62,9 +62,8 @@ export async function detailHandler(req: Request, res: Response) {
       template === null &&
       uuidPattern.test(parsedParams.data.idOrHashedSlug)
     ) {
-      const accountId = res.locals.accountId as string | undefined;
-      const isApiKeyListener =
-        (res.locals.isApiKeyListener as boolean | undefined) ?? false;
+      const accountId = res.locals.accountId;
+      const isApiKeyListener = res.locals.isApiKeyListener ?? false;
 
       const draftTemplate = await prisma.agentTemplate.findUnique({
         where: { id: parsedParams.data.idOrHashedSlug },
@@ -109,7 +108,7 @@ export async function detailHandler(req: Request, res: Response) {
       .json(
         serializeAgentTemplate(
           template,
-          owner === undefined ? { includeSkills } : { includeSkills, owner },
+          owner ? { includeSkills, owner } : { includeSkills },
         ),
       );
   } catch (error) {

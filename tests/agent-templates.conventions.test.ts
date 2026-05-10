@@ -191,9 +191,7 @@ describe("Agent template read response conventions", () => {
     });
 
     const list = await readJson("/api/v2/agent-templates?category=conventions");
-    const detail = await readJson(
-      `/api/v2/agent-templates/${child.id}`,
-    );
+    const detail = await readJson(`/api/v2/agent-templates/${child.id}`);
 
     expect(list.response.status).toBe(200);
     expect(list.response.headers.get("content-type")).toContain(

@@ -4,8 +4,8 @@ import { agentTemplatesRouter } from "@/api/v2/agent-templates/agent-templates.r
 import { jsonMiddleware } from "@/middleware/json";
 import { noRouteMiddleware } from "@/middleware/noRoute";
 import { pinoMiddleware } from "@/middleware/pino";
-import { createJwtToken } from "@/utils/jwt";
 import { ADMIN_ACCOUNT_ID } from "@/utils/constants";
+import { createJwtToken } from "@/utils/jwt";
 import { buildSlug } from "@/utils/slug-hash";
 
 export type TemplateBody = Record<string, unknown>;

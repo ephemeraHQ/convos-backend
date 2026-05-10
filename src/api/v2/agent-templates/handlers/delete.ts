@@ -38,9 +38,8 @@ export async function deleteHandler(req: Request, res: Response) {
     }
 
     // Ownership guard: reject if caller is not the owner AND not an API key listener
-    const callerAccountId = res.locals.accountId as string | undefined;
-    const isApiKeyListener =
-      (res.locals.isApiKeyListener as boolean | undefined) ?? false;
+    const callerAccountId = res.locals.accountId;
+    const isApiKeyListener = res.locals.isApiKeyListener ?? false;
     if (template.ownerAccountId !== callerAccountId && !isApiKeyListener) {
       res.status(403).json({ error: "Not authorized to delete this template" });
       return;

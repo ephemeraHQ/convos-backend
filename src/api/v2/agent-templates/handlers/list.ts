@@ -98,9 +98,8 @@ const decodeCursor = (cursor: string | undefined) => {
 };
 
 export async function listHandler(req: Request, res: Response) {
-  const accountId = res.locals.accountId as string | undefined;
-  const isApiKeyListener =
-    (res.locals.isApiKeyListener as boolean | undefined) ?? false;
+  const accountId = res.locals.accountId;
+  const isApiKeyListener = res.locals.isApiKeyListener ?? false;
   const isAuthenticated = accountId !== undefined;
 
   // Status filter handling

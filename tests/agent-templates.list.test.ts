@@ -14,8 +14,8 @@ import { agentTemplatesRouter } from "@/api/v2/agent-templates/agent-templates.r
 import { jsonMiddleware } from "@/middleware/json";
 import { noRouteMiddleware } from "@/middleware/noRoute";
 import { pinoMiddleware } from "@/middleware/pino";
-import { createJwtToken } from "@/utils/jwt";
 import { ADMIN_ACCOUNT_ID } from "@/utils/constants";
+import { createJwtToken } from "@/utils/jwt";
 import { prisma } from "@/utils/prisma";
 
 type ListEnvelope = {
@@ -141,7 +141,7 @@ describe("Agent template list endpoint", () => {
   });
 
   test("omits non-published rows and composes category owner and featured filters", async () => {
-    const tmplDraft = await createTemplate({
+    await createTemplate({
       status: "draft",
       category: "utility",
       featured: true,
@@ -156,12 +156,12 @@ describe("Agent template list endpoint", () => {
       category: "entertainment",
       featured: false,
     });
-    const tmplUnlisted = await createTemplate({
+    await createTemplate({
       status: "unlisted",
       category: "utility",
       featured: true,
     });
-    const tmplArchived = await createTemplate({
+    await createTemplate({
       status: "archived",
       category: "utility",
       featured: true,
@@ -273,7 +273,7 @@ describe("Agent template list endpoint", () => {
 
   test("orders by createdAt descending then id descending", async () => {
     const tieCreatedAt = new Date("2026-01-01T00:00:00.000Z");
-    const [older, newer, tieA, tieB] = await Promise.all([
+    const [_older, _newer, tieA, tieB] = await Promise.all([
       createTemplate({
         createdAt: new Date("2025-12-31T23:59:58.000Z"),
       }),
@@ -295,7 +295,9 @@ describe("Agent template list endpoint", () => {
     expect(body.data).toHaveLength(4);
     const resultIds = ids(body.data);
     // Newer timestamps first
-    expect(new Date(body.data[0]?.createdAt as string).getTime()).toBeGreaterThanOrEqual(
+    expect(
+      new Date(body.data[0]?.createdAt as string).getTime(),
+    ).toBeGreaterThanOrEqual(
       new Date(body.data[1]?.createdAt as string).getTime(),
     );
     // The two tied ones should be adjacent
@@ -369,9 +371,7 @@ describe("Agent template list endpoint", () => {
     const secondIds = new Set(ids(secondPage.body.data));
     const allIds = new Set([...firstIds, ...secondIds]);
 
-    expect([...firstIds].some((id) => secondIds.has(id as string))).toBe(
-      false,
-    );
+    expect([...firstIds].some((id) => secondIds.has(id as string))).toBe(false);
     expect(allIds).toEqual(new Set(created));
   });
 
