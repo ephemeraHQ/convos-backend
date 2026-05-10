@@ -332,7 +332,7 @@ When SIWE lands, owners can list their own drafts/unlisted/archived rows by pass
 
 Trust model: "anyone authed at all can mutate the gallery." Acceptable because the slice doesn't ship to production until real accounts and SIWE auth land.
 
-**Production guard.** Routers must NOT mount in production. Fail-closed by allowlist, reading `process.env.XMTP_ENV` **raw** (NOT the imported `XMTP_ENV` constant from `src/config.ts`, which defaults unset to `"dev"`). Mount only when `process.env.XMTP_ENV === "dev" || process.env.XMTP_ENV === "staging"`. Anything else — `"production"`, unset, typos — leaves the routers unmounted. The `AGENT_TEMPLATES_ENABLED` env var is _not_ introduced; a misset enable flag would unlock the surface in prod. Tests cover positive (`"dev"`, `"staging"`) and negative (`"production"`, unset, unknown) values, all read from `process.env` directly.
+**Production guard.** Routers must NOT mount in production. Fail-closed by deny-list per locked deviation #3, reading `process.env.XMTP_ENV` **raw** (NOT the imported `XMTP_ENV` constant from `src/config.ts`, which defaults unset to `"dev"`). Mount only when `process.env.XMTP_ENV !== "production"`, matching the existing `/api/v2/dev` precedent so `XMTP_ENV=local` (the test-runner default) and unset environments are treated as non-production. The `AGENT_TEMPLATES_ENABLED` env var is _not_ introduced; a misset enable flag would unlock the surface in prod. Tests cover positive (`"dev"`, `"staging"`, `"local"`, unset, mixed-case `"Production"`) and the negative (`"production"`) value, all read from `process.env` directly.
 
 ## Builder module
 
