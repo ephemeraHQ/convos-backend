@@ -43,7 +43,7 @@ const restoreAgentAssetsApiKey = () => {
 
 describe("Agent template cross auth flow", () => {
   beforeAll(async () => {
-    const server = await startAgentTemplatesServer(4022);
+    const server = await startAgentTemplatesServer(4070);
     baseURL = server.baseURL;
     closeServer = server.close;
   });

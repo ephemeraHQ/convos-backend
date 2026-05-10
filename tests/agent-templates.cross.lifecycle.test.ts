@@ -43,7 +43,7 @@ const expectListOmits = async (id: string) => {
 
 describe("Agent template cross lifecycle flow", () => {
   beforeAll(async () => {
-    const server = await startAgentTemplatesServer(4021);
+    const server = await startAgentTemplatesServer(4068);
     baseURL = server.baseURL;
     closeServer = server.close;
   });

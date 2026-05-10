@@ -28,7 +28,7 @@ app.use("/api/v2/agent-templates", agentTemplatesRouter);
 app.use(noRouteMiddleware);
 
 let server: Server;
-const baseURL = "http://localhost:4020";
+const baseURL = "http://localhost:4067";
 const originalAgentAssetsApiKey = process.env.AGENT_ASSETS_API_KEY;
 const validAgentAssetsApiKey =
   "test-agent-assets-api-key-that-is-at-least-32-characters";
@@ -204,7 +204,7 @@ const expectNoMutationAfterRejectedWrites = async (args: {
 describe("Agent template write auth", () => {
   beforeAll(async () => {
     await new Promise<void>((resolve) => {
-      server = app.listen(4020, () => {
+      server = app.listen(4067, () => {
         resolve();
       });
     });

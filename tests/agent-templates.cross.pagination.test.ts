@@ -34,7 +34,7 @@ const cleanupTemplates = () =>
 
 describe("Agent template cross pagination flow", () => {
   beforeAll(async () => {
-    const server = await startAgentTemplatesServer(4025);
+    const server = await startAgentTemplatesServer(4076);
     baseURL = server.baseURL;
     closeServer = server.close;
   });

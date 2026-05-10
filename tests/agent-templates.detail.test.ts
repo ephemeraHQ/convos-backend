@@ -23,7 +23,7 @@ app.use("/api/v2/agent-templates", agentTemplatesRouter);
 app.use(noRouteMiddleware);
 
 let server: Server;
-const baseURL = "http://localhost:4013";
+const baseURL = "http://localhost:4053";
 
 const isoTimestampPattern = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$/;
 
@@ -75,7 +75,7 @@ const readDetail = async (args: { path: string }) => {
 describe("Agent template detail endpoint", () => {
   beforeAll(async () => {
     await new Promise<void>((resolve) => {
-      server = app.listen(4013, () => {
+      server = app.listen(4053, () => {
         resolve();
       });
     });

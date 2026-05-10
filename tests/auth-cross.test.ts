@@ -65,7 +65,7 @@ const agentKeyHeaders = () => ({
 });
 
 let server: Server;
-const baseURL = "http://localhost:4042";
+const baseURL = "http://localhost:4089";
 
 const app = express();
 app.use(pinoMiddleware);
@@ -114,7 +114,7 @@ describe("Cross-area auth flows", () => {
     process.env.AGENT_ASSETS_API_KEY = validAgentAssetsApiKey;
     await ensureUserBAccount();
     await new Promise<void>((resolve) => {
-      server = app.listen(4042, () => {
+      server = app.listen(4089, () => {
         resolve();
       });
     });

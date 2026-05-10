@@ -27,7 +27,7 @@ app.use("/api/v2/agent-templates", agentTemplatesRouter);
 app.use(noRouteMiddleware);
 
 let server: Server;
-const baseURL = "http://localhost:4019";
+const baseURL = "http://localhost:4065";
 const publishedAt = new Date("2026-02-01T12:00:00.000Z");
 const createdAt = new Date("2026-01-31T12:00:00.000Z");
 const isoTimestampPattern = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$/;
@@ -131,7 +131,7 @@ const expectTemplateShape = (body: TemplateBody) => {
 describe("Agent template publish endpoint", () => {
   beforeAll(async () => {
     await new Promise<void>((resolve) => {
-      server = app.listen(4019, () => {
+      server = app.listen(4065, () => {
         resolve();
       });
     });

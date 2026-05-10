@@ -42,7 +42,7 @@ const listContains = async (id: string) => {
 
 describe("Agent template cross visibility flow", () => {
   beforeAll(async () => {
-    const server = await startAgentTemplatesServer(4024);
+    const server = await startAgentTemplatesServer(4075);
     baseURL = server.baseURL;
     closeServer = server.close;
   });

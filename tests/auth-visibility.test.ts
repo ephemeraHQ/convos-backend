@@ -58,7 +58,7 @@ const agentKeyHeaders = () => ({
 });
 
 let server: Server;
-const baseURL = "http://localhost:4041";
+const baseURL = "http://localhost:4088";
 
 const app = express();
 app.use(pinoMiddleware);
@@ -106,7 +106,7 @@ describe("List/detail visibility rules", () => {
   beforeAll(async () => {
     process.env.AGENT_ASSETS_API_KEY = validAgentAssetsApiKey;
     await ensureUserBAccount();
-    server = app.listen(4041);
+    server = app.listen(4088);
   });
 
   afterAll(async () => {

@@ -65,13 +65,13 @@ const withGuardedServer = async (
   app.use(noRouteMiddleware);
 
   const server: Server = await new Promise((resolve) => {
-    const startedServer = app.listen(4015, () => {
+    const startedServer = app.listen(4057, () => {
       resolve(startedServer);
     });
   });
 
   try {
-    await runAssertions("http://localhost:4015");
+    await runAssertions("http://localhost:4057");
   } finally {
     await new Promise<void>((resolve) => {
       server.close(() => {

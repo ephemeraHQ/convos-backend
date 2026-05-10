@@ -22,7 +22,7 @@ app.use("/api/v2/agent-templates", agentTemplatesRouter);
 app.use(noRouteMiddleware);
 
 let server: Server;
-const baseURL = "http://localhost:4014";
+const baseURL = "http://localhost:4054";
 
 const isoTimestampPattern = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$/;
 const camelCaseKeyPattern = /^[a-z][A-Za-z0-9]*$/;
@@ -158,7 +158,7 @@ const expectTimestampValues = (body: unknown) => {
 describe("Agent template read response conventions", () => {
   beforeAll(async () => {
     await new Promise<void>((resolve) => {
-      server = app.listen(4014, () => {
+      server = app.listen(4054, () => {
         resolve();
       });
     });

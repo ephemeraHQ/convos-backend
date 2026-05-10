@@ -27,7 +27,7 @@ app.use("/api/v2/agent-templates", agentTemplatesRouter);
 app.use(noRouteMiddleware);
 
 let server: Server;
-const baseURL = "http://localhost:4018";
+const baseURL = "http://localhost:4063";
 const publishedAt = new Date("2026-02-01T12:00:00.000Z");
 const createdAt = new Date("2026-01-31T12:00:00.000Z");
 
@@ -118,7 +118,7 @@ const createTemplate = async (body: Record<string, unknown>) => {
 describe("Agent template delete endpoint", () => {
   beforeAll(async () => {
     await new Promise<void>((resolve) => {
-      server = app.listen(4018, () => {
+      server = app.listen(4063, () => {
         resolve();
       });
     });

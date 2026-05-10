@@ -61,7 +61,7 @@ const agentKeyHeaders = () => ({
 });
 
 let server: Server;
-const baseURL = "http://localhost:4040";
+const baseURL = "http://localhost:4087";
 
 const app = express();
 app.use(pinoMiddleware);
@@ -113,7 +113,7 @@ describe("Per-account ownership guards", () => {
     process.env.AGENT_ASSETS_API_KEY = validAgentAssetsApiKey;
     await ensureUserBAccount();
     await new Promise<void>((resolve) => {
-      server = app.listen(4040, () => {
+      server = app.listen(4087, () => {
         resolve();
       });
     });

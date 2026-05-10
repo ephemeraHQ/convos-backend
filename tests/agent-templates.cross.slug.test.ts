@@ -54,7 +54,7 @@ const cleanupTemplates = () =>
 
 describe("Agent template cross slug flow", () => {
   beforeAll(async () => {
-    const server = await startAgentTemplatesServer(4023);
+    const server = await startAgentTemplatesServer(4072);
     baseURL = server.baseURL;
     closeServer = server.close;
   });

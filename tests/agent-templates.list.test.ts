@@ -31,7 +31,7 @@ app.use("/api/v2/agent-templates", agentTemplatesRouter);
 app.use(noRouteMiddleware);
 
 let server: Server;
-const baseURL = "http://localhost:4012";
+const baseURL = "http://localhost:4052";
 
 const cleanupTemplates = () =>
   prisma.agentTemplate.deleteMany({
@@ -82,7 +82,7 @@ const ids = (rows: Array<{ id?: unknown }>) => rows.map((row) => row.id);
 describe("Agent template list endpoint", () => {
   beforeAll(async () => {
     await new Promise<void>((resolve) => {
-      server = app.listen(4012, () => {
+      server = app.listen(4052, () => {
         resolve();
       });
     });
