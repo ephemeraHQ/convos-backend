@@ -189,22 +189,23 @@ export async function listHandler(req: Request, res: Response) {
   // If there's a visibility OR clause, we need to apply ownerAccountId
   // as an additional AND constraint within each OR branch.
   if (parsed.data.owner !== undefined) {
-    // Validate that the owner value looks like a UUID to prevent Prisma errors
+    // Non-UUID owner values can't match any row; short-circuit with an empty
+    // result rather than handing Prisma a malformed UUID (which throws).
     const UUID_RE =
       /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
     if (!UUID_RE.test(parsed.data.owner)) {
-      // Return empty results for non-UUID owner values instead of a 500 error
-      where.AND = [{ id: "never_match" }];
+      res.status(200).json({ data: [], hasMore: false, nextCursor: null });
+      return;
+    }
+
+    const ownerFilter = { ownerAccountId: parsed.data.owner };
+    if (where.OR) {
+      // Apply owner filter to each OR branch by converting to AND inside each
+      where.OR = where.OR.map((branch) => ({
+        AND: [branch, ownerFilter],
+      }));
     } else {
-      const ownerFilter = { ownerAccountId: parsed.data.owner };
-      if (where.OR) {
-        // Apply owner filter to each OR branch by converting to AND inside each
-        where.OR = where.OR.map((branch) => ({
-          AND: [branch, ownerFilter],
-        }));
-      } else {
-        where.ownerAccountId = parsed.data.owner;
-      }
+      where.ownerAccountId = parsed.data.owner;
     }
   }
 
