@@ -26,7 +26,7 @@ import { pinoMiddleware } from "@/middleware/pino";
 // Constants
 // ---------------------------------------------------------------------------
 
-const TEST_PORT = 4019;
+const TEST_PORT = 4064;
 const BASE_URL = `http://localhost:${TEST_PORT}`;
 
 // ---------------------------------------------------------------------------

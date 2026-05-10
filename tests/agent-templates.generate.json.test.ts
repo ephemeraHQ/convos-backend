@@ -31,8 +31,8 @@ import {
 import { jsonMiddleware } from "@/middleware/json";
 import { noRouteMiddleware } from "@/middleware/noRoute";
 import { pinoMiddleware } from "@/middleware/pino";
-import { createJwtToken } from "@/utils/jwt";
 import { ADMIN_ACCOUNT_ID } from "@/utils/constants";
+import { createJwtToken } from "@/utils/jwt";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -41,7 +41,7 @@ import { ADMIN_ACCOUNT_ID } from "@/utils/constants";
 const MAX_TEXT_LEN = 50_000;
 const MAX_BASE64_LEN = 35_000_000;
 
-const TEST_PORT = 4015;
+const TEST_PORT = 4056;
 const BASE_URL = `http://localhost:${TEST_PORT}`;
 
 // ---------------------------------------------------------------------------

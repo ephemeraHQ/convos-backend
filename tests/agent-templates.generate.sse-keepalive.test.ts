@@ -34,7 +34,7 @@ import { pinoMiddleware } from "@/middleware/pino";
 // Constants
 // ---------------------------------------------------------------------------
 
-const TEST_PORT = 4018;
+const TEST_PORT = 4062;
 const BASE_URL = `http://localhost:${TEST_PORT}`;
 const KEEPALIVE_INTERVAL = 15_000;
 

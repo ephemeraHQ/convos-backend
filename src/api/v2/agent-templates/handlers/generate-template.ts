@@ -39,7 +39,8 @@
  */
 
 import { randomUUID } from "node:crypto";
-import type { Request, Response } from "express";import { z } from "zod";
+import type { Request, Response } from "express";
+import { z } from "zod";
 import { serializeAgentTemplate } from "@/api/v2/agent-templates/lib/serialize-agent-template";
 import { capturePostHog } from "@/api/v2/agent-templates/services/posthog";
 import {
@@ -367,7 +368,9 @@ export async function generateTemplateHandler(req: Request, res: Response) {
       // Terminal success frame — return serialized persisted template
       clearInterval(keepalive);
       const data = JSON.stringify(
-        serializeAgentTemplate(persisted as Parameters<typeof serializeAgentTemplate>[0]),
+        serializeAgentTemplate(
+          persisted as Parameters<typeof serializeAgentTemplate>[0],
+        ),
       );
       res.write(`event: result\ndata: ${data}\n\n`);
       res.end();

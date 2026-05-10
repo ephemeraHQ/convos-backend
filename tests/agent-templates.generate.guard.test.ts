@@ -11,12 +11,10 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import express, { Router } from "express";
 import { agentTemplatesRouter } from "@/api/v2/agent-templates/agent-templates.router";
 import { __resetPersistForTests } from "@/api/v2/agent-templates/handlers/generate-template";
-import {
-  type GeneratedTemplate,
-} from "@/api/v2/agent-templates/services/templateGen";
+import { type GeneratedTemplate } from "@/api/v2/agent-templates/services/templateGen";
 import { noRouteMiddleware } from "@/middleware/noRoute";
 
-const TEST_PORT = 4016;
+const TEST_PORT = 4058;
 const originalXMTPEnv = process.env.XMTP_ENV;
 const originalAgentAssetsApiKey = process.env.AGENT_ASSETS_API_KEY;
 
@@ -82,7 +80,7 @@ const withServer = async (
   });
 
   try {
-    await runAssertions("http://localhost:4016");
+    await runAssertions("http://localhost:4058");
   } finally {
     await new Promise<void>((resolve) => {
       server.close(() => {

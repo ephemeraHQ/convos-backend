@@ -37,14 +37,14 @@ import {
 import { jsonMiddleware } from "@/middleware/json";
 import { noRouteMiddleware } from "@/middleware/noRoute";
 import { pinoMiddleware } from "@/middleware/pino";
-import { createJwtToken } from "@/utils/jwt";
 import { ADMIN_ACCOUNT_ID } from "@/utils/constants";
+import { createJwtToken } from "@/utils/jwt";
 
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
 
-const TEST_PORT = 4021;
+const TEST_PORT = 4069;
 const BASE_URL = `http://localhost:${TEST_PORT}`;
 
 // ---------------------------------------------------------------------------

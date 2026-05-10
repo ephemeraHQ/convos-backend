@@ -22,7 +22,7 @@ import { noRouteMiddleware } from "@/middleware/noRoute";
 // Constants
 // ---------------------------------------------------------------------------
 
-const TEST_PORT = 4020;
+const TEST_PORT = 4066;
 const happyTemplate: GeneratedTemplate = {
   agentName: "GuardBot",
   description: "Guard test assistant",
@@ -94,7 +94,7 @@ const withServer = async (
   });
 
   try {
-    await runAssertions("http://localhost:4020");
+    await runAssertions("http://localhost:4066");
   } finally {
     await new Promise<void>((resolve) => {
       server.close(() => {

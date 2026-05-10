@@ -436,10 +436,9 @@ Rules:
 
   const t0 = performance.now();
   const controller = new AbortController();
-  const timeoutId = setTimeout(
-    () => controller.abort(),
-    OPENROUTER_TIMEOUT_MS,
-  );
+  const timeoutId = setTimeout(() => {
+    controller.abort();
+  }, OPENROUTER_TIMEOUT_MS);
   let data: any;
   try {
     const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
@@ -690,10 +689,9 @@ Rules:
 
   const t0 = performance.now();
   const controller = new AbortController();
-  const timeoutId = setTimeout(
-    () => controller.abort(),
-    OPENROUTER_TIMEOUT_MS,
-  );
+  const timeoutId = setTimeout(() => {
+    controller.abort();
+  }, OPENROUTER_TIMEOUT_MS);
   let data: any;
   try {
     const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
@@ -990,10 +988,9 @@ export async function generateTemplate(
 
   const t0 = performance.now();
   const controller = new AbortController();
-  const timeoutId = setTimeout(
-    () => controller.abort(),
-    OPENROUTER_TIMEOUT_MS,
-  );
+  const timeoutId = setTimeout(() => {
+    controller.abort();
+  }, OPENROUTER_TIMEOUT_MS);
   let data: any;
   try {
     const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {

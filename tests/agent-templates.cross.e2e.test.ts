@@ -38,7 +38,7 @@ import {
 // Constants
 // ---------------------------------------------------------------------------
 
-const TEST_PORT = 4024;
+const TEST_PORT = 4074;
 
 // ---------------------------------------------------------------------------
 // Mock generateTemplate at the service-singleton seam
@@ -143,7 +143,7 @@ describe("Cross-area E2E: Generate → Create → Publish → List → Hashed-sl
 
     expect(createResponse.status).toBe(201);
     expect(created.object).toBe("agent_template");
-    expect((created.id as string)).toMatch(
+    expect(created.id as string).toMatch(
       /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i,
     );
     expect(created.ownerAccountId).toBe(ADMIN_ACCOUNT_ID);

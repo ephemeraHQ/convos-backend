@@ -26,7 +26,7 @@ import { pinoMiddleware } from "@/middleware/pino";
 const apiKey = process.env.BUILDER_OPENROUTER_API_KEY;
 const SKIP = !apiKey;
 
-const TEST_PORT = 4023;
+const TEST_PORT = 4073;
 const BASE_URL = `http://localhost:${TEST_PORT}`;
 
 const validAgentAssetsApiKey =

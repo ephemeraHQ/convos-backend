@@ -10,7 +10,7 @@
  *   - the timeout timer is cleared on the non-2xx error path (finally runs)
  */
 
-/* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-return, @typescript-eslint/no-explicit-any, @typescript-eslint/consistent-type-imports */
+/* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-explicit-any */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 
@@ -38,7 +38,7 @@ function installTimerSpy() {
     if (id !== undefined) {
       timerStats.clearCount++;
     }
-    return originalClearTimeout(id);
+    originalClearTimeout(id);
   }) as any;
 }
 
