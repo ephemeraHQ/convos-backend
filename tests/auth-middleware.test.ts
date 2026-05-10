@@ -45,16 +45,6 @@ type LocalsBody = {
   isApiKeyListener: boolean;
 };
 
-async function startTestServer(app: express.Application) {
-  const server: Server = await new Promise((resolve, reject) => {
-    const s = app.listen(4051, () => {
-      resolve(s);
-    });
-    s.once("error", reject);
-  });
-  return { server, baseURL: "http://localhost:4051" };
-}
-
 /**
  * Build a test app that captures res.locals after the middleware chain.
  * The endpoint handler returns the captured locals as JSON.
@@ -84,167 +74,153 @@ function buildTestApp(middlewares: express.RequestHandler[]) {
 // ---------------------------------------------------------------------------
 
 describe("authOrAgentApiKeyAuth identity resolution", () => {
-  beforeAll(() => {
+  const baseURL = "http://localhost:4051";
+  let server: Server;
+
+  beforeAll(async () => {
     process.env.AGENT_ASSETS_API_KEY = validAgentAssetsApiKey;
+    const app = buildTestApp([authOrAgentApiKeyAuth]);
+    await new Promise<void>((resolve) => {
+      server = app.listen(4051, () => {
+        resolve();
+      });
+    });
   });
 
-  afterAll(() => {
+  afterAll(async () => {
     if (originalAgentAssetsApiKey === undefined) {
       delete process.env.AGENT_ASSETS_API_KEY;
     } else {
       process.env.AGENT_ASSETS_API_KEY = originalAgentAssetsApiKey;
     }
+    await new Promise<void>((resolve) => {
+      server.close(() => {
+        resolve();
+      });
+    });
   });
 
   // VAL-AUTH-ID-001: API key auth sets res.locals.accountId = ADMIN_ACCOUNT_ID
   test("sets accountId to ADMIN_ACCOUNT_ID when API key auth is used", async () => {
-    const app = buildTestApp([authOrAgentApiKeyAuth]);
-    const { server, baseURL } = await startTestServer(app);
+    const response = await fetch(`${baseURL}/test`, {
+      method: "POST",
+      headers: agentKeyHeaders(),
+    });
+    const body = (await response.json()) as LocalsBody;
 
-    try {
-      const response = await fetch(`${baseURL}/test`, {
-        method: "POST",
-        headers: agentKeyHeaders(),
-      });
-      const body = (await response.json()) as LocalsBody;
-
-      expect(response.status).toBe(200);
-      expect(body.accountId).toBe(ADMIN_ACCOUNT_ID);
-    } finally {
-      server.close();
-    }
+    expect(response.status).toBe(200);
+    expect(body.accountId).toBe(ADMIN_ACCOUNT_ID);
   });
 
   // VAL-AUTH-ID-002: API key auth sets res.locals.isApiKeyListener = true
   test("sets isApiKeyListener = true when API key auth is used", async () => {
-    const app = buildTestApp([authOrAgentApiKeyAuth]);
-    const { server, baseURL } = await startTestServer(app);
+    const response = await fetch(`${baseURL}/test`, {
+      method: "POST",
+      headers: agentKeyHeaders(),
+    });
+    const body = (await response.json()) as LocalsBody;
 
-    try {
-      const response = await fetch(`${baseURL}/test`, {
-        method: "POST",
-        headers: agentKeyHeaders(),
-      });
-      const body = (await response.json()) as LocalsBody;
-
-      expect(response.status).toBe(200);
-      expect(body.isApiKeyListener).toBe(true);
-    } finally {
-      server.close();
-    }
+    expect(response.status).toBe(200);
+    expect(body.isApiKeyListener).toBe(true);
   });
 
   // VAL-AUTH-ID-002 (negative case): JWT auth does NOT set isApiKeyListener
   test("does NOT set isApiKeyListener when JWT auth is used", async () => {
-    const app = buildTestApp([authOrAgentApiKeyAuth]);
-    const { server, baseURL } = await startTestServer(app);
+    const response = await fetch(`${baseURL}/test`, {
+      method: "POST",
+      headers: await jwtHeaders(ADMIN_ACCOUNT_ID),
+    });
+    const body = (await response.json()) as LocalsBody;
 
-    try {
-      const response = await fetch(`${baseURL}/test`, {
-        method: "POST",
-        headers: await jwtHeaders(ADMIN_ACCOUNT_ID),
-      });
-      const body = (await response.json()) as LocalsBody;
-
-      expect(response.status).toBe(200);
-      expect(body.isApiKeyListener).toBe(false);
-    } finally {
-      server.close();
-    }
+    expect(response.status).toBe(200);
+    expect(body.isApiKeyListener).toBe(false);
   });
 
   // VAL-AUTH-ID-003: JWT auth sets accountId from the JWT payload
   test("sets accountId from JWT payload when JWT auth is used", async () => {
-    const app = buildTestApp([authOrAgentApiKeyAuth]);
-    const { server, baseURL } = await startTestServer(app);
+    const response = await fetch(`${baseURL}/test`, {
+      method: "POST",
+      headers: await jwtHeaders(ADMIN_ACCOUNT_ID),
+    });
+    const body = (await response.json()) as LocalsBody;
 
-    try {
-      const response = await fetch(`${baseURL}/test`, {
-        method: "POST",
-        headers: await jwtHeaders(ADMIN_ACCOUNT_ID),
-      });
-      const body = (await response.json()) as LocalsBody;
-
-      expect(response.status).toBe(200);
-      expect(body.accountId).toBe(ADMIN_ACCOUNT_ID);
-    } finally {
-      server.close();
-    }
+    expect(response.status).toBe(200);
+    expect(body.accountId).toBe(ADMIN_ACCOUNT_ID);
   });
 
   // JWT without accountId still authenticates (accountId is undefined)
   test("JWT without accountId authenticates but accountId is null", async () => {
-    const app = buildTestApp([authOrAgentApiKeyAuth]);
-    const { server, baseURL } = await startTestServer(app);
+    const response = await fetch(`${baseURL}/test`, {
+      method: "POST",
+      headers: await jwtHeaders(), // no accountId
+    });
+    const body = (await response.json()) as LocalsBody;
 
-    try {
-      const response = await fetch(`${baseURL}/test`, {
-        method: "POST",
-        headers: await jwtHeaders(), // no accountId
+    expect(response.status).toBe(200);
+    expect(body.accountId).toBeNull();
+  });
+});
+
+describe("requireAccount with authOrAgentApiKeyAuth", () => {
+  const baseURL = "http://localhost:4092";
+  let server: Server;
+
+  beforeAll(async () => {
+    process.env.AGENT_ASSETS_API_KEY = validAgentAssetsApiKey;
+    const app = buildTestApp([authOrAgentApiKeyAuth, requireAccount]);
+    await new Promise<void>((resolve) => {
+      server = app.listen(4092, () => {
+        resolve();
       });
-      const body = (await response.json()) as LocalsBody;
+    });
+  });
 
-      expect(response.status).toBe(200);
-      expect(body.accountId).toBeNull();
-    } finally {
-      server.close();
+  afterAll(async () => {
+    if (originalAgentAssetsApiKey === undefined) {
+      delete process.env.AGENT_ASSETS_API_KEY;
+    } else {
+      process.env.AGENT_ASSETS_API_KEY = originalAgentAssetsApiKey;
     }
+    await new Promise<void>((resolve) => {
+      server.close(() => {
+        resolve();
+      });
+    });
   });
 
   // VAL-AUTH-ID-004: requireAccount rejects when accountId is undefined
-  test("requireAccount rejects (403) when accountId is undefined", async () => {
-    const app = buildTestApp([authOrAgentApiKeyAuth, requireAccount]);
-    const { server, baseURL } = await startTestServer(app);
+  test("rejects (403) when accountId is undefined", async () => {
+    // JWT without accountId → authOrAgentApiKeyAuth passes but accountId is null
+    const response = await fetch(`${baseURL}/test`, {
+      method: "POST",
+      headers: await jwtHeaders(), // no accountId
+    });
 
-    try {
-      // JWT without accountId → authOrAgentApiKeyAuth passes but accountId is null
-      const response = await fetch(`${baseURL}/test`, {
-        method: "POST",
-        headers: await jwtHeaders(), // no accountId
-      });
-
-      expect(response.status).toBe(403);
-      const body = (await response.json()) as { error: string };
-      expect(body.error).toBe("Account required");
-    } finally {
-      server.close();
-    }
+    expect(response.status).toBe(403);
+    const body = (await response.json()) as { error: string };
+    expect(body.error).toBe("Account required");
   });
 
   // requireAccount does NOT reject API key requests (accountId is set by middleware)
-  test("requireAccount passes when API key auth sets accountId", async () => {
-    const app = buildTestApp([authOrAgentApiKeyAuth, requireAccount]);
-    const { server, baseURL } = await startTestServer(app);
+  test("passes when API key auth sets accountId", async () => {
+    const response = await fetch(`${baseURL}/test`, {
+      method: "POST",
+      headers: agentKeyHeaders(),
+    });
 
-    try {
-      const response = await fetch(`${baseURL}/test`, {
-        method: "POST",
-        headers: agentKeyHeaders(),
-      });
-
-      expect(response.status).toBe(200);
-      const body = (await response.json()) as LocalsBody;
-      expect(body.accountId).toBe(ADMIN_ACCOUNT_ID);
-    } finally {
-      server.close();
-    }
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as LocalsBody;
+    expect(body.accountId).toBe(ADMIN_ACCOUNT_ID);
   });
 
   // requireAccount passes when JWT auth with accountId sets accountId
-  test("requireAccount passes when JWT auth with accountId sets accountId", async () => {
-    const app = buildTestApp([authOrAgentApiKeyAuth, requireAccount]);
-    const { server, baseURL } = await startTestServer(app);
+  test("passes when JWT auth with accountId sets accountId", async () => {
+    const response = await fetch(`${baseURL}/test`, {
+      method: "POST",
+      headers: await jwtHeaders(ADMIN_ACCOUNT_ID),
+    });
 
-    try {
-      const response = await fetch(`${baseURL}/test`, {
-        method: "POST",
-        headers: await jwtHeaders(ADMIN_ACCOUNT_ID),
-      });
-
-      expect(response.status).toBe(200);
-    } finally {
-      server.close();
-    }
+    expect(response.status).toBe(200);
   });
 });
 
