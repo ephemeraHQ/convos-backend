@@ -136,10 +136,9 @@ export const ProvisioningClient = {
     const url = `${baseUrl}/api/assistants`;
 
     const controller = new AbortController();
-    const timeoutId = setTimeout(
-      () => controller.abort(),
-      PROVISIONING_TIMEOUT_MS,
-    );
+    const timeoutId = setTimeout(() => {
+      controller.abort();
+    }, PROVISIONING_TIMEOUT_MS);
 
     let response: Response;
     try {
@@ -196,10 +195,9 @@ export const ProvisioningClient = {
     const url = `${baseUrl}/api/assistants/${encodeURIComponent(instanceId)}`;
 
     const controller = new AbortController();
-    const timeoutId = setTimeout(
-      () => controller.abort(),
-      PROVISIONING_TIMEOUT_MS,
-    );
+    const timeoutId = setTimeout(() => {
+      controller.abort();
+    }, PROVISIONING_TIMEOUT_MS);
 
     let response: Response;
     try {

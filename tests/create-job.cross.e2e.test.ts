@@ -64,7 +64,7 @@ import { prisma } from "@/utils/prisma";
 // Constants
 // ---------------------------------------------------------------------------
 
-const TEST_PORT = 4029;
+const TEST_PORT = 4083;
 const validAgentAssetsApiKey =
   "test-agent-assets-api-key-that-is-at-least-32-characters";
 const originalAgentAssetsApiKey = process.env.AGENT_ASSETS_API_KEY;
@@ -505,7 +505,7 @@ describe("CreateJob Cross-Area E2E", () => {
     guardedApp.use(noRouteMiddleware);
 
     const guardedServer = await new Promise<Server>((resolve) => {
-      const s = guardedApp.listen(4032, () => {
+      const s = guardedApp.listen(4090, () => {
         resolve(s);
       });
     });
@@ -513,7 +513,7 @@ describe("CreateJob Cross-Area E2E", () => {
     try {
       // POST should return 404 (route not mounted)
       const postRes = await fetch(
-        "http://localhost:4032/api/v2/agent-templates/create-job",
+        "http://localhost:4090/api/v2/agent-templates/create-job",
         {
           method: "POST",
           headers: {
@@ -530,7 +530,7 @@ describe("CreateJob Cross-Area E2E", () => {
 
       // GET should also return 404
       const getRes = await fetch(
-        "http://localhost:4032/api/v2/agent-templates/create-job/some-id",
+        "http://localhost:4090/api/v2/agent-templates/create-job/some-id",
         {
           headers: {
             "X-Agent-API-Key": validAgentAssetsApiKey,

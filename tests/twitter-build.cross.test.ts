@@ -47,7 +47,7 @@ import { prisma } from "@/utils/prisma";
 // Constants
 // ---------------------------------------------------------------------------
 
-const TEST_PORT = 4030;
+const TEST_PORT = 4086;
 const validAgentAssetsApiKey =
   "test-agent-assets-api-key-that-is-at-least-32-characters";
 const originalAgentAssetsApiKey = process.env.AGENT_ASSETS_API_KEY;
@@ -983,7 +983,7 @@ describe("Twitter Build — Cross-Source Integration", () => {
         guardedApp.use(noRouteMiddleware);
 
         const guardedServer = await new Promise<Server>((resolve) => {
-          const s = guardedApp.listen(4033, () => {
+          const s = guardedApp.listen(4091, () => {
             resolve(s);
           });
         });
@@ -991,7 +991,7 @@ describe("Twitter Build — Cross-Source Integration", () => {
         try {
           // POST with source=twitter should be blocked in production
           const twitterRes = await fetch(
-            "http://localhost:4033/api/v2/agent-templates/create-job",
+            "http://localhost:4091/api/v2/agent-templates/create-job",
             {
               method: "POST",
               headers: {
@@ -1012,7 +1012,7 @@ describe("Twitter Build — Cross-Source Integration", () => {
 
           // POST with source=app should also be blocked
           const appRes = await fetch(
-            "http://localhost:4033/api/v2/agent-templates/create-job",
+            "http://localhost:4091/api/v2/agent-templates/create-job",
             {
               method: "POST",
               headers: {

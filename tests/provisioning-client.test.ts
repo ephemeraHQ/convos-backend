@@ -806,7 +806,7 @@ describe("ProvisioningClient — wallclock timeout", () => {
     }) as any;
     globalThis.clearTimeout = ((id: any) => {
       if (id !== undefined) clearCount++;
-      return realClearTimeout(id);
+      realClearTimeout(id);
     }) as any;
 
     try {
@@ -846,7 +846,7 @@ describe("ProvisioningClient — wallclock timeout", () => {
     }) as any;
     globalThis.clearTimeout = ((id: any) => {
       if (id !== undefined) clearCount++;
-      return realClearTimeout(id);
+      realClearTimeout(id);
     }) as any;
 
     try {
@@ -887,7 +887,7 @@ describe("ProvisioningClient — wallclock timeout", () => {
     }) as any;
     globalThis.clearTimeout = ((id: any) => {
       if (id !== undefined) clearCount++;
-      return realClearTimeout(id);
+      realClearTimeout(id);
     }) as any;
 
     try {
@@ -927,7 +927,7 @@ describe("ProvisioningClient — wallclock timeout", () => {
     }) as any;
     globalThis.clearTimeout = ((id: any) => {
       if (id !== undefined) clearCount++;
-      return realClearTimeout(id);
+      realClearTimeout(id);
     }) as any;
 
     try {

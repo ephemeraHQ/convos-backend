@@ -22,7 +22,7 @@ import express, { Router } from "express";
 import { agentTemplatesRouter } from "@/api/v2/agent-templates/agent-templates.router";
 import { noRouteMiddleware } from "@/middleware/noRoute";
 
-const TEST_PORT = 4028;
+const TEST_PORT = 4081;
 const originalXMTPEnv = process.env.XMTP_ENV;
 
 afterAll(() => {

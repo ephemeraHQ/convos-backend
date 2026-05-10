@@ -41,7 +41,7 @@ import { prisma } from "@/utils/prisma";
 // Constants
 // ---------------------------------------------------------------------------
 
-const TEST_PORT = 4025;
+const TEST_PORT = 4077;
 const validAgentAssetsApiKey =
   "test-agent-assets-api-key-that-is-at-least-32-characters";
 const originalAgentAssetsApiKey = process.env.AGENT_ASSETS_API_KEY;
