@@ -25,7 +25,12 @@ import { createJwtToken } from "@/utils/jwt";
 
 const validAgentAssetsApiKey =
   "test-agent-assets-api-key-that-is-at-least-32-characters";
-const originalAgentAssetsApiKey = process.env.AGENT_ASSETS_API_KEY;
+
+// Set the API key once at module load. The agentApiKeyAuth middleware reads
+// process.env.AGENT_ASSETS_API_KEY at request time, so toggling it across
+// describe-block transitions can race with in-flight requests under Bun's
+// CI runner. Setting it once for the entire test file avoids that transition.
+process.env.AGENT_ASSETS_API_KEY = validAgentAssetsApiKey;
 
 const agentKeyHeaders = (key = validAgentAssetsApiKey) => ({
   "Content-Type": "application/json",
@@ -78,7 +83,6 @@ describe("authOrAgentApiKeyAuth identity resolution", () => {
   let server: Server;
 
   beforeAll(async () => {
-    process.env.AGENT_ASSETS_API_KEY = validAgentAssetsApiKey;
     const app = buildTestApp([authOrAgentApiKeyAuth]);
     await new Promise<void>((resolve) => {
       server = app.listen(4051, () => {
@@ -88,11 +92,6 @@ describe("authOrAgentApiKeyAuth identity resolution", () => {
   });
 
   afterAll(async () => {
-    if (originalAgentAssetsApiKey === undefined) {
-      delete process.env.AGENT_ASSETS_API_KEY;
-    } else {
-      process.env.AGENT_ASSETS_API_KEY = originalAgentAssetsApiKey;
-    }
     await new Promise<void>((resolve) => {
       server.close(() => {
         resolve();
@@ -166,7 +165,6 @@ describe("requireAccount with authOrAgentApiKeyAuth", () => {
   let server: Server;
 
   beforeAll(async () => {
-    process.env.AGENT_ASSETS_API_KEY = validAgentAssetsApiKey;
     const app = buildTestApp([authOrAgentApiKeyAuth, requireAccount]);
     await new Promise<void>((resolve) => {
       server = app.listen(4092, () => {
@@ -176,11 +174,6 @@ describe("requireAccount with authOrAgentApiKeyAuth", () => {
   });
 
   afterAll(async () => {
-    if (originalAgentAssetsApiKey === undefined) {
-      delete process.env.AGENT_ASSETS_API_KEY;
-    } else {
-      process.env.AGENT_ASSETS_API_KEY = originalAgentAssetsApiKey;
-    }
     await new Promise<void>((resolve) => {
       server.close(() => {
         resolve();
