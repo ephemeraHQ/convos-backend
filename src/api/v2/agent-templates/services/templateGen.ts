@@ -90,6 +90,15 @@ interface PassthroughBundle {
   tokens: PassthroughTokens;
 }
 
+/** Result of GitHub URL pre-fetch. `passthrough` means we have a ready
+ *  template; `rawContent` means we fetched the user-pointed file but the
+ *  classifier didn't flag it as agent-ready — caller should use the content
+ *  as source material instead of re-extracting from the original URL (which
+ *  would scrape GitHub's HTML viewer page). */
+type GithubPrefetch =
+  | { kind: "passthrough"; bundle: PassthroughBundle }
+  | { kind: "rawContent"; content: string };
+
 /** Convenience constant for test mocks — realistic placeholder metrics. */
 export const DEFAULT_TEST_METRICS: GenerationMetrics = {
   model: "@preset/assistants-pro",
@@ -201,23 +210,20 @@ async function extractViaTweetOEmbed(url: string): Promise<string> {
     .replace(/\s+/g, " ")
     .trim();
 
-  // Follow any t.co links and enrich with linked page content
+  // Enrich tweet content with any linked pages by passing the t.co URLs
+  // directly to Exa. Exa resolves redirects internally, so we never fetch a
+  // user-supplied (or user-redirected) URL from our own server — matching the
+  // "we don't fetch user URLs" pattern established when the direct-fetch
+  // fallback was removed in edf2503. Trade-off: we lose the
+  // `isTwitterUrl(realUrl)` dedupe on links that redirect back to twitter.com;
+  // Exa returns the underlying tweet content in that case, which is harmless
+  // (the outer tweet's text is already included by oEmbed above).
   const tcoLinks = (data.html || "").match(/https?:\/\/t\.co\/\w+/g) || [];
   let linkedContent = "";
   for (const tco of tcoLinks.slice(0, 3)) {
     try {
-      const redirectRes = await fetch(tco, {
-        redirect: "follow",
-        signal: AbortSignal.timeout(5_000),
-      });
-      const realUrl = redirectRes.url;
-      if (isTwitterUrl(realUrl)) continue;
-      try {
-        const pageContent = await extractViaExa(realUrl);
-        linkedContent += `\n\n--- Linked content from ${realUrl} ---\n${pageContent}`;
-      } catch {
-        // skip
-      }
+      const pageContent = await extractViaExa(tco);
+      linkedContent += `\n\n--- Linked content from ${tco} ---\n${pageContent}`;
     } catch {
       // skip
     }
@@ -542,7 +548,7 @@ Rules:
  */
 async function tryGithubPassthrough(
   url: string,
-): Promise<PassthroughBundle | null> {
+): Promise<GithubPrefetch | null> {
   const parsed = parseGithubRepoUrl(url);
   if (!parsed) return null;
   const { owner, repo, filePath, branch: explicitBranch } = parsed;
@@ -561,7 +567,13 @@ async function tryGithubPassthrough(
       );
       return null;
     }
-    return await tryContentPassthrough(content);
+    const bundle = await tryContentPassthrough(content);
+    if (bundle) return { kind: "passthrough", bundle };
+    // Classifier said this isn't agent-ready, but the user linked directly
+    // at the file — hand the raw content back to the caller so it can be
+    // used as source material. Without this, generateTemplate would fall
+    // through to extractUrl(blobUrl), which scrapes the GitHub HTML viewer.
+    return { kind: "rawContent", content };
   }
 
   let repoInfo: any;
@@ -643,7 +655,10 @@ async function tryGithubPassthrough(
     type,
   );
 
-  return { template, tokens: selectorTokens };
+  return {
+    kind: "passthrough",
+    bundle: { template, tokens: selectorTokens },
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -928,21 +943,29 @@ export async function generateTemplate(
         throw new AppError(400, "Invalid URL");
       }
 
-      // For GitHub repo URLs, first try to detect + pass through agent install
-      // instructions. If found, short-circuit: the instructions IS the prompt.
-      const githubBundle = await tryGithubPassthrough(url);
-      if (githubBundle)
+      // For GitHub URLs, try to short-circuit:
+      //  - `passthrough`: the repo/file IS an agent prompt → return verbatim.
+      //  - `rawContent`: the user linked a specific file but it's not
+      //    agent-ready → use the fetched file content as source material
+      //    (skip extractUrl, which would scrape GitHub's HTML viewer).
+      const githubResult = await tryGithubPassthrough(url);
+      if (githubResult?.kind === "passthrough") {
+        const { bundle } = githubResult;
         return {
-          template: githubBundle.template,
+          template: bundle.template,
           metrics: {
             model: getModel(),
-            promptTokens: githubBundle.tokens.promptTokens,
-            completionTokens: githubBundle.tokens.completionTokens,
+            promptTokens: bundle.tokens.promptTokens,
+            completionTokens: bundle.tokens.completionTokens,
             latencyMs: Math.round(performance.now() - funcStart),
           },
         };
+      }
 
-      extracted = await extractUrl(url);
+      extracted =
+        githubResult?.kind === "rawContent"
+          ? githubResult.content
+          : await extractUrl(url);
     }
 
     if (!extracted.trim()) {

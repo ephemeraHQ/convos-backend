@@ -8,7 +8,7 @@
  * Fulfills: VAL-M3-OPENROUTER-001 through VAL-M3-OPENROUTER-008
  */
 
-/* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-return, @typescript-eslint/no-explicit-any, @typescript-eslint/consistent-type-imports */
+/* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-return, @typescript-eslint/no-explicit-any, @typescript-eslint/consistent-type-imports, @typescript-eslint/await-thenable, @typescript-eslint/no-confusing-void-expression */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 
@@ -766,8 +766,7 @@ describe("templateGen service — OpenRouter integration", () => {
     expect(result.agentName).toBe("MinimalBot");
     expect(result.description).toBe("");
     // Prompt defaults to "" before brevity rail is appended;
-    // the final prompt is just the rail separator + rail content
-    expect(result.prompt.startsWith("")).toBe(true);
+    // the final prompt is just the rail separator + rail content.
     expect(result.prompt).toContain("---");
     expect(result.prompt.endsWith(BREVITY_RAIL)).toBe(true);
     expect(result.category).toBe("");
@@ -799,7 +798,7 @@ describe("templateGen service — OpenRouter integration", () => {
       usage: { prompt_tokens: 10, completion_tokens: 5 },
     });
 
-    expect(generateTemplate({ text: "Build me a bot" })).rejects.toThrow(
+    await expect(generateTemplate({ text: "Build me a bot" })).rejects.toThrow(
       /agentName/i,
     );
   });
@@ -827,7 +826,7 @@ describe("templateGen service — OpenRouter integration", () => {
       usage: { prompt_tokens: 10, completion_tokens: 5 },
     });
 
-    expect(generateTemplate({ text: "Build me a bot" })).rejects.toThrow(
+    await expect(generateTemplate({ text: "Build me a bot" })).rejects.toThrow(
       /agentName/i,
     );
   });
@@ -907,9 +906,9 @@ describe("templateGen service — OpenRouter integration", () => {
     const mod = await import("@/api/v2/agent-templates/services/templateGen");
     generateTemplate = mod.generateTemplate;
 
-    expect(generateTemplate({ text: "https://[invalid-url" })).rejects.toThrow(
-      /^Invalid URL/i,
-    );
+    await expect(
+      generateTemplate({ text: "https://[invalid-url" }),
+    ).rejects.toThrow(/^Invalid URL/i);
   });
 
   test("no content after extraction throws 'No content extracted'", async () => {
@@ -917,7 +916,9 @@ describe("templateGen service — OpenRouter integration", () => {
     generateTemplate = mod.generateTemplate;
 
     // Empty text after trimming
-    expect(generateTemplate({ text: "   " })).rejects.toThrow(/No content/i);
+    await expect(generateTemplate({ text: "   " })).rejects.toThrow(
+      /No content/i,
+    );
   });
 
   // -----------------------------------------------------------------------
@@ -974,9 +975,9 @@ describe("templateGen service — OpenRouter integration", () => {
     const mod = await import("@/api/v2/agent-templates/services/templateGen");
     generateTemplate = mod.generateTemplate;
 
-    expect(generateTemplate({ text: "Build me a helper" })).rejects.toThrow(
-      /OPENROUTER_API_KEY/i,
-    );
+    await expect(
+      generateTemplate({ text: "Build me a helper" }),
+    ).rejects.toThrow(/OPENROUTER_API_KEY/i);
   });
 
   // -----------------------------------------------------------------------
