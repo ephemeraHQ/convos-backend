@@ -62,8 +62,8 @@ const createTemplate = async (
   });
 };
 
-const readDetail = async (path: string) => {
-  const response = await fetch(`${baseURL}${path}`);
+const readDetail = async (args: { path: string }) => {
+  const response = await fetch(`${baseURL}${args.path}`);
   const contentType = response.headers.get("content-type") ?? "";
   const body = contentType.includes("application/json")
     ? ((await response.json()) as DetailBody)
@@ -102,9 +102,9 @@ describe("Agent template detail endpoint", () => {
       connections: ["github"],
     });
 
-    const { body, response } = await readDetail(
-      `/api/v2/agent-templates/${tmpl.id}`,
-    );
+    const { body, response } = await readDetail({
+      path: `/api/v2/agent-templates/${tmpl.id}`,
+    });
 
     expect(response.status).toBe(200);
     expect(response.headers.get("content-type")).toContain("application/json");
@@ -144,7 +144,9 @@ describe("Agent template detail endpoint", () => {
     });
 
     const hash = slugHash(tmpl.id);
-    const hashed = await readDetail(`/api/v2/agent-templates/brewski.${hash}`);
+    const hashed = await readDetail({
+      path: `/api/v2/agent-templates/brewski.${hash}`,
+    });
 
     expect(hashed.response.status).toBe(200);
     expect(hashed.body).toMatchObject({
@@ -188,15 +190,15 @@ describe("Agent template detail endpoint", () => {
       { tmpl: unlisted, slug: "detail-unlisted", status: "unlisted" },
       { tmpl: archived, slug: "detail-archived", status: "archived" },
     ]) {
-      const byId = await readDetail(
-        `/api/v2/agent-templates/${fixture.tmpl.id}`,
-      );
+      const byId = await readDetail({
+        path: `/api/v2/agent-templates/${fixture.tmpl.id}`,
+      });
       expect(byId.response.status).toBe(200);
       expect(byId.body?.status).toBe(fixture.status);
 
-      const byHash = await readDetail(
-        `/api/v2/agent-templates/${fixture.slug}.${slugHash(fixture.tmpl.id)}`,
-      );
+      const byHash = await readDetail({
+        path: `/api/v2/agent-templates/${fixture.slug}.${slugHash(fixture.tmpl.id)}`,
+      });
       expect(byHash.response.status).toBe(200);
       expect(byHash.body?.status).toBe(fixture.status);
     }
@@ -207,17 +209,17 @@ describe("Agent template detail endpoint", () => {
       slug: "detail-expand",
     });
 
-    const defaultDetail = await readDetail(
-      `/api/v2/agent-templates/${tmpl.id}`,
-    );
+    const defaultDetail = await readDetail({
+      path: `/api/v2/agent-templates/${tmpl.id}`,
+    });
     expect(defaultDetail.response.status).toBe(200);
     expect(defaultDetail.body?.ownerAccountId).toBe(ADMIN_ACCOUNT_ID);
     expect(defaultDetail.body).not.toHaveProperty("owner");
     expect(defaultDetail.body).not.toHaveProperty("skills");
 
-    const ownerExpanded = await readDetail(
-      `/api/v2/agent-templates/${tmpl.id}?expand[]=owner`,
-    );
+    const ownerExpanded = await readDetail({
+      path: `/api/v2/agent-templates/${tmpl.id}?expand[]=owner`,
+    });
     expect(ownerExpanded.response.status).toBe(200);
     expect(ownerExpanded.body).not.toHaveProperty("ownerAccountId");
     const owner = ownerExpanded.body?.owner as Record<string, unknown>;
@@ -226,21 +228,21 @@ describe("Agent template detail endpoint", () => {
     expect(owner.createdAt).toEqual(expect.stringMatching(isoTimestampPattern));
     expect(Object.keys(owner).sort()).toEqual(["createdAt", "id", "object"]);
 
-    const skillsExpanded = await readDetail(
-      `/api/v2/agent-templates/${tmpl.id}?expand[]=skills`,
-    );
+    const skillsExpanded = await readDetail({
+      path: `/api/v2/agent-templates/${tmpl.id}?expand[]=skills`,
+    });
     expect(skillsExpanded.response.status).toBe(200);
     expect(skillsExpanded.body?.skills).toEqual([]);
 
-    const skillsFilesExpanded = await readDetail(
-      `/api/v2/agent-templates/${tmpl.id}?expand[]=skills.files`,
-    );
+    const skillsFilesExpanded = await readDetail({
+      path: `/api/v2/agent-templates/${tmpl.id}?expand[]=skills.files`,
+    });
     expect(skillsFilesExpanded.response.status).toBe(200);
     expect(skillsFilesExpanded.body?.skills).toEqual([]);
 
-    const combined = await readDetail(
-      `/api/v2/agent-templates/${tmpl.id}?expand[]=owner&expand[]=skills`,
-    );
+    const combined = await readDetail({
+      path: `/api/v2/agent-templates/${tmpl.id}?expand[]=owner&expand[]=skills`,
+    });
     expect(combined.response.status).toBe(200);
     expect(combined.body).not.toHaveProperty("ownerAccountId");
     expect(combined.body?.owner).toMatchObject({
@@ -249,9 +251,9 @@ describe("Agent template detail endpoint", () => {
     });
     expect(combined.body?.skills).toEqual([]);
 
-    const unknown = await readDetail(
-      `/api/v2/agent-templates/${tmpl.id}?expand[]=bogus`,
-    );
+    const unknown = await readDetail({
+      path: `/api/v2/agent-templates/${tmpl.id}?expand[]=bogus`,
+    });
     expect(unknown.response.status).toBe(200);
     expect(unknown.body).toEqual(defaultDetail.body);
   });

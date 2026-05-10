@@ -39,8 +39,8 @@ const forbiddenKeys = [
   "updatedAt",
 ];
 
-const hasOwn = (value: object, key: string) =>
-  Object.prototype.hasOwnProperty.call(value, key);
+const hasOwn = (args: { value: object; key: string }) =>
+  Object.prototype.hasOwnProperty.call(args.value, args.key);
 
 const testTemplateIds: string[] = [];
 
@@ -58,7 +58,7 @@ const createTemplate = async (
 ) => {
   const id = overrides.id ?? randomUUID();
   testTemplateIds.push(id);
-  const firstPublishedAt = hasOwn(overrides, "firstPublishedAt")
+  const firstPublishedAt = hasOwn({ value: overrides, key: "firstPublishedAt" })
     ? overrides.firstPublishedAt
     : new Date("2026-01-20T00:00:00.000Z");
 
@@ -85,8 +85,8 @@ const createTemplate = async (
   });
 };
 
-const readJson = async (path: string) => {
-  const response = await fetch(`${baseURL}${path}`);
+const readJson = async (args: { path: string }) => {
+  const response = await fetch(`${baseURL}${args.path}`);
   const body = (await response.json()) as JsonObject;
 
   return { body, response };
@@ -190,8 +190,12 @@ describe("Agent template read response conventions", () => {
       firstPublishedAt: new Date("2026-01-20T00:00:00.000Z"),
     });
 
-    const list = await readJson("/api/v2/agent-templates?category=conventions");
-    const detail = await readJson(`/api/v2/agent-templates/${child.id}`);
+    const list = await readJson({
+      path: "/api/v2/agent-templates?category=conventions",
+    });
+    const detail = await readJson({
+      path: `/api/v2/agent-templates/${child.id}`,
+    });
 
     expect(list.response.status).toBe(200);
     expect(list.response.headers.get("content-type")).toContain(
@@ -242,9 +246,9 @@ describe("Agent template read response conventions", () => {
       firstPublishedAt: null,
     });
 
-    const { body, response } = await readJson(
-      `/api/v2/agent-templates/${tmpl.id}?expand[]=owner`,
-    );
+    const { body, response } = await readJson({
+      path: `/api/v2/agent-templates/${tmpl.id}?expand[]=owner`,
+    });
 
     expect(response.status).toBe(200);
     expect(response.headers.get("content-type")).toContain("application/json");
@@ -272,7 +276,7 @@ describe("Agent template read response conventions", () => {
     ];
 
     for (const errorCase of cases) {
-      const { body, response } = await readJson(errorCase.path);
+      const { body, response } = await readJson({ path: errorCase.path });
 
       expect(response.status).toBe(errorCase.status);
       expect(response.headers.get("content-type")).toContain(

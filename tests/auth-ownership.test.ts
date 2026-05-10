@@ -47,11 +47,11 @@ const validAgentAssetsApiKey =
 
 const originalAgentAssetsApiKey = process.env.AGENT_ASSETS_API_KEY;
 
-const jwtHeadersFor = async (accountId: string) => ({
+const jwtHeadersFor = async (args: { accountId: string }) => ({
   "Content-Type": "application/json",
   "X-Convos-AuthToken": await createJwtToken({
     deviceId: "test-device-auth-ownership",
-    accountId,
+    accountId: args.accountId,
   }),
 });
 
@@ -143,7 +143,7 @@ describe("Per-account ownership guards", () => {
   test("POST creates template with ownerAccountId from authenticated user (JWT)", async () => {
     const response = await fetch(`${baseURL}/api/v2/agent-templates`, {
       method: "POST",
-      headers: await jwtHeadersFor(USER_A_ID),
+      headers: await jwtHeadersFor({ accountId: USER_A_ID }),
       body: JSON.stringify({
         agentName: "Own Test User A Template",
         prompt: "You are a test",
@@ -164,7 +164,7 @@ describe("Per-account ownership guards", () => {
   test("POST creates template with User B's accountId when User B is authenticated", async () => {
     const response = await fetch(`${baseURL}/api/v2/agent-templates`, {
       method: "POST",
-      headers: await jwtHeadersFor(USER_B_ID),
+      headers: await jwtHeadersFor({ accountId: USER_B_ID }),
       body: JSON.stringify({
         agentName: "Own Test User B Template",
         prompt: "You are user B's test",
@@ -203,7 +203,7 @@ describe("Per-account ownership guards", () => {
     // User A creates a template
     const createResponse = await fetch(`${baseURL}/api/v2/agent-templates`, {
       method: "POST",
-      headers: await jwtHeadersFor(USER_A_ID),
+      headers: await jwtHeadersFor({ accountId: USER_A_ID }),
       body: JSON.stringify({
         agentName: "Own Test Patch Template",
         prompt: "You are a test",
@@ -218,7 +218,7 @@ describe("Per-account ownership guards", () => {
       `${baseURL}/api/v2/agent-templates/${templateId}`,
       {
         method: "PATCH",
-        headers: await jwtHeadersFor(USER_B_ID),
+        headers: await jwtHeadersFor({ accountId: USER_B_ID }),
         body: JSON.stringify({ agentName: "Patched by User B" }),
       },
     );
@@ -233,7 +233,7 @@ describe("Per-account ownership guards", () => {
     // User A creates a template
     const createResponse = await fetch(`${baseURL}/api/v2/agent-templates`, {
       method: "POST",
-      headers: await jwtHeadersFor(USER_A_ID),
+      headers: await jwtHeadersFor({ accountId: USER_A_ID }),
       body: JSON.stringify({
         agentName: "Own Test Delete Template",
         prompt: "You are a test",
@@ -248,7 +248,7 @@ describe("Per-account ownership guards", () => {
       `${baseURL}/api/v2/agent-templates/${templateId}`,
       {
         method: "DELETE",
-        headers: await jwtHeadersFor(USER_B_ID),
+        headers: await jwtHeadersFor({ accountId: USER_B_ID }),
       },
     );
 
@@ -262,7 +262,7 @@ describe("Per-account ownership guards", () => {
     // User A creates a draft template
     const createResponse = await fetch(`${baseURL}/api/v2/agent-templates`, {
       method: "POST",
-      headers: await jwtHeadersFor(USER_A_ID),
+      headers: await jwtHeadersFor({ accountId: USER_A_ID }),
       body: JSON.stringify({
         agentName: "Own Test Publish Template",
         prompt: "You are a test",
@@ -277,7 +277,7 @@ describe("Per-account ownership guards", () => {
       `${baseURL}/api/v2/agent-templates/${templateId}/publish`,
       {
         method: "POST",
-        headers: await jwtHeadersFor(USER_B_ID),
+        headers: await jwtHeadersFor({ accountId: USER_B_ID }),
       },
     );
 
@@ -291,7 +291,7 @@ describe("Per-account ownership guards", () => {
     // User A creates a template (owned by User A)
     const createResponse = await fetch(`${baseURL}/api/v2/agent-templates`, {
       method: "POST",
-      headers: await jwtHeadersFor(USER_A_ID),
+      headers: await jwtHeadersFor({ accountId: USER_A_ID }),
       body: JSON.stringify({
         agentName: "Own Test API Patch",
         prompt: "You are a test",
@@ -320,7 +320,7 @@ describe("Per-account ownership guards", () => {
     // User A creates a draft template (owned by User A)
     const createResponse = await fetch(`${baseURL}/api/v2/agent-templates`, {
       method: "POST",
-      headers: await jwtHeadersFor(USER_A_ID),
+      headers: await jwtHeadersFor({ accountId: USER_A_ID }),
       body: JSON.stringify({
         agentName: "Own Test API Delete",
         prompt: "You are a test",
@@ -346,7 +346,7 @@ describe("Per-account ownership guards", () => {
     // User A creates a draft template (owned by User A)
     const createResponse = await fetch(`${baseURL}/api/v2/agent-templates`, {
       method: "POST",
-      headers: await jwtHeadersFor(USER_A_ID),
+      headers: await jwtHeadersFor({ accountId: USER_A_ID }),
       body: JSON.stringify({
         agentName: "Own Test API Publish",
         prompt: "You are a test",
@@ -378,7 +378,7 @@ describe("Per-account ownership guards", () => {
     // User A creates a template
     const createResponse = await fetch(`${baseURL}/api/v2/agent-templates`, {
       method: "POST",
-      headers: await jwtHeadersFor(USER_A_ID),
+      headers: await jwtHeadersFor({ accountId: USER_A_ID }),
       body: JSON.stringify({
         agentName: "Own Test Owner Patch",
         prompt: "You are a test",
@@ -393,7 +393,7 @@ describe("Per-account ownership guards", () => {
       `${baseURL}/api/v2/agent-templates/${templateId}`,
       {
         method: "PATCH",
-        headers: await jwtHeadersFor(USER_A_ID),
+        headers: await jwtHeadersFor({ accountId: USER_A_ID }),
         body: JSON.stringify({ agentName: "Patched by Owner" }),
       },
     );
@@ -405,7 +405,7 @@ describe("Per-account ownership guards", () => {
     // User A creates a template
     const createResponse = await fetch(`${baseURL}/api/v2/agent-templates`, {
       method: "POST",
-      headers: await jwtHeadersFor(USER_A_ID),
+      headers: await jwtHeadersFor({ accountId: USER_A_ID }),
       body: JSON.stringify({
         agentName: "Own Test Owner Delete",
         prompt: "You are a test",
@@ -420,7 +420,7 @@ describe("Per-account ownership guards", () => {
       `${baseURL}/api/v2/agent-templates/${templateId}`,
       {
         method: "DELETE",
-        headers: await jwtHeadersFor(USER_A_ID),
+        headers: await jwtHeadersFor({ accountId: USER_A_ID }),
       },
     );
 
@@ -431,7 +431,7 @@ describe("Per-account ownership guards", () => {
     // User A creates a draft template
     const createResponse = await fetch(`${baseURL}/api/v2/agent-templates`, {
       method: "POST",
-      headers: await jwtHeadersFor(USER_A_ID),
+      headers: await jwtHeadersFor({ accountId: USER_A_ID }),
       body: JSON.stringify({
         agentName: "Own Test Owner Publish",
         prompt: "You are a test",
@@ -446,7 +446,7 @@ describe("Per-account ownership guards", () => {
       `${baseURL}/api/v2/agent-templates/${templateId}/publish`,
       {
         method: "POST",
-        headers: await jwtHeadersFor(USER_A_ID),
+        headers: await jwtHeadersFor({ accountId: USER_A_ID }),
       },
     );
 

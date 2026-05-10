@@ -22,11 +22,11 @@ const cleanup = async () => {
   await prisma.account.deleteMany({ where: { id: OTHER_OWNER_ID } });
 };
 
-const createAccount = (id: string) =>
+const createAccount = (args: { id: string }) =>
   prisma.account.upsert({
-    where: { id },
+    where: { id: args.id },
     update: {},
-    create: { id },
+    create: { id: args.id },
   });
 
 const createTemplate = async (
@@ -114,7 +114,7 @@ describe("agent template id-or-hashed-slug resolver", () => {
   });
 
   test("resolves duplicate base slugs by each owner's hash and rejects collisions", async () => {
-    await createAccount(OTHER_OWNER_ID);
+    await createAccount({ id: OTHER_OWNER_ID });
     const [tmplA, tmplB] = await Promise.all([
       createTemplate({
         slug: "shared",

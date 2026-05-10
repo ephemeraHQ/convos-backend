@@ -88,11 +88,14 @@ const seedTemplate = async (
   });
 };
 
-const patchTemplate = async (id: string, body: Record<string, unknown>) => {
-  const response = await fetch(`${baseURL}/api/v2/agent-templates/${id}`, {
+const patchTemplate = async (args: {
+  id: string;
+  body: Record<string, unknown>;
+}) => {
+  const response = await fetch(`${baseURL}/api/v2/agent-templates/${args.id}`, {
     method: "PATCH",
     headers: await makeAuthHeaders(),
-    body: JSON.stringify(body),
+    body: JSON.stringify(args.body),
   });
   const parsedBody = (await response.json()) as TemplateBody;
 
@@ -149,8 +152,11 @@ describe("Agent template patch endpoint", () => {
 
   test("returns 404 for an unknown template id", async () => {
     const missingId = randomUUID();
-    const { body, response } = await patchTemplate(missingId, {
-      description: "x",
+    const { body, response } = await patchTemplate({
+      id: missingId,
+      body: {
+        description: "x",
+      },
     });
 
     expect(response.status).toBe(404);
@@ -165,15 +171,18 @@ describe("Agent template patch endpoint", () => {
       version: 7,
     });
 
-    const { body, response } = await patchTemplate(template.id, {
-      prompt: "New prompt",
-      tools: ["web_search", "calculator"],
-      connections: ["calendar", "gmail"],
-      avatarUrl: "https://example.com/avatar.png",
-      agentName: "Renamed Patch Test",
-      description: "Updated description",
-      category: "productivity",
-      emoji: "🤖",
+    const { body, response } = await patchTemplate({
+      id: template.id,
+      body: {
+        prompt: "New prompt",
+        tools: ["web_search", "calculator"],
+        connections: ["calendar", "gmail"],
+        avatarUrl: "https://example.com/avatar.png",
+        agentName: "Renamed Patch Test",
+        description: "Updated description",
+        category: "productivity",
+        emoji: "🤖",
+      },
     });
 
     expect(response.status).toBe(200);
@@ -208,13 +217,19 @@ describe("Agent template patch endpoint", () => {
     });
     const maxLengthSlug = "a".repeat(64);
 
-    const renamed = await patchTemplate(template.id, {
-      slug: "patch-test-new",
+    const renamed = await patchTemplate({
+      id: template.id,
+      body: {
+        slug: "patch-test-new",
+      },
     });
     expect(renamed.response.status).toBe(200);
     expect(renamed.body.slug).toBe("patch-test-new");
 
-    const tooLong = await patchTemplate(template.id, { slug: "a".repeat(65) });
+    const tooLong = await patchTemplate({
+      id: template.id,
+      body: { slug: "a".repeat(65) },
+    });
     expect(tooLong.response.status).toBe(400);
     expect(
       await prisma.agentTemplate.findUniqueOrThrow({
@@ -222,7 +237,10 @@ describe("Agent template patch endpoint", () => {
       }),
     ).toMatchObject({ slug: "patch-test-new" });
 
-    const boundary = await patchTemplate(template.id, { slug: maxLengthSlug });
+    const boundary = await patchTemplate({
+      id: template.id,
+      body: { slug: maxLengthSlug },
+    });
     expect(boundary.response.status).toBe(200);
     expect(boundary.body.slug).toBe(maxLengthSlug);
     expect(
@@ -241,7 +259,7 @@ describe("Agent template patch endpoint", () => {
     });
 
     for (const slug of ["Has-Caps", "with space", "", "generate"]) {
-      const result = await patchTemplate(template.id, { slug });
+      const result = await patchTemplate({ id: template.id, body: { slug } });
       expect(result.response.status).toBe(400);
       expect(
         await prisma.agentTemplate.findUniqueOrThrow({
@@ -250,8 +268,11 @@ describe("Agent template patch endpoint", () => {
       ).toMatchObject({ slug: "patch-test-original" });
     }
 
-    const conflict = await patchTemplate(template.id, {
-      slug: "patch-test-taken",
+    const conflict = await patchTemplate({
+      id: template.id,
+      body: {
+        slug: "patch-test-taken",
+      },
     });
     expect(conflict.response.status).toBe(409);
     expect(
@@ -268,8 +289,11 @@ describe("Agent template patch endpoint", () => {
       firstPublishedAt: publishedAt,
     });
 
-    const result = await patchTemplate(template.id, {
-      slug: "patch-test-moved",
+    const result = await patchTemplate({
+      id: template.id,
+      body: {
+        slug: "patch-test-moved",
+      },
     });
 
     expect(result.response.status).toBe(400);
@@ -286,20 +310,29 @@ describe("Agent template patch endpoint", () => {
       status: "published",
     });
 
-    const toUnlisted = await patchTemplate(published.id, {
-      status: "unlisted",
+    const toUnlisted = await patchTemplate({
+      id: published.id,
+      body: {
+        status: "unlisted",
+      },
     });
     expect(toUnlisted.response.status).toBe(200);
     expect(toUnlisted.body.status).toBe("unlisted");
 
-    const backToPublished = await patchTemplate(published.id, {
-      status: "published",
+    const backToPublished = await patchTemplate({
+      id: published.id,
+      body: {
+        status: "published",
+      },
     });
     expect(backToPublished.response.status).toBe(200);
     expect(backToPublished.body.status).toBe("published");
 
-    const publishedToArchived = await patchTemplate(published.id, {
-      status: "archived",
+    const publishedToArchived = await patchTemplate({
+      id: published.id,
+      body: {
+        status: "archived",
+      },
     });
     expect(publishedToArchived.response.status).toBe(200);
     expect(publishedToArchived.body.status).toBe("archived");
@@ -308,14 +341,20 @@ describe("Agent template patch endpoint", () => {
       slug: "patch-test-status-unlisted",
       status: "unlisted",
     });
-    const unlistedToArchived = await patchTemplate(unlisted.id, {
-      status: "archived",
+    const unlistedToArchived = await patchTemplate({
+      id: unlisted.id,
+      body: {
+        status: "archived",
+      },
     });
     expect(unlistedToArchived.response.status).toBe(200);
     expect(unlistedToArchived.body.status).toBe("archived");
 
-    const archivedToPublished = await patchTemplate(unlisted.id, {
-      status: "published",
+    const archivedToPublished = await patchTemplate({
+      id: unlisted.id,
+      body: {
+        status: "published",
+      },
     });
     expect(archivedToPublished.response.status).toBe(200);
     expect(archivedToPublished.body.status).toBe("published");
@@ -324,8 +363,11 @@ describe("Agent template patch endpoint", () => {
       slug: "patch-test-status-archived",
       status: "archived",
     });
-    const archivedToUnlisted = await patchTemplate(archived.id, {
-      status: "unlisted",
+    const archivedToUnlisted = await patchTemplate({
+      id: archived.id,
+      body: {
+        status: "unlisted",
+      },
     });
     expect(archivedToUnlisted.response.status).toBe(200);
     expect(archivedToUnlisted.body.status).toBe("unlisted");
@@ -338,7 +380,10 @@ describe("Agent template patch endpoint", () => {
         status,
       });
 
-      const result = await patchTemplate(template.id, { status: "draft" });
+      const result = await patchTemplate({
+        id: template.id,
+        body: { status: "draft" },
+      });
       expect(result.response.status).toBe(400);
       expect(
         await prisma.agentTemplate.findUniqueOrThrow({
@@ -354,7 +399,10 @@ describe("Agent template patch endpoint", () => {
         firstPublishedAt: null,
       });
 
-      const result = await patchTemplate(template.id, { status: target });
+      const result = await patchTemplate({
+        id: template.id,
+        body: { status: target },
+      });
       expect(result.response.status).toBe(400);
       expect(
         await prisma.agentTemplate.findUniqueOrThrow({
@@ -374,13 +422,16 @@ describe("Agent template patch endpoint", () => {
     });
 
     const fakeOtherId = randomUUID();
-    const result = await patchTemplate(template.id, {
-      ownerAccountId: OTHER_ACCOUNT_ID,
-      version: 42,
-      firstPublishedAt: "2020-01-01T00:00:00.000Z",
-      forkedFromId: fakeOtherId,
-      createdAt: "2000-01-01T00:00:00.000Z",
-      id: fakeOtherId,
+    const result = await patchTemplate({
+      id: template.id,
+      body: {
+        ownerAccountId: OTHER_ACCOUNT_ID,
+        version: 42,
+        firstPublishedAt: "2020-01-01T00:00:00.000Z",
+        forkedFromId: fakeOtherId,
+        createdAt: "2000-01-01T00:00:00.000Z",
+        id: fakeOtherId,
+      },
     });
 
     expect(result.response.status).toBe(200);
@@ -415,14 +466,14 @@ describe("Agent template patch endpoint", () => {
       firstPublishedAt: publishedAt,
     });
 
-    const first = await patchTemplate(template.id, {});
+    const first = await patchTemplate({ id: template.id, body: {} });
     expect(first.response.status).toBe(200);
     expectTemplateShape(first.body);
     expect(first.body.firstPublishedAt).toEqual(
       expect.stringMatching(isoTimestampPattern),
     );
 
-    const second = await patchTemplate(template.id, {});
+    const second = await patchTemplate({ id: template.id, body: {} });
     expect(second.response.status).toBe(200);
     expect(second.body).toEqual(first.body);
   });
@@ -447,7 +498,10 @@ describe("Agent template patch endpoint", () => {
     })();
 
     const [patchResult] = await Promise.all([
-      patchTemplate(template.id, { description: "racing description" }),
+      patchTemplate({
+        id: template.id,
+        body: { description: "racing description" },
+      }),
       concurrentMutation,
     ]);
 
@@ -481,7 +535,9 @@ describe("Agent template patch endpoint", () => {
       (_, index) => `patch-test-race-many-${index}`,
     );
     const results = await Promise.all(
-      candidates.map((slug) => patchTemplate(template.id, { slug })),
+      candidates.map((slug) =>
+        patchTemplate({ id: template.id, body: { slug } }),
+      ),
     );
 
     const successes = results.filter((r) => r.response.status === 200);
