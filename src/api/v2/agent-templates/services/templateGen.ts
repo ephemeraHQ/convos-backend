@@ -1,7 +1,7 @@
 /**
  * Template generation service — port of pool/src/services/skillGen.ts.
  *
- * URL detection → GitHub-passthrough → Exa/oEmbed/raw fetch →
+ * URL detection → GitHub-passthrough → Exa (or Twitter oEmbed) →
  * content-classifier passthrough → main LLM call.
  * PDFs/images go straight to the multimodal call.
  * Text truncated to MAX_CONTENT_LENGTH = 10_000.
@@ -16,7 +16,7 @@
  * Soft defaults for non-name fields. Server-injects connections: [].
  */
 
-/* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-return, @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-unnecessary-condition, @typescript-eslint/restrict-plus-operands */
+/* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-return, @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-argument */
 
 import { AppError } from "@/utils/errors";
 import { SYSTEM_PROMPT } from "../lib/system-prompt";
@@ -832,148 +832,25 @@ async function tryContentPassthrough(
   return { template, tokens: classifierTokens };
 }
 
-// SSRF protection for the direct-fetch fallback. Blocks IP literals in
-// loopback, RFC1918, link-local (incl. AWS metadata at 169.254.169.254), and
-// IPv6 loopback/link-local/ULA ranges. Also resolves the hostname and
-// rejects when DNS points at any of those ranges.
-//
-// Caveat: this does not protect against DNS rebinding (the DNS record could
-// change between resolution and fetch). Real DNS-rebinding protection requires
-// resolving once and connecting via the resolved IP with the Host header
-// preserved, which we'd build out if this surface starts taking traffic
-// outside of dev/staging.
-const SSRF_BLOCKLIST_PATTERNS: RegExp[] = [
-  /^127\./, // IPv4 loopback
-  /^10\./, // RFC1918
-  /^172\.(1[6-9]|2\d|3[01])\./, // RFC1918
-  /^192\.168\./, // RFC1918
-  /^169\.254\./, // link-local (incl. cloud metadata)
-  /^0\./, // "this network"
-  /^::1$/, // IPv6 loopback
-  /^fe80:/i, // IPv6 link-local
-  /^fc/i, // IPv6 unique local addresses
-  /^fd/i, // IPv6 unique local addresses
-];
-
-const MAX_URL_RESPONSE_BYTES = 1_000_000;
-
-const isPrivateAddress = (address: string) => {
-  const lower = address.toLowerCase();
-  if (lower === "localhost" || lower === "::") return true;
-  return SSRF_BLOCKLIST_PATTERNS.some((pattern) => pattern.test(address));
-};
-
-async function safeFetchUserUrl(
-  url: string,
-): Promise<{ body: string; contentType: string }> {
-  let parsed;
-  try {
-    parsed = new URL(url);
-  } catch {
-    throw new AppError(400, "Invalid URL");
-  }
-
-  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-    throw new AppError(400, "URL must use http or https");
-  }
-
-  if (isPrivateAddress(parsed.hostname)) {
-    throw new AppError(400, "URL refers to a private or local address");
-  }
-
-  // Resolve hostname and reject when DNS points at any private/loopback IP.
-  // DNS failure is treated as "not private" — the fetch below will surface
-  // the actual error.
-  try {
-    const dns = await import("node:dns/promises");
-    const addresses = await dns.lookup(parsed.hostname, { all: true });
-    if (addresses.some((addr) => isPrivateAddress(addr.address))) {
-      throw new AppError(400, "URL resolves to a private or local address");
-    }
-  } catch (err) {
-    if (err instanceof AppError) throw err;
-    // DNS lookup failed (NXDOMAIN, network error, etc.); let fetch handle it.
-  }
-
-  const res = await fetch(url, {
-    headers: { "User-Agent": "Mozilla/5.0 (compatible; Convos/1.0)" },
-    signal: AbortSignal.timeout(10_000),
-  });
-  if (!res.ok) {
-    throw new AppError(400, `Failed to fetch URL (${res.status})`);
-  }
-
-  const declaredLength = res.headers.get("content-length");
-  if (declaredLength && Number(declaredLength) > MAX_URL_RESPONSE_BYTES) {
-    throw new AppError(400, "Failed to fetch URL (response too large)");
-  }
-
-  // Stream the body with a size cap so a server lying about (or omitting)
-  // content-length can't exhaust memory.
-  const reader = res.body?.getReader();
-  let raw: string;
-  if (!reader) {
-    raw = await res.text();
-    if (raw.length > MAX_URL_RESPONSE_BYTES) {
-      throw new AppError(400, "Failed to fetch URL (response too large)");
-    }
-  } else {
-    const decoder = new TextDecoder();
-    let total = 0;
-    let result = "";
-    try {
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        total += value.length;
-        if (total > MAX_URL_RESPONSE_BYTES) {
-          await reader.cancel();
-          throw new AppError(400, "Failed to fetch URL (response too large)");
-        }
-        result += decoder.decode(value, { stream: true });
-      }
-    } finally {
-      result += decoder.decode();
-    }
-    raw = result;
-  }
-
-  return { body: raw, contentType: res.headers.get("content-type") ?? "" };
-}
-
-/** Extract content with fallback chain: Twitter oEmbed → Exa → direct fetch. */
+/** Extract content via the configured upstream services. Twitter URLs go
+ *  through oEmbed; everything else goes through Exa. We deliberately do not
+ *  fall back to a direct fetch of the user-supplied URL — that's an SSRF
+ *  surface, and the rest of the codebase only fetches env-configured or
+ *  hardcoded hosts. If both upstream paths fail, we surface the error rather
+ *  than fetching the URL ourselves. */
 async function extractUrl(url: string): Promise<string> {
   if (isTwitterUrl(url)) {
     try {
       return await extractViaTweetOEmbed(url);
     } catch (err: any) {
-      console.error("[templateGen] Tweet oEmbed failed:", err.message);
+      console.error(
+        "[templateGen] Tweet oEmbed failed, trying Exa:",
+        err.message,
+      );
     }
   }
 
-  try {
-    return await extractViaExa(url);
-  } catch (err: any) {
-    console.error(
-      "[templateGen] Exa failed, trying direct fetch:",
-      err.message,
-    );
-  }
-
-  const { body: raw, contentType: ct } = await safeFetchUserUrl(url);
-  if (ct.includes("text/html")) {
-    const text = raw
-      .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, "")
-      .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, "")
-      .replace(/<[^>]*>/g, " ")
-      .replace(/\s+/g, " ")
-      .trim();
-    if (!text || text.length < 50) {
-      throw new AppError(400, "Could not extract content");
-    }
-    return text;
-  }
-  return raw;
+  return await extractViaExa(url);
 }
 
 // ---------------------------------------------------------------------------

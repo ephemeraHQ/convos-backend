@@ -509,7 +509,16 @@ describe("templateGen service — OpenRouter integration", () => {
       return (originalMockFetch as any)(input, init);
     }) as any;
 
-    await generateTemplate({ text: "https://github.com/test-user/test-repo" });
+    // The test mock does not set `hasAgentInstructions: true` on the
+    // selector response, so the GitHub passthrough returns null and the
+    // generate path falls through to URL extraction. URL extraction now
+    // requires Exa (the direct-fetch SSRF fallback was removed); without
+    // EXA_SERVICE_KEY set in tests, the call throws. We only care that
+    // the selector LLM was invoked with the right shape — swallow the
+    // downstream error.
+    await generateTemplate({
+      text: "https://github.com/test-user/test-repo",
+    }).catch(() => undefined);
 
     // The first OpenRouter call should be the selector (helper)
     const selectorReq = getOpenRouterRequests()[0];

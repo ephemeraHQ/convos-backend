@@ -306,14 +306,19 @@ describe("templateGen service — OpenRouter error handling", () => {
   });
 
   // -----------------------------------------------------------------------
-  // Validation-class error messages preserved from pool
+  // Exa returning no content surfaces as a meaningful extraction error.
+  // (Previously this test exercised a direct-fetch fallback that scraped
+  // HTML directly; that fallback was removed to eliminate the user-URL
+  // SSRF surface — see PR #200 review thread. Exa is now the sole
+  // non-Twitter extraction path, so its no-content response is the
+  // canonical "extraction failed" path.)
   // -----------------------------------------------------------------------
-  test("'Could not extract content' error is thrown for failed content extraction", async () => {
+  test("Exa returning no content surfaces as an extraction error", async () => {
+    process.env.EXA_SERVICE_KEY = "test-exa-key";
     const mod = await import("@/api/v2/agent-templates/services/templateGen");
     generateTemplate = mod.generateTemplate;
 
-    // Simulate a URL fetch that returns no meaningful content
-    const customFetch = (input: any, init?: any) => {
+    const customFetch = (input: any) => {
       const url =
         typeof input === "string"
           ? input
@@ -321,11 +326,10 @@ describe("templateGen service — OpenRouter error handling", () => {
             ? input.toString()
             : input.url;
 
-      // Return a minimal HTML page with no content
-      if (url === "https://example.com") {
-        return new Response("<html><body></body></html>", {
+      if (url === "https://api.exa.ai/contents") {
+        return new Response(JSON.stringify({ results: [{ text: "" }] }), {
           status: 200,
-          headers: { "Content-Type": "text/html" },
+          headers: { "Content-Type": "application/json" },
         });
       }
       return new Response("{}", { status: 200 });
@@ -334,6 +338,6 @@ describe("templateGen service — OpenRouter error handling", () => {
 
     await expect(
       generateTemplate({ text: "https://example.com" }),
-    ).rejects.toThrow(/Could not extract/i);
+    ).rejects.toThrow(/Exa returned no content/i);
   });
 });
