@@ -426,4 +426,76 @@ describe("Agent template patch endpoint", () => {
     expect(second.response.status).toBe(200);
     expect(second.body).toEqual(first.body);
   });
+
+  test("a slug PATCH whose pinned WHERE state has shifted underneath it surfaces as 409", async () => {
+    const template = await seedTemplate({
+      slug: "patch-test-race",
+      status: "draft",
+    });
+
+    // Stage a request, then before its updateMany lands, mutate the row out
+    // from under it. The handler observed slug "patch-test-race" so its
+    // WHERE clause pins on that value; once the slug is rewritten by a
+    // concurrent client, the WHERE no longer matches and the patch must
+    // surface 409 instead of silently overwriting against stale state.
+    const concurrentMutation = (async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      await prisma.agentTemplate.update({
+        where: { id: template.id },
+        data: { slug: "patch-test-race-rewritten" },
+      });
+    })();
+
+    const [patchResult] = await Promise.all([
+      patchTemplate(template.id, { description: "racing description" }),
+      concurrentMutation,
+    ]);
+
+    if (patchResult.response.status === 409) {
+      expect(patchResult.body).toMatchObject({
+        error: { code: "TEMPLATE_MODIFIED" },
+      });
+      const row = await prisma.agentTemplate.findUniqueOrThrow({
+        where: { id: template.id },
+      });
+      expect(row.slug).toBe("patch-test-race-rewritten");
+      expect(row.description).toBeNull();
+    } else {
+      expect(patchResult.response.status).toBe(200);
+      const row = await prisma.agentTemplate.findUniqueOrThrow({
+        where: { id: template.id },
+      });
+      expect(row.slug).toBe("patch-test-race-rewritten");
+      expect(row.description).toBe("racing description");
+    }
+  });
+
+  test("multiple concurrent slug PATCHes converge to one winner with conflicting peers reporting 409", async () => {
+    const template = await seedTemplate({
+      slug: "patch-test-race-many",
+      status: "draft",
+    });
+
+    const candidates = Array.from(
+      { length: 6 },
+      (_, index) => `patch-test-race-many-${index}`,
+    );
+    const results = await Promise.all(
+      candidates.map((slug) => patchTemplate(template.id, { slug })),
+    );
+
+    const successes = results.filter((r) => r.response.status === 200);
+    const conflicts = results.filter((r) => r.response.status === 409);
+    expect(successes.length + conflicts.length).toBe(results.length);
+    for (const conflict of conflicts) {
+      expect(conflict.body).toMatchObject({
+        error: { code: "TEMPLATE_MODIFIED" },
+      });
+    }
+
+    const row = await prisma.agentTemplate.findUniqueOrThrow({
+      where: { id: template.id },
+    });
+    expect(candidates).toContain(row.slug);
+  });
 });

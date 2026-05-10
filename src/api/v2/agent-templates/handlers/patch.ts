@@ -246,9 +246,43 @@ export async function patchHandler(req: Request, res: Response) {
     }
 
     try {
-      const updated = await prisma.agentTemplate.update({
-        where: { id: template.id },
+      // Pin the WHERE clause to the row state we just validated. A concurrent
+      // publish, slug rename, ownership transfer or status flip would
+      // invalidate our invariant checks above, so any such mutation drops us
+      // into the count === 0 branch and surfaces as a 409 (or 404 if the row
+      // was deleted).
+      const result = await prisma.agentTemplate.updateMany({
+        where: {
+          id: template.id,
+          ownerAccountId: template.ownerAccountId,
+          slug: template.slug,
+          status: template.status,
+          firstPublishedAt: template.firstPublishedAt,
+        },
         data,
+      });
+
+      if (result.count === 0) {
+        const stillExists = await prisma.agentTemplate.findUnique({
+          where: { id: template.id },
+          select: { id: true },
+        });
+        if (stillExists === null) {
+          res.status(404).json({ error: "Agent template not found" });
+        } else {
+          res.status(409).json({
+            error: {
+              code: "TEMPLATE_MODIFIED",
+              message:
+                "Agent template was modified by another request; reload and retry",
+            },
+          });
+        }
+        return;
+      }
+
+      const updated = await prisma.agentTemplate.findUniqueOrThrow({
+        where: { id: template.id },
       });
 
       res.status(200).json(serializeAgentTemplate(updated));
