@@ -10,7 +10,12 @@
  *   - the timeout timer is cleared on the non-2xx error path (finally runs)
  */
 
-/* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-explicit-any */
+/* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-argument, @typescript-eslint/await-thenable, @typescript-eslint/no-confusing-void-expression */
+// The unsafe-argument disables are for the global setTimeout/clearTimeout
+// spies — they wrap variadic args of historically `any`-typed Node globals.
+// The await-thenable / no-confusing-void-expression disables cover Bun's
+// `expect(...).rejects.toThrow(...)` matcher, which returns Promise<void>
+// at runtime but is typed as `void` in current @types/bun (await still works).
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 

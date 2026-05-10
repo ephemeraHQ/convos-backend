@@ -355,6 +355,11 @@ export async function generateTemplateHandler(req: Request, res: Response) {
         // No uncaughtException leak
       }
     }, KEEPALIVE_MS);
+    // Stop immediately on client disconnect rather than waiting for the
+    // handler to reach its finally-style clearInterval.
+    res.on("close", () => {
+      clearInterval(keepalive);
+    });
 
     try {
       const { template, metrics } = await callGenerateTemplate(coalesced);
