@@ -22,7 +22,6 @@ import { noRouteMiddleware } from "@/middleware/noRoute";
 // Constants
 // ---------------------------------------------------------------------------
 
-const TEST_PORT = 4066;
 const happyTemplate: GeneratedTemplate = {
   agentName: "GuardBot",
   description: "Guard test assistant",
@@ -87,14 +86,20 @@ const withServer = async (
   app.use("/api/v2", router as Parameters<typeof app.use>[1]);
   app.use(noRouteMiddleware);
 
-  const server: Server = await new Promise((resolve) => {
-    const startedServer = app.listen(TEST_PORT, () => {
+  const server: Server = await new Promise((resolve, reject) => {
+    const startedServer = app.listen(0, () => {
       resolve(startedServer);
     });
+    startedServer.once("error", reject);
   });
+  const address = server.address();
+  if (!address || typeof address === "string") {
+    throw new Error("Unable to determine server port");
+  }
+  const baseURL = `http://localhost:${address.port}`;
 
   try {
-    await runAssertions("http://localhost:4066");
+    await runAssertions(baseURL);
   } finally {
     await new Promise<void>((resolve) => {
       server.close(() => {

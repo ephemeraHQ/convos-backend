@@ -14,7 +14,6 @@ import { __resetPersistForTests } from "@/api/v2/agent-templates/handlers/genera
 import { type GeneratedTemplate } from "@/api/v2/agent-templates/services/templateGen";
 import { noRouteMiddleware } from "@/middleware/noRoute";
 
-const TEST_PORT = 4058;
 const originalXMTPEnv = process.env.XMTP_ENV;
 const originalAgentAssetsApiKey = process.env.AGENT_ASSETS_API_KEY;
 
@@ -73,14 +72,20 @@ const withServer = async (
   app.use("/api/v2", router as Parameters<typeof app.use>[1]);
   app.use(noRouteMiddleware);
 
-  const server: Server = await new Promise((resolve) => {
-    const startedServer = app.listen(TEST_PORT, () => {
+  const server: Server = await new Promise((resolve, reject) => {
+    const startedServer = app.listen(0, () => {
       resolve(startedServer);
     });
+    startedServer.once("error", reject);
   });
+  const address = server.address();
+  if (!address || typeof address === "string") {
+    throw new Error("Unable to determine server port");
+  }
+  const baseURL = `http://localhost:${address.port}`;
 
   try {
-    await runAssertions("http://localhost:4058");
+    await runAssertions(baseURL);
   } finally {
     await new Promise<void>((resolve) => {
       server.close(() => {
