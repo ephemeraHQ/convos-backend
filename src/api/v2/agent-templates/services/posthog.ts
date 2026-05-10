@@ -108,10 +108,19 @@ export function capturePostHog(properties: PostHogCaptureProperties): void {
   if (!client) return; // silent no-op when env not set
 
   // Fire-and-forget: capture is buffered internally by the SDK.
-  // No await — the route returns immediately.
-  client.capture({
-    distinctId: "builder",
-    event: BUILDER_TEMPLATE_GENERATED_EVENT,
-    properties,
-  });
+  // No await — the route returns immediately. Wrap in try/catch so a
+  // synchronous SDK failure (serialization, internal state) cannot bubble
+  // up and break the request that triggered this analytics call.
+  try {
+    client.capture({
+      distinctId: "builder",
+      event: BUILDER_TEMPLATE_GENERATED_EVENT,
+      properties,
+    });
+  } catch (err) {
+    console.error(
+      "[posthog] capture failed:",
+      err instanceof Error ? err.message : err,
+    );
+  }
 }

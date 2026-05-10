@@ -16,8 +16,9 @@
  * Soft defaults for non-name fields. Server-injects connections: [].
  */
 
-/* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-return, @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-argument */
+/* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-return, @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-unnecessary-condition, @typescript-eslint/restrict-plus-operands */
 
+import { AppError } from "@/utils/errors";
 import { SYSTEM_PROMPT } from "../lib/system-prompt";
 
 // ---------------------------------------------------------------------------
@@ -75,6 +76,18 @@ export interface GenerationMetrics {
 export interface GenerationResult {
   template: GeneratedTemplate;
   metrics: GenerationMetrics;
+}
+
+/** Token usage from helper LLM calls (selector, classifier) used in
+ *  passthrough paths so PostHog metering reflects actual cost. */
+interface PassthroughTokens {
+  promptTokens: number;
+  completionTokens: number;
+}
+
+interface PassthroughBundle {
+  template: GeneratedTemplate;
+  tokens: PassthroughTokens;
 }
 
 /** Convenience constant for test mocks — realistic placeholder metrics. */
@@ -350,7 +363,10 @@ async function selectInstructionsViaLLM(
   repoDescription: string,
   tree: string[],
   readme: string,
-): Promise<GithubInstructionSelection | null> {
+): Promise<{
+  selection: GithubInstructionSelection;
+  tokens: PassthroughTokens;
+} | null> {
   const apiKey = process.env.BUILDER_OPENROUTER_API_KEY;
   if (!apiKey) return null;
 
@@ -481,6 +497,10 @@ Rules:
   console.log(
     `[templateGen] selectInstructions ok: model=${data?.model}, latencyMs=${Math.round(performance.now() - t0)}, prompt=${data?.usage?.prompt_tokens}, completion=${data?.usage?.completion_tokens}`,
   );
+  const tokens: PassthroughTokens = {
+    promptTokens: Number(data?.usage?.prompt_tokens ?? 0),
+    completionTokens: Number(data?.usage?.completion_tokens ?? 0),
+  };
   const content = data?.choices?.[0]?.message?.content;
   if (!content) return null;
 
@@ -490,12 +510,18 @@ Rules:
       .replace(/\s*```$/i, "")
       .trim();
     const parsed = JSON.parse(cleaned);
-    return parsed as GithubInstructionSelection;
+    return {
+      selection: parsed as GithubInstructionSelection,
+      tokens,
+    };
   } catch {
     const match = content.match(/\{[\s\S]*"hasAgentInstructions"[\s\S]*\}/);
     if (match) {
       try {
-        return JSON.parse(match[0]) as GithubInstructionSelection;
+        return {
+          selection: JSON.parse(match[0]) as GithubInstructionSelection,
+          tokens,
+        };
       } catch {
         /* fall through */
       }
@@ -516,7 +542,7 @@ Rules:
  */
 async function tryGithubPassthrough(
   url: string,
-): Promise<GeneratedTemplate | null> {
+): Promise<PassthroughBundle | null> {
   const parsed = parseGithubRepoUrl(url);
   if (!parsed) return null;
   const { owner, repo, filePath, branch: explicitBranch } = parsed;
@@ -565,14 +591,15 @@ async function tryGithubPassthrough(
   }
 
   // Ask LLM to locate agent instructions + produce metadata
-  const selection = await selectInstructionsViaLLM(
+  const selectorResult = await selectInstructionsViaLLM(
     owner,
     repo,
     repoDescription,
     tree,
     readme,
   );
-  if (!selection?.hasAgentInstructions) return null;
+  if (!selectorResult?.selection.hasAgentInstructions) return null;
+  const { selection, tokens: selectorTokens } = selectorResult;
 
   // Resolve the instruction content
   let instructions: string;
@@ -602,7 +629,7 @@ async function tryGithubPassthrough(
       ? "skill-definition"
       : "install-instructions";
 
-  return wrapAsPassthroughTemplate(
+  const template = wrapAsPassthroughTemplate(
     instructions,
     {
       agentName: selection.agentName || repo,
@@ -615,6 +642,8 @@ async function tryGithubPassthrough(
     },
     type,
   );
+
+  return { template, tokens: selectorTokens };
 }
 
 // ---------------------------------------------------------------------------
@@ -634,9 +663,10 @@ interface ContentPassthroughResult {
 }
 
 /** Classify pasted content: is it agent-ready, or source material to generate from? */
-async function classifyPastedContent(
-  content: string,
-): Promise<ContentPassthroughResult | null> {
+async function classifyPastedContent(content: string): Promise<{
+  classification: ContentPassthroughResult;
+  tokens: PassthroughTokens;
+} | null> {
   const apiKey = process.env.BUILDER_OPENROUTER_API_KEY;
   if (!apiKey) return null;
 
@@ -734,6 +764,10 @@ Rules:
   console.log(
     `[templateGen] classifyContent ok: model=${data?.model}, latencyMs=${Math.round(performance.now() - t0)}, prompt=${data?.usage?.prompt_tokens}, completion=${data?.usage?.completion_tokens}`,
   );
+  const tokens: PassthroughTokens = {
+    promptTokens: Number(data?.usage?.prompt_tokens ?? 0),
+    completionTokens: Number(data?.usage?.completion_tokens ?? 0),
+  };
   const content_response = data?.choices?.[0]?.message?.content;
   if (!content_response) return null;
 
@@ -742,12 +776,18 @@ Rules:
       .replace(/^```json?\s*/i, "")
       .replace(/\s*```$/i, "")
       .trim();
-    return JSON.parse(cleaned) as ContentPassthroughResult;
+    return {
+      classification: JSON.parse(cleaned) as ContentPassthroughResult,
+      tokens,
+    };
   } catch {
     const match = content_response.match(/\{[\s\S]*"isPassthrough"[\s\S]*\}/);
     if (match) {
       try {
-        return JSON.parse(match[0]) as ContentPassthroughResult;
+        return {
+          classification: JSON.parse(match[0]) as ContentPassthroughResult,
+          tokens,
+        };
       } catch {
         /* fall through */
       }
@@ -768,14 +808,17 @@ Rules:
  */
 async function tryContentPassthrough(
   content: string,
-): Promise<GeneratedTemplate | null> {
+): Promise<PassthroughBundle | null> {
   if (content.length < PASSTHROUGH_MIN_LENGTH) return null;
 
-  const classification = await classifyPastedContent(content);
-  if (!classification?.isPassthrough || !classification.passthroughType)
+  const classifierResult = await classifyPastedContent(content);
+  if (!classifierResult) return null;
+  const { classification, tokens: classifierTokens } = classifierResult;
+  if (!classification.isPassthrough || !classification.passthroughType) {
     return null;
+  }
 
-  return wrapAsPassthroughTemplate(
+  const template = wrapAsPassthroughTemplate(
     content,
     {
       agentName: classification.agentName || "Assistant",
@@ -785,6 +828,117 @@ async function tryContentPassthrough(
     },
     classification.passthroughType,
   );
+
+  return { template, tokens: classifierTokens };
+}
+
+// SSRF protection for the direct-fetch fallback. Blocks IP literals in
+// loopback, RFC1918, link-local (incl. AWS metadata at 169.254.169.254), and
+// IPv6 loopback/link-local/ULA ranges. Also resolves the hostname and
+// rejects when DNS points at any of those ranges.
+//
+// Caveat: this does not protect against DNS rebinding (the DNS record could
+// change between resolution and fetch). Real DNS-rebinding protection requires
+// resolving once and connecting via the resolved IP with the Host header
+// preserved, which we'd build out if this surface starts taking traffic
+// outside of dev/staging.
+const SSRF_BLOCKLIST_PATTERNS: RegExp[] = [
+  /^127\./, // IPv4 loopback
+  /^10\./, // RFC1918
+  /^172\.(1[6-9]|2\d|3[01])\./, // RFC1918
+  /^192\.168\./, // RFC1918
+  /^169\.254\./, // link-local (incl. cloud metadata)
+  /^0\./, // "this network"
+  /^::1$/, // IPv6 loopback
+  /^fe80:/i, // IPv6 link-local
+  /^fc/i, // IPv6 unique local addresses
+  /^fd/i, // IPv6 unique local addresses
+];
+
+const MAX_URL_RESPONSE_BYTES = 1_000_000;
+
+const isPrivateAddress = (address: string) => {
+  const lower = address.toLowerCase();
+  if (lower === "localhost" || lower === "::") return true;
+  return SSRF_BLOCKLIST_PATTERNS.some((pattern) => pattern.test(address));
+};
+
+async function safeFetchUserUrl(
+  url: string,
+): Promise<{ body: string; contentType: string }> {
+  let parsed;
+  try {
+    parsed = new URL(url);
+  } catch {
+    throw new AppError(400, "Invalid URL");
+  }
+
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    throw new AppError(400, "URL must use http or https");
+  }
+
+  if (isPrivateAddress(parsed.hostname)) {
+    throw new AppError(400, "URL refers to a private or local address");
+  }
+
+  // Resolve hostname and reject when DNS points at any private/loopback IP.
+  // DNS failure is treated as "not private" — the fetch below will surface
+  // the actual error.
+  try {
+    const dns = await import("node:dns/promises");
+    const addresses = await dns.lookup(parsed.hostname, { all: true });
+    if (addresses.some((addr) => isPrivateAddress(addr.address))) {
+      throw new AppError(400, "URL resolves to a private or local address");
+    }
+  } catch (err) {
+    if (err instanceof AppError) throw err;
+    // DNS lookup failed (NXDOMAIN, network error, etc.); let fetch handle it.
+  }
+
+  const res = await fetch(url, {
+    headers: { "User-Agent": "Mozilla/5.0 (compatible; Convos/1.0)" },
+    signal: AbortSignal.timeout(10_000),
+  });
+  if (!res.ok) {
+    throw new AppError(400, `Failed to fetch URL (${res.status})`);
+  }
+
+  const declaredLength = res.headers.get("content-length");
+  if (declaredLength && Number(declaredLength) > MAX_URL_RESPONSE_BYTES) {
+    throw new AppError(400, "Failed to fetch URL (response too large)");
+  }
+
+  // Stream the body with a size cap so a server lying about (or omitting)
+  // content-length can't exhaust memory.
+  const reader = res.body?.getReader();
+  let raw: string;
+  if (!reader) {
+    raw = await res.text();
+    if (raw.length > MAX_URL_RESPONSE_BYTES) {
+      throw new AppError(400, "Failed to fetch URL (response too large)");
+    }
+  } else {
+    const decoder = new TextDecoder();
+    let total = 0;
+    let result = "";
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        total += value.length;
+        if (total > MAX_URL_RESPONSE_BYTES) {
+          await reader.cancel();
+          throw new AppError(400, "Failed to fetch URL (response too large)");
+        }
+        result += decoder.decode(value, { stream: true });
+      }
+    } finally {
+      result += decoder.decode();
+    }
+    raw = result;
+  }
+
+  return { body: raw, contentType: res.headers.get("content-type") ?? "" };
 }
 
 /** Extract content with fallback chain: Twitter oEmbed → Exa → direct fetch. */
@@ -806,14 +960,7 @@ async function extractUrl(url: string): Promise<string> {
     );
   }
 
-  const res = await fetch(url, {
-    headers: { "User-Agent": "Mozilla/5.0 (compatible; Convos/1.0)" },
-    signal: AbortSignal.timeout(10_000),
-  });
-  if (!res.ok) throw new Error(`Failed to fetch URL (${res.status})`);
-
-  const raw = await res.text();
-  const ct = res.headers.get("content-type") || "";
+  const { body: raw, contentType: ct } = await safeFetchUserUrl(url);
   if (ct.includes("text/html")) {
     const text = raw
       .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, "")
@@ -821,7 +968,9 @@ async function extractUrl(url: string): Promise<string> {
       .replace(/<[^>]*>/g, " ")
       .replace(/\s+/g, " ")
       .trim();
-    if (!text || text.length < 50) throw new Error("Could not extract content");
+    if (!text || text.length < 50) {
+      throw new AppError(400, "Could not extract content");
+    }
     return text;
   }
   return raw;
@@ -899,19 +1048,19 @@ export async function generateTemplate(
       try {
         new URL(url);
       } catch {
-        throw new Error("Invalid URL");
+        throw new AppError(400, "Invalid URL");
       }
 
       // For GitHub repo URLs, first try to detect + pass through agent install
       // instructions. If found, short-circuit: the instructions IS the prompt.
-      const githubTemplate = await tryGithubPassthrough(url);
-      if (githubTemplate)
+      const githubBundle = await tryGithubPassthrough(url);
+      if (githubBundle)
         return {
-          template: githubTemplate,
+          template: githubBundle.template,
           metrics: {
             model: getModel(),
-            promptTokens: 0,
-            completionTokens: 0,
+            promptTokens: githubBundle.tokens.promptTokens,
+            completionTokens: githubBundle.tokens.completionTokens,
             latencyMs: Math.round(performance.now() - funcStart),
           },
         };
@@ -920,19 +1069,19 @@ export async function generateTemplate(
     }
 
     if (!extracted.trim()) {
-      throw new Error("No content extracted");
+      throw new AppError(400, "No content extracted");
     }
 
     // Before running full generation, classify the extracted text — if it's
     // already an agent install guide or skill definition, use it verbatim.
-    const passthroughTemplate = await tryContentPassthrough(extracted);
-    if (passthroughTemplate)
+    const passthroughBundle = await tryContentPassthrough(extracted);
+    if (passthroughBundle)
       return {
-        template: passthroughTemplate,
+        template: passthroughBundle.template,
         metrics: {
           model: getModel(),
-          promptTokens: 0,
-          completionTokens: 0,
+          promptTokens: passthroughBundle.tokens.promptTokens,
+          completionTokens: passthroughBundle.tokens.completionTokens,
           latencyMs: Math.round(performance.now() - funcStart),
         },
       };
@@ -1005,15 +1154,19 @@ export async function generateTemplate(
 
     if (!res.ok) {
       const body = await res.text();
-      throw new Error(
-        `OpenRouter API error ${res.status}: ${body.slice(0, 500)}`,
+      console.error(
+        "[templateGen] OpenRouter error:",
+        res.status,
+        body.slice(0, 500),
       );
+      throw new Error(`OpenRouter API error ${res.status}`);
     }
 
     data = (await res.json()) as any;
   } catch (err) {
     if (err instanceof Error && err.name === "AbortError") {
-      throw new Error(
+      throw new AppError(
+        504,
         `OpenRouter request timed out after ${OPENROUTER_TIMEOUT_MS}ms`,
       );
     }

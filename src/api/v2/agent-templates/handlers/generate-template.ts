@@ -49,6 +49,7 @@ import {
 } from "@/api/v2/agent-templates/services/templateGen";
 import { AGENT_API_KEY_HEADER } from "@/middleware/agentAuth";
 import { getEffectiveOwnerId } from "@/utils/auth-helpers";
+import { AppError } from "@/utils/errors";
 import { prisma } from "@/utils/prisma";
 import { buildSlug } from "@/utils/slug-hash";
 
@@ -248,6 +249,10 @@ const coalesceText = (
 // ---------------------------------------------------------------------------
 
 const errorStatus = (error: Error): number => {
+  // Prefer the typed AppError status when the service throws one.
+  if (error instanceof AppError) return error.statusCode;
+  // Legacy fallback: service may still throw plain Error in older paths.
+  // The matchers below are retained until every service throw is migrated.
   if (VALIDATION_ERROR_RE.test(error.message)) return 400;
   if (TIMEOUT_ERROR_RE.test(error.message)) return 504;
   return 502;
