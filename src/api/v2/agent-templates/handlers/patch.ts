@@ -6,7 +6,7 @@ import { prisma } from "@/utils/prisma";
 import { validateSlug } from "@/utils/reserved-slugs";
 
 const paramsSchema = z.object({
-  id: z.string().min(1),
+  id: z.string().uuid(),
 });
 
 const statusSchema = z.enum(["draft", "published", "unlisted", "archived"]);

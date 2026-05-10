@@ -148,6 +148,7 @@ describe("AgentTemplate schema", () => {
 
     expect(ownerForeignKey?.foreign_column).toBe("id");
     expect(ownerForeignKey?.foreign_table).toBe("Account");
+    expect(ownerForeignKey?.delete_rule).toBe("RESTRICT");
     expect(forkedFromForeignKey?.delete_rule).toBe("SET NULL");
     expect(forkedFromForeignKey?.foreign_column).toBe("id");
     expect(forkedFromForeignKey?.foreign_table).toBe("AgentTemplate");

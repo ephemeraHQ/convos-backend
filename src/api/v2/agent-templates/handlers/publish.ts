@@ -4,7 +4,7 @@ import { serializeAgentTemplate } from "@/api/v2/agent-templates/lib/serialize-a
 import { prisma } from "@/utils/prisma";
 
 const paramsSchema = z.object({
-  id: z.string().min(1),
+  id: z.string().uuid(),
 });
 
 const querySchema = z
