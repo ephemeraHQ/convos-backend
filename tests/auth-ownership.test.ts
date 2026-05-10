@@ -112,7 +112,11 @@ describe("Per-account ownership guards", () => {
   beforeAll(async () => {
     process.env.AGENT_ASSETS_API_KEY = validAgentAssetsApiKey;
     await ensureUserBAccount();
-    server = app.listen(4040);
+    await new Promise<void>((resolve) => {
+      server = app.listen(4040, () => {
+        resolve();
+      });
+    });
   });
 
   afterAll(async () => {
@@ -121,7 +125,11 @@ describe("Per-account ownership guards", () => {
     } else {
       process.env.AGENT_ASSETS_API_KEY = originalAgentAssetsApiKey;
     }
-    server.close();
+    await new Promise<void>((resolve) => {
+      server.close(() => {
+        resolve();
+      });
+    });
     await cleanupTestRows();
     await deleteAccounts();
   });

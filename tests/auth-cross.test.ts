@@ -113,7 +113,11 @@ describe("Cross-area auth flows", () => {
   beforeAll(async () => {
     process.env.AGENT_ASSETS_API_KEY = validAgentAssetsApiKey;
     await ensureUserBAccount();
-    server = app.listen(4042);
+    await new Promise<void>((resolve) => {
+      server = app.listen(4042, () => {
+        resolve();
+      });
+    });
   });
 
   afterAll(async () => {
@@ -122,7 +126,11 @@ describe("Cross-area auth flows", () => {
     } else {
       process.env.AGENT_ASSETS_API_KEY = originalAgentAssetsApiKey;
     }
-    server.close();
+    await new Promise<void>((resolve) => {
+      server.close(() => {
+        resolve();
+      });
+    });
     await cleanupTestRows();
     await deleteAccounts();
   });
