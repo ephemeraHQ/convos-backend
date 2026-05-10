@@ -107,8 +107,8 @@ describe("system-prompt module graceful error handling", () => {
     expect(source).toContain("try");
     expect(source).toContain("catch");
     expect(source).toContain("readFileSync");
-    // The catch block must be present (empty or with a comment)
-    expect(source).toMatch(/catch\s*\{/);
+    // The catch block must be present (with or without an error binding)
+    expect(source).toMatch(/catch\s*(?:\([^)]*\)\s*)?\{/);
 
     // Additionally, simulate the pattern: a try/catch that catches readFileSync
     // errors and sets the result to null
