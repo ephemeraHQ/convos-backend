@@ -13,7 +13,17 @@
  *
  * Test seam: `__resetProvisioningClientForTests(override | null)` mirrors the
  * `__resetGenerateTemplateForTests` / `__resetPostHogForTests` pattern.
+ *
+ * Timeouts: every fetch is wrapped in an AbortController with a 15s wallclock
+ * cap. Aborts surface as a typed timeout error; the timer is cleared in a
+ * finally block to avoid leaks.
  */
+
+// ---------------------------------------------------------------------------
+// Constants
+// ---------------------------------------------------------------------------
+
+const PROVISIONING_TIMEOUT_MS = 15_000;
 
 // ---------------------------------------------------------------------------
 // Types
@@ -125,6 +135,12 @@ export const ProvisioningClient = {
 
     const url = `${baseUrl}/api/assistants`;
 
+    const controller = new AbortController();
+    const timeoutId = setTimeout(
+      () => controller.abort(),
+      PROVISIONING_TIMEOUT_MS,
+    );
+
     let response: Response;
     try {
       response = await fetch(url, {
@@ -134,12 +150,20 @@ export const ProvisioningClient = {
           Authorization: `Bearer ${apiKey}`,
         },
         body: JSON.stringify(body),
+        signal: controller.signal,
       });
     } catch (err: unknown) {
+      if (err instanceof Error && err.name === "AbortError") {
+        throw new Error(
+          `ProvisioningClient: POST /api/assistants timed out after ${PROVISIONING_TIMEOUT_MS}ms`,
+        );
+      }
       const message = err instanceof Error ? err.message : String(err);
       throw new Error(
         `ProvisioningClient: network error calling POST /api/assistants — ${message}`,
       );
+    } finally {
+      clearTimeout(timeoutId);
     }
 
     if (!response.ok) {
@@ -171,6 +195,12 @@ export const ProvisioningClient = {
 
     const url = `${baseUrl}/api/assistants/${encodeURIComponent(instanceId)}`;
 
+    const controller = new AbortController();
+    const timeoutId = setTimeout(
+      () => controller.abort(),
+      PROVISIONING_TIMEOUT_MS,
+    );
+
     let response: Response;
     try {
       response = await fetch(url, {
@@ -178,12 +208,20 @@ export const ProvisioningClient = {
         headers: {
           Authorization: `Bearer ${apiKey}`,
         },
+        signal: controller.signal,
       });
     } catch (err: unknown) {
+      if (err instanceof Error && err.name === "AbortError") {
+        throw new Error(
+          `ProvisioningClient: GET /api/assistants/${instanceId} timed out after ${PROVISIONING_TIMEOUT_MS}ms`,
+        );
+      }
       const message = err instanceof Error ? err.message : String(err);
       throw new Error(
         `ProvisioningClient: network error calling GET /api/assistants/${instanceId} — ${message}`,
       );
+    } finally {
+      clearTimeout(timeoutId);
     }
 
     if (!response.ok) {

@@ -703,3 +703,251 @@ describe("ProvisioningClient — test seam", () => {
     expect(mockFetch).toHaveBeenCalledTimes(1);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Wallclock timeout — 15s AbortController on every fetch
+// ---------------------------------------------------------------------------
+
+describe("ProvisioningClient — wallclock timeout", () => {
+  test("createAssistant fetch is invoked with an AbortSignal", async () => {
+    setEnv();
+
+    let capturedSignal: AbortSignal | undefined;
+    mockFetch.mockImplementation((_input, init) => {
+      capturedSignal = init?.signal as AbortSignal | undefined;
+      return Promise.resolve(
+        new Response(JSON.stringify({ instanceId: "inst-1" }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      );
+    });
+
+    await ProvisioningClient.createAssistant({
+      name: "Test",
+      instructions: "Hi",
+      joinUrl: "xmtp:https://relay.example.com/join",
+    });
+
+    expect(capturedSignal).toBeInstanceOf(AbortSignal);
+  });
+
+  test("getAssistant fetch is invoked with an AbortSignal", async () => {
+    setEnv();
+
+    let capturedSignal: AbortSignal | undefined;
+    mockFetch.mockImplementation((_input, init) => {
+      capturedSignal = init?.signal as AbortSignal | undefined;
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({
+            instanceId: "inst-1",
+            joinStatus: "joined",
+            createdAt: "2025-01-01T00:00:00Z",
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      );
+    });
+
+    await ProvisioningClient.getAssistant("inst-1");
+
+    expect(capturedSignal).toBeInstanceOf(AbortSignal);
+  });
+
+  test("createAssistant AbortError surfaces as 'timed out after 15000ms'", async () => {
+    setEnv();
+
+    mockFetch.mockImplementation(() => {
+      const err = new Error("The operation was aborted");
+      err.name = "AbortError";
+      throw err;
+    });
+
+    try {
+      await ProvisioningClient.createAssistant({
+        name: "Test",
+        instructions: "Hi",
+        joinUrl: "xmtp:https://relay.example.com/join",
+      });
+      expect.unreachable("Should have thrown");
+    } catch (err: any) {
+      expect(err.message).toMatch(/timed out after 15000ms/i);
+    }
+  });
+
+  test("getAssistant AbortError surfaces as 'timed out after 15000ms'", async () => {
+    setEnv();
+
+    mockFetch.mockImplementation(() => {
+      const err = new Error("The operation was aborted");
+      err.name = "AbortError";
+      throw err;
+    });
+
+    try {
+      await ProvisioningClient.getAssistant("inst-1");
+      expect.unreachable("Should have thrown");
+    } catch (err: any) {
+      expect(err.message).toMatch(/timed out after 15000ms/i);
+    }
+  });
+
+  test("createAssistant clears the timeout timer on success (no leak)", async () => {
+    setEnv();
+
+    const realSetTimeout = globalThis.setTimeout;
+    const realClearTimeout = globalThis.clearTimeout;
+    let setCount = 0;
+    let clearCount = 0;
+    globalThis.setTimeout = ((fn: any, ms?: number, ...args: any[]) => {
+      setCount++;
+      return realSetTimeout(fn, ms, ...args);
+    }) as any;
+    globalThis.clearTimeout = ((id: any) => {
+      if (id !== undefined) clearCount++;
+      return realClearTimeout(id);
+    }) as any;
+
+    try {
+      mockFetch.mockImplementation(() =>
+        Promise.resolve(
+          new Response(JSON.stringify({ instanceId: "inst-1" }), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          }),
+        ),
+      );
+
+      await ProvisioningClient.createAssistant({
+        name: "Test",
+        instructions: "Hi",
+        joinUrl: "xmtp:https://relay.example.com/join",
+      });
+
+      expect(setCount).toBeGreaterThanOrEqual(1);
+      expect(clearCount).toBe(setCount);
+    } finally {
+      globalThis.setTimeout = realSetTimeout;
+      globalThis.clearTimeout = realClearTimeout;
+    }
+  });
+
+  test("createAssistant clears the timeout timer on AbortError (no leak)", async () => {
+    setEnv();
+
+    const realSetTimeout = globalThis.setTimeout;
+    const realClearTimeout = globalThis.clearTimeout;
+    let setCount = 0;
+    let clearCount = 0;
+    globalThis.setTimeout = ((fn: any, ms?: number, ...args: any[]) => {
+      setCount++;
+      return realSetTimeout(fn, ms, ...args);
+    }) as any;
+    globalThis.clearTimeout = ((id: any) => {
+      if (id !== undefined) clearCount++;
+      return realClearTimeout(id);
+    }) as any;
+
+    try {
+      mockFetch.mockImplementation(() => {
+        const err = new Error("The operation was aborted");
+        err.name = "AbortError";
+        throw err;
+      });
+
+      try {
+        await ProvisioningClient.createAssistant({
+          name: "Test",
+          instructions: "Hi",
+          joinUrl: "xmtp:https://relay.example.com/join",
+        });
+      } catch {
+        /* expected */
+      }
+
+      expect(setCount).toBeGreaterThanOrEqual(1);
+      expect(clearCount).toBe(setCount);
+    } finally {
+      globalThis.setTimeout = realSetTimeout;
+      globalThis.clearTimeout = realClearTimeout;
+    }
+  });
+
+  test("getAssistant clears the timeout timer on success (no leak)", async () => {
+    setEnv();
+
+    const realSetTimeout = globalThis.setTimeout;
+    const realClearTimeout = globalThis.clearTimeout;
+    let setCount = 0;
+    let clearCount = 0;
+    globalThis.setTimeout = ((fn: any, ms?: number, ...args: any[]) => {
+      setCount++;
+      return realSetTimeout(fn, ms, ...args);
+    }) as any;
+    globalThis.clearTimeout = ((id: any) => {
+      if (id !== undefined) clearCount++;
+      return realClearTimeout(id);
+    }) as any;
+
+    try {
+      mockFetch.mockImplementation(() =>
+        Promise.resolve(
+          new Response(
+            JSON.stringify({
+              instanceId: "inst-1",
+              joinStatus: "joined",
+              createdAt: "2025-01-01T00:00:00Z",
+            }),
+            { status: 200, headers: { "Content-Type": "application/json" } },
+          ),
+        ),
+      );
+
+      await ProvisioningClient.getAssistant("inst-1");
+
+      expect(setCount).toBeGreaterThanOrEqual(1);
+      expect(clearCount).toBe(setCount);
+    } finally {
+      globalThis.setTimeout = realSetTimeout;
+      globalThis.clearTimeout = realClearTimeout;
+    }
+  });
+
+  test("getAssistant clears the timeout timer on AbortError (no leak)", async () => {
+    setEnv();
+
+    const realSetTimeout = globalThis.setTimeout;
+    const realClearTimeout = globalThis.clearTimeout;
+    let setCount = 0;
+    let clearCount = 0;
+    globalThis.setTimeout = ((fn: any, ms?: number, ...args: any[]) => {
+      setCount++;
+      return realSetTimeout(fn, ms, ...args);
+    }) as any;
+    globalThis.clearTimeout = ((id: any) => {
+      if (id !== undefined) clearCount++;
+      return realClearTimeout(id);
+    }) as any;
+
+    try {
+      mockFetch.mockImplementation(() => {
+        const err = new Error("The operation was aborted");
+        err.name = "AbortError";
+        throw err;
+      });
+
+      try {
+        await ProvisioningClient.getAssistant("inst-1");
+      } catch {
+        /* expected */
+      }
+
+      expect(setCount).toBeGreaterThanOrEqual(1);
+      expect(clearCount).toBe(setCount);
+    } finally {
+      globalThis.setTimeout = realSetTimeout;
+      globalThis.clearTimeout = realClearTimeout;
+    }
+  });
+});
