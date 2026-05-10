@@ -34,6 +34,7 @@
  *
  * Error → status mapping (both modes):
  *   - Validation-class messages (Invalid URL|No content|Could not extract) → 400
+ *   - Upstream timeout messages (OpenRouter request timed out) → 504
  *   - All other rejections → 502
  */
 
@@ -63,6 +64,9 @@ const MAX_BASE64_LEN = 35_000_000;
  */
 const VALIDATION_ERROR_RE =
   /^(Invalid URL|No content extracted|Could not extract)/i;
+
+/** Regex matching upstream-timeout error messages that should map to 504. */
+const TIMEOUT_ERROR_RE = /^OpenRouter request timed out/i;
 
 // ---------------------------------------------------------------------------
 // Template persistence
@@ -242,8 +246,11 @@ const coalesceText = (
 // Error → status mapping
 // ---------------------------------------------------------------------------
 
-const errorStatus = (error: Error): number =>
-  VALIDATION_ERROR_RE.test(error.message) ? 400 : 502;
+const errorStatus = (error: Error): number => {
+  if (VALIDATION_ERROR_RE.test(error.message)) return 400;
+  if (TIMEOUT_ERROR_RE.test(error.message)) return 504;
+  return 502;
+};
 
 // ---------------------------------------------------------------------------
 // Handler

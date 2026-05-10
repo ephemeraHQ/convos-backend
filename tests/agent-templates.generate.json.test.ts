@@ -620,6 +620,15 @@ describe("POST /api/v2/agent-templates/generate (JSON mode)", () => {
     expect(body.error).toBeTruthy();
   });
 
+  test("OpenRouter timeout errors return 504", async () => {
+    mockReject(new Error("OpenRouter request timed out after 120000ms"));
+
+    const res = await postGenerate({ idea: "test" }, agentKeyHeaders());
+    expect(res.status).toBe(504);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toMatch(/timed out/i);
+  });
+
   test("BUILDER_OPENROUTER_API_KEY not configured returns 502", async () => {
     mockReject(new Error("BUILDER_OPENROUTER_API_KEY not configured"));
 

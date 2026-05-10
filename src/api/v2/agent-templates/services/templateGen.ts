@@ -27,6 +27,12 @@ import { SYSTEM_PROMPT } from "../lib/system-prompt";
 const MAX_CONTENT_LENGTH = 10_000;
 const DEFAULT_MODEL = "@preset/assistants-pro";
 
+// Wallclock cap for every OpenRouter call (selector, classifier, main).
+// Today both JSON and SSE handler modes share a single buffered completion,
+// so the same wallclock cap covers both. If the runtime ever streams chunks
+// from upstream, that path needs a separate per-chunk inactivity timer.
+const OPENROUTER_TIMEOUT_MS = 120_000;
+
 /** Read the model from env at call time so BUILDER_MODEL override works.
  *  Exported for the generate handler (needed for error-path PostHog metrics). */
 export function getModel(): string {
@@ -429,30 +435,50 @@ Rules:
 - If you're unsure whether content is "for agents" vs "source material about a topic", lean toward false. Better to fall back to generation than to pass through a human-oriented README.`;
 
   const t0 = performance.now();
-  const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      model: getModel(),
-      messages: [{ role: "user", content: selectorPrompt }],
-      temperature: 0.2,
-    }),
-  });
+  const controller = new AbortController();
+  const timeoutId = setTimeout(
+    () => controller.abort(),
+    OPENROUTER_TIMEOUT_MS,
+  );
+  let data: any;
+  try {
+    const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: getModel(),
+        messages: [{ role: "user", content: selectorPrompt }],
+        temperature: 0.2,
+      }),
+      signal: controller.signal,
+    });
 
-  if (!res.ok) {
-    const body = await res.text();
-    console.error(
-      "[templateGen] GitHub selector LLM error:",
-      res.status,
-      body.slice(0, 300),
-    );
-    return null;
+    if (!res.ok) {
+      const body = await res.text();
+      console.error(
+        "[templateGen] GitHub selector LLM error:",
+        res.status,
+        body.slice(0, 300),
+      );
+      return null;
+    }
+
+    data = (await res.json()) as any;
+  } catch (err) {
+    if (err instanceof Error && err.name === "AbortError") {
+      console.error(
+        `[templateGen] GitHub selector LLM timed out after ${OPENROUTER_TIMEOUT_MS}ms`,
+      );
+      return null;
+    }
+    throw err;
+  } finally {
+    clearTimeout(timeoutId);
   }
 
-  const data = (await res.json()) as any;
   console.log(
     `[templateGen] selectInstructions ok: model=${data?.model}, latencyMs=${Math.round(performance.now() - t0)}, prompt=${data?.usage?.prompt_tokens}, completion=${data?.usage?.completion_tokens}`,
   );
@@ -663,30 +689,50 @@ Rules:
 - The content must be READY-TO-USE as an agent prompt on its own — if it's merely ABOUT agents or references them in passing, that's false.`;
 
   const t0 = performance.now();
-  const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      model: getModel(),
-      messages: [{ role: "user", content: classifierPrompt }],
-      temperature: 0.2,
-    }),
-  });
+  const controller = new AbortController();
+  const timeoutId = setTimeout(
+    () => controller.abort(),
+    OPENROUTER_TIMEOUT_MS,
+  );
+  let data: any;
+  try {
+    const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: getModel(),
+        messages: [{ role: "user", content: classifierPrompt }],
+        temperature: 0.2,
+      }),
+      signal: controller.signal,
+    });
 
-  if (!res.ok) {
-    const body = await res.text();
-    console.error(
-      "[templateGen] Content classifier error:",
-      res.status,
-      body.slice(0, 300),
-    );
-    return null;
+    if (!res.ok) {
+      const body = await res.text();
+      console.error(
+        "[templateGen] Content classifier error:",
+        res.status,
+        body.slice(0, 300),
+      );
+      return null;
+    }
+
+    data = (await res.json()) as any;
+  } catch (err) {
+    if (err instanceof Error && err.name === "AbortError") {
+      console.error(
+        `[templateGen] Content classifier timed out after ${OPENROUTER_TIMEOUT_MS}ms`,
+      );
+      return null;
+    }
+    throw err;
+  } finally {
+    clearTimeout(timeoutId);
   }
 
-  const data = (await res.json()) as any;
   console.log(
     `[templateGen] classifyContent ok: model=${data?.model}, latencyMs=${Math.round(performance.now() - t0)}, prompt=${data?.usage?.prompt_tokens}, completion=${data?.usage?.completion_tokens}`,
   );
@@ -943,23 +989,41 @@ export async function generateTemplate(
   };
 
   const t0 = performance.now();
-  const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(reqBody),
-  });
+  const controller = new AbortController();
+  const timeoutId = setTimeout(
+    () => controller.abort(),
+    OPENROUTER_TIMEOUT_MS,
+  );
+  let data: any;
+  try {
+    const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(reqBody),
+      signal: controller.signal,
+    });
 
-  if (!res.ok) {
-    const body = await res.text();
-    throw new Error(
-      `OpenRouter API error ${res.status}: ${body.slice(0, 500)}`,
-    );
+    if (!res.ok) {
+      const body = await res.text();
+      throw new Error(
+        `OpenRouter API error ${res.status}: ${body.slice(0, 500)}`,
+      );
+    }
+
+    data = (await res.json()) as any;
+  } catch (err) {
+    if (err instanceof Error && err.name === "AbortError") {
+      throw new Error(
+        `OpenRouter request timed out after ${OPENROUTER_TIMEOUT_MS}ms`,
+      );
+    }
+    throw err;
+  } finally {
+    clearTimeout(timeoutId);
   }
-
-  const data = (await res.json()) as any;
   const latencyMs = Math.round(performance.now() - t0);
   const promptTokens = Number(data?.usage?.prompt_tokens ?? 0);
   const completionTokens = Number(data?.usage?.completion_tokens ?? 0);
