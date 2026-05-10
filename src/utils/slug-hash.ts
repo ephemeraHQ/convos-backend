@@ -1,8 +1,8 @@
 import crypto from "node:crypto";
 
+// 32-bit fingerprint encoded in base36 fits in 5 chars (5 * log2(36) ≈ 25.85 bits).
 const HASH_LEN = 5;
-// 32-bit fingerprint encoded in base36 fits in HASH_LEN chars (HASH_LEN * log2(36) ≈ 25.85 bits).
-const HASHED_SLUG_RE = new RegExp(`\\.[0-9a-z]{${HASH_LEN}}$`);
+const HASHED_SLUG_RE = /\.[0-9a-z]{5}$/;
 
 /**
  * Stable 5-char base36 hash derived from the agent ID. Used to suffix the
