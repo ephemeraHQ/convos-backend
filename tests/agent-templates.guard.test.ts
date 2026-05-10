@@ -49,18 +49,14 @@ const withServer = async (
   app.use(noRouteMiddleware);
 
   const server: Server = await new Promise((resolve, reject) => {
-    const startedServer = app.listen(0, () => {
+    const startedServer = app.listen(4050, () => {
       resolve(startedServer);
     });
     startedServer.once("error", reject);
   });
 
   try {
-    const address = server.address();
-    if (!address || typeof address === "string") {
-      throw new Error("Unable to determine server port");
-    }
-    await runAssertions(`http://127.0.0.1:${address.port}`);
+    await runAssertions("http://localhost:4050");
   } finally {
     await new Promise<void>((resolve) => {
       server.close(() => {

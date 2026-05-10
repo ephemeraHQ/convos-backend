@@ -47,16 +47,12 @@ type LocalsBody = {
 
 async function startTestServer(app: express.Application) {
   const server: Server = await new Promise((resolve, reject) => {
-    const s = app.listen(0, () => {
+    const s = app.listen(4051, () => {
       resolve(s);
     });
     s.once("error", reject);
   });
-  const address = server.address();
-  if (!address || typeof address === "string") {
-    throw new Error("Unable to determine server port");
-  }
-  return { server, baseURL: `http://127.0.0.1:${address.port}` };
+  return { server, baseURL: "http://localhost:4051" };
 }
 
 /**
