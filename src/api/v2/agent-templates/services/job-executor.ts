@@ -579,6 +579,22 @@ export async function executeCreateJob(jobId: string): Promise<void> {
     return;
   }
 
+  // Atomic claim: transition pending → generating in a single statement so
+  // that two concurrent invocations of executeCreateJob for the same jobId
+  // can never both run side effects (templateGen, PostHog, persistence,
+  // ProvisioningClient). The loser sees count === 0 and bails out before
+  // any logging or metrics fire.
+  const claimed = await prisma.createJob.updateMany({
+    where: { id: jobId, status: "pending" },
+    data: { status: "generating" },
+  });
+  if (claimed.count === 0) {
+    console.info(
+      `[job-executor] job ${jobId} already claimed/expired/cancelled; skipping`,
+    );
+    return;
+  }
+
   // Determine source from the job's source column
   const source: string = job.source;
 

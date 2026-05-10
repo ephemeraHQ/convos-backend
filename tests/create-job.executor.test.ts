@@ -1136,3 +1136,92 @@ describe("CreateJob Executor — Edge Cases", () => {
     }
   });
 });
+
+describe("CreateJob Executor — Atomic Claim", () => {
+  test("two concurrent invocations of executeCreateJob for the same jobId run side effects exactly once", async () => {
+    let templateGenInvocations = 0;
+    let provisioningCreateInvocations = 0;
+
+    __resetGenerateTemplateForTests(async (input) => {
+      templateGenInvocations += 1;
+      const inputObj = typeof input === "string" ? { text: input } : input;
+      templateGenCalls.push({
+        text: inputObj.text,
+        pdfBase64: inputObj.pdfBase64,
+        imageBase64: inputObj.imageBase64,
+        mimeType: inputObj.mimeType,
+      });
+      // Yield long enough that the second invocation, if not gated by the
+      // claim, would also reach templateGen before this resolves.
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      return {
+        template: MOCK_TEMPLATE,
+        metrics: DEFAULT_TEST_METRICS,
+      };
+    });
+
+    __resetProvisioningClientForTests({
+      createAssistant: (opts) => {
+        provisioningCreateInvocations += 1;
+        provisioningCreateCalls.push(opts);
+        return Promise.resolve({ instanceId: "inst-claim-test" });
+      },
+      getAssistant: (instanceId) =>
+        Promise.resolve({
+          instanceId,
+          joinStatus: "joined" as const,
+          inboxId: "inbox-claim",
+          conversationId: "conv-claim",
+          createdAt: new Date().toISOString(),
+        }),
+    });
+
+    const { executeCreateJob } = await import(
+      "../src/api/v2/agent-templates/services/job-executor"
+    );
+
+    const jobId = await createTestJob();
+
+    const [a, b] = await Promise.allSettled([
+      executeCreateJob(jobId),
+      executeCreateJob(jobId),
+    ]);
+    expect(a.status).toBe("fulfilled");
+    expect(b.status).toBe("fulfilled");
+
+    expect(templateGenInvocations).toBe(1);
+    expect(provisioningCreateInvocations).toBe(1);
+
+    const job = await getJobStatus(jobId);
+    expect(job!.status).toBe("done");
+
+    const templates = await prisma.agentTemplate.findMany({
+      where: { ownerAccountId: ADMIN_ACCOUNT_ID },
+    });
+    expect(templates.length).toBe(1);
+  });
+
+  test("a second invocation against an already-claimed job returns without firing side effects", async () => {
+    installHappyPathMocks();
+    const { executeCreateJob } = await import(
+      "../src/api/v2/agent-templates/services/job-executor"
+    );
+
+    // Pre-claim the job by setting status to "generating" directly. A second
+    // invocation must not re-fire templateGen, ProvisioningClient, or any
+    // metering side effects.
+    const jobId = await createTestJob();
+    await prisma.createJob.update({
+      where: { id: jobId },
+      data: { status: "generating" },
+    });
+
+    await executeCreateJob(jobId);
+
+    expect(templateGenCalls.length).toBe(0);
+    expect(provisioningCreateCalls.length).toBe(0);
+
+    const job = await getJobStatus(jobId);
+    expect(job!.status).toBe("generating");
+  });
+});
