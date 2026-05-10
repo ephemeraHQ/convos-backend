@@ -3,7 +3,7 @@ CREATE TYPE "CreateJobStatus" AS ENUM ('pending', 'generating', 'provisioning', 
 
 -- CreateTable
 CREATE TABLE "CreateJob" (
-    "id" TEXT NOT NULL DEFAULT gen_random_uuid()::text,
+    "id" UUID NOT NULL DEFAULT gen_random_uuid(),
     "status" "CreateJobStatus" NOT NULL DEFAULT 'pending',
     "input" TEXT NOT NULL,
     "ownerAccountId" UUID NOT NULL,

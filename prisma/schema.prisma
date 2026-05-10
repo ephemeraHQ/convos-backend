@@ -180,7 +180,7 @@ enum CreateJobSource {
 }
 
 model CreateJob {
-  id                   String          @id @default(uuid())
+  id                   String          @id @default(uuid()) @db.Uuid
   status               CreateJobStatus @default(value: pending)
   source               CreateJobSource @default(value: app)
   input                String

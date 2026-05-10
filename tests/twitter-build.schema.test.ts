@@ -76,7 +76,7 @@ describe("Twitter-build schema changes", () => {
     expect(result[0].source).toBe("app");
 
     // Cleanup
-    await prisma.$executeRaw`DELETE FROM "CreateJob" WHERE id = ${result[0].id}`;
+    await prisma.$executeRaw`DELETE FROM "CreateJob" WHERE id = ${result[0].id}::uuid`;
   });
 
   // ── VAL-TB-SCHEMA-003: CreateJob.metadata column is nullable JSON text ──
@@ -98,7 +98,7 @@ describe("Twitter-build schema changes", () => {
     expect(result[0].metadata).toBeNull();
 
     // Cleanup
-    await prisma.$executeRaw`DELETE FROM "CreateJob" WHERE id = ${result[0].id}`;
+    await prisma.$executeRaw`DELETE FROM "CreateJob" WHERE id = ${result[0].id}::uuid`;
   });
 
   test("metadata column accepts valid JSON strings", async () => {
@@ -124,7 +124,7 @@ describe("Twitter-build schema changes", () => {
     expect(parsed.tweetId).toBe("1234567890");
 
     // Cleanup
-    await prisma.$executeRaw`DELETE FROM "CreateJob" WHERE id = ${result[0].id}`;
+    await prisma.$executeRaw`DELETE FROM "CreateJob" WHERE id = ${result[0].id}::uuid`;
   });
 
   // ── VAL-TB-SCHEMA-004: CreateJob.joinUrl is nullable ──
@@ -146,7 +146,7 @@ describe("Twitter-build schema changes", () => {
     expect(result[0].joinUrl).toBeNull();
 
     // Cleanup
-    await prisma.$executeRaw`DELETE FROM "CreateJob" WHERE id = ${result[0].id}`;
+    await prisma.$executeRaw`DELETE FROM "CreateJob" WHERE id = ${result[0].id}::uuid`;
   });
 
   // ── VAL-TB-SCHEMA-005: CreateJob.provisioningInstanceId, conversationId, inboxId are nullable ──
@@ -177,7 +177,7 @@ describe("Twitter-build schema changes", () => {
     expect(result[0].inboxId).toBeNull();
 
     // Cleanup
-    await prisma.$executeRaw`DELETE FROM "CreateJob" WHERE id = ${result[0].id}`;
+    await prisma.$executeRaw`DELETE FROM "CreateJob" WHERE id = ${result[0].id}::uuid`;
   });
 
   // ── VAL-TB-SCHEMA-006: Migration adds source + metadata columns and adds nullable joinUrl/instance columns ──
@@ -256,7 +256,7 @@ describe("Twitter-build schema changes", () => {
     expect(Number(nullRows[0].count)).toBe(0);
 
     // Cleanup
-    await prisma.$executeRaw`DELETE FROM "CreateJob" WHERE id = ${result[0].id}`;
+    await prisma.$executeRaw`DELETE FROM "CreateJob" WHERE id = ${result[0].id}::uuid`;
   });
 
   // ── Additional: CreateJobSource CHECK constraint rejects invalid values ──
@@ -299,7 +299,7 @@ describe("Twitter-build schema changes", () => {
 
     // Cleanup
     for (const id of insertedIds) {
-      await prisma.$executeRaw`DELETE FROM "CreateJob" WHERE id = ${id}`;
+      await prisma.$executeRaw`DELETE FROM "CreateJob" WHERE id = ${id}::uuid`;
     }
   });
 
@@ -336,6 +336,6 @@ describe("Twitter-build schema changes", () => {
     expect(result[0].inboxId).toBeNull();
 
     // Cleanup
-    await prisma.$executeRaw`DELETE FROM "CreateJob" WHERE id = ${result[0].id}`;
+    await prisma.$executeRaw`DELETE FROM "CreateJob" WHERE id = ${result[0].id}::uuid`;
   });
 });

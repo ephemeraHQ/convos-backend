@@ -185,8 +185,8 @@ describe("CreateJob schema", () => {
       /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
     );
 
-    // Cleanup (id is TEXT, no ::uuid cast)
-    await prisma.$executeRaw`DELETE FROM "CreateJob" WHERE id = ${id}`;
+    // Cleanup
+    await prisma.$executeRaw`DELETE FROM "CreateJob" WHERE id = ${id}::uuid`;
   });
 
   // ── VAL-CJ-SCHEMA-007: CreateJob.status defaults to "pending" on insert ──
@@ -205,7 +205,7 @@ describe("CreateJob schema", () => {
     expect(result[0].status).toBe("pending");
 
     // Cleanup
-    await prisma.$executeRaw`DELETE FROM "CreateJob" WHERE id = ${result[0].id}`;
+    await prisma.$executeRaw`DELETE FROM "CreateJob" WHERE id = ${result[0].id}::uuid`;
   });
 
   // ── VAL-CJ-SCHEMA-008: CreateJob.status CHECK constraint rejects invalid values ──
@@ -247,7 +247,7 @@ describe("CreateJob schema", () => {
     expect(result[0].error).toBeNull();
 
     // Cleanup
-    await prisma.$executeRaw`DELETE FROM "CreateJob" WHERE id = ${result[0].id}`;
+    await prisma.$executeRaw`DELETE FROM "CreateJob" WHERE id = ${result[0].id}::uuid`;
   });
 
   // ── VAL-CJ-SCHEMA-010: CreateJob.expiresAt is nullable ──
@@ -266,7 +266,7 @@ describe("CreateJob schema", () => {
     expect(result[0].expiresAt).toBeNull();
 
     // Cleanup
-    await prisma.$executeRaw`DELETE FROM "CreateJob" WHERE id = ${result[0].id}`;
+    await prisma.$executeRaw`DELETE FROM "CreateJob" WHERE id = ${result[0].id}::uuid`;
   });
 
   // ── FK constraint: rejects ownerAccountId that does not exist ──
