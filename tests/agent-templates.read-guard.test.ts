@@ -95,14 +95,20 @@ const withGuardedServer = async (
   app.use("/api/v2", buildGuardedV2Router());
   app.use(noRouteMiddleware);
 
-  const server: Server = await new Promise((resolve) => {
-    const startedServer = app.listen(4059, () => {
+  const server: Server = await new Promise((resolve, reject) => {
+    const startedServer = app.listen(0, () => {
       resolve(startedServer);
     });
+    startedServer.once("error", reject);
   });
+  const address = server.address();
+  if (!address || typeof address === "string") {
+    throw new Error("Unable to determine server port");
+  }
+  const baseURL = `http://localhost:${address.port}`;
 
   try {
-    await runAssertions("http://localhost:4059");
+    await runAssertions(baseURL);
   } finally {
     await new Promise<void>((resolve) => {
       server.close(() => {
