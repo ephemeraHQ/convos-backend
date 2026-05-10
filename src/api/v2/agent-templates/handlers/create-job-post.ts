@@ -292,7 +292,9 @@ async function handleTwitterSource(req: Request, res: Response) {
     let errorMessage = "Invalid request body";
     if (firstIssue.path.includes("metadata")) {
       const metaPath = firstIssue.path.slice(1).join(".");
-      if (metaPath === "idea") {
+      if (metaPath === "") {
+        errorMessage = "metadata is required";
+      } else if (metaPath === "idea") {
         errorMessage = "idea is required in metadata";
       } else if (metaPath === "twitterHandle") {
         errorMessage = "twitterHandle is required in metadata";

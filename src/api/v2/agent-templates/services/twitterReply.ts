@@ -110,6 +110,12 @@ export function buildDeterministicFallback(input: ReplyInput): string {
 
   const availableForSentence = MAX_REPLY_LENGTH - prefix.length - suffix.length;
 
+  // If the prefix + suffix already exceeds the limit, the URL must remain
+  // intact for the reply to be useful, so fall back to the minimal form.
+  if (availableForSentence <= 0) {
+    return buildMinimalFallback(input);
+  }
+
   let sentence = firstSentence;
   if (sentence.length > availableForSentence) {
     sentence = sentence
@@ -181,28 +187,21 @@ function validateLlmReply(
   const trimmed = rawReply.trim();
   if (!trimmed) return null;
 
-  // Ensure it starts with @handle (or the handle without @)
-  const _normalizedHandle = handle.startsWith("@") ? handle : `@${handle}`;
-  const handleNoAt = _normalizedHandle.slice(1);
+  const normalizedHandle = handle.startsWith("@") ? handle : `@${handle}`;
 
-  if (
-    !trimmed.startsWith(_normalizedHandle) &&
-    !trimmed.startsWith(handleNoAt)
-  ) {
-    // The LLM reply doesn't start with the expected handle
+  if (!trimmed.startsWith(normalizedHandle)) {
     return null;
   }
 
-  // Truncate to 270 chars if needed
+  // Reject (rather than truncate) replies that exceed the limit. Truncation
+  // can cut the URL mid-string and ship a broken link; the deterministic
+  // fallback is short enough to always preserve the URL.
   if (trimmed.length > MAX_REPLY_LENGTH) {
-    return trimmed.slice(0, MAX_REPLY_LENGTH);
+    return null;
   }
 
-  // Accept the reply if it contains the URL or at least the handle
-  if (!trimmed.includes(url) && !trimmed.includes(_normalizedHandle)) {
-    // If URL is missing but handle is present, still accept —
-    // the URL might have been shortened by the model
-    return trimmed;
+  if (!trimmed.includes(url)) {
+    return null;
   }
 
   return trimmed;
