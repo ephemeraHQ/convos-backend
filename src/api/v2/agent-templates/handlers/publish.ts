@@ -58,21 +58,34 @@ export async function publishHandler(req: Request, res: Response) {
       return;
     }
 
-    const updated =
-      template.firstPublishedAt === null
-        ? await prisma.agentTemplate.update({
-            where: { id: template.id },
-            data: {
-              firstPublishedAt: new Date(),
-              status: parsedQuery.data.status ?? "published",
-            },
-          })
-        : await prisma.agentTemplate.update({
-            where: { id: template.id },
-            data: {
-              version: { increment: 1 },
-            },
-          });
+    // First-publish path is atomic via WHERE-pinned updateMany: it only
+    // succeeds if firstPublishedAt is still null at write time, so two
+    // concurrent first-publishes can't both initialize the timestamp.
+    const firstPublishResult = await prisma.agentTemplate.updateMany({
+      where: { id: template.id, firstPublishedAt: null },
+      data: {
+        firstPublishedAt: new Date(),
+        status: parsedQuery.data.status ?? "published",
+      },
+    });
+
+    if (firstPublishResult.count === 0) {
+      // Already published (or row deleted). Re-publish atomically — only
+      // matches when firstPublishedAt is non-null, so we won't accidentally
+      // overlap with the first-publish branch.
+      const repubResult = await prisma.agentTemplate.updateMany({
+        where: { id: template.id, firstPublishedAt: { not: null } },
+        data: { version: { increment: 1 } },
+      });
+      if (repubResult.count === 0) {
+        res.status(404).json({ error: "Agent template not found" });
+        return;
+      }
+    }
+
+    const updated = await prisma.agentTemplate.findUniqueOrThrow({
+      where: { id: template.id },
+    });
 
     res.status(200).json(serializeAgentTemplate(updated));
   } catch (error) {

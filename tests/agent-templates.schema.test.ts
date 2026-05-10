@@ -8,9 +8,9 @@ const schema = readFileSync(
   "utf8",
 );
 
-const getSchemaBlock = (kind: "enum" | "model", name: string) => {
+const getSchemaBlock = (args: { kind: "enum" | "model"; name: string }) => {
   const match = schema.match(
-    new RegExp(`${kind}\\s+${name}\\s+\\{([\\s\\S]*?)\\n\\}`),
+    new RegExp(`${args.kind}\\s+${args.name}\\s+\\{([\\s\\S]*?)\\n\\}`),
   );
 
   return match?.[1] ?? "";
@@ -18,7 +18,10 @@ const getSchemaBlock = (kind: "enum" | "model", name: string) => {
 
 describe("AgentTemplate schema", () => {
   test("declares PublishStatus enum and Account.agentTemplates relation", () => {
-    const publishStatusBlock = getSchemaBlock("enum", "PublishStatus");
+    const publishStatusBlock = getSchemaBlock({
+      kind: "enum",
+      name: "PublishStatus",
+    });
     const publishStatusValues = publishStatusBlock.split(/\s+/).filter(Boolean);
 
     expect(publishStatusValues).toEqual([
@@ -28,12 +31,15 @@ describe("AgentTemplate schema", () => {
       "archived",
     ]);
 
-    const accountBlock = getSchemaBlock("model", "Account");
+    const accountBlock = getSchemaBlock({ kind: "model", name: "Account" });
     expect(accountBlock).toMatch(/\bagentTemplates\s+AgentTemplate\[\]/);
   });
 
   test("declares AgentTemplate fields, relations, and all six required indexes", () => {
-    const agentTemplateBlock = getSchemaBlock("model", "AgentTemplate");
+    const agentTemplateBlock = getSchemaBlock({
+      kind: "model",
+      name: "AgentTemplate",
+    });
 
     const requiredFields = [
       /\bid\s+String\s+@id\s+@default\(uuid\(\)\)\s+@db\.Uuid\b/,

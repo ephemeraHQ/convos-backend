@@ -542,6 +542,11 @@ describe("Agent template patch endpoint", () => {
 
     const successes = results.filter((r) => r.response.status === 200);
     const conflicts = results.filter((r) => r.response.status === 409);
+    // Each handler reads its own snapshot before the WHERE-pinned write, so
+    // multiple PATCHes can succeed when their reads observe different
+    // committed states. The invariant: every response is either a clean 200
+    // or a TEMPLATE_MODIFIED 409, and at least one peer wins.
+    expect(successes.length).toBeGreaterThanOrEqual(1);
     expect(successes.length + conflicts.length).toBe(results.length);
     for (const conflict of conflicts) {
       expect(conflict.body).toMatchObject({
