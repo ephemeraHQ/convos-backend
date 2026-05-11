@@ -158,7 +158,10 @@ describe("CreateJob schema", () => {
     `;
 
     const indexNames = indexes.map((idx) => idx.indexname).sort();
-    expect(indexNames).toEqual(["CreateJob_status_createdAt_idx"]);
+    expect(indexNames).toEqual([
+      "CreateJob_ownerAccountId_createdAt_idx",
+      "CreateJob_status_createdAt_idx",
+    ]);
 
     const indexDefinitions = indexes.map((idx) =>
       idx.indexdef.replace(/\s+/g, " "),
@@ -166,6 +169,11 @@ describe("CreateJob schema", () => {
 
     expect(
       indexDefinitions.some((def) => def.includes('(status, "createdAt")')),
+    ).toBe(true);
+    expect(
+      indexDefinitions.some((def) =>
+        def.includes('("ownerAccountId", "createdAt")'),
+      ),
     ).toBe(true);
   });
 

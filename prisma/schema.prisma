@@ -199,4 +199,5 @@ model CreateJob {
   owner Account @relation(fields: [ownerAccountId], references: [id])
 
   @@index([status, createdAt])
+  @@index([ownerAccountId, createdAt])
 }

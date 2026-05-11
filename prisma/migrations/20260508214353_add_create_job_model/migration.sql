@@ -19,5 +19,8 @@ CREATE TABLE "CreateJob" (
 -- CreateIndex
 CREATE INDEX "CreateJob_status_createdAt_idx" ON "CreateJob"("status", "createdAt");
 
+-- CreateIndex
+CREATE INDEX "CreateJob_ownerAccountId_createdAt_idx" ON "CreateJob"("ownerAccountId", "createdAt");
+
 -- AddForeignKey
 ALTER TABLE "CreateJob" ADD CONSTRAINT "CreateJob_ownerAccountId_fkey" FOREIGN KEY ("ownerAccountId") REFERENCES "Account"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
