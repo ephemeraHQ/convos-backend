@@ -55,6 +55,14 @@ write_summary() {
 
 on_exit() {
   local code=$?
+  # Best-effort restore. Phase 1 flips app_attest_enabled=false so the demo can
+  # exercise auth without AppCheck. If the demo is Ctrl-C'd mid-run the next
+  # `bun dev` would otherwise start with AppCheck disabled. Errors are absorbed:
+  # psql may be missing, DB may be down, row may not exist — none of that should
+  # prevent the trap from running write_summary and cleaning TMP.
+  if declare -F psql_exec >/dev/null 2>&1; then
+    psql_exec "UPDATE \"RuntimeConfig\" SET value='true', \"updatedAt\"=now() WHERE key='app_attest_enabled';" >/dev/null 2>&1 || true
+  fi
   write_summary || true
   if [[ -n "$TMP" && -d "$TMP" ]]; then
     rm -rf "$TMP"
@@ -145,9 +153,11 @@ EOF
 phase0_preflight() {
   emit "## Phase 0 — preflight"
 
-  # Production-safety guard
-  if [[ "${XMTP_ENV:-}" == "production" ]]; then
-    die "XMTP_ENV=production — refusing to run demo against production"
+  # Production-safety guard (case-insensitive; also rejects "prod").
+  local xmtp_env_lc="${XMTP_ENV:-}"
+  xmtp_env_lc="${xmtp_env_lc,,}"
+  if [[ "$xmtp_env_lc" == "production" || "$xmtp_env_lc" == "prod" ]]; then
+    die "XMTP_ENV=$XMTP_ENV — refusing to run demo against production"
   fi
 
   # Postgres
