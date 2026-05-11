@@ -73,6 +73,14 @@ trap on_exit EXIT
 die() { echo "❌ preflight failed: $1" >&2; exit 1; }
 warn() { echo "⚠️  $1" >&2; }
 
+extract_nonce_from_cookie_jar() {
+  # Reads cookie jar (Netscape format), extracts the raw nonce (after the dot in <hmac>.<nonce>).
+  local jar="$1"
+  local cookie_value
+  cookie_value=$(awk '$6 == "__Host-convos_nonce" {print $7}' "$jar")
+  printf '%s' "${cookie_value##*.}"
+}
+
 start_runbook() {
   cat > "$RUNBOOK" <<EOF
 # Local end-to-end auth demo
@@ -170,6 +178,69 @@ phase1_setup() {
   emit "Tmp directory for cookie jars: \`$TMP\`."
 }
 
+phase2_happy_path() {
+  emit "## Phase 2 — happy path"
+
+  local jar="$TMP/cookies.happy.txt"
+
+  # Step 1 — issue nonce.
+  run_curl "Step 1 — issue nonce" \
+    -X POST "$BASE_URL/api/v2/auth/nonce" \
+    -c "$jar"
+  assert_status "happy/nonce" 200 "$LAST_STATUS" || return 1
+
+  # Step 2 — sign SIWE.
+  local nonce
+  nonce=$(extract_nonce_from_cookie_jar "$jar")
+  assert_match "happy/nonce-shape" '^[a-f0-9]{64}$' "$nonce" || return 1
+
+  emit "**Step 2 — sign SIWE off-line**"
+  emit_code "bun run dev/scripts/sign-siwe.ts --nonce $nonce"
+  local siwe_json
+  siwe_json=$(bun run "$SCRIPT_DIR/sign-siwe.ts" --nonce "$nonce")
+  emit_code_block "json" "$siwe_json"
+
+  # Step 3 — exchange for JWT.
+  local body
+  body=$(jq -nc --argjson siwe "$siwe_json" --arg deviceId "${DEMO_DEVICE_PREFIX}dev-1" \
+    '{deviceId: $deviceId, siwe: $siwe}')
+
+  run_curl "Step 3 — exchange for JWT" \
+    -X POST "$BASE_URL/api/v2/auth/token" \
+    -b "$jar" \
+    -H "Content-Type: application/json" \
+    -d "$body"
+  assert_status "happy/token" 200 "$LAST_STATUS" || return 1
+
+  local jwt
+  jwt=$(echo "$LAST_BODY" | jq -r '.token')
+  emit "**JWT payload decoded:**"
+  emit_code_block "json" "$(decode_jwt_payload "$jwt")"
+
+  local account_id
+  account_id=$(decode_jwt_payload "$jwt" | jq -r '.accountId')
+  assert_match "happy/jwt-accountId-uuid" \
+    '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' "$account_id" || return 1
+
+  # Step 4 — probe /account-auth-check.
+  run_curl "Step 4 — probe /account-auth-check" \
+    -X GET "$BASE_URL/api/v2/account-auth-check" \
+    -H "X-Convos-AuthToken: $jwt"
+  assert_status "happy/account-auth-check" 200 "$LAST_STATUS" || return 1
+  assert_json_eq "happy/account-auth-check-body" '.success' 'true' "$LAST_BODY" || return 1
+
+  # Step 5 — probe /auth-check (legacy auth, no requireAccount).
+  run_curl "Step 5 — probe /auth-check" \
+    -X GET "$BASE_URL/api/v2/auth-check" \
+    -H "X-Convos-AuthToken: $jwt"
+  assert_status "happy/auth-check" 200 "$LAST_STATUS" || return 1
+
+  # Step 6 — verify DB state.
+  assert_psql_count "happy/account-count" "Account" 1 || return 1
+  assert_psql_count "happy/auth-method-count" "AuthMethod" 1 || return 1
+  assert_psql_count "happy/auth-nonce-count" "AuthNonce" 0 || return 1
+}
+
 # --- main ---------------------------------------------------------------------
 
 main() {
@@ -179,8 +250,7 @@ main() {
   start_runbook
   phase0_preflight
   phase1_setup
-
-  # TODO subsequent tasks add phase2..phase7 here
+  phase2_happy_path
 }
 
 main "$@"
