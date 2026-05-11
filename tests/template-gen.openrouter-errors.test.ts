@@ -80,6 +80,33 @@ function mockFetch(input: any, init?: RequestInit): Response {
   );
 }
 
+/** Install a fetch mock that returns the given status + error message for
+ *  OpenRouter and a 200 stub for any other URL. */
+function mockOpenRouterError(status: number, message: string) {
+  const customFetch = (input: any, init?: any) => {
+    const url =
+      typeof input === "string"
+        ? input
+        : input instanceof URL
+          ? input.toString()
+          : input.url;
+    capturedRequests.push({
+      url,
+      method: init?.method || "GET",
+      headers: {},
+      body: null,
+    });
+    if (url === OPENROUTER_URL) {
+      return new Response(JSON.stringify({ error: { message } }), {
+        status,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+    return new Response("{}", { status: 200 });
+  };
+  globalThis.fetch = customFetch as any;
+}
+
 describe("templateGen service — OpenRouter error handling", () => {
   let generateTemplate: typeof import("@/api/v2/agent-templates/services/templateGen").generateTemplate;
 
@@ -105,29 +132,7 @@ describe("templateGen service — OpenRouter error handling", () => {
     const mod = await import("@/api/v2/agent-templates/services/templateGen");
     generateTemplate = mod.generateTemplate;
 
-    // Override fetch to return 500 for OpenRouter calls
-    const customFetch = (input: any, init?: any) => {
-      const url =
-        typeof input === "string"
-          ? input
-          : input instanceof URL
-            ? input.toString()
-            : input.url;
-      capturedRequests.push({
-        url,
-        method: init?.method || "GET",
-        headers: {},
-        body: null,
-      });
-      if (url === OPENROUTER_URL) {
-        return new Response(
-          JSON.stringify({ error: { message: "Internal server error" } }),
-          { status: 500, headers: { "Content-Type": "application/json" } },
-        );
-      }
-      return new Response("{}", { status: 200 });
-    };
-    globalThis.fetch = customFetch as any;
+    mockOpenRouterError(500, "Internal server error");
 
     await expect(generateTemplate({ text: "Build me a bot" })).rejects.toThrow(
       /OpenRouter API error 500/,
@@ -138,22 +143,7 @@ describe("templateGen service — OpenRouter error handling", () => {
     const mod = await import("@/api/v2/agent-templates/services/templateGen");
     generateTemplate = mod.generateTemplate;
 
-    const customFetch = (input: any, init?: any) => {
-      const url =
-        typeof input === "string"
-          ? input
-          : input instanceof URL
-            ? input.toString()
-            : input.url;
-      if (url === OPENROUTER_URL) {
-        return new Response(
-          JSON.stringify({ error: { message: "Rate limited" } }),
-          { status: 429, headers: { "Content-Type": "application/json" } },
-        );
-      }
-      return new Response("{}", { status: 200 });
-    };
-    globalThis.fetch = customFetch as any;
+    mockOpenRouterError(429, "Rate limited");
 
     await expect(generateTemplate({ text: "Build me a bot" })).rejects.toThrow(
       /OpenRouter API error 429/,
@@ -164,22 +154,7 @@ describe("templateGen service — OpenRouter error handling", () => {
     const mod = await import("@/api/v2/agent-templates/services/templateGen");
     generateTemplate = mod.generateTemplate;
 
-    const customFetch = (input: any, init?: any) => {
-      const url =
-        typeof input === "string"
-          ? input
-          : input instanceof URL
-            ? input.toString()
-            : input.url;
-      if (url === OPENROUTER_URL) {
-        return new Response(
-          JSON.stringify({ error: { message: "Invalid API key" } }),
-          { status: 401, headers: { "Content-Type": "application/json" } },
-        );
-      }
-      return new Response("{}", { status: 200 });
-    };
-    globalThis.fetch = customFetch as any;
+    mockOpenRouterError(401, "Invalid API key");
 
     await expect(generateTemplate({ text: "Build me a bot" })).rejects.toThrow(
       /OpenRouter API error 401/,

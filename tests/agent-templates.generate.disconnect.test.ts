@@ -243,7 +243,11 @@ describe("POST /api/v2/agent-templates/generate SSE client disconnect", () => {
   // VAL-M3-DISCONNECT-003: No resource leak after abort (clearInterval runs)
   // -----------------------------------------------------------------------
   test("active handles return to baseline after client abort + settlement", async () => {
-    // Capture baseline active handles
+    // _getActiveHandles is a private Node/Bun API used here purely for leak
+    // detection — there's no stable public equivalent. If this test starts
+    // flaking after a runtime upgrade, the handle-counting API may have
+    // changed; reach for `process.getActiveResourcesInfo()` (Node ≥17) as
+    // a candidate replacement.
     const baselineHandles = (process as any)._getActiveHandles()
       .length as number;
 
