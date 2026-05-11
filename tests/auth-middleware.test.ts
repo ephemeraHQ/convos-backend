@@ -236,8 +236,8 @@ describe("getEffectiveOwnerId utility", () => {
   });
 });
 
-describe("requireAccount chained on agent-templates write routes", () => {
-  test("router source chains requireAccount on all write routes", () => {
+describe("requireAccount chained on every agent-templates route", () => {
+  test("router source chains requireAccount on read and write routes", () => {
     const source = readFileSync(
       new URL(
         "../src/api/v2/agent-templates/agent-templates.router.ts",
@@ -250,17 +250,18 @@ describe("requireAccount chained on agent-templates write routes", () => {
     expect(source).toContain("requireAccount");
     expect(source).toContain('from "@/middleware/auth"');
 
-    // Check that requireAccount appears after authOrAgentApiKeyAuth on write routes
-    // The pattern should be: authOrAgentApiKeyAuth, requireAccount, handler
+    // Every route on this router requires an account, so the chain is always
+    // `authOrAgentApiKeyAuth, requireAccount, handler`. No public discovery
+    // surface — the unauth list/detail branch was removed.
     const requireAccountCount = (source.match(/requireAccount/g) ?? []).length;
 
-    // 6 write routes (POST, POST /generate, POST /create-job, PATCH, DELETE, PUBLISH)
-    // + 1 read route that requires account (GET /create-job/:jobId)
-    // + 1 import = 8 occurrences
-    expect(requireAccountCount).toBe(8);
+    // 6 write routes (POST, POST /generate, POST /create-job, PATCH, DELETE,
+    // POST /:id/publish) + 3 read routes (GET /, GET /:idOrHashedSlug,
+    // GET /create-job/:jobId) + 1 import = 10 occurrences.
+    expect(requireAccountCount).toBe(10);
 
-    // Verify read routes do NOT have requireAccount
-    expect(source).not.toContain("requireAccount, listHandler");
-    expect(source).not.toContain("requireAccount, detailHandler");
+    // Read routes now DO have requireAccount chained.
+    expect(source).toContain("requireAccount,\n  listHandler");
+    expect(source).toContain("requireAccount,\n  detailHandler");
   });
 });

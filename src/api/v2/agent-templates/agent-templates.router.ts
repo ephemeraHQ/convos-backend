@@ -1,8 +1,5 @@
 import { Router } from "express";
-import {
-  authOrAgentApiKeyAuth,
-  optionalAuthOrAgentApiKeyAuth,
-} from "@/middleware/agentAuth";
+import { authOrAgentApiKeyAuth } from "@/middleware/agentAuth";
 import { requireAccount } from "@/middleware/auth";
 import { createHandler } from "./handlers/create";
 import { createJobGetHandler } from "./handlers/create-job-get";
@@ -16,7 +13,12 @@ import { publishHandler } from "./handlers/publish";
 
 export const agentTemplatesRouter = Router();
 
-agentTemplatesRouter.get("/", optionalAuthOrAgentApiKeyAuth, listHandler);
+agentTemplatesRouter.get(
+  "/",
+  authOrAgentApiKeyAuth,
+  requireAccount,
+  listHandler,
+);
 agentTemplatesRouter.post(
   "/",
   authOrAgentApiKeyAuth,
@@ -61,6 +63,7 @@ agentTemplatesRouter.post(
 );
 agentTemplatesRouter.get(
   "/:idOrHashedSlug",
-  optionalAuthOrAgentApiKeyAuth,
+  authOrAgentApiKeyAuth,
+  requireAccount,
   detailHandler,
 );

@@ -41,8 +41,22 @@ const cleanupTemplates = () =>
 const encodeCursor = (cursor: { id: string; createdAt: string }) =>
   Buffer.from(JSON.stringify(cursor)).toString("base64url");
 
+// Use a distinct, non-admin account so visibility semantics match the
+// pre-auth-required tests: the caller is NOT the template owner, so they
+// see only published templates owned by ADMIN.
+const READER_ACCOUNT_ID = "00000000-0000-4000-8000-000000000001";
+
+const readerAuthHeaders = async (): Promise<Record<string, string>> => ({
+  "X-Convos-AuthToken": await createJwtToken({
+    deviceId: "test-device-agent-templates-list",
+    accountId: READER_ACCOUNT_ID,
+  }),
+});
+
 const readList = async (path = "/api/v2/agent-templates") => {
-  const response = await fetch(`${baseURL}${path}`);
+  const response = await fetch(`${baseURL}${path}`, {
+    headers: await readerAuthHeaders(),
+  });
   const body = (await response.json()) as ListEnvelope;
 
   return { body, response };
@@ -126,8 +140,11 @@ describe("Agent template list endpoint", () => {
     );
     expect(body.data[0]).not.toHaveProperty("updatedAt");
 
+    // Independent authed call (token minted inline) returns the same shape
+    // and data as the helper.
     const authToken = await createJwtToken({
       deviceId: "test-device-agent-templates-list",
+      accountId: READER_ACCOUNT_ID,
     });
     const authedResponse = await fetch(`${baseURL}/api/v2/agent-templates`, {
       headers: { "X-Convos-AuthToken": authToken },
@@ -136,6 +153,8 @@ describe("Agent template list endpoint", () => {
     expect(authedResponse.status).toBe(200);
     expect(ids(authedBody.data)).toEqual(ids(body.data));
 
+    // Snake-cased path stays unmounted — no router matches → 404 from
+    // noRouteMiddleware before any auth middleware runs.
     const snakeResponse = await fetch(`${baseURL}/api/v2/agent_templates`);
     expect(snakeResponse.status).toBe(404);
   });
@@ -229,17 +248,24 @@ describe("Agent template list endpoint", () => {
     expect(ids(composed.body.data)).toEqual([tmplPubFeatured.id]);
   });
 
-  test("rejects status, invalid limits, and malformed cursors with 400", async () => {
-    for (const status of [
-      "draft",
-      "published",
-      "unlisted",
-      "archived",
-      "anything",
-      "",
-    ]) {
+  test("rejects invalid status values, invalid limits, and malformed cursors with 400", async () => {
+    const headers = await readerAuthHeaders();
+
+    // Valid enum values are accepted (200); only unknown / empty strings 400.
+    for (const status of ["draft", "published", "unlisted", "archived"]) {
       const response = await fetch(
         `${baseURL}/api/v2/agent-templates?status=${status}`,
+        { headers },
+      );
+      expect(response.status).toBe(200);
+      expect(response.headers.get("content-type")).toContain(
+        "application/json",
+      );
+    }
+    for (const status of ["anything", ""]) {
+      const response = await fetch(
+        `${baseURL}/api/v2/agent-templates?status=${status}`,
+        { headers },
       );
       expect(response.status).toBe(400);
       expect(response.headers.get("content-type")).toContain(
@@ -250,6 +276,7 @@ describe("Agent template list endpoint", () => {
     for (const limit of ["0", "-1", "abc", "1.5"]) {
       const response = await fetch(
         `${baseURL}/api/v2/agent-templates?limit=${limit}`,
+        { headers },
       );
       expect(response.status).toBe(400);
     }
@@ -266,6 +293,7 @@ describe("Agent template list endpoint", () => {
     ]) {
       const response = await fetch(
         `${baseURL}/api/v2/agent-templates?cursor=${cursor}`,
+        { headers },
       );
       expect(response.status).toBe(400);
     }

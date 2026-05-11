@@ -229,14 +229,16 @@ describe("POST /api/v2/agent-templates/generate (JSON mode)", () => {
   // GET/PUT hit no matching generate route (404); PATCH/DELETE match /:id
   // but the generate handler is NOT invoked for non-POST methods.
   // -----------------------------------------------------------------------
-  test("only POST invokes the generate handler; GET/PUT return 404", async () => {
-    // GET matches /:idOrHashedSlug but returns 404 (not a valid id);
-    // PUT has no matching route → 404 from noRouteMiddleware
+  test("only POST invokes the generate handler; GET 401 (auth required), PUT 404", async () => {
+    // GET matches /:idOrHashedSlug, which now requires auth → 401 before
+    // the detail handler runs. PUT has no matching route → 404 from
+    // noRouteMiddleware. Either response proves the generate handler did
+    // NOT fire for non-POST methods.
     const [getRes, putRes] = await Promise.all([
       fetch(`${BASE_URL}/api/v2/agent-templates/generate`),
       fetch(`${BASE_URL}/api/v2/agent-templates/generate`, { method: "PUT" }),
     ]);
-    expect(getRes.status).toBe(404);
+    expect(getRes.status).toBe(401);
     expect(putRes.status).toBe(404);
   });
 

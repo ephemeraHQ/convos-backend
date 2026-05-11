@@ -98,9 +98,11 @@ const decodeCursor = (cursor: string | undefined) => {
 };
 
 export async function listHandler(req: Request, res: Response) {
-  const accountId = res.locals.accountId;
+  // The router pins this route to authOrAgentApiKeyAuth + requireAccount, so
+  // accountId is always set by the time we get here. We don't expose the list
+  // surface to unauthenticated callers — there's no public discovery API.
+  const accountId = res.locals.accountId as string;
   const isApiKeyListener = res.locals.isApiKeyListener ?? false;
-  const isAuthenticated = accountId !== undefined;
 
   // Status filter handling
   const hasStatusFilter = Object.prototype.hasOwnProperty.call(
@@ -110,13 +112,6 @@ export async function listHandler(req: Request, res: Response) {
   const statusFilter = req.query.status as string | undefined;
 
   if (hasStatusFilter) {
-    // Unauthenticated users cannot use the status filter
-    if (!isAuthenticated) {
-      sendInvalidQuery(res, "status filter requires authentication");
-      return;
-    }
-
-    // Validate the status filter value
     if (
       statusFilter === undefined ||
       !VALID_STATUS_FILTERS.includes(
@@ -146,39 +141,32 @@ export async function listHandler(req: Request, res: Response) {
     return;
   }
 
-  // Build the where clause based on auth status
+  // Build the where clause based on caller type (regular user vs API key).
   const where: Prisma.AgentTemplateWhereInput = {};
 
   if (hasStatusFilter && statusFilter) {
-    // Authenticated user with status filter: show their own templates with that status
-    // API key listeners see all templates with that status (admin-like access)
+    // API key listeners see all templates with that status (admin-like access);
+    // regular users see only their own templates with the requested status.
     if (isApiKeyListener) {
       where.status = statusFilter as Prisma.EnumPublishStatusFilter;
     } else {
-      // Regular authenticated user: own templates with the requested status
       where.AND = [
         { status: statusFilter as Prisma.EnumPublishStatusFilter },
         { ownerAccountId: accountId },
       ];
     }
-  } else if (isAuthenticated) {
-    // Authenticated user without status filter:
-    // Published templates from any owner + own drafts/unlisted/archived
-    if (isApiKeyListener) {
-      // API key listener sees everything (admin-like access)
-      // No status filter needed
-    } else {
-      where.OR = [
-        { status: "published" },
-        {
-          status: { in: ["draft", "unlisted", "archived"] },
-          ownerAccountId: accountId,
-        },
-      ];
-    }
+  } else if (isApiKeyListener) {
+    // API key listener sees everything (admin-like access). No filter needed.
   } else {
-    // Unauthenticated: only published templates
-    where.status = "published";
+    // Regular authenticated user without status filter:
+    // Published templates from any owner + own drafts/unlisted/archived.
+    where.OR = [
+      { status: "published" },
+      {
+        status: { in: ["draft", "unlisted", "archived"] },
+        ownerAccountId: accountId,
+      },
+    ];
   }
 
   if (parsed.data.category !== undefined) {
