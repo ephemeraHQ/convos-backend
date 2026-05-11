@@ -253,7 +253,7 @@ describe("CreateJob Cross-Area E2E", () => {
     __resetJobExecutorForTests(null);
     // Install PostHog stub
     capturedPostHog = [];
-    __resetPostHogForTests((properties) => {
+    __resetPostHogForTests((_event, properties) => {
       capturedPostHog.push(properties);
     });
     // Short poll interval for faster E2E tests

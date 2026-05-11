@@ -1035,7 +1035,11 @@ describe("Twitter Build — Cross-Source Integration", () => {
           });
         }
       } finally {
-        process.env.XMTP_ENV = originalXMTPEnv;
+        if (originalXMTPEnv === undefined) {
+          delete process.env.XMTP_ENV;
+        } else {
+          process.env.XMTP_ENV = originalXMTPEnv;
+        }
       }
     });
   });

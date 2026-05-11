@@ -40,7 +40,11 @@ import { buildSlug } from "@/utils/slug-hash";
 import { capturePostHog } from "./posthog";
 import { ProvisioningClient } from "./provisioningClient";
 import { callGenerateTemplate, type GeneratedTemplate } from "./templateGen";
-import { composeReply, type ReplyInput } from "./twitterReply";
+import {
+  buildDeterministicFallback,
+  composeReply,
+  type ReplyInput,
+} from "./twitterReply";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -404,7 +408,19 @@ async function executeTwitterJob(
     slug,
   };
 
-  const { replyText } = await composeReply(replyInput);
+  // The template is already published; a reply composition failure must NOT
+  // discard that work, so any throw here is caught and replaced with the
+  // deterministic fallback.
+  let replyText: string;
+  try {
+    ({ replyText } = await composeReply(replyInput));
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error(
+      `[job-executor] composeReply threw, using deterministic fallback: ${message}`,
+    );
+    replyText = buildDeterministicFallback(replyInput);
+  }
 
   // ── Step 5: Set status=done with twitter result ──
   const result: TwitterJobResult = {

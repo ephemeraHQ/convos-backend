@@ -72,13 +72,17 @@ const MOCK_TEMPLATE: GeneratedTemplate = {
 // Test lifecycle
 // ---------------------------------------------------------------------------
 
-/** Captured PostHog calls — reset beforeEach. */
+/** Captured PostHog properties — reset beforeEach. */
 let capturedPostHog: PostHogCaptureProperties[] = [];
+/** Captured PostHog event names, parallel to `capturedPostHog`. */
+let capturedPostHogEvents: string[] = [];
 
 const stubPostHog = () => {
   capturedPostHog = [];
-  __resetPostHogForTests((properties) => {
+  capturedPostHogEvents = [];
+  __resetPostHogForTests((event, properties) => {
     capturedPostHog.push(properties);
+    capturedPostHogEvents.push(event);
   });
 };
 
@@ -141,6 +145,7 @@ describe("CreateJob PostHog Metering", () => {
     await executeCreateJob(jobId);
 
     expect(capturedPostHog.length).toBe(1);
+    expect(capturedPostHogEvents[0]).toBe(BUILDER_TEMPLATE_GENERATED_EVENT);
   });
 
   test("VAL-CJ-PH-002: event includes source: create-job property", async () => {
@@ -153,6 +158,7 @@ describe("CreateJob PostHog Metering", () => {
     await executeCreateJob(jobId);
 
     expect(capturedPostHog.length).toBe(1);
+    expect(capturedPostHogEvents[0]).toBe(BUILDER_TEMPLATE_GENERATED_EVENT);
     expect(capturedPostHog[0].source).toBe("create-job");
   });
 

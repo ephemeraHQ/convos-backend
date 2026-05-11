@@ -172,7 +172,14 @@ export const ProvisioningClient = {
       );
     }
 
-    const data = (await response.json()) as { instanceId: string };
+    const data = (await response.json().catch(() => null)) as {
+      instanceId?: unknown;
+    } | null;
+    if (!data || typeof data.instanceId !== "string" || !data.instanceId) {
+      throw new Error(
+        "ProvisioningClient: POST /api/assistants returned 200 with malformed payload (missing instanceId)",
+      );
+    }
     return { instanceId: data.instanceId };
   },
 
@@ -229,7 +236,26 @@ export const ProvisioningClient = {
       );
     }
 
-    const data = (await response.json()) as GetAssistantResult;
-    return data;
+    const data = (await response
+      .json()
+      .catch(() => null)) as Partial<GetAssistantResult> | null;
+    const validJoinStatuses: ReadonlySet<string> = new Set([
+      "starting",
+      "pending_acceptance",
+      "joined",
+      "failed",
+    ]);
+    if (
+      !data ||
+      typeof data.instanceId !== "string" ||
+      !data.instanceId ||
+      typeof data.joinStatus !== "string" ||
+      !validJoinStatuses.has(data.joinStatus)
+    ) {
+      throw new Error(
+        `ProvisioningClient: GET /api/assistants/${instanceId} returned 200 with malformed payload (missing or invalid instanceId/joinStatus)`,
+      );
+    }
+    return data as GetAssistantResult;
   },
 };

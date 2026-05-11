@@ -32,7 +32,7 @@ const TTL_MS = 24 * 60 * 60 * 1000;
 // ---------------------------------------------------------------------------
 
 let _intervalId: ReturnType<typeof setInterval> | null = null;
-let _sweepIntervalMs = DEFAULT_SWEEP_INTERVAL_MS;
+let _sweepIntervalMs: number | null = DEFAULT_SWEEP_INTERVAL_MS;
 
 // ---------------------------------------------------------------------------
 // Test seam
@@ -40,11 +40,14 @@ let _sweepIntervalMs = DEFAULT_SWEEP_INTERVAL_MS;
 
 /**
  * Override the sweep interval for tests.
- * Pass `null` to disable the sweep entirely.
+ * Pass `null` to disable the sweep entirely (and stop any running interval).
  * Call before `startTtlSweep`.
  */
 export function __setSweepIntervalForTests(ms: number | null): void {
-  _sweepIntervalMs = ms ?? DEFAULT_SWEEP_INTERVAL_MS;
+  _sweepIntervalMs = ms;
+  if (ms === null) {
+    stopTtlSweep();
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -93,6 +96,7 @@ export async function sweepExpiredJobs(): Promise<number> {
  */
 export function startTtlSweep(): void {
   if (_intervalId !== null) return; // already running
+  if (_sweepIntervalMs === null) return; // disabled
 
   _intervalId = setInterval(() => {
     void sweepExpiredJobs().catch((err: unknown) => {

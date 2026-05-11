@@ -595,13 +595,13 @@ describe("Twitter Build Executor — Additional Coverage", () => {
     expect(template!.slug).toBe(result.slug);
   });
 
-  test("twitter job with reply failure still completes", async () => {
+  test("twitter job with reply failure still completes via deterministic fallback", async () => {
     installTwitterHappyPathMocks();
 
-    // Override reply to use fallback
-    __resetTwitterReplyForTests(async (input) => ({
-      replyText: `@${input.handle.startsWith("@") ? input.handle.slice(1) : input.handle} ${input.templateUrl}`,
-    }));
+    // Make composeReply throw so the executor's catch/fallback path runs.
+    __resetTwitterReplyForTests(async () => {
+      throw new Error("simulated reply failure");
+    });
 
     const { executeCreateJob } = await import(
       "../src/api/v2/agent-templates/services/job-executor"
@@ -613,9 +613,14 @@ describe("Twitter Build Executor — Additional Coverage", () => {
     const job = await getJobStatus(jobId);
     expect(job!.status).toBe("done");
 
-    const result = JSON.parse(job!.result!);
-    expect(result.replyText).toBeDefined();
+    const result = JSON.parse(job!.result!) as {
+      replyText: string;
+      slug: string;
+      templateUrl: string;
+    };
+    // Deterministic fallback always preserves @handle and the template URL.
     expect(result.replyText).toContain("@alice");
+    expect(result.replyText).toContain(result.templateUrl);
   });
 
   test("app/web source still works (no regression)", async () => {

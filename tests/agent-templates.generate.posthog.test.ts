@@ -66,7 +66,7 @@ let capturedPostHog: PostHogCaptureProperties[] = [];
 
 const stubPostHog = () => {
   capturedPostHog = [];
-  __resetPostHogForTests((properties) => {
+  __resetPostHogForTests((_event, properties) => {
     capturedPostHog.push(properties);
   });
 };

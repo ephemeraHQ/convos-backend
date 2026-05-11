@@ -294,18 +294,24 @@ describe("GET /api/v2/agent-templates/create-job/:jobId", () => {
   // Tested indirectly — we can't wait 45s in a test, but we verify the
   // cap is applied by checking the validation logic
 
-  test("wait_ms is capped at 45000ms", async () => {
-    const job = await seedJob({ status: "generating" });
-    // Use a moderate wait_ms value that is within the cap
+  test("wait_ms above 45000ms cap is accepted (clamped, not rejected)", async () => {
+    // Seed a terminal job so the handler returns immediately rather than
+    // actually polling for the (clamped) deadline. The point is to verify
+    // the clamp path accepts the input without 400ing — if validation
+    // regressed to reject anything > MAX_WAIT_MS, this would 400.
+    const job = await seedJob({ status: "done" });
+    const start = Date.now();
     const response = await getJobStatus(
       job.id,
       await jwtHeaders(),
-      "wait_ms=500",
+      "wait_ms=999999",
     );
+    const elapsed = Date.now() - start;
 
     expect(response.status).toBe(200);
     const body = (await response.json()) as Record<string, unknown>;
-    expect(body.status).toBe("generating");
+    expect(body.status).toBe("done");
+    expect(elapsed).toBeLessThan(1000);
   });
 
   // ── VAL-CJ-GET-011: GET with wait_ms=0 returns immediately ──

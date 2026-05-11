@@ -71,8 +71,12 @@ function getPostHogClient(): any {
 // Test seam — mirrors __resetGenerateTemplateForTests pattern
 // ---------------------------------------------------------------------------
 
-let _captureOverride: ((properties: PostHogCaptureProperties) => void) | null =
-  null;
+export type PostHogCaptureOverride = (
+  event: string,
+  properties: PostHogCaptureProperties,
+) => void;
+
+let _captureOverride: PostHogCaptureOverride | null = null;
 
 /**
  * Install a test override for the PostHog capture.
@@ -80,7 +84,7 @@ let _captureOverride: ((properties: PostHogCaptureProperties) => void) | null =
  * Also resets the cached PostHog client so env-var changes take effect.
  */
 export function __resetPostHogForTests(
-  override: ((properties: PostHogCaptureProperties) => void) | null,
+  override: PostHogCaptureOverride | null,
 ) {
   _captureOverride = override;
   _posthogClient = null;
@@ -100,7 +104,7 @@ export function __resetPostHogForTests(
  */
 export function capturePostHog(properties: PostHogCaptureProperties): void {
   if (_captureOverride) {
-    _captureOverride(properties);
+    _captureOverride(BUILDER_TEMPLATE_GENERATED_EVENT, properties);
     return;
   }
 
