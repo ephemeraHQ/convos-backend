@@ -35,6 +35,7 @@
  */
 
 import { randomUUID } from "node:crypto";
+import type { CreateJobStatus } from "@prisma/client";
 import { prisma } from "@/utils/prisma";
 import { buildSlug } from "@/utils/slug-hash";
 import { capturePostHog } from "./posthog";
@@ -156,7 +157,7 @@ export function __setPollIntervalMsForTests(ms: number | null): void {
 async function updateJob(
   jobId: string,
   data: {
-    status: string;
+    status: CreateJobStatus;
     result?: string | null;
     error?: string | null;
   },
