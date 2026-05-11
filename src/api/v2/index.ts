@@ -4,6 +4,7 @@ import {
   appCheckOnlyMiddleware,
   authMiddleware,
   authMiddlewareAllowNSE,
+  requireAccount,
 } from "@/middleware/auth";
 import { devAuthMiddleware } from "@/middleware/devAuth";
 import { lifecycleTestAuthMiddleware } from "@/middleware/lifecycleTestAuth";
@@ -114,5 +115,20 @@ v2Router.get("/auth-check", authMiddlewareAllowNSE, (_req, res) => {
   });
   return;
 });
+
+// Account auth check - rejects legacy device-only and NSE-only JWTs.
+// Used by the iOS app to confirm a SIWE-bound JWT is in hand. Returns
+// 401 (missing/invalid token), 403 "Account required" (legacy device
+// JWT), 403 "NSE tokens not allowed on this route" (NSE JWT), or 200.
+v2Router.get(
+  "/account-auth-check",
+  authMiddleware,
+  requireAccount,
+  (_req, res) => {
+    res.status(200).json({
+      success: true,
+    });
+  },
+);
 
 export default v2Router;
