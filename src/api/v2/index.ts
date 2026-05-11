@@ -4,6 +4,7 @@ import {
   appCheckOnlyMiddleware,
   authMiddleware,
   authMiddlewareAllowNSE,
+  requireAccount,
 } from "@/middleware/auth";
 import { devAuthMiddleware } from "@/middleware/devAuth";
 import { lifecycleTestAuthMiddleware } from "@/middleware/lifecycleTestAuth";
@@ -118,5 +119,22 @@ v2Router.get("/auth-check", authMiddlewareAllowNSE, (_req, res) => {
   });
   return;
 });
+
+// Account-bound auth check - returns 200 only if JWT carries accountId claim.
+// Method-agnostic: works for any AuthMethodType today (SIWE) or future
+// (Google, Apple, passkey, ...). Used by clients to probe whether they need to
+// trigger an account-upgrade flow (e.g. SIWE login) before hitting routes
+// gated by requireAccount.
+v2Router.get(
+  "/account-auth-check",
+  authMiddleware,
+  requireAccount,
+  (_req, res) => {
+    res.status(200).json({
+      success: true,
+    });
+    return;
+  },
+);
 
 export default v2Router;
