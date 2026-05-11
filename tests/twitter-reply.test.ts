@@ -32,7 +32,7 @@ let mockFetch: ReturnType<typeof mock<typeof fetch>>;
 
 const restoreOrDelete = (name: string, original: string | undefined) => {
   if (original === undefined) {
-    delete process.env[name];
+    Reflect.deleteProperty(process.env, name);
   } else {
     process.env[name] = original;
   }

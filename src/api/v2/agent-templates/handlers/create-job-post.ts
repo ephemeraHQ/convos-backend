@@ -166,8 +166,12 @@ export async function createJobPostHandler(req: Request, res: Response) {
     return;
   }
 
-  // 2. Branch on source field
-  const rawSource = req.body?.source as string | undefined;
+  // 2. Branch on source field. We peek at `source` before zod validation so
+  // we can dispatch to the right branch; full validation happens inside each
+  // handler. Cast through an unknown shape to keep eslint's no-unsafe-*
+  // checks happy without disabling them file-wide.
+  const body = req.body as { source?: unknown } | undefined;
+  const rawSource = body?.source;
 
   if (rawSource === "twitter") {
     // ── Twitter source flow ──
