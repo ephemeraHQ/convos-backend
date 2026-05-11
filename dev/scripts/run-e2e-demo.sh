@@ -326,6 +326,35 @@ phase3_negative_nonce_and_sig() {
     --address-override "$key1_addr" || return 1
 }
 
+phase3_negative_siwe_fields() {
+  emit "## Phase 3 — negative SIWE matrix (field mismatches)"
+
+  local device_id="${DEMO_DEVICE_PREFIX}neg-2"
+  local jar
+
+  declare -a cases=(
+    "domain-mismatch|--domain|evil.app"
+    "uri-mismatch|--uri|https://evil.app"
+    "chainid-not-allowed|--chain-id|137"
+    "version-not-1|--tamper-version|2"
+    "no-expiration|--no-expiration"
+    "exp-too-far|--exp-offset|+11m"
+    "exp-past|--exp-offset|-1m"
+    "iat-skew|--iat-offset|-6m"
+    "nbf-future|--nbf-offset|+1m"
+  )
+
+  for entry in "${cases[@]}"; do
+    IFS="|" read -r -a parts <<< "$entry"
+    local case_name="${parts[0]}"
+    local signer_flags=("${parts[@]:1}")
+
+    jar="$TMP/cookies.${case_name}.txt"
+    issue_nonce "$jar" || continue
+    sign_and_token "siwe-field/${case_name}" 401 "$jar" "$device_id" "${signer_flags[@]}" || true
+  done
+}
+
 # --- main ---------------------------------------------------------------------
 
 main() {
@@ -337,6 +366,7 @@ main() {
   phase1_setup
   phase2_happy_path
   phase3_negative_nonce_and_sig
+  phase3_negative_siwe_fields
 }
 
 main "$@"
