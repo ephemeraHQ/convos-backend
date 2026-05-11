@@ -25,7 +25,11 @@ import { noRouteMiddleware } from "@/middleware/noRoute";
 const originalXMTPEnv = process.env.XMTP_ENV;
 
 afterAll(() => {
-  process.env.XMTP_ENV = originalXMTPEnv;
+  if (originalXMTPEnv === undefined) {
+    delete process.env.XMTP_ENV;
+  } else {
+    process.env.XMTP_ENV = originalXMTPEnv;
+  }
 });
 
 const buildGuardedV2Router = () => {

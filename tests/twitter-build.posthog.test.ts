@@ -122,13 +122,17 @@ const MOCK_TEMPLATE: GeneratedTemplate = {
 // Test lifecycle
 // ---------------------------------------------------------------------------
 
-/** Captured PostHog calls — reset beforeEach. */
+/** Captured PostHog properties — reset beforeEach. */
 let capturedPostHog: PostHogCaptureProperties[] = [];
+/** Captured PostHog event names, parallel to `capturedPostHog`. */
+let capturedPostHogEvents: string[] = [];
 
 const stubPostHog = () => {
   capturedPostHog = [];
-  __resetPostHogForTests((_event, properties) => {
+  capturedPostHogEvents = [];
+  __resetPostHogForTests((event, properties) => {
     capturedPostHog.push(properties);
+    capturedPostHogEvents.push(event);
   });
 };
 
@@ -234,9 +238,11 @@ describe("Twitter Build PostHog Metering", () => {
     const jobId = await createTwitterJob();
     await executeCreateJob(jobId);
 
-    // Verify the event constant is correct
-    expect(BUILDER_TEMPLATE_GENERATED_EVENT).toBe("builder.template.generated");
+    // Assert the executor actually emitted the right event name — not just
+    // that the constant has the expected value. Without checking the captured
+    // event, a regression to a different event name would pass silently.
     expect(capturedPostHog.length).toBe(1);
+    expect(capturedPostHogEvents[0]).toBe(BUILDER_TEMPLATE_GENERATED_EVENT);
   });
 
   test("PostHog event includes ownerAccountId for twitter builds", async () => {
