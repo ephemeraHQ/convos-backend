@@ -60,8 +60,11 @@ on_exit() {
     rm -rf "$TMP"
   fi
   if [[ ${#FAILED_CASES[@]} -gt 0 || $code -ne 0 ]]; then
+    if [[ $code -eq 0 ]]; then
+      code=1
+    fi
     echo "❌ Demo finished with ${#FAILED_CASES[@]} failure(s) (exit $code)." >&2
-    exit "${code:-1}"
+    exit "$code"
   fi
   echo "✅ Demo finished. ${#PASSED_CASES[@]} case(s) passed." >&2
   exit 0
@@ -587,6 +590,41 @@ phase7_observability() {
   # If Opus-followup observability counters land later, add their grep here too.
 }
 
+# --- CLI flag parsing --------------------------------------------------------
+
+for arg in "$@"; do
+  case "$arg" in
+    --continue-on-fail) CONTINUE_ON_FAIL=1 ;;
+    --self-test)        SELF_TEST=1 ;;
+    -h|--help)
+      cat <<USAGE
+Usage: $0 [--continue-on-fail] [--self-test]
+
+Environment:
+  BASE_URL                http://localhost:4000  (default)
+  PSQL_URL                postgres://postgres:convos@localhost:5432/postgres?sslmode=disable
+  SWEEP_INTERVAL_MS       (recommend 5000 in 'bun dev' env)
+  CONVOS_SERVER_LOG       path to file containing tee'd server stdout
+  XMTP_ENV                must not equal 'production'
+
+USAGE
+      exit 0 ;;
+  esac
+done
+
+run_phase() {
+  local name="$1"
+  shift
+  if "$@"; then
+    return 0
+  fi
+  if [[ "$CONTINUE_ON_FAIL" == "1" ]]; then
+    warn "phase $name failed; continuing per --continue-on-fail"
+    return 0
+  fi
+  return 1
+}
+
 # --- main ---------------------------------------------------------------------
 
 main() {
@@ -594,15 +632,27 @@ main() {
   export TMP
 
   start_runbook
-  phase0_preflight
-  phase1_setup
-  phase2_happy_path
-  phase3_negative_nonce_and_sig
-  phase3_negative_siwe_fields
-  phase4_backward_compat
-  phase5_idempotency
-  phase6_sweep
-  phase7_observability
+  run_phase 0  phase0_preflight
+  run_phase 1  phase1_setup
+  run_phase 2  phase2_happy_path
+  run_phase 3a phase3_negative_nonce_and_sig
+  run_phase 3b phase3_negative_siwe_fields
+  run_phase 4  phase4_backward_compat
+  run_phase 5  phase5_idempotency
+  run_phase 6  phase6_sweep
+  run_phase 7  phase7_observability
+
+  if [[ "$SELF_TEST" == "1" ]]; then
+    emit "## Self-test"
+    local before_fail=${#FAILED_CASES[@]}
+    assert_status "selftest/should-fail" 200 404 || true
+    local after_fail=${#FAILED_CASES[@]}
+    if (( after_fail > before_fail )); then
+      _record_pass "selftest: assertion failures are detected"
+    else
+      _record_fail "selftest: assertion failures NOT detected — assert helpers broken!"
+    fi
+  fi
 }
 
 main "$@"
