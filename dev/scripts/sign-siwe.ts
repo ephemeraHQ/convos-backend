@@ -58,9 +58,16 @@ function parseArgs(argv: string[]): Args {
   for (let i = 0; i < argv.length; i++) {
     const flag = argv[i];
     const next = (): string => {
-      i++;
-      if (i >= argv.length) throw new Error(`${flag} requires a value`);
-      return argv[i];
+      if (i + 1 >= argv.length) {
+        throw new Error(`${flag} requires a value`);
+      }
+      const v = argv[++i];
+      if (v.startsWith("--")) {
+        throw new Error(
+          `${flag} requires a value (got flag-looking token: "${v}")`,
+        );
+      }
+      return v;
     };
     switch (flag) {
       case "--nonce":
@@ -106,7 +113,7 @@ function parseArgs(argv: string[]): Args {
       case "--out": {
         const v = next();
         if (v !== "json" && v !== "message" && v !== "signature") {
-          throw new Error(`--out must be json|message|signature`);
+          throw new Error(`--out must be json|message|signature, got: "${v}"`);
         }
         args.out = v;
         break;
@@ -168,6 +175,6 @@ async function main() {
 }
 
 main().catch((err: unknown) => {
-  process.stderr.write(`${(err as Error).message}\n`);
+  process.stderr.write(`${err instanceof Error ? err.message : String(err)}\n`);
   process.exit(1);
 });

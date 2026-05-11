@@ -41,4 +41,16 @@ describe("sign-siwe.ts CLI — minimal", () => {
     expect(parsed.message).toContain("URI: https://convos.app");
     expect(parsed.message).toContain("convos.app wants you to sign in");
   });
+
+  test("--nonce with no value at end of argv → exits non-zero", async () => {
+    const { exitCode, stderr } = await runCli(["--nonce"]);
+    expect(exitCode).not.toBe(0);
+    expect(stderr).toMatch(/--nonce requires a value/);
+  });
+
+  test("--nonce followed by another flag → exits non-zero", async () => {
+    const { exitCode, stderr } = await runCli(["--nonce", "--domain"]);
+    expect(exitCode).not.toBe(0);
+    expect(stderr).toMatch(/--nonce requires a value/);
+  });
 });
