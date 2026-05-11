@@ -52,7 +52,7 @@ async function createTwitterJob(overrides?: {
       status: "pending",
       source: "twitter",
       input: JSON.stringify({ source: "twitter", metadata }),
-      metadata: JSON.stringify(metadata),
+      metadata,
       joinUrl: null,
       ownerAccountId: overrides?.ownerAccountId ?? ADMIN_ACCOUNT_ID,
     },

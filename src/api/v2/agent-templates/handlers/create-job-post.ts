@@ -352,18 +352,16 @@ async function handleTwitterSource(req: Request, res: Response) {
     joinUrl: body.joinUrl ?? null,
   });
 
-  const metadataJson = JSON.stringify({
-    idea: body.metadata.idea,
-    twitterHandle: body.metadata.twitterHandle,
-    tweetId: body.metadata.tweetId,
-  });
-
   const job = await prisma.createJob.create({
     data: {
       status: "pending",
       source: "twitter",
       input,
-      metadata: metadataJson,
+      metadata: {
+        idea: body.metadata.idea,
+        twitterHandle: body.metadata.twitterHandle,
+        tweetId: body.metadata.tweetId,
+      },
       joinUrl: body.joinUrl ?? null,
       ownerAccountId,
     },

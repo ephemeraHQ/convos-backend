@@ -5,6 +5,6 @@ CREATE TYPE "CreateJobSource" AS ENUM ('app', 'web', 'twitter');
 ALTER TABLE "CreateJob" ADD COLUMN     "conversationId" TEXT,
 ADD COLUMN     "inboxId" TEXT,
 ADD COLUMN     "joinUrl" TEXT,
-ADD COLUMN     "metadata" TEXT,
+ADD COLUMN     "metadata" JSONB,
 ADD COLUMN     "playgroundInstanceId" TEXT,
 ADD COLUMN     "source" "CreateJobSource" NOT NULL DEFAULT 'app';

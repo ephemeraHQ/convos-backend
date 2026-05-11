@@ -119,7 +119,7 @@ async function createTwitterJob(overrides?: {
       status: "pending",
       source: "twitter",
       input: JSON.stringify({ source: "twitter", metadata }),
-      metadata: JSON.stringify(metadata),
+      metadata,
       joinUrl: null,
       ownerAccountId: overrides?.ownerAccountId ?? ADMIN_ACCOUNT_ID,
     },
@@ -731,20 +731,27 @@ describe("Twitter Build — Cross-Source Integration", () => {
 
       await executeCreateJob(jobId);
 
-      // Query by metadata containing specific handle
+      // Query by metadata containing specific handle. Prisma exposes Json
+      // path filtering via `path` + `equals`/`string_contains` for jsonb.
       const jobs = await prisma.createJob.findMany({
         where: {
           source: "twitter",
           ownerAccountId: ADMIN_ACCOUNT_ID,
-          metadata: { contains: "@cross_test_user" },
+          metadata: {
+            path: ["twitterHandle"],
+            equals: "@cross_test_user",
+          },
         },
       });
 
       expect(jobs.length).toBe(1);
       expect(jobs[0].id).toBe(jobId);
 
-      // Verify the metadata is valid JSON
-      const metadata = JSON.parse(jobs[0].metadata!);
+      // metadata is parsed by Prisma — no JSON.parse needed.
+      const metadata = jobs[0].metadata as {
+        twitterHandle: string;
+        tweetId: string;
+      };
       expect(metadata.twitterHandle).toBe("@cross_test_user");
       expect(metadata.tweetId).toBe("999888777");
     });

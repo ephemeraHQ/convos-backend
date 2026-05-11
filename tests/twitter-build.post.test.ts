@@ -369,7 +369,8 @@ describe("POST /api/v2/agent-templates/create-job — twitter source", () => {
     });
 
     expect(job!.metadata).not.toBeNull();
-    const parsed = JSON.parse(job!.metadata!) as {
+    // metadata is now Prisma Json — already parsed into an object on read.
+    const parsed = job!.metadata as {
       idea: string;
       twitterHandle: string;
       tweetId: string;

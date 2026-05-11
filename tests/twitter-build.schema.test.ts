@@ -81,11 +81,11 @@ describe("Twitter-build schema changes", () => {
     await prisma.createJob.delete({ where: { id: job.id } });
   });
 
-  // ── VAL-TB-SCHEMA-003: CreateJob.metadata column is nullable JSON text ──
+  // ── VAL-TB-SCHEMA-003: CreateJob.metadata column is nullable JSON ──
 
-  test("metadata column is nullable in Prisma schema", () => {
+  test("metadata column is nullable Json in Prisma schema", () => {
     const createJobBlock = getSchemaBlock("model", "CreateJob");
-    expect(createJobBlock).toMatch(/\bmetadata\s+String\?/);
+    expect(createJobBlock).toMatch(/\bmetadata\s+Json\?/);
   });
 
   test("metadata column accepts NULL in Postgres", async () => {
@@ -93,7 +93,10 @@ describe("Twitter-build schema changes", () => {
       data: {
         input: "{}",
         ownerAccountId: ADMIN_ACCOUNT_ID,
-        metadata: null,
+        // Prisma Json fields use Prisma.JsonNull for SQL NULL writes; the
+        // imported `Prisma` namespace would shadow our own type alias, so use
+        // the literal sentinel value instead.
+        metadata: undefined,
       },
     });
 
@@ -103,27 +106,26 @@ describe("Twitter-build schema changes", () => {
     await prisma.createJob.delete({ where: { id: job.id } });
   });
 
-  test("metadata column accepts valid JSON strings", async () => {
-    const jsonValue =
-      '{"idea":"Build a math tutor","twitterHandle":"@alice","tweetId":"1234567890"}';
+  test("metadata column round-trips structured JSON values", async () => {
+    const value = {
+      idea: "Build a math tutor",
+      twitterHandle: "@alice",
+      tweetId: "1234567890",
+    };
 
     const job = await prisma.createJob.create({
       data: {
         input: "{}",
         ownerAccountId: ADMIN_ACCOUNT_ID,
-        metadata: jsonValue,
+        metadata: value,
       },
     });
 
-    expect(job.metadata).toBe(jsonValue);
-    const parsed = JSON.parse(job.metadata!) as {
-      idea: string;
-      twitterHandle: string;
-      tweetId: string;
-    };
-    expect(parsed.idea).toBe("Build a math tutor");
-    expect(parsed.twitterHandle).toBe("@alice");
-    expect(parsed.tweetId).toBe("1234567890");
+    // metadata comes back as a parsed JS object — no JSON.parse needed.
+    const stored = job.metadata as typeof value;
+    expect(stored.idea).toBe("Build a math tutor");
+    expect(stored.twitterHandle).toBe("@alice");
+    expect(stored.tweetId).toBe("1234567890");
 
     // Cleanup
     await prisma.createJob.delete({ where: { id: job.id } });
@@ -208,10 +210,10 @@ describe("Twitter-build schema changes", () => {
     expect(source.is_nullable).toBe("NO");
     expect(source.column_default).toContain("'app'");
 
-    // metadata: nullable text
+    // metadata: nullable jsonb
     const metadata = colMap.get("metadata")!;
     expect(metadata.is_nullable).toBe("YES");
-    expect(metadata.data_type).toBe("text");
+    expect(metadata.data_type).toBe("jsonb");
 
     // joinUrl: nullable text
     const joinUrl = colMap.get("joinUrl")!;
@@ -308,11 +310,11 @@ describe("Twitter-build schema changes", () => {
   // ── Full twitter-source row can be inserted with nullable fields ──
 
   test("twitter source row with all nullable fields set to NULL succeeds", async () => {
-    const metadata = JSON.stringify({
+    const metadata = {
       idea: "Build a friendly math tutor",
       twitterHandle: "@alice",
       tweetId: "1234567890",
-    });
+    };
 
     const job = await prisma.createJob.create({
       data: {
@@ -328,7 +330,7 @@ describe("Twitter-build schema changes", () => {
     });
 
     expect(job.source).toBe("twitter");
-    expect(job.metadata).toBe(metadata);
+    expect(job.metadata).toEqual(metadata);
     expect(job.joinUrl).toBeNull();
     expect(job.provisioningInstanceId).toBeNull();
     expect(job.conversationId).toBeNull();

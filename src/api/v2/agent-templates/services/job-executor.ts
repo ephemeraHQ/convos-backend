@@ -614,15 +614,28 @@ export async function executeCreateJob(jobId: string): Promise<void> {
   // Determine source from the job's source column
   const source: string = job.source;
 
-  // Parse metadata for twitter source
+  // metadata is stored as Prisma Json — Prisma already parsed it into a
+  // JS object/value. Validate the shape rather than re-parsing a string.
   let twitterMetadata: TwitterMetadata | null = null;
-  if (source === "twitter" && job.metadata) {
-    try {
-      twitterMetadata = JSON.parse(job.metadata) as TwitterMetadata;
-    } catch {
-      await failJob(jobId, "Invalid job metadata — could not parse JSON");
+  if (source === "twitter" && job.metadata !== null) {
+    const md = job.metadata as Record<string, unknown>;
+    if (
+      typeof md !== "object" ||
+      typeof md.idea !== "string" ||
+      typeof md.twitterHandle !== "string" ||
+      typeof md.tweetId !== "string"
+    ) {
+      await failJob(
+        jobId,
+        "Invalid job metadata — missing idea/twitterHandle/tweetId",
+      );
       return;
     }
+    twitterMetadata = {
+      idea: md.idea,
+      twitterHandle: md.twitterHandle,
+      tweetId: md.tweetId,
+    };
   }
 
   // Parse input

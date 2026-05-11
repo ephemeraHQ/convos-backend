@@ -184,7 +184,7 @@ model CreateJob {
   status               CreateJobStatus @default(value: pending)
   source               CreateJobSource @default(value: app)
   input                String
-  metadata             String?
+  metadata             Json?
   joinUrl              String?
   ownerAccountId       String          @db.Uuid
   provisioningInstanceId String?
