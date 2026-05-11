@@ -355,6 +355,81 @@ phase3_negative_siwe_fields() {
   done
 }
 
+phase4_backward_compat() {
+  emit "## Phase 4 — backward compat + NSE + disabled device"
+
+  # --- legacy device-only path ---
+  local legacy_device="${DEMO_DEVICE_PREFIX}legacy-1"
+  run_curl "legacy/token" \
+    -X POST "$BASE_URL/api/v2/auth/token" \
+    -H "Content-Type: application/json" \
+    -d "$(jq -nc --arg deviceId "$legacy_device" '{deviceId: $deviceId}')"
+  assert_status "legacy/token" 200 "$LAST_STATUS" || return 1
+  local legacy_jwt
+  legacy_jwt=$(echo "$LAST_BODY" | jq -r '.token')
+
+  # Legacy JWT → /auth-check 200
+  run_curl "legacy/auth-check" \
+    -X GET "$BASE_URL/api/v2/auth-check" \
+    -H "X-Convos-AuthToken: $legacy_jwt"
+  assert_status "legacy/auth-check" 200 "$LAST_STATUS" || return 1
+
+  # Legacy JWT → /account-auth-check 403 "Account required"
+  run_curl "legacy/account-auth-check" \
+    -X GET "$BASE_URL/api/v2/account-auth-check" \
+    -H "X-Convos-AuthToken: $legacy_jwt"
+  assert_status "legacy/account-auth-check" 403 "$LAST_STATUS" || return 1
+  assert_json_eq "legacy/account-auth-check-body" '.error' '"Account required"' "$LAST_BODY" || return 1
+
+  # --- NSE token (minted via shim) ---
+  emit "**Mint NSE token via dev/scripts/mint-nse-jwt.ts**"
+  emit_code "bun run dev/scripts/mint-nse-jwt.ts --device-id ${DEMO_DEVICE_PREFIX}nse-1"
+  local nse_jwt
+  nse_jwt=$(bun run "$SCRIPT_DIR/mint-nse-jwt.ts" --device-id "${DEMO_DEVICE_PREFIX}nse-1")
+  emit_code_block "" "<JWT redacted, length=${#nse_jwt}>"
+
+  # NSE → /auth-check 200 (allowed by authMiddlewareAllowNSE + path allowlist)
+  run_curl "nse/auth-check" \
+    -X GET "$BASE_URL/api/v2/auth-check" \
+    -H "X-Convos-AuthToken: $nse_jwt"
+  assert_status "nse/auth-check" 200 "$LAST_STATUS" || return 1
+
+  # NSE → /account-auth-check 403 "NSE tokens not allowed on this route"
+  # (authMiddleware rejects NSE at the first gate, before requireAccount.)
+  run_curl "nse/account-auth-check" \
+    -X GET "$BASE_URL/api/v2/account-auth-check" \
+    -H "X-Convos-AuthToken: $nse_jwt"
+  assert_status "nse/account-auth-check" 403 "$LAST_STATUS" || return 1
+  assert_json_eq "nse/account-auth-check-body" \
+    '.error' '"NSE tokens not allowed on this route"' "$LAST_BODY" || return 1
+
+  # --- disabled device ---
+  local disabled_device="${DEMO_DEVICE_PREFIX}disabled-1"
+  # First create the device by minting a legacy token (just to insert a row).
+  run_curl "disabled/seed-device" \
+    -X POST "$BASE_URL/api/v2/auth/token" \
+    -H "Content-Type: application/json" \
+    -d "$(jq -nc --arg deviceId "$disabled_device" '{deviceId: $deviceId}')"
+  assert_status "disabled/seed-device" 200 "$LAST_STATUS" || return 1
+
+  # Disable the device row directly.
+  psql_exec "INSERT INTO \"DeviceRegistration\" (\"deviceId\", disabled, \"addedAt\", \"updatedAt\")
+             VALUES ('$disabled_device', true, now(), now())
+             ON CONFLICT (\"deviceId\") DO UPDATE SET disabled=true, \"updatedAt\"=now()"
+
+  # Attempt SIWE upgrade — expect 403 BEFORE nonce burn.
+  local jar="$TMP/cookies.disabled.txt"
+  issue_nonce "$jar" || return 1
+  local nonce_before
+  nonce_before=$(extract_nonce_from_cookie_jar "$jar")
+  sign_and_token "disabled/token" 403 "$jar" "$disabled_device" || true
+
+  # Nonce row must still exist (device-disabled is checked before nonce consumption).
+  local still_present
+  still_present=$(psql_query "SELECT count(*) FROM \"AuthNonce\" WHERE nonce='$nonce_before'")
+  assert_match "disabled/nonce-preserved" '^1$' "$still_present" || return 1
+}
+
 # --- main ---------------------------------------------------------------------
 
 main() {
@@ -367,6 +442,7 @@ main() {
   phase2_happy_path
   phase3_negative_nonce_and_sig
   phase3_negative_siwe_fields
+  phase4_backward_compat
 }
 
 main "$@"
