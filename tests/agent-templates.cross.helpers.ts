@@ -51,6 +51,21 @@ export const jwtHeaders = async () => ({
   }),
 });
 
+// Non-owner reader used for list/detail by default. Read endpoints now
+// require auth, but the visibility rules differ for owner vs non-owner:
+// non-owners see only published templates from any account. Using a distinct
+// reader keeps cross-flow tests' visibility assertions stable — drafts and
+// archived templates remain invisible in the listing.
+const READER_ACCOUNT_ID = "00000000-0000-4000-8000-cccccccc0001";
+
+export const readerHeaders = async (): Promise<Record<string, string>> => ({
+  "Content-Type": "application/json",
+  "X-Convos-AuthToken": await createJwtToken({
+    deviceId: "test-device-agent-templates-cross-reader",
+    accountId: READER_ACCOUNT_ID,
+  }),
+});
+
 export const agentKeyHeaders = () => ({
   "Content-Type": "application/json",
   "X-Agent-API-Key": validAgentAssetsApiKey,
@@ -129,18 +144,25 @@ export const deleteTemplate = async (args: {
 export const listTemplates = async (args: {
   baseURL: string;
   query?: string;
+  headers?: Record<string, string>;
 }) => {
   const response = await fetch(
     `${args.baseURL}/api/v2/agent-templates${args.query ?? ""}`,
+    { headers: args.headers ?? (await readerHeaders()) },
   );
   const body = (await response.json()) as ListBody;
 
   return { body, response };
 };
 
-export const getTemplate = async (args: { baseURL: string; path: string }) => {
+export const getTemplate = async (args: {
+  baseURL: string;
+  path: string;
+  headers?: Record<string, string>;
+}) => {
   const response = await fetch(
     `${args.baseURL}/api/v2/agent-templates/${args.path}`,
+    { headers: args.headers ?? (await readerHeaders()) },
   );
   const body = (await response.json()) as TemplateBody;
 

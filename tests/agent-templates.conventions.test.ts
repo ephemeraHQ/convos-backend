@@ -12,12 +12,15 @@ import {
 import express from "express";
 import { agentTemplatesRouter } from "@/api/v2/agent-templates/agent-templates.router";
 import { noRouteMiddleware } from "@/middleware/noRoute";
+import { pinoMiddleware } from "@/middleware/pino";
 import { ADMIN_ACCOUNT_ID } from "@/utils/constants";
+import { createJwtToken } from "@/utils/jwt";
 import { prisma } from "@/utils/prisma";
 
 type JsonObject = Record<string, unknown>;
 
 const app = express();
+app.use(pinoMiddleware);
 app.use("/api/v2/agent-templates", agentTemplatesRouter);
 app.use(noRouteMiddleware);
 
@@ -85,8 +88,22 @@ const createTemplate = async (
   });
 };
 
+// Non-owner reader: read endpoints now require auth, but visibility for a
+// non-owner caller matches the old unauthenticated behavior (only published
+// templates visible).
+const READER_ACCOUNT_ID = "00000000-0000-4000-8000-cccccccc0002";
+
+const readerAuthHeaders = async (): Promise<Record<string, string>> => ({
+  "X-Convos-AuthToken": await createJwtToken({
+    deviceId: "test-device-agent-templates-conventions",
+    accountId: READER_ACCOUNT_ID,
+  }),
+});
+
 const readJson = async (args: { path: string }) => {
-  const response = await fetch(`${baseURL}${args.path}`);
+  const response = await fetch(`${baseURL}${args.path}`, {
+    headers: await readerAuthHeaders(),
+  });
   const body = (await response.json()) as JsonObject;
 
   return { body, response };
@@ -269,7 +286,10 @@ describe("Agent template read response conventions", () => {
   test("returns JSON content type and parseable JSON bodies for read errors", async () => {
     const fakeUuid = randomUUID();
     const cases = [
-      { path: "/api/v2/agent-templates?status=draft", status: 400 },
+      // `status=bogus` is not a valid enum value → 400; `status=draft` is a
+      // valid enum now (auth is required, so the old "auth required" 400 path
+      // no longer applies for valid enum values).
+      { path: "/api/v2/agent-templates?status=bogus", status: 400 },
       { path: "/api/v2/agent-templates?cursor=!!!", status: 400 },
       { path: `/api/v2/agent-templates/${fakeUuid}`, status: 404 },
       { path: "/api/v2/agent-templates/missing.aaaaa", status: 404 },

@@ -63,7 +63,7 @@ let capturedPostHog: PostHogCaptureProperties[] = [];
 
 const stubPostHog = () => {
   capturedPostHog = [];
-  __resetPostHogForTests((properties) => {
+  __resetPostHogForTests((_event, properties) => {
     capturedPostHog.push(properties);
   });
 };
@@ -164,7 +164,7 @@ describe("Cross-area metering: auth mode + PostHog (VAL-CROSS-METERING-001)", ()
     expect(props.promptTokens).toBe(DEFAULT_TEST_METRICS.promptTokens);
     expect(props.completionTokens).toBe(DEFAULT_TEST_METRICS.completionTokens);
     expect(typeof props.latencyMs).toBe("number");
-    expect(UUID_V4_RE.test(props.requestId)).toBe(true);
+    expect(UUID_V4_RE.test(props.requestId!)).toBe(true);
   });
 
   // -----------------------------------------------------------------------
@@ -189,7 +189,7 @@ describe("Cross-area metering: auth mode + PostHog (VAL-CROSS-METERING-001)", ()
     expect(props.promptTokens).toBe(DEFAULT_TEST_METRICS.promptTokens);
     expect(props.completionTokens).toBe(DEFAULT_TEST_METRICS.completionTokens);
     expect(typeof props.latencyMs).toBe("number");
-    expect(UUID_V4_RE.test(props.requestId)).toBe(true);
+    expect(UUID_V4_RE.test(props.requestId!)).toBe(true);
   });
 
   // -----------------------------------------------------------------------

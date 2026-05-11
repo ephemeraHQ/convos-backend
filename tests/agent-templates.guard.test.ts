@@ -5,6 +5,7 @@ import express, { Router } from "express";
 import { agentSkillsRouter } from "@/api/v2/agent-skills/agent-skills.router";
 import { agentTemplatesRouter } from "@/api/v2/agent-templates/agent-templates.router";
 import { noRouteMiddleware } from "@/middleware/noRoute";
+import { pinoMiddleware } from "@/middleware/pino";
 
 type RouterWithStack = {
   stack?: Array<{
@@ -45,6 +46,7 @@ const withServer = async (
   runAssertions: (baseURL: string) => Promise<void>,
 ) => {
   const app = express();
+  app.use(pinoMiddleware);
   app.use("/api/v2", router as Parameters<typeof app.use>[1]);
   app.use(noRouteMiddleware);
 
@@ -109,6 +111,8 @@ describe("agent templates and skills production guard", () => {
         fetch(`${baseURL}/api/v2/agent-skills`),
       ]);
 
+      // In production the routers aren't mounted at all → noRouteMiddleware
+      // returns 404 before any auth runs.
       expect(templatesResponse.status).toBe(404);
       expect(skillsResponse.status).toBe(404);
     });
@@ -119,6 +123,13 @@ describe("agent templates and skills production guard", () => {
     expect(hasMountedRouter(localRouter, "/agent-skills")).toBe(true);
 
     await withServer(localRouter, async (baseURL) => {
+      // The agent-templates list/detail routes are now auth-required, so
+      // unauthenticated reads return 401 (not 200/404). The agent-skills
+      // router is empty, so no route matches → 404 from noRouteMiddleware.
+      // What matters for this guard test is the *distinction*: 401 means
+      // the router is mounted but auth gated, 404 means the router isn't
+      // mounted at all. Production above must be 404; non-production for
+      // /agent-templates must be 401.
       const paths = [
         "/api/v2/agent-templates",
         "/api/v2/agent-templates/anything",
@@ -131,7 +142,7 @@ describe("agent templates and skills production guard", () => {
       );
 
       expect(responses.map((response) => response.status)).toEqual([
-        200, 404, 404, 404,
+        401, 401, 404, 404,
       ]);
     });
   });

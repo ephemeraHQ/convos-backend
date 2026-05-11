@@ -12,13 +12,16 @@ import {
 import express from "express";
 import { agentTemplatesRouter } from "@/api/v2/agent-templates/agent-templates.router";
 import { noRouteMiddleware } from "@/middleware/noRoute";
+import { pinoMiddleware } from "@/middleware/pino";
 import { ADMIN_ACCOUNT_ID } from "@/utils/constants";
+import { createJwtToken } from "@/utils/jwt";
 import { prisma } from "@/utils/prisma";
 import { slugHash } from "@/utils/slug-hash";
 
 type DetailBody = Record<string, unknown>;
 
 const app = express();
+app.use(pinoMiddleware);
 app.use("/api/v2/agent-templates", agentTemplatesRouter);
 app.use(noRouteMiddleware);
 
@@ -62,8 +65,22 @@ const createTemplate = async (
   });
 };
 
+// Non-admin reader so draft visibility rules still distinguish caller from
+// owner — templates are owned by ADMIN_ACCOUNT_ID; the reader sees only
+// published/unlisted/archived from other owners.
+const READER_ACCOUNT_ID = "00000000-0000-4000-8000-000000000002";
+
+const readerAuthHeaders = async (): Promise<Record<string, string>> => ({
+  "X-Convos-AuthToken": await createJwtToken({
+    deviceId: "test-device-agent-templates-detail",
+    accountId: READER_ACCOUNT_ID,
+  }),
+});
+
 const readDetail = async (args: { path: string }) => {
-  const response = await fetch(`${baseURL}${args.path}`);
+  const response = await fetch(`${baseURL}${args.path}`, {
+    headers: await readerAuthHeaders(),
+  });
   const contentType = response.headers.get("content-type") ?? "";
   const body = contentType.includes("application/json")
     ? ((await response.json()) as DetailBody)
@@ -132,6 +149,8 @@ describe("Agent template detail endpoint", () => {
     expect(body?.createdAt).toMatch(isoTimestampPattern);
     expect(body?.firstPublishedAt).toMatch(isoTimestampPattern);
 
+    // Snake-cased path stays unmounted — no router matches → 404 from
+    // noRouteMiddleware before any auth middleware runs.
     const snakeResponse = await fetch(
       `${baseURL}/api/v2/agent_templates/${tmpl.id}`,
     );
@@ -154,11 +173,15 @@ describe("Agent template detail endpoint", () => {
       slug: "brewski",
     });
 
-    const slugOnly = await fetch(`${baseURL}/api/v2/agent-templates/brewski`);
+    const headers = await readerAuthHeaders();
+    const slugOnly = await fetch(`${baseURL}/api/v2/agent-templates/brewski`, {
+      headers,
+    });
     expect(slugOnly.status).toBe(404);
 
     const wrongHash = await fetch(
       `${baseURL}/api/v2/agent-templates/brewski.aaaaa`,
+      { headers },
     );
     expect(wrongHash.status).toBe(404);
   });
@@ -178,11 +201,12 @@ describe("Agent template detail endpoint", () => {
       status: "archived",
     });
 
+    const headers = await readerAuthHeaders();
     for (const path of [
       `/api/v2/agent-templates/${draft.id}`,
       `/api/v2/agent-templates/detail-draft.${slugHash(draft.id)}`,
     ]) {
-      const response = await fetch(`${baseURL}${path}`);
+      const response = await fetch(`${baseURL}${path}`, { headers });
       expect(response.status).toBe(404);
     }
 

@@ -57,12 +57,13 @@ export async function detailHandler(req: Request, res: Response) {
       idOrHashedSlug: parsedParams.data.idOrHashedSlug,
     });
 
-    // If not found, check if it's a draft template accessible to the caller
+    // If not found, check if it's a draft template accessible to the caller.
+    // accountId is guaranteed by the router (authOrAgentApiKeyAuth + requireAccount).
     if (
       template === null &&
       uuidPattern.test(parsedParams.data.idOrHashedSlug)
     ) {
-      const accountId = res.locals.accountId;
+      const accountId = res.locals.accountId as string;
       const isApiKeyListener = res.locals.isApiKeyListener ?? false;
 
       const draftTemplate = await prisma.agentTemplate.findUnique({

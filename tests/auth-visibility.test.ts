@@ -1,10 +1,13 @@
 /**
  * List/detail visibility rule tests (VAL-AUTH-VIS-001..006)
  *
+ * The list and detail endpoints both require auth — there is no public
+ * discovery surface. Unauthenticated callers always receive 401.
+ *
  * Tests that:
- *   - Unauthenticated GET /agent-templates returns only published templates (VAL-AUTH-VIS-001)
+ *   - Unauthenticated GET /agent-templates returns 401 (VAL-AUTH-VIS-001)
  *   - Authenticated GET /agent-templates returns published + own drafts/unlisted/archived (VAL-AUTH-VIS-002)
- *   - GET /agent-templates?status=draft returns 400 for unauthenticated users (VAL-AUTH-VIS-003)
+ *   - GET /agent-templates?status=draft returns 401 for unauthenticated users (VAL-AUTH-VIS-003)
  *   - GET /agent-templates?status=draft returns caller's own drafts for authenticated users (VAL-AUTH-VIS-004)
  *   - GET /agent-templates/:id returns 404 for draft templates not owned by caller (VAL-AUTH-VIS-005)
  *   - GET /agent-templates/:id returns template for drafts owned by caller (VAL-AUTH-VIS-006)
@@ -125,62 +128,12 @@ describe("List/detail visibility rules", () => {
     await cleanupTestRows();
   });
 
-  // VAL-AUTH-VIS-001: Unauthenticated GET returns only published templates
-  test("Unauthenticated GET returns only published templates", async () => {
-    // Create a published template (via API key)
-    const publishedResponse = await fetch(`${baseURL}/api/v2/agent-templates`, {
-      method: "POST",
-      headers: agentKeyHeaders(),
-      body: JSON.stringify({
-        agentName: "Vis Test Published",
-        prompt: "Published template",
-        slug: "vis-test-published",
-      }),
-    });
-    const publishedBody = (await publishedResponse.json()) as Record<
-      string,
-      unknown
-    >;
-    const publishedId = publishedBody.id as string;
-
-    // Publish it
-    await fetch(`${baseURL}/api/v2/agent-templates/${publishedId}/publish`, {
-      method: "POST",
-      headers: agentKeyHeaders(),
-    });
-
-    // Create a draft template (not published)
-    const draftResponse = await fetch(`${baseURL}/api/v2/agent-templates`, {
-      method: "POST",
-      headers: agentKeyHeaders(),
-      body: JSON.stringify({
-        agentName: "Vis Test Draft",
-        prompt: "Draft template",
-        slug: "vis-test-draft",
-      }),
-    });
-    const draftBody = (await draftResponse.json()) as Record<string, unknown>;
-
-    // Unauthenticated list should only show published
+  // VAL-AUTH-VIS-001: Unauthenticated GET returns 401
+  test("Unauthenticated GET /agent-templates returns 401", async () => {
     const listResponse = await fetch(
       `${baseURL}/api/v2/agent-templates?limit=100`,
     );
-    expect(listResponse.status).toBe(200);
-    const listBody = (await listResponse.json()) as {
-      data: Record<string, unknown>[];
-    };
-
-    // All returned templates should be published
-    const allPublished = listBody.data.every((t) => t.status === "published");
-    expect(allPublished).toBe(true);
-
-    // Draft should NOT appear
-    const draftPresent = listBody.data.some((t) => t.id === draftBody.id);
-    expect(draftPresent).toBe(false);
-
-    // Published should appear
-    const publishedPresent = listBody.data.some((t) => t.id === publishedId);
-    expect(publishedPresent).toBe(true);
+    expect(listResponse.status).toBe(401);
   });
 
   // VAL-AUTH-VIS-002: Authenticated GET returns published + own drafts/unlisted/archived
@@ -248,20 +201,12 @@ describe("List/detail visibility rules", () => {
     expect(bListBody.data.some((t) => t.id === aDraftId)).toBe(false);
   });
 
-  // VAL-AUTH-VIS-003: GET ?status=draft returns 400 for unauthenticated users
-  test("GET ?status=draft returns 400 for unauthenticated users", async () => {
+  // VAL-AUTH-VIS-003: GET ?status=draft returns 401 for unauthenticated users
+  test("GET ?status=draft returns 401 for unauthenticated users", async () => {
     const response = await fetch(
       `${baseURL}/api/v2/agent-templates?status=draft`,
     );
-
-    expect(response.status).toBe(400);
-    const body = (await response.json()) as {
-      error: unknown;
-      message?: string;
-    };
-    // Error should indicate status filter requires auth
-    const errorStr = JSON.stringify(body).toLowerCase();
-    expect(errorStr).toMatch(/status|auth|unauth/i);
+    expect(response.status).toBe(401);
   });
 
   // VAL-AUTH-VIS-004: GET ?status=draft returns caller's own drafts for authed users
@@ -339,7 +284,7 @@ describe("List/detail visibility rules", () => {
     expect(detailResponse.status).toBe(404);
   });
 
-  test("GET /:id returns 404 for draft templates for unauthenticated users", async () => {
+  test("GET /:id returns 401 for unauthenticated users", async () => {
     // User A creates a draft
     const createResponse = await fetch(`${baseURL}/api/v2/agent-templates`, {
       method: "POST",
@@ -353,12 +298,13 @@ describe("List/detail visibility rules", () => {
     const createBody = (await createResponse.json()) as Record<string, unknown>;
     const templateId = createBody.id as string;
 
-    // Unauthenticated user tries to get it — should return 404
+    // Unauthenticated user — should be rejected at the auth layer regardless
+    // of template status (draft or published). 401, not 404.
     const detailResponse = await fetch(
       `${baseURL}/api/v2/agent-templates/${templateId}`,
     );
 
-    expect(detailResponse.status).toBe(404);
+    expect(detailResponse.status).toBe(401);
   });
 
   // VAL-AUTH-VIS-006: Detail returns template for drafts owned by the caller
@@ -435,18 +381,19 @@ describe("List/detail visibility rules", () => {
       headers: await jwtHeadersFor(USER_A_ID),
     });
 
-    // User B can see it
+    // Any authenticated user can see it
     const bDetailResponse = await fetch(
       `${baseURL}/api/v2/agent-templates/${templateId}`,
       { headers: await jwtHeadersFor(USER_B_ID) },
     );
     expect(bDetailResponse.status).toBe(200);
 
-    // Unauthenticated can see it
+    // Unauthenticated callers are rejected at the auth layer — published
+    // templates are not publicly discoverable through this API.
     const unauthResponse = await fetch(
       `${baseURL}/api/v2/agent-templates/${templateId}`,
     );
-    expect(unauthResponse.status).toBe(200);
+    expect(unauthResponse.status).toBe(401);
   });
 
   // Status filter with unlisted/archived for authenticated users

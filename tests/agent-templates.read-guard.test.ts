@@ -6,7 +6,9 @@ import { afterAll, beforeEach, describe, expect, test } from "bun:test";
 import express, { Router } from "express";
 import { agentTemplatesRouter } from "@/api/v2/agent-templates/agent-templates.router";
 import { noRouteMiddleware } from "@/middleware/noRoute";
+import { pinoMiddleware } from "@/middleware/pino";
 import { ADMIN_ACCOUNT_ID } from "@/utils/constants";
+import { createJwtToken } from "@/utils/jwt";
 import { prisma } from "@/utils/prisma";
 
 type ListEnvelope = {
@@ -92,6 +94,7 @@ const withGuardedServer = async (
   setXMTPEnv(envValue);
 
   const app = express();
+  app.use(pinoMiddleware);
   app.use("/api/v2", buildGuardedV2Router());
   app.use(noRouteMiddleware);
 
@@ -179,6 +182,17 @@ describe("Agent template read production guard", () => {
       slug: "read-guard-reachable",
     });
 
+    // Reader token — list requires auth now. Non-owner reader sees only
+    // published, which matches what this test creates.
+    const READER_ID = "00000000-0000-4000-8000-cccccccc0003";
+    const authToken = await createJwtToken({
+      deviceId: "test-device-agent-templates-read-guard",
+      accountId: READER_ID,
+    });
+    const authHeader: Record<string, string> = {
+      "X-Convos-AuthToken": authToken,
+    };
+
     const envCases = [
       { label: "dev", value: "dev" },
       { label: "staging", value: "staging" },
@@ -189,7 +203,9 @@ describe("Agent template read production guard", () => {
 
     for (const envCase of envCases) {
       await withGuardedServer(envCase.value, async (baseURL) => {
-        const response = await fetch(`${baseURL}/api/v2/agent-templates`);
+        const response = await fetch(`${baseURL}/api/v2/agent-templates`, {
+          headers: authHeader,
+        });
         const body = (await response.json()) as ListEnvelope;
 
         expect(response.status).toBe(200);
@@ -203,6 +219,7 @@ describe("Agent template read production guard", () => {
         ]);
         expect(body.data.some((row) => row.id === tmpl.id)).toBe(true);
 
+        // Underscore paths stay unmounted — no route, no auth — 404.
         const underscoreResponses = await Promise.all([
           fetch(`${baseURL}/api/v2/agent_templates`),
           fetch(`${baseURL}/api/v2/agent_templates/${tmpl.id}`),

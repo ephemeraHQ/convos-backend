@@ -4,7 +4,7 @@
  * Tests that:
  *   - User A creates draft → User B cannot see/mutate; User A and API key listener can (VAL-AUTH-CROSS-001)
  *   - User A publishes → User B can see but cannot mutate (VAL-AUTH-CROSS-002)
- *   - Unauthenticated can list published but cannot filter by status or see drafts (VAL-AUTH-CROSS-003)
+ *   - Unauthenticated callers cannot list or detail any template (VAL-AUTH-CROSS-003)
  *   - JWT-only user (no accountId) is rejected from write routes with 403 (VAL-AUTH-CROSS-004)
  */
 
@@ -300,27 +300,10 @@ describe("Cross-area auth flows", () => {
     expect(bPublishResponse.status).toBe(403);
   });
 
-  // VAL-AUTH-CROSS-003: Unauthenticated can list published but cannot filter by status or see drafts
-  test("Unauthenticated can list published templates but cannot filter by status or see drafts", async () => {
-    // Create and publish a template
-    const createResponse = await fetch(`${baseURL}/api/v2/agent-templates`, {
-      method: "POST",
-      headers: agentKeyHeaders(),
-      body: JSON.stringify({
-        agentName: "Cross Auth Unauth Pub",
-        prompt: "Published",
-        slug: "cross-auth-unauth-pub",
-      }),
-    });
-    const createBody = (await createResponse.json()) as Record<string, unknown>;
-    const pubId = createBody.id as string;
-
-    await fetch(`${baseURL}/api/v2/agent-templates/${pubId}/publish`, {
-      method: "POST",
-      headers: agentKeyHeaders(),
-    });
-
-    // Create a draft
+  // VAL-AUTH-CROSS-003: Unauthenticated callers are rejected from every
+  // agent-templates route — no public discovery surface.
+  test("Unauthenticated callers cannot list or detail any template", async () => {
+    // Seed a draft template so we have a concrete URL to attempt.
     const draftResponse = await fetch(`${baseURL}/api/v2/agent-templates`, {
       method: "POST",
       headers: agentKeyHeaders(),
@@ -333,29 +316,24 @@ describe("Cross-area auth flows", () => {
     const draftBody = (await draftResponse.json()) as Record<string, unknown>;
     const draftId = draftBody.id as string;
 
-    // (1) Unauthenticated GET list — all templates have status: published
+    // (1) Unauthenticated GET list — 401
     const listResponse = await fetch(
       `${baseURL}/api/v2/agent-templates?limit=100`,
     );
-    expect(listResponse.status).toBe(200);
-    const listBody = (await listResponse.json()) as {
-      data: Record<string, unknown>[];
-    };
-    const allPublished = listBody.data.every((t) => t.status === "published");
-    expect(allPublished).toBe(true);
-    expect(listBody.data.some((t) => t.id === draftId)).toBe(false);
+    expect(listResponse.status).toBe(401);
 
-    // (2) Unauthenticated GET ?status=draft — 400
+    // (2) Unauthenticated GET ?status=draft — 401 (auth check runs before
+    // query validation, so this is the same code path as #1)
     const statusFilterResponse = await fetch(
       `${baseURL}/api/v2/agent-templates?status=draft`,
     );
-    expect(statusFilterResponse.status).toBe(400);
+    expect(statusFilterResponse.status).toBe(401);
 
-    // (3) Unauthenticated GET detail for draft — 404
+    // (3) Unauthenticated GET detail — 401
     const draftDetailResponse = await fetch(
       `${baseURL}/api/v2/agent-templates/${draftId}`,
     );
-    expect(draftDetailResponse.status).toBe(404);
+    expect(draftDetailResponse.status).toBe(401);
   });
 
   // VAL-AUTH-CROSS-004: JWT-only user (no accountId) is rejected from write routes with 403
