@@ -430,6 +430,109 @@ phase4_backward_compat() {
   assert_match "disabled/nonce-preserved" '^1$' "$still_present" || return 1
 }
 
+phase5_idempotency() {
+  emit "## Phase 5 — idempotency + concurrency"
+
+  # --- serial same-wallet ---
+  local device_id="${DEMO_DEVICE_PREFIX}serial-1"
+  local signer_key
+  signer_key="0x$(printf '3%.0s' $(seq 64))"
+
+  local jar1="$TMP/cookies.serial.1.txt"
+  issue_nonce "$jar1" || return 1
+  sign_and_token "serial/first" 200 "$jar1" "$device_id" --signer-key "$signer_key" || return 1
+  local jwt1
+  jwt1=$(echo "$LAST_BODY" | jq -r '.token')
+  local acct1
+  acct1=$(decode_jwt_payload "$jwt1" | jq -r '.accountId')
+
+  local jar2="$TMP/cookies.serial.2.txt"
+  issue_nonce "$jar2" || return 1
+  sign_and_token "serial/second" 200 "$jar2" "$device_id" --signer-key "$signer_key" || return 1
+  local jwt2
+  jwt2=$(echo "$LAST_BODY" | jq -r '.token')
+  local acct2
+  acct2=$(decode_jwt_payload "$jwt2" | jq -r '.accountId')
+
+  if [[ "$acct1" == "$acct2" ]]; then
+    _record_pass "serial/same-accountId: $acct1"
+  else
+    _record_fail "serial/same-accountId: first=$acct1 second=$acct2"
+  fi
+
+  # --- two distinct wallets ---
+  local device_id_b="${DEMO_DEVICE_PREFIX}serial-2"
+  local signer_key_b
+  signer_key_b="0x$(printf '4%.0s' $(seq 64))"
+  local jarb="$TMP/cookies.distinct.txt"
+  issue_nonce "$jarb" || return 1
+  sign_and_token "distinct/b" 200 "$jarb" "$device_id_b" --signer-key "$signer_key_b" || return 1
+  local jwt_b
+  jwt_b=$(echo "$LAST_BODY" | jq -r '.token')
+  local acct_b
+  acct_b=$(decode_jwt_payload "$jwt_b" | jq -r '.accountId')
+  if [[ "$acct1" != "$acct_b" ]]; then
+    _record_pass "distinct-wallets/different-accountIds: $acct1 != $acct_b"
+  else
+    _record_fail "distinct-wallets/different-accountIds: matched ($acct1)"
+  fi
+
+  # --- best-effort concurrent ---
+  local device_id_c="${DEMO_DEVICE_PREFIX}concurrent-1"
+  local signer_key_c
+  signer_key_c="0x$(printf '5%.0s' $(seq 64))"
+  local jar_c1="$TMP/cookies.concurrent.1.txt"
+  local jar_c2="$TMP/cookies.concurrent.2.txt"
+  issue_nonce "$jar_c1" || return 1
+  issue_nonce "$jar_c2" || return 1
+  local n1 n2
+  n1=$(extract_nonce_from_cookie_jar "$jar_c1")
+  n2=$(extract_nonce_from_cookie_jar "$jar_c2")
+
+  local out1="$TMP/out.c1" out2="$TMP/out.c2"
+  (
+    siwe=$(bun run "$SCRIPT_DIR/sign-siwe.ts" --nonce "$n1" --signer-key "$signer_key_c")
+    body=$(jq -nc --argjson siwe "$siwe" --arg deviceId "$device_id_c" \
+      '{deviceId: $deviceId, siwe: $siwe}')
+    curl -sS -X POST "$BASE_URL/api/v2/auth/token" -b "$jar_c1" \
+      -H "Content-Type: application/json" -d "$body" > "$out1"
+  ) &
+  local pid1=$!
+  (
+    siwe=$(bun run "$SCRIPT_DIR/sign-siwe.ts" --nonce "$n2" --signer-key "$signer_key_c")
+    body=$(jq -nc --argjson siwe "$siwe" --arg deviceId "$device_id_c" \
+      '{deviceId: $deviceId, siwe: $siwe}')
+    curl -sS -X POST "$BASE_URL/api/v2/auth/token" -b "$jar_c2" \
+      -H "Content-Type: application/json" -d "$body" > "$out2"
+  ) &
+  local pid2=$!
+  wait "$pid1" "$pid2"
+
+  local jwt_c1 jwt_c2 acct_c1 acct_c2
+  jwt_c1=$(jq -r '.token' "$out1")
+  jwt_c2=$(jq -r '.token' "$out2")
+  acct_c1=$(decode_jwt_payload "$jwt_c1" | jq -r '.accountId')
+  acct_c2=$(decode_jwt_payload "$jwt_c2" | jq -r '.accountId')
+
+  emit "**Concurrent same-wallet:** acct1=$acct_c1 acct2=$acct_c2"
+  if [[ "$acct_c1" == "$acct_c2" ]]; then
+    _record_pass "concurrent/same-accountId"
+  else
+    _record_fail "concurrent/same-accountId: $acct_c1 != $acct_c2"
+  fi
+
+  # DB state for concurrent address: 1 AuthMethod for that wallet.
+  local wallet_c
+  wallet_c=$(bun -e '
+    import("viem/accounts").then(m => {
+      console.log(m.privateKeyToAccount("'"$signer_key_c"'").address.toLowerCase());
+    });
+  ')
+  local n_methods
+  n_methods=$(psql_query "SELECT count(*) FROM \"AuthMethod\" WHERE \"externalKey\"='$wallet_c'")
+  assert_match "concurrent/single-authmethod" '^1$' "$n_methods" || return 1
+}
+
 # --- main ---------------------------------------------------------------------
 
 main() {
@@ -443,6 +546,7 @@ main() {
   phase3_negative_nonce_and_sig
   phase3_negative_siwe_fields
   phase4_backward_compat
+  phase5_idempotency
 }
 
 main "$@"
