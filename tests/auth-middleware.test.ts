@@ -8,6 +8,7 @@
  *   - requireAccount rejects when res.locals.accountId is undefined
  */
 
+import { readFileSync } from "node:fs";
 import type { Server } from "node:http";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import express, { type Response } from "express";
@@ -236,5 +237,35 @@ describe("getEffectiveOwnerId utility", () => {
     } as unknown as Response;
 
     expect(getEffectiveOwnerId(mockRes)).toBeUndefined();
+  });
+});
+
+describe("requireAccount chained on every agent-templates route", () => {
+  test("router source chains requireAccount on read and write routes", () => {
+    const source = readFileSync(
+      new URL(
+        "../src/api/v2/agent-templates/agent-templates.router.ts",
+        import.meta.url,
+      ),
+      "utf8",
+    );
+
+    // Check that requireAccount is imported
+    expect(source).toContain("requireAccount");
+    expect(source).toContain('from "@/middleware/auth"');
+
+    // Every route on this router requires an account, so the chain is always
+    // `authOrAgentApiKeyAuth, requireAccount, handler`. No public discovery
+    // surface — there is no unauth list/detail branch.
+    const requireAccountCount = (source.match(/requireAccount/g) ?? []).length;
+
+    // 4 write routes (POST, PATCH, DELETE, POST /:id/publish) + 2 read routes
+    // (GET /, GET /:idOrHashedSlug) + 1 import = 7 occurrences.
+    // (generate and create-job routes are on later branches.)
+    expect(requireAccountCount).toBe(7);
+
+    // Read routes DO have requireAccount chained.
+    expect(source).toContain("requireAccount,\n  listHandler");
+    expect(source).toContain("requireAccount,\n  detailHandler");
   });
 });
