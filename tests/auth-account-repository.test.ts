@@ -1,14 +1,18 @@
 import { AuthMethodType } from "@prisma/client";
 import { afterEach, beforeAll, describe, expect, test } from "bun:test";
 import { upsertAuthMethodAndAccount } from "@/accounts/repository";
+import { ADMIN_ACCOUNT_ID } from "@/utils/constants";
 import { prisma } from "@/utils/prisma";
 
 const ADDR_A = "0x" + "a".repeat(40);
 const ADDR_B = "0x" + "b".repeat(40);
 
+// Preserve the admin account seeded by migration; only wipe rows created by tests.
+const nonAdminAccountFilter = { id: { not: ADMIN_ACCOUNT_ID } };
+
 async function reset() {
   await prisma.authMethod.deleteMany();
-  await prisma.account.deleteMany();
+  await prisma.account.deleteMany({ where: nonAdminAccountFilter });
 }
 
 describe("upsertAuthMethodAndAccount", () => {
@@ -40,7 +44,9 @@ describe("upsertAuthMethodAndAccount", () => {
       externalKey: ADDR_A,
     });
     expect(second.accountId).toBe(first.accountId);
-    const accounts = await prisma.account.count();
+    const accounts = await prisma.account.count({
+      where: nonAdminAccountFilter,
+    });
     expect(accounts).toBe(1);
     const methods = await prisma.authMethod.count();
     expect(methods).toBe(1);
@@ -56,7 +62,9 @@ describe("upsertAuthMethodAndAccount", () => {
       externalKey: ADDR_B,
     });
     expect(a.accountId).not.toBe(b.accountId);
-    expect(await prisma.account.count()).toBe(2);
+    expect(await prisma.account.count({ where: nonAdminAccountFilter })).toBe(
+      2,
+    );
   });
 
   test("concurrent first-login same wallet → both resolve to same accountId, no orphan", async () => {
@@ -72,7 +80,9 @@ describe("upsertAuthMethodAndAccount", () => {
       }),
     ]);
     expect(a.accountId).toBe(b.accountId);
-    expect(await prisma.account.count()).toBe(1);
+    expect(await prisma.account.count({ where: nonAdminAccountFilter })).toBe(
+      1,
+    );
     expect(await prisma.authMethod.count()).toBe(1);
   });
 });
