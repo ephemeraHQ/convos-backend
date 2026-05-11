@@ -14,6 +14,7 @@
 
 /* eslint-disable @typescript-eslint/no-require-imports, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-explicit-any */
 
+import logger from "@/utils/logger";
 import type { GenerationMetrics } from "./templateGen";
 
 // ---------------------------------------------------------------------------
@@ -28,9 +29,9 @@ export const BUILDER_TEMPLATE_GENERATED_EVENT = "builder.template.generated";
 
 export interface PostHogCaptureProperties extends GenerationMetrics {
   /** Fresh UUID v4 per request — correlates logs to the metering event. */
-  requestId: string;
+  requestId?: string;
   /** How the request was authenticated: "jwt" or "agentKey". */
-  authMode: "jwt" | "agentKey";
+  authMode?: "jwt" | "agentKey";
   /** Source of the generation event — e.g. "create-job" for async job executor. */
   source?: string;
   /** Account ID of the template/job owner. */
@@ -71,8 +72,12 @@ function getPostHogClient(): any {
 // Test seam — mirrors __resetGenerateTemplateForTests pattern
 // ---------------------------------------------------------------------------
 
-let _captureOverride: ((properties: PostHogCaptureProperties) => void) | null =
-  null;
+export type PostHogCaptureOverride = (
+  event: string,
+  properties: PostHogCaptureProperties,
+) => void;
+
+let _captureOverride: PostHogCaptureOverride | null = null;
 
 /**
  * Install a test override for the PostHog capture.
@@ -80,7 +85,7 @@ let _captureOverride: ((properties: PostHogCaptureProperties) => void) | null =
  * Also resets the cached PostHog client so env-var changes take effect.
  */
 export function __resetPostHogForTests(
-  override: ((properties: PostHogCaptureProperties) => void) | null,
+  override: PostHogCaptureOverride | null,
 ) {
   _captureOverride = override;
   _posthogClient = null;
@@ -100,7 +105,7 @@ export function __resetPostHogForTests(
  */
 export function capturePostHog(properties: PostHogCaptureProperties): void {
   if (_captureOverride) {
-    _captureOverride(properties);
+    _captureOverride(BUILDER_TEMPLATE_GENERATED_EVENT, properties);
     return;
   }
 
@@ -118,9 +123,6 @@ export function capturePostHog(properties: PostHogCaptureProperties): void {
       properties,
     });
   } catch (err) {
-    console.error(
-      "[posthog] capture failed:",
-      err instanceof Error ? err.message : err,
-    );
+    logger.error({ err }, "[posthog] capture failed");
   }
 }

@@ -65,7 +65,7 @@ let capturedPostHog: PostHogCaptureProperties[] = [];
 
 const stubPostHog = () => {
   capturedPostHog = [];
-  __resetPostHogForTests((properties) => {
+  __resetPostHogForTests((_event, properties) => {
     capturedPostHog.push(properties);
   });
 };
@@ -238,7 +238,7 @@ describe("PostHog metering for POST /api/v2/agent-templates/generate", () => {
     expect(typeof props.completionTokens).toBe("number");
     expect(typeof props.latencyMs).toBe("number");
     expect(typeof props.requestId).toBe("string");
-    expect(UUID_V4_RE.test(props.requestId)).toBe(true);
+    expect(UUID_V4_RE.test(props.requestId!)).toBe(true);
     expect(["jwt", "agentKey"]).toContain(props.authMode);
     expect(props.ownerAccountId).toBe(ADMIN_ACCOUNT_ID);
   });
@@ -255,7 +255,7 @@ describe("PostHog metering for POST /api/v2/agent-templates/generate", () => {
     expect(typeof props.completionTokens).toBe("number");
     expect(typeof props.latencyMs).toBe("number");
     expect(typeof props.requestId).toBe("string");
-    expect(UUID_V4_RE.test(props.requestId)).toBe(true);
+    expect(UUID_V4_RE.test(props.requestId!)).toBe(true);
     expect(["jwt", "agentKey"]).toContain(props.authMode);
     expect(props.ownerAccountId).toBe(ADMIN_ACCOUNT_ID);
   });

@@ -2,6 +2,8 @@ import { Router } from "express";
 import { authOrAgentApiKeyAuth } from "@/middleware/agentAuth";
 import { requireAccount } from "@/middleware/auth";
 import { createHandler } from "./handlers/create";
+import { createJobGetHandler } from "./handlers/create-job-get";
+import { createJobPostHandler } from "./handlers/create-job-post";
 import { deleteHandler } from "./handlers/delete";
 import { detailHandler } from "./handlers/detail";
 import { generateTemplateHandler } from "./handlers/generate-template";
@@ -28,6 +30,18 @@ agentTemplatesRouter.post(
   authOrAgentApiKeyAuth,
   requireAccount,
   generateTemplateHandler,
+);
+agentTemplatesRouter.post(
+  "/create-job",
+  authOrAgentApiKeyAuth,
+  requireAccount,
+  createJobPostHandler,
+);
+agentTemplatesRouter.get(
+  "/create-job/:jobId",
+  authOrAgentApiKeyAuth,
+  requireAccount,
+  createJobGetHandler,
 );
 agentTemplatesRouter.patch(
   "/:id",
