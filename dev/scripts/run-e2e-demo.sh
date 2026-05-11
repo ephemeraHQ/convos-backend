@@ -136,6 +136,40 @@ phase0_preflight() {
   fi
 }
 
+phase1_setup() {
+  emit "## Phase 1 — setup"
+
+  # AppCheck bypass via runtime config.
+  emit "Flip AppCheck off for the demo run (UPSERT into RuntimeConfig)."
+  emit_code "psql ... INSERT INTO \"RuntimeConfig\" ... ON CONFLICT DO UPDATE"
+  psql_exec "
+    INSERT INTO \"RuntimeConfig\" (key, value, \"updatedAt\")
+    VALUES ('app_attest_enabled', 'false', now())
+    ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, \"updatedAt\" = now();
+  "
+  _record_pass "phase1: app_attest_enabled UPSERT'd to false"
+
+  # 30s runtime-config cache TTL — wait so the next request sees the new value.
+  emit "Wait 32s for the in-memory runtime-config cache (30s TTL) to expire."
+  emit_code "sleep 32"
+  sleep 32
+  _record_pass "phase1: runtime-config cache flushed"
+
+  # Wipe auth-slice tables.
+  emit "Wipe Account / AuthMethod / AuthNonce (CASCADE)."
+  emit_code "psql ... TRUNCATE \"Account\", \"AuthMethod\", \"AuthNonce\" CASCADE"
+  psql_exec 'TRUNCATE "AuthMethod", "Account", "AuthNonce" CASCADE'
+  _record_pass "phase1: tables truncated"
+
+  # Reset disabled-device state from prior demo runs.
+  emit "Reset DeviceRegistration.disabled for demo-prefixed deviceIds."
+  emit_code "psql ... UPDATE \"DeviceRegistration\" SET disabled=false WHERE \"deviceId\" LIKE '${DEMO_DEVICE_PREFIX}%'"
+  psql_exec "UPDATE \"DeviceRegistration\" SET disabled = false WHERE \"deviceId\" LIKE '${DEMO_DEVICE_PREFIX}%'"
+  _record_pass "phase1: demo device disabled-flag reset"
+
+  emit "Tmp directory for cookie jars: \`$TMP\`."
+}
+
 # --- main ---------------------------------------------------------------------
 
 main() {
@@ -144,8 +178,9 @@ main() {
 
   start_runbook
   phase0_preflight
+  phase1_setup
 
-  # TODO subsequent tasks add phase1..phase7 here
+  # TODO subsequent tasks add phase2..phase7 here
 }
 
 main "$@"
