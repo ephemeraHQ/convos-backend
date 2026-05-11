@@ -4,7 +4,6 @@ import {
   appCheckOnlyMiddleware,
   authMiddleware,
   authMiddlewareAllowNSE,
-  requireAccount,
 } from "@/middleware/auth";
 import { devAuthMiddleware } from "@/middleware/devAuth";
 import { lifecycleTestAuthMiddleware } from "@/middleware/lifecycleTestAuth";
@@ -17,6 +16,8 @@ import {
   inviteCodeRedeemLimiter,
   serviceProvisionLimiter,
 } from "@/middleware/rateLimit";
+import { agentSkillsRouter } from "./agent-skills/agent-skills.router";
+import { agentTemplatesRouter } from "./agent-templates/agent-templates.router";
 import { agentsRouter } from "./agents/agents.router";
 import { agentAssetsRouter } from "./agents/assets/agent-assets.router";
 import { provisionRouter } from "./agents/provision/provision.router";
@@ -42,6 +43,8 @@ const v2Router = Router();
 
 if (process.env.XMTP_ENV !== "production") {
   v2Router.use("/dev", devAuthMiddleware, devRouter);
+  v2Router.use("/agent-templates", agentTemplatesRouter);
+  v2Router.use("/agent-skills", agentSkillsRouter);
 }
 
 v2Router.use("/invites", invitesV2Router);
@@ -115,22 +118,5 @@ v2Router.get("/auth-check", authMiddlewareAllowNSE, (_req, res) => {
   });
   return;
 });
-
-// Account-bound auth check - returns 200 only if JWT carries accountId claim.
-// Method-agnostic: works for any AuthMethodType today (SIWE) or future
-// (Google, Apple, passkey, ...). Used by clients to probe whether they need to
-// trigger an account-upgrade flow (e.g. SIWE login) before hitting routes
-// gated by requireAccount.
-v2Router.get(
-  "/account-auth-check",
-  authMiddleware,
-  requireAccount,
-  (_req, res) => {
-    res.status(200).json({
-      success: true,
-    });
-    return;
-  },
-);
 
 export default v2Router;
