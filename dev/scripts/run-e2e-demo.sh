@@ -59,8 +59,8 @@ on_exit() {
   if [[ -n "$TMP" && -d "$TMP" ]]; then
     rm -rf "$TMP"
   fi
-  if [[ ${#FAILED_CASES[@]} -gt 0 ]]; then
-    echo "❌ Demo finished with ${#FAILED_CASES[@]} failure(s)." >&2
+  if [[ ${#FAILED_CASES[@]} -gt 0 || $code -ne 0 ]]; then
+    echo "❌ Demo finished with ${#FAILED_CASES[@]} failure(s) (exit $code)." >&2
     exit "${code:-1}"
   fi
   echo "✅ Demo finished. ${#PASSED_CASES[@]} case(s) passed." >&2
@@ -107,7 +107,7 @@ phase0_preflight() {
   fi
 
   # Postgres
-  nc -z localhost 5432 || die "Postgres not reachable on :5432. Run ./dev/up first."
+  nc -z localhost 5432 2>/dev/null || die "Postgres not reachable on :5432. Run ./dev/up first."
   _record_pass "Postgres reachable on :5432"
 
   # Server
