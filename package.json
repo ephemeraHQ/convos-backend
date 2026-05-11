@@ -16,6 +16,7 @@
     "generate:key": "bun run dev/scripts/generateDbKey.ts",
     "generate:notification-secret": "bun run dev/scripts/generateNotificationSecret.ts",
     "lint": "eslint .",
+    "lint:shell": "shellcheck dev/scripts/run-e2e-demo.sh dev/scripts/lib/*.sh",
     "migrate:deploy": "prisma migrate deploy",
     "migrate:dev": "prisma migrate dev",
     "start": "bun run --preload ./src/instrumentation.ts src/index.ts",

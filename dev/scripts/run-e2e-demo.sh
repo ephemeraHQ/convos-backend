@@ -24,15 +24,15 @@ SKIPPED_PHASES=()
 RUNBOOK="$SCRIPT_DIR/AUTH.md"
 TMP=""
 
-# shellcheck source=lib/md.sh
+# shellcheck source=/dev/null
 source "$SCRIPT_DIR/lib/md.sh"
-# shellcheck source=lib/psql.sh
+# shellcheck source=/dev/null
 source "$SCRIPT_DIR/lib/psql.sh"
-# shellcheck source=lib/jwt.sh
+# shellcheck source=/dev/null
 source "$SCRIPT_DIR/lib/jwt.sh"
-# shellcheck source=lib/http.sh
+# shellcheck source=/dev/null
 source "$SCRIPT_DIR/lib/http.sh"
-# shellcheck source=lib/assert.sh
+# shellcheck source=/dev/null
 source "$SCRIPT_DIR/lib/assert.sh"
 
 # --- exit/cleanup -------------------------------------------------------------
