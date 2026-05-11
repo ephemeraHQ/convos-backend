@@ -81,6 +81,39 @@ extract_nonce_from_cookie_jar() {
   printf '%s' "${cookie_value##*.}"
 }
 
+issue_nonce() {
+  # Issues a fresh nonce, returns the cookie jar path on stdout via output arg.
+  local jar="$1"
+  run_curl "issue fresh nonce" -X POST "$BASE_URL/api/v2/auth/nonce" -c "$jar"
+  [[ "$LAST_STATUS" == "200" ]] || { _record_fail "issue_nonce got $LAST_STATUS"; return 1; }
+}
+
+sign_and_token() {
+  # Args: case_name, expected_status, cookie_jar, deviceId, [extra signer args...].
+  # Runs sign-siwe.ts, posts to /auth/token, asserts status.
+  local case_name="$1"; shift
+  local expected_status="$1"; shift
+  local jar="$1"; shift
+  local device_id="$1"; shift
+
+  local nonce
+  nonce=$(extract_nonce_from_cookie_jar "$jar")
+
+  local siwe_json
+  siwe_json=$(bun run "$SCRIPT_DIR/sign-siwe.ts" --nonce "$nonce" "$@")
+
+  local body
+  body=$(jq -nc --argjson siwe "$siwe_json" --arg deviceId "$device_id" \
+    '{deviceId: $deviceId, siwe: $siwe}')
+
+  run_curl "$case_name" \
+    -X POST "$BASE_URL/api/v2/auth/token" \
+    -b "$jar" \
+    -H "Content-Type: application/json" \
+    -d "$body"
+  assert_status "$case_name" "$expected_status" "$LAST_STATUS" || return 1
+}
+
 start_runbook() {
   cat > "$RUNBOOK" <<EOF
 # Local end-to-end auth demo
@@ -241,6 +274,58 @@ phase2_happy_path() {
   assert_psql_count "happy/auth-nonce-count" "AuthNonce" 0 || return 1
 }
 
+phase3_negative_nonce_and_sig() {
+  emit "## Phase 3 — negative SIWE matrix (nonce + signature)"
+
+  local jar
+  local device_id="${DEMO_DEVICE_PREFIX}neg-1"
+
+  # --- replay: consume a nonce, then reuse the SAME cookie jar ---
+  jar="$TMP/cookies.replay.txt"
+  issue_nonce "$jar" || return 1
+  # Snapshot the cookie BEFORE consumption (server will clear it on success).
+  cp "$jar" "$TMP/cookies.replay.snapshot.txt"
+  sign_and_token "replay/first-use" 200 "$jar" "$device_id" || return 1
+  # Second use of the SAME (now-consumed) nonce — expect 401.
+  sign_and_token "replay/second-use" 401 "$TMP/cookies.replay.snapshot.txt" "$device_id" || return 1
+
+  # --- expired-nonce live exercise SKIPPED ---
+  # Requires demo-side HMAC signing of an expired-but-valid-HMAC cookie.
+  # Covered by tests/auth-nonce-repository.test.ts integration test.
+  emit "**expired-nonce (live)** — skipped here, requires demo-side HMAC signing. Covered by tests/auth-nonce-repository.test.ts."
+  SKIPPED_PHASES+=("phase3/expired-nonce-live")
+
+  # --- HMAC tamper: edit one hex char of the cookie value ---
+  jar="$TMP/cookies.hmac.txt"
+  issue_nonce "$jar" || return 1
+  # Flip the first char of the HMAC half (before the dot).
+  awk 'BEGIN {OFS="\t"} $6 == "__Host-convos_nonce" {
+    n = split($7, parts, ".");
+    hmac = parts[1]; nonce = parts[2];
+    c = substr(hmac, 1, 1);
+    flipped = (c == "0") ? "1" : "0";
+    hmac = flipped substr(hmac, 2);
+    $7 = hmac "." nonce
+  } { print }' "$jar" > "$jar.tampered"
+  mv "$jar.tampered" "$jar"
+  sign_and_token "hmac-tamper" 401 "$jar" "$device_id" || return 1
+
+  # --- bad signature: signer key #2, address-override = key #1's address ---
+  jar="$TMP/cookies.badsig.txt"
+  issue_nonce "$jar" || return 1
+  local key1_addr
+  key1_addr=$(bun -e '
+    import("viem/accounts").then(m => {
+      console.log(m.privateKeyToAccount("0x" + "1".repeat(64)).address);
+    });
+  ')
+  local key2_hex
+  key2_hex="0x$(printf '2%.0s' $(seq 64))"
+  sign_and_token "bad-signature" 401 "$jar" "$device_id" \
+    --signer-key "$key2_hex" \
+    --address-override "$key1_addr" || return 1
+}
+
 # --- main ---------------------------------------------------------------------
 
 main() {
@@ -251,6 +336,7 @@ main() {
   phase0_preflight
   phase1_setup
   phase2_happy_path
+  phase3_negative_nonce_and_sig
 }
 
 main "$@"
