@@ -1,0 +1,1 @@
+export const ADMIN_ACCOUNT_ID = "48a05ef4-4a71-57a0-957f-a3d410992b31";
