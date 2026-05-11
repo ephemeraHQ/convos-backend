@@ -214,10 +214,22 @@ async function extractViaTweetOEmbed(url: string): Promise<string> {
   // directly to Exa. Exa resolves redirects internally, so we never fetch a
   // user-supplied (or user-redirected) URL from our own server — matching the
   // "we don't fetch user URLs" pattern established when the direct-fetch
-  // fallback was removed in edf2503. Trade-off: we lose the
-  // `isTwitterUrl(realUrl)` dedupe on links that redirect back to twitter.com;
-  // Exa returns the underlying tweet content in that case, which is harmless
-  // (the outer tweet's text is already included by oEmbed above).
+  // fallback was removed in edf2503.
+  //
+  // Trust boundary: the URLs handed to Exa here come from a third-party
+  // tweet, not from the requesting user. A malicious tweet author could
+  // include a t.co link that redirects to an internal-to-Exa endpoint (e.g.
+  // cloud metadata). The SSRF surface on OUR network is closed — we make no
+  // outbound request to the t.co URL — but Exa does fetch it on its own
+  // infrastructure. We accept that posture because Exa exists to fetch
+  // user-supplied URLs as its product (the main URL flow at extractUrl()
+  // does the same with the user's own typed URL), and the residual blast
+  // radius is on Exa's side, not ours.
+  //
+  // Trade-off: we lose the `isTwitterUrl(realUrl)` dedupe on links that
+  // redirect back to twitter.com; Exa returns the underlying tweet content
+  // in that case, which is harmless (the outer tweet's text is already
+  // included by oEmbed above).
   const tcoLinks = (data.html || "").match(/https?:\/\/t\.co\/\w+/g) || [];
   let linkedContent = "";
   for (const tco of tcoLinks.slice(0, 3)) {
