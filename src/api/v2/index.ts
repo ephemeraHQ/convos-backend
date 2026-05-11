@@ -17,7 +17,6 @@ import {
   inviteCodeRedeemLimiter,
   serviceProvisionLimiter,
 } from "@/middleware/rateLimit";
-import { agentSkillsRouter } from "./agent-skills/agent-skills.router";
 import { agentTemplatesRouter } from "./agent-templates/agent-templates.router";
 import { agentsRouter } from "./agents/agents.router";
 import { agentAssetsRouter } from "./agents/assets/agent-assets.router";
@@ -45,7 +44,6 @@ const v2Router = Router();
 if (process.env.XMTP_ENV !== "production") {
   v2Router.use("/dev", devAuthMiddleware, devRouter);
   v2Router.use("/agent-templates", agentTemplatesRouter);
-  v2Router.use("/agent-skills", agentSkillsRouter);
 }
 
 v2Router.use("/invites", invitesV2Router);
