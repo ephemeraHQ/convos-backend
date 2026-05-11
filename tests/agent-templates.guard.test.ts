@@ -5,6 +5,7 @@ import express, { Router } from "express";
 import { agentSkillsRouter } from "@/api/v2/agent-skills/agent-skills.router";
 import { agentTemplatesRouter } from "@/api/v2/agent-templates/agent-templates.router";
 import { noRouteMiddleware } from "@/middleware/noRoute";
+import { pinoMiddleware } from "@/middleware/pino";
 
 type RouterWithStack = {
   stack?: Array<{
@@ -45,18 +46,24 @@ const withServer = async (
   runAssertions: (baseURL: string) => Promise<void>,
 ) => {
   const app = express();
+  app.use(pinoMiddleware);
   app.use("/api/v2", router as Parameters<typeof app.use>[1]);
   app.use(noRouteMiddleware);
 
   const server: Server = await new Promise((resolve, reject) => {
-    const startedServer = app.listen(4050, () => {
+    const startedServer = app.listen(0, () => {
       resolve(startedServer);
     });
     startedServer.once("error", reject);
   });
+  const address = server.address();
+  if (!address || typeof address === "string") {
+    throw new Error("Unable to determine server port");
+  }
+  const baseURL = `http://localhost:${address.port}`;
 
   try {
-    await runAssertions("http://localhost:4050");
+    await runAssertions(baseURL);
   } finally {
     await new Promise<void>((resolve) => {
       server.close(() => {
@@ -87,12 +94,12 @@ describe("agent templates and skills production guard", () => {
     );
   });
 
-  test("router shells are empty in M1", () => {
-    expect(getRouterStack(agentTemplatesRouter)).toHaveLength(0);
+  test("router registrations match the current milestone", () => {
+    expect(getRouterStack(agentTemplatesRouter).length).toBeGreaterThan(0);
     expect(getRouterStack(agentSkillsRouter)).toHaveLength(0);
   });
 
-  test("production does not mount routers and non-production mounts empty routers", async () => {
+  test("production does not mount routers and non-production mounts current routers", async () => {
     process.env.XMTP_ENV = "production";
     const productionRouter = buildGuardedV2Router();
     expect(hasMountedRouter(productionRouter, "/agent-templates")).toBe(false);
@@ -104,6 +111,8 @@ describe("agent templates and skills production guard", () => {
         fetch(`${baseURL}/api/v2/agent-skills`),
       ]);
 
+      // In production the routers aren't mounted at all → noRouteMiddleware
+      // returns 404 before any auth runs.
       expect(templatesResponse.status).toBe(404);
       expect(skillsResponse.status).toBe(404);
     });
@@ -114,6 +123,13 @@ describe("agent templates and skills production guard", () => {
     expect(hasMountedRouter(localRouter, "/agent-skills")).toBe(true);
 
     await withServer(localRouter, async (baseURL) => {
+      // The agent-templates list/detail routes are now auth-required, so
+      // unauthenticated reads return 401 (not 200/404). The agent-skills
+      // router is empty, so no route matches → 404 from noRouteMiddleware.
+      // What matters for this guard test is the *distinction*: 401 means
+      // the router is mounted but auth gated, 404 means the router isn't
+      // mounted at all. Production above must be 404; non-production for
+      // /agent-templates must be 401.
       const paths = [
         "/api/v2/agent-templates",
         "/api/v2/agent-templates/anything",
@@ -126,7 +142,7 @@ describe("agent templates and skills production guard", () => {
       );
 
       expect(responses.map((response) => response.status)).toEqual([
-        404, 404, 404, 404,
+        401, 401, 404, 404,
       ]);
     });
   });
