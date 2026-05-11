@@ -533,6 +533,34 @@ phase5_idempotency() {
   assert_match "concurrent/single-authmethod" '^1$' "$n_methods" || return 1
 }
 
+phase6_sweep() {
+  emit "## Phase 6 — AuthNonce sweep"
+
+  if [[ -z "${SWEEP_INTERVAL_MS:-}" ]]; then
+    emit "Skipping live sweep: SWEEP_INTERVAL_MS not exported in demo env. Server may still be using default 10-min wait."
+    SKIPPED_PHASES+=("phase6/sweep")
+    return 0
+  fi
+
+  local interval_s=$((SWEEP_INTERVAL_MS / 1000 + 2))
+
+  local stale_nonce
+  stale_nonce=$(openssl rand -hex 32)
+  emit_code "psql ... INSERT \"AuthNonce\"(nonce, createdAt=now()-2h)"
+  psql_exec "INSERT INTO \"AuthNonce\" (nonce, \"createdAt\") VALUES ('$stale_nonce', now() - interval '2 hours')"
+
+  local before
+  before=$(psql_query "SELECT count(*) FROM \"AuthNonce\" WHERE nonce='$stale_nonce'")
+  assert_match "sweep/row-inserted" '^1$' "$before" || return 1
+
+  emit "Wait $interval_s s for sweep tick (SWEEP_INTERVAL_MS=$SWEEP_INTERVAL_MS + 2s buffer)."
+  sleep "$interval_s"
+
+  local after
+  after=$(psql_query "SELECT count(*) FROM \"AuthNonce\" WHERE nonce='$stale_nonce'")
+  assert_match "sweep/row-deleted" '^0$' "$after" || return 1
+}
+
 # --- main ---------------------------------------------------------------------
 
 main() {
@@ -547,6 +575,7 @@ main() {
   phase3_negative_siwe_fields
   phase4_backward_compat
   phase5_idempotency
+  phase6_sweep
 }
 
 main "$@"
