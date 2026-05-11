@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { Prisma } from "@prisma/client";
 import { describe, expect, test } from "bun:test";
@@ -173,20 +174,23 @@ describe("CreateJob schema", () => {
   test("id defaults to UUID on insert", async () => {
     const adminAccountId = "48a05ef4-4a71-57a0-957f-a3d410992b31";
 
-    const result = await prisma.$queryRaw<Array<{ id: string }>>`
-      INSERT INTO "CreateJob" ("status", "input", "ownerAccountId", "createdAt", "updatedAt")
-      VALUES ('pending', '{}', ${adminAccountId}::uuid, NOW(), NOW())
-      RETURNING id
-    `;
+    // CreateJob.id uses @default(uuid()) — Prisma generates the UUID
+    // client-side. Use prisma.createJob.create() so the schema-declared
+    // default is exercised; raw SQL bypasses Prisma and would hit a
+    // NOT NULL violation.
+    const job = await prisma.createJob.create({
+      data: {
+        input: "{}",
+        ownerAccountId: adminAccountId,
+      },
+    });
 
-    expect(result).toHaveLength(1);
-    const id = result[0].id;
-    expect(id).toMatch(
-      /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
+    expect(job.id).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
     );
 
     // Cleanup
-    await prisma.$executeRaw`DELETE FROM "CreateJob" WHERE id = ${id}::uuid`;
+    await prisma.createJob.delete({ where: { id: job.id } });
   });
 
   // ── VAL-CJ-SCHEMA-007: CreateJob.status defaults to "pending" on insert ──
@@ -194,18 +198,17 @@ describe("CreateJob schema", () => {
   test("status defaults to pending on insert", async () => {
     const adminAccountId = "48a05ef4-4a71-57a0-957f-a3d410992b31";
 
-    const result = await prisma.$queryRaw<
-      Array<{ status: string; id: string }>
-    >`
-      INSERT INTO "CreateJob" ("input", "ownerAccountId", "createdAt", "updatedAt")
-      VALUES ('{}', ${adminAccountId}::uuid, NOW(), NOW())
-      RETURNING id, status
-    `;
+    const job = await prisma.createJob.create({
+      data: {
+        input: "{}",
+        ownerAccountId: adminAccountId,
+      },
+    });
 
-    expect(result[0].status).toBe("pending");
+    expect(job.status).toBe("pending");
 
     // Cleanup
-    await prisma.$executeRaw`DELETE FROM "CreateJob" WHERE id = ${result[0].id}::uuid`;
+    await prisma.createJob.delete({ where: { id: job.id } });
   });
 
   // ── VAL-CJ-SCHEMA-008: CreateJob.status CHECK constraint rejects invalid values ──
@@ -215,9 +218,12 @@ describe("CreateJob schema", () => {
 
     let caughtError: unknown;
     try {
+      // Raw SQL is required here — Prisma client's enum typing prevents
+      // passing an invalid value at the type level. Pass an explicit id
+      // since the schema's @default(uuid()) is client-side only.
       await prisma.$executeRaw`
-        INSERT INTO "CreateJob" ("status", "input", "ownerAccountId", "createdAt", "updatedAt")
-        VALUES ('INVALID_STATUS', '{}', ${adminAccountId}::uuid, NOW(), NOW())
+        INSERT INTO "CreateJob" ("id", "status", "input", "ownerAccountId", "createdAt", "updatedAt")
+        VALUES (${randomUUID()}::uuid, 'INVALID_STATUS', '{}', ${adminAccountId}::uuid, NOW(), NOW())
       `;
     } catch (error) {
       caughtError = error;
@@ -235,19 +241,20 @@ describe("CreateJob schema", () => {
   test("result and error accept NULL values", async () => {
     const adminAccountId = "48a05ef4-4a71-57a0-957f-a3d410992b31";
 
-    const result = await prisma.$queryRaw<
-      Array<{ id: string; result: string | null; error: string | null }>
-    >`
-      INSERT INTO "CreateJob" ("status", "input", "ownerAccountId", "result", "error", "createdAt", "updatedAt")
-      VALUES ('pending', '{}', ${adminAccountId}::uuid, NULL, NULL, NOW(), NOW())
-      RETURNING id, result, error
-    `;
+    const job = await prisma.createJob.create({
+      data: {
+        input: "{}",
+        ownerAccountId: adminAccountId,
+        result: null,
+        error: null,
+      },
+    });
 
-    expect(result[0].result).toBeNull();
-    expect(result[0].error).toBeNull();
+    expect(job.result).toBeNull();
+    expect(job.error).toBeNull();
 
     // Cleanup
-    await prisma.$executeRaw`DELETE FROM "CreateJob" WHERE id = ${result[0].id}::uuid`;
+    await prisma.createJob.delete({ where: { id: job.id } });
   });
 
   // ── VAL-CJ-SCHEMA-010: CreateJob.expiresAt is nullable ──
@@ -255,18 +262,17 @@ describe("CreateJob schema", () => {
   test("expiresAt is nullable", async () => {
     const adminAccountId = "48a05ef4-4a71-57a0-957f-a3d410992b31";
 
-    const result = await prisma.$queryRaw<
-      Array<{ id: string; expiresAt: Date | null }>
-    >`
-      INSERT INTO "CreateJob" ("status", "input", "ownerAccountId", "createdAt", "updatedAt")
-      VALUES ('pending', '{}', ${adminAccountId}::uuid, NOW(), NOW())
-      RETURNING id, "expiresAt"
-    `;
+    const job = await prisma.createJob.create({
+      data: {
+        input: "{}",
+        ownerAccountId: adminAccountId,
+      },
+    });
 
-    expect(result[0].expiresAt).toBeNull();
+    expect(job.expiresAt).toBeNull();
 
     // Cleanup
-    await prisma.$executeRaw`DELETE FROM "CreateJob" WHERE id = ${result[0].id}::uuid`;
+    await prisma.createJob.delete({ where: { id: job.id } });
   });
 
   // ── FK constraint: rejects ownerAccountId that does not exist ──

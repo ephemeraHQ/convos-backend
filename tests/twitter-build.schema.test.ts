@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { describe, expect, test } from "bun:test";
 import { prisma } from "@/utils/prisma";
@@ -65,18 +66,19 @@ describe("Twitter-build schema changes", () => {
   });
 
   test("source column defaults to app on insert", async () => {
-    const result = await prisma.$queryRaw<
-      Array<{ id: string; source: string }>
-    >`
-      INSERT INTO "CreateJob" ("status", "input", "ownerAccountId", "createdAt", "updatedAt")
-      VALUES ('pending', '{}', ${ADMIN_ACCOUNT_ID}::uuid, NOW(), NOW())
-      RETURNING id, source
-    `;
+    // CreateJob.id uses @default(uuid()) (client-side); use prisma client
+    // so all schema-declared defaults — id and source — are exercised.
+    const job = await prisma.createJob.create({
+      data: {
+        input: "{}",
+        ownerAccountId: ADMIN_ACCOUNT_ID,
+      },
+    });
 
-    expect(result[0].source).toBe("app");
+    expect(job.source).toBe("app");
 
     // Cleanup
-    await prisma.$executeRaw`DELETE FROM "CreateJob" WHERE id = ${result[0].id}::uuid`;
+    await prisma.createJob.delete({ where: { id: job.id } });
   });
 
   // ── VAL-TB-SCHEMA-003: CreateJob.metadata column is nullable JSON text ──
@@ -87,34 +89,34 @@ describe("Twitter-build schema changes", () => {
   });
 
   test("metadata column accepts NULL in Postgres", async () => {
-    const result = await prisma.$queryRaw<
-      Array<{ id: string; metadata: string | null }>
-    >`
-      INSERT INTO "CreateJob" ("status", "input", "ownerAccountId", "metadata", "createdAt", "updatedAt")
-      VALUES ('pending', '{}', ${ADMIN_ACCOUNT_ID}::uuid, NULL, NOW(), NOW())
-      RETURNING id, metadata
-    `;
+    const job = await prisma.createJob.create({
+      data: {
+        input: "{}",
+        ownerAccountId: ADMIN_ACCOUNT_ID,
+        metadata: null,
+      },
+    });
 
-    expect(result[0].metadata).toBeNull();
+    expect(job.metadata).toBeNull();
 
     // Cleanup
-    await prisma.$executeRaw`DELETE FROM "CreateJob" WHERE id = ${result[0].id}::uuid`;
+    await prisma.createJob.delete({ where: { id: job.id } });
   });
 
   test("metadata column accepts valid JSON strings", async () => {
     const jsonValue =
       '{"idea":"Build a math tutor","twitterHandle":"@alice","tweetId":"1234567890"}';
 
-    const result = await prisma.$queryRaw<
-      Array<{ id: string; metadata: string }>
-    >`
-      INSERT INTO "CreateJob" ("status", "input", "ownerAccountId", "metadata", "createdAt", "updatedAt")
-      VALUES ('pending', '{}', ${ADMIN_ACCOUNT_ID}::uuid, ${jsonValue}, NOW(), NOW())
-      RETURNING id, metadata
-    `;
+    const job = await prisma.createJob.create({
+      data: {
+        input: "{}",
+        ownerAccountId: ADMIN_ACCOUNT_ID,
+        metadata: jsonValue,
+      },
+    });
 
-    expect(result[0].metadata).toBe(jsonValue);
-    const parsed = JSON.parse(result[0].metadata) as {
+    expect(job.metadata).toBe(jsonValue);
+    const parsed = JSON.parse(job.metadata!) as {
       idea: string;
       twitterHandle: string;
       tweetId: string;
@@ -124,7 +126,7 @@ describe("Twitter-build schema changes", () => {
     expect(parsed.tweetId).toBe("1234567890");
 
     // Cleanup
-    await prisma.$executeRaw`DELETE FROM "CreateJob" WHERE id = ${result[0].id}::uuid`;
+    await prisma.createJob.delete({ where: { id: job.id } });
   });
 
   // ── VAL-TB-SCHEMA-004: CreateJob.joinUrl is nullable ──
@@ -135,18 +137,19 @@ describe("Twitter-build schema changes", () => {
   });
 
   test("joinUrl column accepts NULL for twitter source", async () => {
-    const result = await prisma.$queryRaw<
-      Array<{ id: string; joinUrl: string | null }>
-    >`
-      INSERT INTO "CreateJob" ("status", "input", "ownerAccountId", "source", "joinUrl", "createdAt", "updatedAt")
-      VALUES ('pending', '{}', ${ADMIN_ACCOUNT_ID}::uuid, 'twitter', NULL, NOW(), NOW())
-      RETURNING id, "joinUrl"
-    `;
+    const job = await prisma.createJob.create({
+      data: {
+        input: "{}",
+        ownerAccountId: ADMIN_ACCOUNT_ID,
+        source: "twitter",
+        joinUrl: null,
+      },
+    });
 
-    expect(result[0].joinUrl).toBeNull();
+    expect(job.joinUrl).toBeNull();
 
     // Cleanup
-    await prisma.$executeRaw`DELETE FROM "CreateJob" WHERE id = ${result[0].id}::uuid`;
+    await prisma.createJob.delete({ where: { id: job.id } });
   });
 
   // ── VAL-TB-SCHEMA-005: CreateJob.provisioningInstanceId, conversationId, inboxId are nullable ──
@@ -159,25 +162,23 @@ describe("Twitter-build schema changes", () => {
   });
 
   test("all three instance columns accept NULL for twitter source", async () => {
-    const result = await prisma.$queryRaw<
-      Array<{
-        id: string;
-        provisioningInstanceId: string | null;
-        conversationId: string | null;
-        inboxId: string | null;
-      }>
-    >`
-      INSERT INTO "CreateJob" ("status", "input", "ownerAccountId", "source", "provisioningInstanceId", "conversationId", "inboxId", "createdAt", "updatedAt")
-      VALUES ('pending', '{}', ${ADMIN_ACCOUNT_ID}::uuid, 'twitter', NULL, NULL, NULL, NOW(), NOW())
-      RETURNING id, "provisioningInstanceId", "conversationId", "inboxId"
-    `;
+    const job = await prisma.createJob.create({
+      data: {
+        input: "{}",
+        ownerAccountId: ADMIN_ACCOUNT_ID,
+        source: "twitter",
+        provisioningInstanceId: null,
+        conversationId: null,
+        inboxId: null,
+      },
+    });
 
-    expect(result[0].provisioningInstanceId).toBeNull();
-    expect(result[0].conversationId).toBeNull();
-    expect(result[0].inboxId).toBeNull();
+    expect(job.provisioningInstanceId).toBeNull();
+    expect(job.conversationId).toBeNull();
+    expect(job.inboxId).toBeNull();
 
     // Cleanup
-    await prisma.$executeRaw`DELETE FROM "CreateJob" WHERE id = ${result[0].id}::uuid`;
+    await prisma.createJob.delete({ where: { id: job.id } });
   });
 
   // ── VAL-TB-SCHEMA-006: Migration adds source + metadata columns and adds nullable joinUrl/instance columns ──
@@ -236,19 +237,19 @@ describe("Twitter-build schema changes", () => {
   // ── VAL-TB-SCHEMA-007: Existing CreateJob rows default to source="app" after migration ──
 
   test("existing rows default to source=app (backward compatible)", async () => {
-    // Insert a row WITHOUT specifying source, simulating a pre-migration row
-    const result = await prisma.$queryRaw<
-      Array<{ id: string; source: string }>
-    >`
-      INSERT INTO "CreateJob" ("status", "input", "ownerAccountId", "createdAt", "updatedAt")
-      VALUES ('pending', '{}', ${ADMIN_ACCOUNT_ID}::uuid, NOW(), NOW())
-      RETURNING id, source
-    `;
+    // Insert a row WITHOUT specifying source, simulating a pre-migration row.
+    const job = await prisma.createJob.create({
+      data: {
+        input: "{}",
+        ownerAccountId: ADMIN_ACCOUNT_ID,
+      },
+    });
 
-    expect(result[0].source).toBe("app");
+    expect(job.source).toBe("app");
 
-    // Also verify no rows have source IS NULL or source != 'app' for rows
-    // created without explicit source (column default always applies)
+    // Also verify no rows have source IS NULL — the column has a NOT NULL
+    // constraint so any pre-existing row backfilled by the migration must
+    // have a value.
     const nullRows = await prisma.$queryRaw<Array<{ count: bigint }>>`
       SELECT COUNT(*) as count FROM "CreateJob" WHERE source IS NULL
     `;
@@ -256,7 +257,7 @@ describe("Twitter-build schema changes", () => {
     expect(Number(nullRows[0].count)).toBe(0);
 
     // Cleanup
-    await prisma.$executeRaw`DELETE FROM "CreateJob" WHERE id = ${result[0].id}::uuid`;
+    await prisma.createJob.delete({ where: { id: job.id } });
   });
 
   // ── Additional: CreateJobSource CHECK constraint rejects invalid values ──
@@ -264,9 +265,12 @@ describe("Twitter-build schema changes", () => {
   test("source rejects invalid enum values", async () => {
     let caughtError: unknown;
     try {
+      // Raw SQL is required — Prisma client's enum typing rejects invalid
+      // values at the type level. Pass explicit id since @default(uuid())
+      // is client-side only.
       await prisma.$executeRaw`
-        INSERT INTO "CreateJob" ("status", "input", "ownerAccountId", "source", "createdAt", "updatedAt")
-        VALUES ('pending', '{}', ${ADMIN_ACCOUNT_ID}::uuid, 'INVALID_SOURCE', NOW(), NOW())
+        INSERT INTO "CreateJob" ("id", "status", "input", "ownerAccountId", "source", "createdAt", "updatedAt")
+        VALUES (${randomUUID()}::uuid, 'pending', '{}', ${ADMIN_ACCOUNT_ID}::uuid, 'INVALID_SOURCE', NOW(), NOW())
       `;
     } catch (error) {
       caughtError = error;
@@ -281,26 +285,24 @@ describe("Twitter-build schema changes", () => {
   // ── Additional: All three source values are insertable ──
 
   test("all three source values (app, web, twitter) can be inserted", async () => {
-    const sources = ["app", "web", "twitter"];
+    const sources = ["app", "web", "twitter"] as const;
     const insertedIds: string[] = [];
 
     for (const src of sources) {
-      const result = await prisma.$queryRaw<
-        Array<{ id: string; source: string }>
-      >`
-        INSERT INTO "CreateJob" ("status", "input", "ownerAccountId", "source", "createdAt", "updatedAt")
-        VALUES ('pending', '{}', ${ADMIN_ACCOUNT_ID}::uuid, ${src}::"CreateJobSource", NOW(), NOW())
-        RETURNING id, source
-      `;
+      const job = await prisma.createJob.create({
+        data: {
+          input: "{}",
+          ownerAccountId: ADMIN_ACCOUNT_ID,
+          source: src,
+        },
+      });
 
-      expect(result[0].source).toBe(src);
-      insertedIds.push(result[0].id);
+      expect(job.source).toBe(src);
+      insertedIds.push(job.id);
     }
 
     // Cleanup
-    for (const id of insertedIds) {
-      await prisma.$executeRaw`DELETE FROM "CreateJob" WHERE id = ${id}::uuid`;
-    }
+    await prisma.createJob.deleteMany({ where: { id: { in: insertedIds } } });
   });
 
   // ── Full twitter-source row can be inserted with nullable fields ──
@@ -312,30 +314,27 @@ describe("Twitter-build schema changes", () => {
       tweetId: "1234567890",
     });
 
-    const result = await prisma.$queryRaw<
-      Array<{
-        id: string;
-        source: string;
-        metadata: string;
-        joinUrl: string | null;
-        provisioningInstanceId: string | null;
-        conversationId: string | null;
-        inboxId: string | null;
-      }>
-    >`
-      INSERT INTO "CreateJob" ("status", "input", "ownerAccountId", "source", "metadata", "joinUrl", "provisioningInstanceId", "conversationId", "inboxId", "createdAt", "updatedAt")
-      VALUES ('pending', '{}', ${ADMIN_ACCOUNT_ID}::uuid, 'twitter', ${metadata}, NULL, NULL, NULL, NULL, NOW(), NOW())
-      RETURNING id, source, metadata, "joinUrl", "provisioningInstanceId", "conversationId", "inboxId"
-    `;
+    const job = await prisma.createJob.create({
+      data: {
+        input: "{}",
+        ownerAccountId: ADMIN_ACCOUNT_ID,
+        source: "twitter",
+        metadata,
+        joinUrl: null,
+        provisioningInstanceId: null,
+        conversationId: null,
+        inboxId: null,
+      },
+    });
 
-    expect(result[0].source).toBe("twitter");
-    expect(result[0].metadata).toBe(metadata);
-    expect(result[0].joinUrl).toBeNull();
-    expect(result[0].provisioningInstanceId).toBeNull();
-    expect(result[0].conversationId).toBeNull();
-    expect(result[0].inboxId).toBeNull();
+    expect(job.source).toBe("twitter");
+    expect(job.metadata).toBe(metadata);
+    expect(job.joinUrl).toBeNull();
+    expect(job.provisioningInstanceId).toBeNull();
+    expect(job.conversationId).toBeNull();
+    expect(job.inboxId).toBeNull();
 
     // Cleanup
-    await prisma.$executeRaw`DELETE FROM "CreateJob" WHERE id = ${result[0].id}::uuid`;
+    await prisma.createJob.delete({ where: { id: job.id } });
   });
 });
