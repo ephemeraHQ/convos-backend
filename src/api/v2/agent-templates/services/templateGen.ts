@@ -19,6 +19,7 @@
 /* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-return, @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-argument */
 
 import { AppError } from "@/utils/errors";
+import logger from "@/utils/logger";
 import { SYSTEM_PROMPT } from "../lib/system-prompt";
 
 // ---------------------------------------------------------------------------
@@ -178,10 +179,9 @@ async function extractViaExa(url: string): Promise<string> {
 
   if (!res.ok) {
     const errText = await res.text();
-    console.error(
-      "[templateGen] Exa error:",
-      res.status,
-      errText.slice(0, 300),
+    logger.error(
+      { status: res.status, body: errText.slice(0, 300) },
+      "[templateGen] Exa error",
     );
     throw new Error(`Exa content extraction failed (${res.status})`);
   }
@@ -491,10 +491,9 @@ Rules:
 
     if (!res.ok) {
       const body = await res.text();
-      console.error(
-        "[templateGen] GitHub selector LLM error:",
-        res.status,
-        body.slice(0, 300),
+      logger.error(
+        { status: res.status, body: body.slice(0, 300) },
+        "[templateGen] GitHub selector LLM error",
       );
       return null;
     }
@@ -502,8 +501,9 @@ Rules:
     data = (await res.json()) as any;
   } catch (err) {
     if (err instanceof Error && err.name === "AbortError") {
-      console.error(
-        `[templateGen] GitHub selector LLM timed out after ${OPENROUTER_TIMEOUT_MS}ms`,
+      logger.error(
+        { timeoutMs: OPENROUTER_TIMEOUT_MS },
+        "[templateGen] GitHub selector LLM timed out",
       );
       return null;
     }
@@ -512,8 +512,14 @@ Rules:
     clearTimeout(timeoutId);
   }
 
-  console.log(
-    `[templateGen] selectInstructions ok: model=${data?.model}, latencyMs=${Math.round(performance.now() - t0)}, prompt=${data?.usage?.prompt_tokens}, completion=${data?.usage?.completion_tokens}`,
+  logger.info(
+    {
+      model: data?.model,
+      latencyMs: Math.round(performance.now() - t0),
+      promptTokens: data?.usage?.prompt_tokens,
+      completionTokens: data?.usage?.completion_tokens,
+    },
+    "[templateGen] selectInstructions ok",
   );
   const tokens: PassthroughTokens = {
     promptTokens: Number(data?.usage?.prompt_tokens ?? 0),
@@ -544,9 +550,9 @@ Rules:
         /* fall through */
       }
     }
-    console.error(
-      "[templateGen] Failed to parse GitHub selector response:",
-      content.slice(0, 300),
+    logger.error(
+      { content: content.slice(0, 300) },
+      "[templateGen] Failed to parse GitHub selector response",
     );
     return null;
   }
@@ -573,9 +579,9 @@ async function tryGithubPassthrough(
     try {
       content = await githubFetchRaw(owner, repo, branch, filePath);
     } catch (err: any) {
-      console.error(
-        `[templateGen] Failed to fetch ${owner}/${repo}/${filePath}:`,
-        err.message,
+      logger.error(
+        { owner, repo, filePath, err: err.message },
+        "[templateGen] Failed to fetch GitHub file",
       );
       return null;
     }
@@ -592,7 +598,10 @@ async function tryGithubPassthrough(
   try {
     repoInfo = await githubApiGet(`/repos/${owner}/${repo}`);
   } catch (err: any) {
-    console.error("[templateGen] GitHub repo lookup failed:", err.message);
+    logger.error(
+      { err: err.message },
+      "[templateGen] GitHub repo lookup failed",
+    );
     return null;
   }
 
@@ -610,7 +619,10 @@ async function tryGithubPassthrough(
     tree = (treeData.tree || []).map((t: any) => t.path).filter(Boolean);
     readme = readmeRaw;
   } catch (err: any) {
-    console.error("[templateGen] Failed to fetch repo tree:", err.message);
+    logger.error(
+      { err: err.message },
+      "[templateGen] Failed to fetch repo tree",
+    );
     return null;
   }
 
@@ -636,9 +648,9 @@ async function tryGithubPassthrough(
         selection.instructionsPath,
       );
     } catch (err: any) {
-      console.error(
-        `[templateGen] Failed to fetch ${selection.instructionsPath}:`,
-        err.message,
+      logger.error(
+        { instructionsPath: selection.instructionsPath, err: err.message },
+        "[templateGen] Failed to fetch instructions",
       );
       return null;
     }
@@ -767,10 +779,9 @@ Rules:
 
     if (!res.ok) {
       const body = await res.text();
-      console.error(
-        "[templateGen] Content classifier error:",
-        res.status,
-        body.slice(0, 300),
+      logger.error(
+        { status: res.status, body: body.slice(0, 300) },
+        "[templateGen] Content classifier error",
       );
       return null;
     }
@@ -778,8 +789,9 @@ Rules:
     data = (await res.json()) as any;
   } catch (err) {
     if (err instanceof Error && err.name === "AbortError") {
-      console.error(
-        `[templateGen] Content classifier timed out after ${OPENROUTER_TIMEOUT_MS}ms`,
+      logger.error(
+        { timeoutMs: OPENROUTER_TIMEOUT_MS },
+        "[templateGen] Content classifier timed out",
       );
       return null;
     }
@@ -788,8 +800,14 @@ Rules:
     clearTimeout(timeoutId);
   }
 
-  console.log(
-    `[templateGen] classifyContent ok: model=${data?.model}, latencyMs=${Math.round(performance.now() - t0)}, prompt=${data?.usage?.prompt_tokens}, completion=${data?.usage?.completion_tokens}`,
+  logger.info(
+    {
+      model: data?.model,
+      latencyMs: Math.round(performance.now() - t0),
+      promptTokens: data?.usage?.prompt_tokens,
+      completionTokens: data?.usage?.completion_tokens,
+    },
+    "[templateGen] classifyContent ok",
   );
   const tokens: PassthroughTokens = {
     promptTokens: Number(data?.usage?.prompt_tokens ?? 0),
@@ -819,9 +837,9 @@ Rules:
         /* fall through */
       }
     }
-    console.error(
-      "[templateGen] Failed to parse classifier response:",
-      content_response.slice(0, 300),
+    logger.error(
+      { content: content_response.slice(0, 300) },
+      "[templateGen] Failed to parse classifier response",
     );
     return null;
   }
@@ -870,9 +888,9 @@ async function extractUrl(url: string): Promise<string> {
     try {
       return await extractViaTweetOEmbed(url);
     } catch (err: any) {
-      console.error(
-        "[templateGen] Tweet oEmbed failed, trying Exa:",
-        err.message,
+      logger.error(
+        { err: err.message },
+        "[templateGen] Tweet oEmbed failed, trying Exa",
       );
     }
   }
@@ -1066,10 +1084,9 @@ export async function generateTemplate(
 
     if (!res.ok) {
       const body = await res.text();
-      console.error(
-        "[templateGen] OpenRouter error:",
-        res.status,
-        body.slice(0, 500),
+      logger.error(
+        { status: res.status, body: body.slice(0, 500) },
+        "[templateGen] OpenRouter error",
       );
       throw new Error(`OpenRouter API error ${res.status}`);
     }
@@ -1090,8 +1107,14 @@ export async function generateTemplate(
   const promptTokens = Number(data?.usage?.prompt_tokens ?? 0);
   const completionTokens = Number(data?.usage?.completion_tokens ?? 0);
   const responseModel = String(data?.model ?? model);
-  console.log(
-    `[templateGen] generate ok: model=${responseModel}, latencyMs=${latencyMs}, prompt=${promptTokens}, completion=${completionTokens}`,
+  logger.info(
+    {
+      model: responseModel,
+      latencyMs,
+      promptTokens,
+      completionTokens,
+    },
+    "[templateGen] generate ok",
   );
 
   if (data?.error) {
@@ -1100,9 +1123,9 @@ export async function generateTemplate(
 
   const content = data?.choices?.[0]?.message?.content;
   if (!content) {
-    console.error(
-      "[templateGen] Empty LLM response:",
-      JSON.stringify(data).slice(0, 500),
+    logger.error(
+      { data: JSON.stringify(data).slice(0, 500) },
+      "[templateGen] Empty LLM response",
     );
     throw new Error("No content in LLM response");
   }

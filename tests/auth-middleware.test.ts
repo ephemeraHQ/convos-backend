@@ -252,15 +252,15 @@ describe("requireAccount chained on every agent-templates route", () => {
 
     // Every route on this router requires an account, so the chain is always
     // `authOrAgentApiKeyAuth, requireAccount, handler`. No public discovery
-    // surface — there is no unauth list/detail branch.
+    // surface — the unauth list/detail branch was removed.
     const requireAccountCount = (source.match(/requireAccount/g) ?? []).length;
 
-    // 5 write routes (POST, POST /generate, PATCH, DELETE, POST /:id/publish)
-    // + 2 read routes (GET /, GET /:idOrHashedSlug) + 1 import = 8 occurrences.
-    // (create-job routes are on the next branch.)
-    expect(requireAccountCount).toBe(8);
+    // 6 write routes (POST, POST /generate, POST /create-job, PATCH, DELETE,
+    // POST /:id/publish) + 3 read routes (GET /, GET /:idOrHashedSlug,
+    // GET /create-job/:jobId) + 1 import = 10 occurrences.
+    expect(requireAccountCount).toBe(10);
 
-    // Read routes DO have requireAccount chained.
+    // Read routes now DO have requireAccount chained.
     expect(source).toContain("requireAccount,\n  listHandler");
     expect(source).toContain("requireAccount,\n  detailHandler");
   });
