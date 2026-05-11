@@ -239,6 +239,10 @@ export const ProvisioningClient = {
     const data = (await response
       .json()
       .catch(() => null)) as Partial<GetAssistantResult> | null;
+    const malformed = (reason: string): Error =>
+      new Error(
+        `ProvisioningClient: GET /api/assistants/${instanceId} returned 200 with malformed payload — ${reason}`,
+      );
     const validJoinStatuses: ReadonlySet<string> = new Set([
       "starting",
       "pending_acceptance",
@@ -252,8 +256,29 @@ export const ProvisioningClient = {
       typeof data.joinStatus !== "string" ||
       !validJoinStatuses.has(data.joinStatus)
     ) {
-      throw new Error(
-        `ProvisioningClient: GET /api/assistants/${instanceId} returned 200 with malformed payload (missing or invalid instanceId/joinStatus)`,
+      throw malformed("missing or invalid instanceId/joinStatus");
+    }
+    // Optional string fields: when present they must be strings (not numbers,
+    // booleans, etc). null is allowed since the type declares it.
+    const isStringOrNullish = (v: unknown): v is string | null | undefined =>
+      v === null || v === undefined || typeof v === "string";
+    if (
+      !isStringOrNullish(data.conversationId) ||
+      !isStringOrNullish(data.inboxId) ||
+      !isStringOrNullish(data.joinFailureReason)
+    ) {
+      throw malformed(
+        "conversationId, inboxId, and joinFailureReason must be strings",
+      );
+    }
+    // joinFailureReason is required when joinStatus === "failed". Without it,
+    // the executor has no message to surface back to the user.
+    if (
+      data.joinStatus === "failed" &&
+      (data.joinFailureReason === undefined || data.joinFailureReason === null)
+    ) {
+      throw malformed(
+        "joinFailureReason is required when joinStatus === 'failed'",
       );
     }
     return data as GetAssistantResult;

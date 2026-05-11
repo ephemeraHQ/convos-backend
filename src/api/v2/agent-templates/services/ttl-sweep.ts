@@ -55,35 +55,24 @@ export function __setSweepIntervalForTests(ms: number | null): void {
 // ---------------------------------------------------------------------------
 
 /**
- * Run one sweep pass: find terminal jobs missing `expiresAt` and set it.
- * Sets expiresAt = updatedAt + 24h for each job.
- * Returns the number of rows updated.
+ * Run one sweep pass: find terminal jobs missing `expiresAt` and set it
+ * to `updatedAt + 24h` for each job. Returns the number of rows updated.
+ *
+ * Single batch UPDATE rather than one round-trip per job — avoids N+1
+ * latency when many jobs expire in the same window. Postgres computes
+ * `updatedAt + interval '24 hours'` server-side, so the per-row offset
+ * still derives from each row's own `updatedAt`.
  */
 export async function sweepExpiredJobs(): Promise<number> {
-  // Find terminal jobs where expiresAt is NULL
-  const jobs = await prisma.createJob.findMany({
-    where: {
-      status: { in: ["done", "failed"] },
-      expiresAt: null,
-    },
-    select: { id: true, updatedAt: true },
-  });
-
-  if (jobs.length === 0) return 0;
-
-  // Update each job with expiresAt = updatedAt + 24h
-  // This ensures each job gets its own expiry based on when it completed
-  const updates = jobs.map((job) =>
-    prisma.createJob.update({
-      where: { id: job.id },
-      data: {
-        expiresAt: new Date(job.updatedAt.getTime() + TTL_MS),
-      },
-    }),
-  );
-
-  await Promise.all(updates);
-  return jobs.length;
+  // TTL_MS is the source of truth; pass as milliseconds and convert to
+  // a Postgres interval to avoid hard-coding "24 hours" in two places.
+  const ttlSeconds = Math.floor(TTL_MS / 1000);
+  const rowsUpdated = await prisma.$executeRaw`
+    UPDATE "CreateJob"
+    SET "expiresAt" = "updatedAt" + (${ttlSeconds} * interval '1 second')
+    WHERE status IN ('done', 'failed') AND "expiresAt" IS NULL
+  `;
+  return rowsUpdated;
 }
 
 // ---------------------------------------------------------------------------
