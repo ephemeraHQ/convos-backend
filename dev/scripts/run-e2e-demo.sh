@@ -561,6 +561,32 @@ phase6_sweep() {
   assert_match "sweep/row-deleted" '^0$' "$after" || return 1
 }
 
+phase7_observability() {
+  emit "## Phase 7 — observability spot-check"
+
+  if [[ -z "$CONVOS_SERVER_LOG" || ! -f "$CONVOS_SERVER_LOG" ]]; then
+    emit "Skipping: CONVOS_SERVER_LOG unset or file missing."
+    SKIPPED_PHASES+=("phase7/observability")
+    return 0
+  fi
+
+  # Match both pino-pretty (dev) and JSON (prod) output formats by using
+  # plain substrings instead of '"msg":"..."' JSON-shape patterns.
+  local generating_token_count
+  generating_token_count=$(grep -c "Generating token" "$CONVOS_SERVER_LOG" || true)
+  assert_min "obs/generating-token" "count" 5 "$generating_token_count" || true
+
+  local siwe_failed_count
+  siwe_failed_count=$(grep -c "SIWE verification failed" "$CONVOS_SERVER_LOG" || true)
+  assert_min "obs/siwe-failed" "count" 5 "$siwe_failed_count" || true
+
+  local app_check_bypassed
+  app_check_bypassed=$(grep -c "AppCheck bypassed" "$CONVOS_SERVER_LOG" || true)
+  assert_min "obs/appcheck-bypassed" "count" 1 "$app_check_bypassed" || true
+
+  # If Opus-followup observability counters land later, add their grep here too.
+}
+
 # --- main ---------------------------------------------------------------------
 
 main() {
@@ -576,6 +602,7 @@ main() {
   phase4_backward_compat
   phase5_idempotency
   phase6_sweep
+  phase7_observability
 }
 
 main "$@"
