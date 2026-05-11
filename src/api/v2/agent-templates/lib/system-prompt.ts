@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { logError } from "@/utils/errors";
+import logger from "@/utils/logger";
 
 /**
  * System prompt loaded once at module init.
@@ -21,10 +21,10 @@ try {
   // Intentionally swallowed: module must not crash on import.
   // Downstream handlers check for null and return 502.
   // Log the failure so deployment misconfigurations are diagnosable.
-  logError(err, {
-    context: "system-prompt",
-    message: "Failed to load data/template-generator-prompt.txt",
-  });
+  logger.error(
+    { err },
+    "[system-prompt] Failed to load data/template-generator-prompt.txt",
+  );
 }
 
 export { SYSTEM_PROMPT };

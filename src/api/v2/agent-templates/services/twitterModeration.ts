@@ -20,6 +20,8 @@
  * singleton-override pattern used by templateGen, ProvisioningClient, and PostHog.
  */
 
+import logger from "@/utils/logger";
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -112,8 +114,9 @@ function mapLabelToResult(label: string): ModerationResult {
   }
 
   // If the label is unexpected, fail open
-  console.warn(
-    `[twitterModeration] Unexpected classification label: "${label}", failing open`,
+  logger.warn(
+    { label },
+    "[twitterModeration] Unexpected classification label, failing open",
   );
   return { allowed: true };
 }
@@ -138,7 +141,7 @@ export async function moderateContent(
 async function _moderateContent(input: string): Promise<ModerationResult> {
   const apiKey = getApiKey();
   if (!apiKey) {
-    console.warn(
+    logger.warn(
       "[twitterModeration] BUILDER_OPENROUTER_API_KEY not set, failing open",
     );
     return { allowed: true };
@@ -170,8 +173,9 @@ async function _moderateContent(input: string): Promise<ModerationResult> {
 
     if (!res.ok) {
       const body = await res.text().catch(() => "");
-      console.error(
-        `[twitterModeration] OpenRouter error ${res.status}: ${body.slice(0, 300)}`,
+      logger.error(
+        { status: res.status, body: body.slice(0, 300) },
+        "[twitterModeration] OpenRouter error",
       );
       return { allowed: true }; // fail open
     }
@@ -181,15 +185,15 @@ async function _moderateContent(input: string): Promise<ModerationResult> {
     };
     const content = data.choices?.[0]?.message?.content;
     if (!content) {
-      console.warn("[twitterModeration] Empty LLM response, failing open");
+      logger.warn("[twitterModeration] Empty LLM response, failing open");
       return { allowed: true };
     }
 
     return mapLabelToResult(content);
   } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : String(err);
-    console.error(
-      `[twitterModeration] Error during moderation, failing open: ${message}`,
+    logger.error(
+      { err },
+      "[twitterModeration] Error during moderation, failing open",
     );
     return { allowed: true }; // fail open on network errors, timeouts, etc.
   } finally {

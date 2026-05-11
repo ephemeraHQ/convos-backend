@@ -14,6 +14,7 @@
 
 /* eslint-disable @typescript-eslint/no-require-imports, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-explicit-any */
 
+import logger from "@/utils/logger";
 import type { GenerationMetrics } from "./templateGen";
 
 // ---------------------------------------------------------------------------
@@ -122,9 +123,6 @@ export function capturePostHog(properties: PostHogCaptureProperties): void {
       properties,
     });
   } catch (err) {
-    console.error(
-      "[posthog] capture failed:",
-      err instanceof Error ? err.message : err,
-    );
+    logger.error({ err }, "[posthog] capture failed");
   }
 }

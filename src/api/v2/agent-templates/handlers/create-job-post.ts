@@ -272,11 +272,12 @@ async function handleAppWebSource(req: Request, res: Response) {
     },
   });
 
-  // Fire background executor — fire-and-forget
+  // Fire background executor — fire-and-forget. Capture req.log in the
+  // closure so the failure log carries the originating requestId.
   void executeCreateJob(job.id).catch((err: unknown) => {
-    const message = err instanceof Error ? err.message : String(err);
-    console.error(
-      `[create-job] Background executor failed for job ${job.id}: ${message}`,
+    req.log.error(
+      { err, jobId: job.id },
+      "[create-job] Background executor failed",
     );
   });
 
@@ -367,11 +368,12 @@ async function handleTwitterSource(req: Request, res: Response) {
     },
   });
 
-  // 6. Fire background executor — fire-and-forget
+  // 6. Fire background executor — fire-and-forget. Capture req.log in the
+  // closure so the failure log carries the originating requestId.
   void executeCreateJob(job.id).catch((err: unknown) => {
-    const message = err instanceof Error ? err.message : String(err);
-    console.error(
-      `[create-job-twitter] Background executor failed for job ${job.id}: ${message}`,
+    req.log.error(
+      { err, jobId: job.id },
+      "[create-job-twitter] Background executor failed",
     );
   });
 

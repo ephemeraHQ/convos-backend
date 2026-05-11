@@ -24,6 +24,8 @@
  * singleton-override pattern used by templateGen, ProvisioningClient, and PostHog.
  */
 
+import logger from "@/utils/logger";
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -233,7 +235,7 @@ async function _composeReply(input: ReplyInput): Promise<ReplyResult> {
 
   const apiKey = getApiKey();
   if (!apiKey) {
-    console.warn(
+    logger.warn(
       "[twitterReply] BUILDER_OPENROUTER_API_KEY not set, using deterministic fallback",
     );
     return { replyText: buildDeterministicFallback(input) };
@@ -265,8 +267,9 @@ async function _composeReply(input: ReplyInput): Promise<ReplyResult> {
 
     if (!res.ok) {
       const body = await res.text().catch(() => "");
-      console.error(
-        `[twitterReply] OpenRouter error ${res.status}: ${body.slice(0, 300)}`,
+      logger.error(
+        { status: res.status, body: body.slice(0, 300) },
+        "[twitterReply] OpenRouter error",
       );
       return { replyText: buildDeterministicFallback(input) };
     }
@@ -276,7 +279,7 @@ async function _composeReply(input: ReplyInput): Promise<ReplyResult> {
     };
     const content = data.choices?.[0]?.message?.content;
     if (!content) {
-      console.warn("[twitterReply] Empty LLM response, using fallback");
+      logger.warn("[twitterReply] Empty LLM response, using fallback");
       return { replyText: buildDeterministicFallback(input) };
     }
 
@@ -288,14 +291,9 @@ async function _composeReply(input: ReplyInput): Promise<ReplyResult> {
     // LLM reply was unusable, fall back to deterministic
     return { replyText: buildDeterministicFallback(input) };
   } catch (err: unknown) {
-    const message =
-      err instanceof Error
-        ? err.message
-        : typeof err === "string"
-          ? err
-          : "unknown error";
-    console.error(
-      `[twitterReply] Error during reply composition, using fallback: ${message}`,
+    logger.error(
+      { err },
+      "[twitterReply] Error during reply composition, using fallback",
     );
     return { replyText: buildDeterministicFallback(input) };
   } finally {

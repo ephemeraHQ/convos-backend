@@ -15,6 +15,7 @@
  * timing in tests, or `null` to disable it.
  */
 
+import logger from "@/utils/logger";
 import { prisma } from "@/utils/prisma";
 
 // ---------------------------------------------------------------------------
@@ -90,7 +91,7 @@ export function startTtlSweep(): void {
   _intervalId = setInterval(() => {
     void sweepExpiredJobs().catch((err: unknown) => {
       // Log but don't crash — sweep is best-effort
-      console.error("[ttl-sweep] Error during sweep:", err);
+      logger.error({ err }, "[ttl-sweep] Error during sweep");
     });
   }, _sweepIntervalMs);
 

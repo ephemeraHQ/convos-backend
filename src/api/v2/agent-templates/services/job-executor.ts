@@ -36,6 +36,7 @@
 
 import { randomUUID } from "node:crypto";
 import type { CreateJobStatus } from "@prisma/client";
+import logger from "@/utils/logger";
 import { prisma } from "@/utils/prisma";
 import { buildSlug } from "@/utils/slug-hash";
 import { capturePostHog } from "./posthog";
@@ -416,9 +417,9 @@ async function executeTwitterJob(
   try {
     ({ replyText } = await composeReply(replyInput));
   } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : String(err);
-    console.error(
-      `[job-executor] composeReply threw, using deterministic fallback: ${message}`,
+    logger.error(
+      { err, jobId },
+      "[job-executor] composeReply threw, using deterministic fallback",
     );
     replyText = buildDeterministicFallback(replyInput);
   }
@@ -606,8 +607,9 @@ export async function executeCreateJob(jobId: string): Promise<void> {
     data: { status: "generating" },
   });
   if (claimed.count === 0) {
-    console.info(
-      `[job-executor] job ${jobId} already claimed/expired/cancelled; skipping`,
+    logger.info(
+      { jobId },
+      "[job-executor] job already claimed/expired/cancelled; skipping",
     );
     return;
   }
