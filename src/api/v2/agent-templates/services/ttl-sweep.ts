@@ -46,11 +46,14 @@ function getTtlSeconds(): number {
   return DEFAULT_TTL_HOURS * 3600;
 }
 
-function getStuckThresholdSeconds(): number {
+function getStuckThresholdMs(): number {
+  // Keep the threshold in milliseconds (and use a millisecond Postgres
+  // interval below) so sub-second overrides like `500` don't truncate to
+  // zero and match *every* running row.
   const raw = process.env.GENERATION_STUCK_SWEEP_THRESHOLD_MS;
   const ms = raw ? Number.parseInt(raw, 10) : NaN;
-  if (Number.isFinite(ms) && ms > 0) return Math.floor(ms / 1000);
-  return Math.floor(DEFAULT_STUCK_THRESHOLD_MS / 1000);
+  if (Number.isFinite(ms) && ms > 0) return ms;
+  return DEFAULT_STUCK_THRESHOLD_MS;
 }
 
 // ---------------------------------------------------------------------------
@@ -103,7 +106,7 @@ export async function sweepTerminalTtl(): Promise<number> {
  * Returns the number of rows updated.
  */
 export async function sweepStuckRows(): Promise<number> {
-  const stuckSeconds = getStuckThresholdSeconds();
+  const stuckMs = getStuckThresholdMs();
   const ttlSeconds = getTtlSeconds();
   const rowsUpdated = await prisma.$executeRaw`
     UPDATE "AgentTemplateGeneration"
@@ -112,7 +115,7 @@ export async function sweepStuckRows(): Promise<number> {
         "expiresAt" = NOW() + (${ttlSeconds} * interval '1 second'),
         "updatedAt" = NOW()
     WHERE status = 'running'
-      AND "updatedAt" < NOW() - (${stuckSeconds} * interval '1 second')
+      AND "updatedAt" < NOW() - (${stuckMs} * interval '1 millisecond')
   `;
   return rowsUpdated;
 }

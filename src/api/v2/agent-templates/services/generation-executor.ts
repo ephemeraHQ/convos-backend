@@ -29,7 +29,6 @@ import {
 } from "@/api/v2/agent-templates/services/templateGen";
 import logger from "@/utils/logger";
 import { prisma } from "@/utils/prisma";
-import { buildSlug } from "@/utils/slug-hash";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -80,7 +79,13 @@ export function __setExecutorTimeoutMsForTests(ms: number | null): void {
 
 function getTimeoutMs(): number {
   if (_timeoutMsOverride !== null) return _timeoutMsOverride;
-  const raw = process.env.GENERATION_STUCK_TIMEOUT_MS;
+  // GENERATION_EXECUTOR_TIMEOUT_MS controls how long a single pipeline run is
+  // allowed to take (default 5 min). Distinct from
+  // GENERATION_STUCK_SWEEP_THRESHOLD_MS in ttl-sweep.ts, which is the
+  // out-of-band cutoff for marking abandoned `running` rows as failed.
+  const raw =
+    process.env.GENERATION_EXECUTOR_TIMEOUT_MS ??
+    process.env.GENERATION_STUCK_TIMEOUT_MS; // legacy alias; remove after rename ships
   const parsed = raw ? Number.parseInt(raw, 10) : NaN;
   if (Number.isFinite(parsed) && parsed > 0) return parsed;
   return DEFAULT_EXECUTOR_TIMEOUT_MS;
@@ -137,6 +142,29 @@ const deriveBaseSlug = (agentName: string): string =>
     .replace(/^-+|-+$/g, "")
     .slice(0, 48);
 
+/** Max attempts to auto-pick a non-conflicting slug. Matches the CRUD
+ *  handler's MAX_AUTO_SLUG_ATTEMPTS so generated templates use the same
+ *  retry semantics on per-owner slug conflicts. */
+const MAX_AUTO_SLUG_ATTEMPTS = 50;
+
+function isSlugUniqueConstraintError(error: unknown): boolean {
+  if (!(error instanceof Prisma.PrismaClientKnownRequestError)) return false;
+  if (error.code !== "P2002") return false;
+  const target = error.meta?.target;
+  if (Array.isArray(target)) {
+    return target.includes("ownerAccountId") && target.includes("slug");
+  }
+  return typeof target === "string" && target.includes("slug");
+}
+
+/** Persist the LLM-generated template as a draft AgentTemplate.
+ *  Stores the **base slug** (e.g. "brewski") — the public hashed-slug URL
+ *  is reconstructed by callers via `buildSlug(row.slug, row.id)` and resolved
+ *  by `resolve-id-or-hashed-slug.ts` which queries `where: { slug: baseSlug }`.
+ *  Storing the hashed form would make these rows unreachable via the resolver.
+ *
+ *  On per-owner slug conflict, suffixes `-2`, `-3`, ... up to MAX_AUTO_SLUG_ATTEMPTS,
+ *  matching the CRUD handler's behaviour. */
 async function persistTemplate(
   template: {
     agentName: string;
@@ -150,31 +178,44 @@ async function persistTemplate(
   ownerAccountId: string,
 ): Promise<{ id: string; slug: string }> {
   const baseSlug = deriveBaseSlug(template.agentName);
-  const id = randomUUID();
-  const slug = buildSlug(baseSlug, id);
 
-  await prisma.agentTemplate.create({
-    data: {
-      id,
-      slug,
-      ownerAccountId,
-      forkedFromId: null,
-      agentName: template.agentName,
-      description: template.description || null,
-      prompt: template.prompt,
-      category: template.category || null,
-      emoji: template.emoji || null,
-      avatarUrl: null,
-      tools: template.tools,
-      connections: template.connections,
-      version: 1,
-      firstPublishedAt: null,
-      status: "draft",
-      featured: false,
-    },
-  });
+  for (let attempt = 0; attempt <= MAX_AUTO_SLUG_ATTEMPTS; attempt++) {
+    if (attempt === 1) continue; // skip "-1"; first numeric suffix is "-2"
 
-  return { id, slug };
+    const candidate = attempt === 0 ? baseSlug : `${baseSlug}-${attempt}`;
+    const id = randomUUID();
+
+    try {
+      await prisma.agentTemplate.create({
+        data: {
+          id,
+          slug: candidate,
+          ownerAccountId,
+          forkedFromId: null,
+          agentName: template.agentName,
+          description: template.description || null,
+          prompt: template.prompt,
+          category: template.category || null,
+          emoji: template.emoji || null,
+          avatarUrl: null,
+          tools: template.tools,
+          connections: template.connections,
+          version: 1,
+          firstPublishedAt: null,
+          status: "draft",
+          featured: false,
+        },
+      });
+      return { id, slug: candidate };
+    } catch (err) {
+      if (isSlugUniqueConstraintError(err)) continue;
+      throw err;
+    }
+  }
+
+  throw new Error(
+    `Could not auto-pick a non-conflicting slug after ${MAX_AUTO_SLUG_ATTEMPTS} attempts (base: ${baseSlug})`,
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -189,24 +230,31 @@ async function tryClaim(generationId: string): Promise<boolean> {
   return claim.count === 1;
 }
 
+/** Mark a generation `done`. Conditional on status='running' so a pipeline
+ *  that finishes AFTER the per-generation timeout already fired markFailed
+ *  no-ops instead of resurrecting the row. Returns true if the row was
+ *  actually updated. */
 async function markDone(
   generationId: string,
   templateId: string,
-): Promise<void> {
-  await prisma.agentTemplateGeneration.update({
-    where: { id: generationId },
+): Promise<boolean> {
+  const result = await prisma.agentTemplateGeneration.updateMany({
+    where: { id: generationId, status: "running" },
     data: {
       status: "done",
       templateId,
       expiresAt: new Date(Date.now() + getTtlMs()),
     },
   });
+  return result.count === 1;
 }
 
+/** Mark a generation `failed`. Conditional on status='running' so a pipeline
+ *  that gets the success markDone in first wins; this no-ops on a 0-row update. */
 async function markFailed(generationId: string, error: string): Promise<void> {
   try {
-    await prisma.agentTemplateGeneration.update({
-      where: { id: generationId },
+    await prisma.agentTemplateGeneration.updateMany({
+      where: { id: generationId, status: "running" },
       data: {
         status: "failed",
         error,
@@ -214,13 +262,6 @@ async function markFailed(generationId: string, error: string): Promise<void> {
       },
     });
   } catch (err) {
-    // Row gone, or already marked terminal elsewhere — swallow.
-    if (
-      err instanceof Prisma.PrismaClientKnownRequestError &&
-      err.code === "P2025"
-    ) {
-      return;
-    }
     logger.error(
       { err, generationId },
       "[generation-executor] markFailed failed",
@@ -347,8 +388,32 @@ async function _runPipeline(generationId: string): Promise<void> {
     );
   }
 
-  // 5. Mark done + meter success
-  await markDone(generationId, persisted.id);
+  // 5. Mark done (conditional on status=running). If markDone returns false,
+  // the pipeline lost the race against the per-generation timeout — markFailed
+  // has already set status=failed. Skip the success PostHog event so metering
+  // matches the row's terminal state, and log the orphan template for cleanup
+  // visibility.
+  const claimed = await markDone(generationId, persisted.id);
+  if (!claimed) {
+    logger.warn(
+      {
+        generationId,
+        templateId: persisted.id,
+        slug: persisted.slug,
+      },
+      "[generation-executor] Pipeline finished after timeout — orphan AgentTemplate left in place",
+    );
+    capturePostHog({
+      ...templateResult.metrics,
+      requestId: generationId,
+      source: generation.source,
+      ownerAccountId: generation.ownerAccountId,
+      inputType,
+      outcome: "failed",
+    });
+    return;
+  }
+
   capturePostHog({
     ...templateResult.metrics,
     requestId: generationId,

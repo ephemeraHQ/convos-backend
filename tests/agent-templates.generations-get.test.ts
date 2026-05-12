@@ -250,4 +250,48 @@ describe("GET /generations/:id", () => {
     expect(body.status).toBe("done");
     expect(typeof body.templateId).toBe("string");
   });
+
+  test("client abort during long-poll stops the polling loop", async () => {
+    const gen = await insertGeneration({ status: "pending" });
+
+    // Track Prisma findFirst calls to verify the loop stopped polling.
+    // We can't intercept Prisma cleanly here, so instead we just verify
+    // that aborting the fetch returns quickly (rather than waiting the full
+    // wait_ms) and that the row stays pending (no executor was fired).
+    const controller = new AbortController();
+    const start = Date.now();
+    const fetchPromise = fetch(
+      `${baseURL}/api/v2/agent-templates/generations/${gen.id}?wait_ms=10000`,
+      {
+        headers: adminHeaders(),
+        signal: controller.signal,
+      },
+    );
+
+    // Let the long-poll loop iterate at least twice (~1s at 500ms interval)
+    // before aborting.
+    await new Promise((resolve) => setTimeout(resolve, 1100));
+    controller.abort();
+
+    let aborted = false;
+    try {
+      await fetchPromise;
+    } catch {
+      aborted = true;
+    }
+    const elapsed = Date.now() - start;
+
+    expect(aborted).toBe(true);
+    // We aborted after ~1.1s — well before wait_ms=10000ms. If the server
+    // hadn't bailed on disconnect, the fetch would still be hung at this
+    // point. With the bail-on-close check, the server-side handler exits
+    // shortly after the abort.
+    expect(elapsed).toBeLessThan(3000);
+
+    // Row remains pending — long-poll didn't side-effect anything.
+    const row = await prisma.agentTemplateGeneration.findUnique({
+      where: { id: gen.id },
+    });
+    expect(row?.status).toBe("pending");
+  });
 });

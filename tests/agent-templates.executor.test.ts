@@ -313,6 +313,56 @@ describe("generation-executor", () => {
     });
   });
 
+  describe("timeout race", () => {
+    test("pipeline finishing after timeout does not flip status back to done", async () => {
+      // 100ms in-process timeout, 500ms LLM call — timeout wins the Promise.race
+      __setExecutorTimeoutMsForTests(100);
+      installSlowGenerate(500);
+
+      const gen = await createPendingGeneration("timeout-race");
+
+      // Run executor and wait long enough for both the timeout AND the
+      // slow LLM call to complete in the background.
+      await executeGeneration(gen.id);
+      await new Promise((resolve) => setTimeout(resolve, 700));
+
+      // Row must be `failed` (set by timeout markFailed). The post-timeout
+      // markDone should have been gated by `status='running'` and no-opped.
+      const final = await prisma.agentTemplateGeneration.findUnique({
+        where: { id: gen.id },
+      });
+      expect(final?.status).toBe("failed");
+      expect(final?.templateId).toBeNull();
+      expect(final?.error).toContain("timed out");
+    });
+
+    test("late pipeline success after timeout emits a `failed` PostHog event, not a duplicate `done`", async () => {
+      __setExecutorTimeoutMsForTests(100);
+      installSlowGenerate(500);
+
+      // Filter on requestId so prior-test pipelines whose slow generates
+      // resolve into this test's window don't pollute the assertion.
+      const captured: PostHogCaptureProperties[] = [];
+      __resetPostHogForTests((props) => captured.push(props));
+
+      const gen = await createPendingGeneration("timeout-race-posthog");
+      await executeGeneration(gen.id);
+      // Give the slow LLM call (500ms) + persist + the post-timeout
+      // markDone-no-op + the PostHog capture all time to settle.
+      await new Promise((resolve) => setTimeout(resolve, 1500));
+
+      const eventsForThisGen = captured.filter((e) => e.requestId === gen.id);
+
+      // Exactly one event for this generation, and outcome MUST be `failed`
+      // (matching the row's terminal state). If the late markDone had won,
+      // we would have seen outcome=done here, which would skew metering.
+      expect(eventsForThisGen.length).toBe(1);
+      expect(eventsForThisGen[0].outcome).toBe("failed");
+
+      __resetPostHogForTests(() => {});
+    });
+  });
+
   test("override at the executor seam replaces the pipeline entirely", async () => {
     let overrideCalled = 0;
     __resetGenerationExecutorForTests(() => {

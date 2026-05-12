@@ -101,14 +101,18 @@ function parseWaitMs(raw: unknown): number {
   return Math.min(parsed, MAX_WAIT_MS);
 }
 
-async function waitForTerminal(
-  generationId: string,
-  ownerAccountId: string,
-  waitMs: number,
-): Promise<GenerationRow | null> {
-  const deadline = Date.now() + waitMs;
+async function waitForTerminal(args: {
+  generationId: string;
+  ownerAccountId: string;
+  waitMs: number;
+  /** Returns true once the client has hung up the request. The loop bails
+   *  early in that case to avoid wasted DB queries when nobody is listening. */
+  isClosed: () => boolean;
+}): Promise<GenerationRow | null> {
+  const deadline = Date.now() + args.waitMs;
   while (Date.now() < deadline) {
-    const row = await fetchOwnedRow(generationId, ownerAccountId);
+    if (args.isClosed()) return null;
+    const row = await fetchOwnedRow(args.generationId, args.ownerAccountId);
     if (!row) return null;
     if (isExpired(row)) return null;
     if (isTerminal(row.status)) return row;
@@ -119,7 +123,8 @@ async function waitForTerminal(
     );
   }
   // Timeout — return current state, hide already-expired rows
-  const final = await fetchOwnedRow(generationId, ownerAccountId);
+  if (args.isClosed()) return null;
+  const final = await fetchOwnedRow(args.generationId, args.ownerAccountId);
   if (final && isExpired(final)) return null;
   return final;
 }
@@ -130,6 +135,16 @@ async function waitForTerminal(
 
 export async function generationsGetHandler(req: Request, res: Response) {
   const { generationId } = req.params;
+
+  // Track client disconnect so long-poll can bail early.
+  // Use res.on("close") not req.on("close"): IncomingMessage's "close" fires
+  // when the request body is fully consumed, whereas ServerResponse's fires
+  // only when the underlying connection terminates — which is what
+  // "client disconnected" actually means here.
+  let closed = false;
+  res.on("close", () => {
+    closed = true;
+  });
 
   // 1. Validate wait_ms
   const waitMs = parseWaitMs(req.query.wait_ms);
@@ -148,11 +163,22 @@ export async function generationsGetHandler(req: Request, res: Response) {
   // 3. Fetch (with optional long-poll)
   let row: GenerationRow | null;
   if (waitMs > 0) {
-    row = await waitForTerminal(generationId, ownerAccountId, waitMs);
+    row = await waitForTerminal({
+      generationId,
+      ownerAccountId,
+      waitMs,
+      isClosed: () => closed,
+    });
   } else {
     row = await fetchOwnedRow(generationId, ownerAccountId);
     if (row && isExpired(row)) row = null;
   }
+
+  // If the client hung up mid-poll, don't bother writing a response —
+  // express will already have torn down the socket. (TS flow analysis can't
+  // see the close-listener mutation, so suppress no-unnecessary-condition.)
+  // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+  if (closed || res.writableEnded) return;
 
   // 4. Not found / expired / cross-account → 404
   if (!row) {

@@ -224,32 +224,37 @@ describe("SSE mode — client disconnect", () => {
     };
     process.once("uncaughtException", onUncaught);
 
-    const controller = new AbortController();
-    const fetchPromise = fetch(
-      `${baseURL}/api/v2/agent-templates/generations`,
-      {
-        method: "POST",
-        headers: sseHeaders("sse-disconnect"),
-        body: JSON.stringify(sampleBody),
-        signal: controller.signal,
-      },
-    );
-
-    // Give the server time to start the stream + emit a couple of keep-alives
-    await new Promise((resolve) => setTimeout(resolve, 200));
-    controller.abort();
-
     try {
-      await fetchPromise;
-    } catch {
-      // expected — aborted
+      const controller = new AbortController();
+      const fetchPromise = fetch(
+        `${baseURL}/api/v2/agent-templates/generations`,
+        {
+          method: "POST",
+          headers: sseHeaders("sse-disconnect"),
+          body: JSON.stringify(sampleBody),
+          signal: controller.signal,
+        },
+      );
+
+      // Give the server time to start the stream + emit a couple of keep-alives
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      controller.abort();
+
+      try {
+        await fetchPromise;
+      } catch {
+        // expected — aborted
+      }
+
+      // Let any pending timers settle
+      await new Promise((resolve) => setTimeout(resolve, 150));
+
+      expect(uncaught).toBe(0);
+    } finally {
+      // Always remove the listener so it can't leak into subsequent tests
+      // (even if assertions or the abort itself threw above).
+      process.removeListener("uncaughtException", onUncaught);
     }
-
-    // Let any pending timers settle
-    await new Promise((resolve) => setTimeout(resolve, 150));
-
-    process.removeListener("uncaughtException", onUncaught);
-    expect(uncaught).toBe(0);
 
     // Now let the hung LLM call resolve so we don't leak it across tests
     resolveHang!();

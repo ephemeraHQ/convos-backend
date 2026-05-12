@@ -21,10 +21,15 @@
  *   4. Input length limits (text ≤ 50k, base64 ≤ 35M)           → 400
  *   5. Auth + getEffectiveOwnerId                               → 403
  *   6. Idempotency-Key header present                           → 400
- *   7. Idempotency lookup → existing same body                  → 200/202
+ *   7. Idempotency lookup → existing { source, inputs } match   → respondPerMode
  *   8.                  → existing different body              → 409
  *   9. Content moderation (universal)                           → 422
- *  10. Persist row + fire executor + respond per mode
+ *  10. Persist row + fire executor + respondPerMode
+ *
+ * Idempotent replays go through the SAME respondPerMode path as the original
+ * submit, so a retry with `Accept: text/event-stream` or `?wait_ms=` honours
+ * the requested mode (the previous behaviour was to immediately return JSON
+ * regardless of how the replay was framed).
  *
  * Auth: authOrAgentApiKeyAuth + requireAccount.
  * Production guard: XMTP_ENV !== "production" (in v2/index.ts).
@@ -141,14 +146,19 @@ function bodiesMatch(a: unknown, b: unknown): boolean {
 const isTerminal = (status: string): boolean =>
   status === "done" || status === "failed";
 
-async function waitForTerminal(
-  generationId: string,
-  ownerAccountId: string,
-  waitMs: number,
-): Promise<GenerationRow | null> {
-  const deadline = Date.now() + waitMs;
+async function waitForTerminal(args: {
+  generationId: string;
+  ownerAccountId: string;
+  waitMs: number;
+  isClosed: () => boolean;
+}): Promise<GenerationRow | null> {
+  const deadline = Date.now() + args.waitMs;
   while (Date.now() < deadline) {
-    const row = await fetchOwnedGeneration(generationId, ownerAccountId);
+    if (args.isClosed()) return null;
+    const row = await fetchOwnedGeneration(
+      args.generationId,
+      args.ownerAccountId,
+    );
     if (!row) return null;
     if (isTerminal(row.status)) return row;
     const remaining = deadline - Date.now();
@@ -157,7 +167,8 @@ async function waitForTerminal(
       setTimeout(resolve, Math.min(POLL_INTERVAL_MS, remaining)),
     );
   }
-  return fetchOwnedGeneration(generationId, ownerAccountId);
+  if (args.isClosed()) return null;
+  return fetchOwnedGeneration(args.generationId, args.ownerAccountId);
 }
 
 // ---------------------------------------------------------------------------
@@ -247,25 +258,130 @@ function startSseStream(res: Response): ReturnType<typeof setInterval> {
   return keepalive;
 }
 
-async function streamUntilTerminal(
-  res: Response,
-  keepalive: ReturnType<typeof setInterval>,
-  generationId: string,
-  ownerAccountId: string,
-): Promise<void> {
-  // Poll until terminal — no overall deadline; client can disconnect to cancel
-  for (;;) {
-    const row = await fetchOwnedGeneration(generationId, ownerAccountId);
-    if (!row) {
-      // Disappeared — emit error frame
-      clearInterval(keepalive);
-      const data = JSON.stringify({ error: "Generation not found" });
-      res.write(`event: error\ndata: ${data}\n\n`);
-      res.end();
-      return;
+async function streamUntilTerminal(args: {
+  res: Response;
+  keepalive: ReturnType<typeof setInterval>;
+  generationId: string;
+  ownerAccountId: string;
+  /** Returns true once the client has hung up. We bail without writing further frames. */
+  isClosed: () => boolean;
+  /** Optional row already fetched (e.g. from the dedupe path). Avoids one extra
+   *  query when the caller has a fresh snapshot. */
+  initialRow?: GenerationRow;
+}): Promise<void> {
+  const { res, keepalive } = args;
+  // Wrap the poll loop so errors after headers-flushed still produce a
+  // recoverable terminal frame instead of leaving the client hanging.
+  try {
+    let firstIteration = true;
+    for (;;) {
+      if (args.isClosed() || res.writableEnded || res.destroyed) return;
+
+      const row =
+        firstIteration && args.initialRow
+          ? args.initialRow
+          : await fetchOwnedGeneration(args.generationId, args.ownerAccountId);
+      firstIteration = false;
+
+      if (!row) {
+        const data = JSON.stringify({ error: "Generation not found" });
+        res.write(`event: error\ndata: ${data}\n\n`);
+        res.end();
+        return;
+      }
+      if (isTerminal(row.status)) {
+        if (row.status === "done") {
+          const data = JSON.stringify(toResponse(row));
+          res.write(`event: result\ndata: ${data}\n\n`);
+        } else {
+          const data = JSON.stringify({
+            error: row.error || "Generation failed",
+            ...toResponse(row),
+          });
+          res.write(`event: error\ndata: ${data}\n\n`);
+        }
+        res.end();
+        return;
+      }
+
+      await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
     }
+  } catch (err) {
+    // DB error mid-poll, or write threw after disconnect race. Emit a final
+    // error frame if the stream is still live; otherwise just clean up.
+    if (!res.writableEnded && !res.destroyed) {
+      try {
+        const data = JSON.stringify({
+          error: err instanceof Error ? err.message : "Stream failed",
+        });
+        res.write(`event: error\ndata: ${data}\n\n`);
+        res.end();
+      } catch {
+        // Swallow write-after-close
+      }
+    }
+  } finally {
+    clearInterval(keepalive);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Handler
+// ---------------------------------------------------------------------------
+
+/** Internal type for the idempotency dedupe lookup. Includes `source` so the
+ *  body comparison can detect cross-source key reuse (e.g. same Idempotency-Key
+ *  with source="twitter-bot" vs source="ios-app"). */
+interface DedupeRow extends GenerationRow {
+  source: string;
+  inputs: unknown;
+}
+
+const dedupeSelect = {
+  id: true,
+  source: true,
+  inputs: true,
+  status: true,
+  templateId: true,
+  error: true,
+  createdAt: true,
+  updatedAt: true,
+} as const;
+
+/** Compare the full idempotent contract (source + inputs), not just inputs.
+ *  Matches the docstring's "409 on body mismatch" promise. */
+function dedupeBodiesMatch(existing: DedupeRow, body: Body): boolean {
+  return bodiesMatch(
+    { source: existing.source, inputs: existing.inputs },
+    { source: body.source, inputs: body.inputs },
+  );
+}
+
+/** Pick the response mode (SSE / wait_ms long-poll / immediate JSON) and
+ *  drive it to terminal. Used by the fresh-submit path, the dedupe path,
+ *  and the insert-race dedupe path so idempotent replays honour the same
+ *  Accept / wait_ms semantics as the original request. */
+async function respondPerMode(args: {
+  req: Request;
+  res: Response;
+  ownerAccountId: string;
+  /** Latest known row state. Always present — caller has either just inserted
+   *  it or just fetched it. */
+  row: GenerationRow;
+  isClosed: () => boolean;
+}): Promise<void> {
+  const { req, res, ownerAccountId, row, isClosed } = args;
+
+  // SSE mode
+  const accept = req.headers.accept || "";
+  if (accept.includes("text/event-stream")) {
+    // Terminal already? Skip the keepalive setup and just emit the terminal frame.
     if (isTerminal(row.status)) {
-      clearInterval(keepalive);
+      res.status(200);
+      res.setHeader("Content-Type", "text/event-stream");
+      res.setHeader("Cache-Control", "no-cache");
+      res.setHeader("Connection", "keep-alive");
+      res.flushHeaders();
       if (row.status === "done") {
         const data = JSON.stringify(toResponse(row));
         res.write(`event: result\ndata: ${data}\n\n`);
@@ -279,16 +395,58 @@ async function streamUntilTerminal(
       res.end();
       return;
     }
-    if (res.writableEnded || res.destroyed) return;
-    await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
+
+    const keepalive = startSseStream(res);
+    await streamUntilTerminal({
+      res,
+      keepalive,
+      generationId: row.id,
+      ownerAccountId,
+      isClosed,
+      initialRow: row,
+    });
+    return;
   }
+
+  // wait_ms long-poll
+  const waitMs = parseWaitMs(req.query.wait_ms);
+  if (waitMs > 0 && !isTerminal(row.status)) {
+    const finalRow = await waitForTerminal({
+      generationId: row.id,
+      ownerAccountId,
+      waitMs,
+      isClosed,
+    });
+    if (isClosed() || res.writableEnded) return;
+    if (!finalRow) {
+      res.status(404).json({ error: "Generation not found" });
+      return;
+    }
+    const httpStatus = isTerminal(finalRow.status) ? 200 : 202;
+    res.status(httpStatus).json(toResponse(finalRow));
+    return;
+  }
+
+  // Immediate JSON
+  if (isClosed() || res.writableEnded) return;
+  const httpStatus = isTerminal(row.status) ? 200 : 202;
+  res.status(httpStatus).json(toResponse(row));
 }
 
-// ---------------------------------------------------------------------------
-// Handler
-// ---------------------------------------------------------------------------
-
 export async function generationsPostHandler(req: Request, res: Response) {
+  // Track client disconnect so all blocking paths (SSE poll, wait_ms long-poll)
+  // can bail early when nobody is listening.
+  //
+  // Use res.on("close") rather than req.on("close"): IncomingMessage's "close"
+  // fires when the request body is fully consumed (i.e. almost immediately),
+  // whereas ServerResponse's "close" only fires when the underlying connection
+  // is terminated — which is what "client disconnected" actually means.
+  let closed = false;
+  res.on("close", () => {
+    closed = true;
+  });
+  const isClosed = () => closed;
+
   // 1. Body size guard (Content-Length is best-effort; the route's body
   //    parser also enforces the limit at parse time)
   const contentLength = Number.parseInt(req.get("content-length") || "0", 10);
@@ -358,31 +516,25 @@ export async function generationsPostHandler(req: Request, res: Response) {
     return;
   }
 
-  // 7+8. Idempotency dedupe lookup
+  // 7+8. Idempotency dedupe lookup. Compare the FULL body (source + inputs);
+  // same key with a different source is a 409, matching the docstring contract.
   const existing = await prisma.agentTemplateGeneration.findUnique({
     where: {
       ownerAccountId_idempotencyKey: { ownerAccountId, idempotencyKey },
     },
-    select: {
-      id: true,
-      inputs: true,
-      status: true,
-      templateId: true,
-      error: true,
-      createdAt: true,
-      updatedAt: true,
-    },
+    select: dedupeSelect,
   });
   if (existing) {
-    if (!bodiesMatch(existing.inputs, body.inputs)) {
+    if (!dedupeBodiesMatch(existing, body)) {
       res.status(409).json({
         error: "Idempotency-Key reused with different body",
       });
       return;
     }
-    // Same key + same body → return existing row
-    const httpStatus = isTerminal(existing.status) ? 200 : 202;
-    res.status(httpStatus).json(toResponse(existing));
+    // Same key + same body → return existing row through the same mode-selection
+    // path as a fresh submit. This means a replay with Accept: text/event-stream
+    // still gets an SSE stream, and ?wait_ms= still long-polls.
+    await respondPerMode({ req, res, ownerAccountId, row: existing, isClosed });
     return;
   }
 
@@ -401,7 +553,7 @@ export async function generationsPostHandler(req: Request, res: Response) {
   }
 
   // 10. Persist + fire executor
-  let created;
+  let created: GenerationRow;
   try {
     created = await prisma.agentTemplateGeneration.create({
       data: {
@@ -422,30 +574,27 @@ export async function generationsPostHandler(req: Request, res: Response) {
     });
   } catch (err) {
     // Race: another request created with the same key between our lookup
-    // and insert. Re-fetch and treat as the dedupe path.
+    // and insert. Re-fetch and treat as the dedupe path (same mode selection).
     const racedRow = await prisma.agentTemplateGeneration.findUnique({
       where: {
         ownerAccountId_idempotencyKey: { ownerAccountId, idempotencyKey },
       },
-      select: {
-        id: true,
-        inputs: true,
-        status: true,
-        templateId: true,
-        error: true,
-        createdAt: true,
-        updatedAt: true,
-      },
+      select: dedupeSelect,
     });
     if (racedRow) {
-      if (!bodiesMatch(racedRow.inputs, body.inputs)) {
+      if (!dedupeBodiesMatch(racedRow, body)) {
         res.status(409).json({
           error: "Idempotency-Key reused with different body",
         });
         return;
       }
-      const httpStatus = isTerminal(racedRow.status) ? 200 : 202;
-      res.status(httpStatus).json(toResponse(racedRow));
+      await respondPerMode({
+        req,
+        res,
+        ownerAccountId,
+        row: racedRow,
+        isClosed,
+      });
       return;
     }
     req.log.error({ err }, "[generations-post] Insert failed");
@@ -461,27 +610,6 @@ export async function generationsPostHandler(req: Request, res: Response) {
     );
   });
 
-  // 11. Response mode
-  const accept = req.headers.accept || "";
-  const isSSE = accept.includes("text/event-stream");
-
-  if (isSSE) {
-    const keepalive = startSseStream(res);
-    await streamUntilTerminal(res, keepalive, created.id, ownerAccountId);
-    return;
-  }
-
-  const waitMs = parseWaitMs(req.query.wait_ms);
-  if (waitMs > 0) {
-    const finalRow = await waitForTerminal(created.id, ownerAccountId, waitMs);
-    if (!finalRow) {
-      res.status(404).json({ error: "Generation not found" });
-      return;
-    }
-    const httpStatus = isTerminal(finalRow.status) ? 200 : 202;
-    res.status(httpStatus).json(toResponse(finalRow));
-    return;
-  }
-
-  res.status(202).json(toResponse(created));
+  // 11. Response mode (fresh submit, status=pending)
+  await respondPerMode({ req, res, ownerAccountId, row: created, isClosed });
 }
