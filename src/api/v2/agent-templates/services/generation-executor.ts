@@ -435,23 +435,20 @@ async function _runPipeline(
   if (!claimed) {
     try {
       await prisma.agentTemplate.delete({ where: { id: persisted.id } });
+      logger.warn(
+        { generationId, templateId: persisted.id, slug: persisted.slug },
+        "[generation-executor] Pipeline finished after timeout — orphan AgentTemplate deleted",
+      );
     } catch (err) {
       // Defensive: if delete fails (FK race, row already gone, etc.), log
       // and continue. The orphan stays but the generation is already failed,
-      // so we don't block the executor on cleanup.
+      // so we don't block the executor on cleanup. Operators can grep for
+      // this error to find genuinely-stuck orphans.
       logger.error(
         { err, generationId, templateId: persisted.id, slug: persisted.slug },
-        "[generation-executor] Failed to clean up orphan AgentTemplate after timeout race",
+        "[generation-executor] Pipeline finished after timeout — failed to clean up orphan AgentTemplate",
       );
     }
-    logger.warn(
-      {
-        generationId,
-        templateId: persisted.id,
-        slug: persisted.slug,
-      },
-      "[generation-executor] Pipeline finished after timeout — orphan AgentTemplate deleted",
-    );
     capturePostHog({
       ...templateResult.metrics,
       requestId: generationId,
