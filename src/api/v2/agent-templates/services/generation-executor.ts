@@ -513,7 +513,6 @@ async function _runPipeline(
     return;
   }
 
-
   capturePostHog({
     ...templateResult.metrics,
     requestId: generationId,
