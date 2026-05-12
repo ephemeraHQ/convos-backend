@@ -795,9 +795,9 @@ describe("templateGen service — OpenRouter integration", () => {
       usage: { prompt_tokens: 10, completion_tokens: 5 },
     });
 
-    await expect(
-      generateTemplate({ text: "Build me a bot" }),
-    ).rejects.toThrow(/prompt/i);
+    await expect(generateTemplate({ text: "Build me a bot" })).rejects.toThrow(
+      /prompt/i,
+    );
   });
 
   test("missing agentName causes service to throw", async () => {
