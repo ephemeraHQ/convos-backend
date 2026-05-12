@@ -323,4 +323,52 @@ describe("Agent template publish endpoint", () => {
     expect(row.version).toBe(9);
     expect(row.firstPublishedAt?.toISOString()).toBe(publishedAt.toISOString());
   });
+
+  test("re-publish on a published-then-drafted row brings it back out of draft", async () => {
+    // Models the round-trip: status was set to `draft` via PATCH after a
+    // first publish (allowed once firstPublishedAt is set — see patch.ts).
+    // /publish must take it back out of draft, honour ?status= when
+    // provided, and bump version. firstPublishedAt is preserved (it was
+    // already non-null from the original publish).
+    const template = await seedTemplate({
+      slug: "publish-test-redraft-republish",
+      status: "draft",
+      firstPublishedAt: publishedAt,
+      version: 1,
+    });
+
+    const { body, response } = await publishTemplate(template.id);
+    expect(response.status).toBe(200);
+    expect(body).toMatchObject({
+      status: "published",
+      version: 2,
+      firstPublishedAt: publishedAt.toISOString(),
+    });
+
+    const row = await prisma.agentTemplate.findUniqueOrThrow({
+      where: { id: template.id },
+    });
+    expect(row.status).toBe("published");
+    expect(row.version).toBe(2);
+  });
+
+  test("re-publish on a published-then-drafted row honours ?status=unlisted", async () => {
+    const template = await seedTemplate({
+      slug: "publish-test-redraft-republish-unlisted",
+      status: "draft",
+      firstPublishedAt: publishedAt,
+      version: 3,
+    });
+
+    const { body, response } = await publishTemplate(
+      template.id,
+      "?status=unlisted",
+    );
+    expect(response.status).toBe(200);
+    expect(body).toMatchObject({
+      status: "unlisted",
+      version: 4,
+      firstPublishedAt: publishedAt.toISOString(),
+    });
+  });
 });

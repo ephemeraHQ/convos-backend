@@ -73,9 +73,28 @@ export async function publishHandler(req: Request, res: Response) {
       // Already published (or row deleted). Re-publish atomically — only
       // matches when firstPublishedAt is non-null, so we won't accidentally
       // overlap with the first-publish branch.
+      //
+      // Status is normally preserved on re-publish (an unlisted template
+      // stays unlisted, archived stays archived; `?status=` is ignored to
+      // keep public-state mutations centralised in PATCH). The one
+      // exception is when the template is currently in `draft`, which is
+      // only reachable for a firstPublishedAt-set row via PATCH (see
+      // patch.ts — "published → draft is allowed"). In that case
+      // re-publish must take it back out of draft, so we honour
+      // `?status=` and default to `published` the same way first-publish
+      // does. Otherwise leaving the row at `draft` after the user called
+      // /publish would be a no-op surprise.
+      const desiredStatus =
+        template.status === "draft"
+          ? (parsedQuery.data.status ?? "published")
+          : template.status;
+
       const repubResult = await prisma.agentTemplate.updateMany({
         where: { id: template.id, firstPublishedAt: { not: null } },
-        data: { version: { increment: 1 } },
+        data: {
+          version: { increment: 1 },
+          status: desiredStatus,
+        },
       });
       if (repubResult.count === 0) {
         res.status(404).json({ error: "Agent template not found" });
