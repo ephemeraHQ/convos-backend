@@ -62,6 +62,7 @@ interface GenerationRow {
   id: string;
   status: string;
   templateId: string | null;
+  reply: string | null;
   error: string | null;
   expiresAt: Date | null;
   createdAt: Date;
@@ -72,6 +73,7 @@ interface GenerationResponse {
   generationId: string;
   status: string;
   templateId?: string;
+  reply?: { text: string };
   error?: string;
   createdAt: string;
   updatedAt: string;
@@ -91,6 +93,7 @@ function toResponse(row: GenerationRow): GenerationResponse {
     updatedAt: row.updatedAt.toISOString(),
   };
   if (row.templateId) out.templateId = row.templateId;
+  if (row.reply) out.reply = { text: row.reply };
   if (row.error) out.error = row.error;
   return out;
 }
@@ -105,6 +108,7 @@ async function fetchOwnedRow(
       id: true,
       status: true,
       templateId: true,
+      reply: true,
       error: true,
       expiresAt: true,
       createdAt: true,

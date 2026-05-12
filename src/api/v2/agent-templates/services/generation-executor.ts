@@ -2,10 +2,14 @@
  * Generation Executor — runs the async pipeline for AgentTemplateGeneration.
  *
  * Pipeline:
- *   1. Atomic claim    — UPDATE WHERE status=pending → running. Bails if already claimed.
- *   2. Generate        — callGenerateTemplate(inputs) via OpenRouter
- *   3. Persist         — create AgentTemplate row, set generation.templateId
- *   4. Mark done       — status=done, expiresAt set (TTL window)
+ *   1. Atomic claim     — UPDATE WHERE status=pending → running. Bails if already claimed.
+ *   2. Generate         — callGenerateTemplate(inputs) via OpenRouter
+ *   3. Persist          — create AgentTemplate row, set generation.templateId
+ *   4. ComposeReply (opt) — only when twitterContext is present. composeReply()
+ *                          falls back to deterministic text on LLM failure, so this
+ *                          stage never fails the generation — failure just yields
+ *                          fallback reply text and we proceed to done.
+ *   5. Mark done        — status=done, reply (or null), expiresAt set (TTL window)
  *
  * On any stage failure: mark failed with stage-tagged error message,
  * still set expiresAt so the TTL sweep cleans up.
@@ -24,6 +28,10 @@ import {
   isSlugExhaustionError,
   pickCollisionFreeId,
 } from "@/api/v2/agent-templates/lib/pick-collision-free-id";
+import {
+  buildDeterministicFallback,
+  composeReply,
+} from "@/api/v2/agent-templates/services/compose-reply";
 import { capturePostHog } from "@/api/v2/agent-templates/services/posthog";
 import {
   callGenerateTemplate,
@@ -95,6 +103,12 @@ interface GenerationInputs {
   imageBase64?: string;
   mimeType?: string;
   filename?: string;
+}
+
+interface TwitterContext {
+  twitterHandle: string;
+  tweetId: string;
+  idea?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -250,12 +264,14 @@ async function tryClaim(generationId: string): Promise<boolean> {
 async function markDone(
   generationId: string,
   templateId: string,
+  reply: string | null,
 ): Promise<boolean> {
   const result = await prisma.agentTemplateGeneration.updateMany({
     where: { id: generationId, status: "running" },
     data: {
       status: "done",
       templateId,
+      reply,
       expiresAt: new Date(Date.now() + getTtlMs()),
     },
   });
@@ -432,7 +448,35 @@ async function _runPipeline(
     );
   }
 
-  // 5. Mark done (conditional on status=running). If markDone returns false,
+  // 5. ComposeReply stage — only when twitterContext is present.
+  //    composeReply has its own fallback on LLM failure, so this stage
+  //    never throws; worst case we get the deterministic fallback string.
+  let replyText: string | null = null;
+  const twitterContext = generation.twitterContext as TwitterContext | null;
+  if (twitterContext) {
+    const firstSentence = firstSentenceOf(
+      templateResult.template.description || templateResult.template.prompt,
+    );
+    const replyInput = {
+      handle: twitterContext.twitterHandle,
+      agentName: templateResult.template.agentName,
+      firstSentence,
+      slug: persisted.slug,
+    };
+    try {
+      const reply = await composeReply(replyInput);
+      replyText = reply.replyText;
+    } catch (err) {
+      // composeReply itself shouldn't throw — fallback is internal. Defensive log + fallback.
+      logger.warn(
+        { err, generationId },
+        "[generation-executor] composeReply threw; using deterministic fallback",
+      );
+      replyText = buildDeterministicFallback(replyInput);
+    }
+  }
+
+  // 6. Mark done (conditional on status='running'). If markDone returns false,
   // the pipeline lost the race against the per-generation timeout — markFailed
   // has already set status=failed. Skip the success PostHog event so metering
   // matches the row's terminal state, AND clean up the AgentTemplate we just
@@ -440,7 +484,7 @@ async function _runPipeline(
   // list. The template was created microseconds ago by this same execution and
   // nothing else can hold a reference yet (generation.templateId is still NULL
   // because markDone no-opped), so the delete is safe.
-  const claimed = await markDone(generationId, persisted.id);
+  const claimed = await markDone(generationId, persisted.id, replyText);
   if (!claimed) {
     try {
       await prisma.agentTemplate.delete({ where: { id: persisted.id } });
@@ -469,6 +513,7 @@ async function _runPipeline(
     return;
   }
 
+
   capturePostHog({
     ...templateResult.metrics,
     requestId: generationId,
@@ -478,7 +523,19 @@ async function _runPipeline(
     outcome: "done",
   });
   logger.info(
-    { generationId, templateId: persisted.id, slug: persisted.slug },
+    {
+      generationId,
+      templateId: persisted.id,
+      slug: persisted.slug,
+      hasReply: replyText !== null,
+    },
     "[generation-executor] Generation complete",
   );
+}
+
+/** First-sentence helper for compose-reply's deterministic fallback. */
+function firstSentenceOf(text: string | null | undefined): string {
+  if (!text) return "";
+  const match = text.match(/^[^.!?\n]+[.!?]?/);
+  return match ? match[0].trim() : text.slice(0, 120).trim();
 }
