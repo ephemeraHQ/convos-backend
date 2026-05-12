@@ -44,7 +44,8 @@ const DEFAULT_EXECUTOR_TIMEOUT_MS = 5 * 60 * 1000;
 function getTtlMs(): number {
   const raw = process.env.GENERATION_TTL_HOURS;
   const hours = raw ? Number.parseInt(raw, 10) : DEFAULT_TTL_HOURS;
-  if (!Number.isFinite(hours) || hours <= 0) return DEFAULT_TTL_HOURS * 3600 * 1000;
+  if (!Number.isFinite(hours) || hours <= 0)
+    return DEFAULT_TTL_HOURS * 3600 * 1000;
   return hours * 3600 * 1000;
 }
 
@@ -202,10 +203,7 @@ async function markDone(
   });
 }
 
-async function markFailed(
-  generationId: string,
-  error: string,
-): Promise<void> {
+async function markFailed(generationId: string, error: string): Promise<void> {
   try {
     await prisma.agentTemplateGeneration.update({
       where: { id: generationId },
@@ -258,7 +256,7 @@ async function _executeGeneration(generationId: string): Promise<void> {
 
   // 2. Race against the per-generation timeout
   const timeoutMs = getTimeoutMs();
-  let timer: ReturnType<typeof setTimeout> | null = null;
+  let timer: ReturnType<typeof setTimeout> | undefined;
   const timeout = new Promise<never>((_resolve, reject) => {
     timer = setTimeout(() => {
       reject(new Error(`Generation timed out after ${timeoutMs}ms`));
@@ -269,13 +267,10 @@ async function _executeGeneration(generationId: string): Promise<void> {
     await Promise.race([_runPipeline(generationId), timeout]);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    logger.warn(
-      { err, generationId },
-      "[generation-executor] Pipeline failed",
-    );
+    logger.warn({ err, generationId }, "[generation-executor] Pipeline failed");
     await markFailed(generationId, message);
   } finally {
-    if (timer) clearTimeout(timer);
+    clearTimeout(timer);
   }
 }
 
@@ -289,7 +284,9 @@ async function _runPipeline(generationId: string): Promise<void> {
   }
   if (generation.status !== "running") {
     // Race lost between tryClaim and findUnique (shouldn't happen, but guard)
-    throw new Error(`Generation status is ${generation.status}, expected running`);
+    throw new Error(
+      `Generation status is ${generation.status}, expected running`,
+    );
   }
 
   // 3. Generate stage
@@ -300,11 +297,12 @@ async function _runPipeline(generationId: string): Promise<void> {
       "No usable input — provide one of text, idea, content, url, pdfBase64, or imageBase64",
     );
   }
-  const inputType: "text" | "pdfBase64" | "imageBase64" = "text" in coalesced
-    ? "text"
-    : "pdfBase64" in coalesced
-      ? "pdfBase64"
-      : "imageBase64";
+  const inputType: "text" | "pdfBase64" | "imageBase64" =
+    "text" in coalesced
+      ? "text"
+      : "pdfBase64" in coalesced
+        ? "pdfBase64"
+        : "imageBase64";
 
   const startTime = performance.now();
   let templateResult: Awaited<ReturnType<typeof callGenerateTemplate>>;

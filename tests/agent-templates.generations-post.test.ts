@@ -70,7 +70,10 @@ async function cleanup() {
     where: { ownerAccountId: ADMIN_ACCOUNT_ID, source: TEST_SOURCE },
   });
   await prisma.agentTemplate.deleteMany({
-    where: { ownerAccountId: ADMIN_ACCOUNT_ID, agentName: fakeTemplate.agentName },
+    where: {
+      ownerAccountId: ADMIN_ACCOUNT_ID,
+      agentName: fakeTemplate.agentName,
+    },
   });
 }
 
@@ -115,14 +118,11 @@ const post = (
   body: unknown,
   opts: { headers?: Record<string, string>; query?: string } = {},
 ) =>
-  fetch(
-    `${baseURL}/api/v2/agent-templates/generations${opts.query ?? ""}`,
-    {
-      method: "POST",
-      headers: opts.headers ?? withKey("default-key"),
-      body: typeof body === "string" ? body : JSON.stringify(body),
-    },
-  );
+  fetch(`${baseURL}/api/v2/agent-templates/generations${opts.query ?? ""}`, {
+    method: "POST",
+    headers: opts.headers ?? withKey("default-key"),
+    body: typeof body === "string" ? body : JSON.stringify(body),
+  });
 
 // ---------------------------------------------------------------------------
 // Tests
@@ -130,7 +130,10 @@ const post = (
 
 describe("POST /generations — validation", () => {
   test("missing source → 400", async () => {
-    const res = await post({ inputs: { text: "x" } }, { headers: withKey("v1") });
+    const res = await post(
+      { inputs: { text: "x" } },
+      { headers: withKey("v1") },
+    );
     expect(res.status).toBe(400);
   });
 
@@ -273,17 +276,14 @@ describe("POST /generations — idempotency", () => {
 
 describe("POST /generations — SSE mode", () => {
   test("Accept: text/event-stream emits terminal result frame", async () => {
-    const res = await fetch(
-      `${baseURL}/api/v2/agent-templates/generations`,
-      {
-        method: "POST",
-        headers: {
-          ...withKey("sse-1"),
-          Accept: "text/event-stream",
-        },
-        body: JSON.stringify(sampleBody),
+    const res = await fetch(`${baseURL}/api/v2/agent-templates/generations`, {
+      method: "POST",
+      headers: {
+        ...withKey("sse-1"),
+        Accept: "text/event-stream",
       },
-    );
+      body: JSON.stringify(sampleBody),
+    });
 
     expect(res.status).toBe(200);
     expect(res.headers.get("content-type")).toContain("text/event-stream");

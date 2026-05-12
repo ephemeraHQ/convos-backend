@@ -135,7 +135,8 @@ const insertGeneration = (
     data: {
       ownerAccountId: overrides.ownerAccountId ?? ADMIN_ACCOUNT_ID,
       source: TEST_SOURCE,
-      idempotencyKey: overrides.idempotencyKey ?? `get-test-${Date.now()}-${Math.random()}`,
+      idempotencyKey:
+        overrides.idempotencyKey ?? `get-test-${Date.now()}-${Math.random()}`,
       inputs: { text: "test" },
       status: overrides.status ?? "pending",
       templateId: overrides.templateId ?? null,

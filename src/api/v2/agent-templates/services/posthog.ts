@@ -20,7 +20,8 @@ import type { GenerationMetrics } from "./templateGen";
 // Event name — single source of truth
 // ---------------------------------------------------------------------------
 
-export const BUILDER_GENERATION_COMPLETED_EVENT = "builder.generation.completed";
+export const BUILDER_GENERATION_COMPLETED_EVENT =
+  "builder.generation.completed";
 
 /** @deprecated Renamed to BUILDER_GENERATION_COMPLETED_EVENT in the
  *  /generations refactor. Kept exported so any external dashboards/queries

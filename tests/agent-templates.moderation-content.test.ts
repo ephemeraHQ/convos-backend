@@ -11,7 +11,14 @@
  *   - OpenRouter network error → fails open
  */
 
-import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:test";
+import {
+  afterAll,
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  test,
+} from "bun:test";
 import {
   __resetModerationForTests,
   checkContent,
@@ -22,7 +29,10 @@ import {
 // ---------------------------------------------------------------------------
 
 const originalFetch = globalThis.fetch;
-type MockFetch = (input: Request | URL | string, init?: RequestInit) => Promise<Response>;
+type MockFetch = (
+  input: Request | URL | string,
+  init?: RequestInit,
+) => Promise<Response>;
 
 function installFetchMock(mock: MockFetch) {
   globalThis.fetch = mock as typeof globalThis.fetch;

@@ -126,7 +126,10 @@ export async function runSweep(): Promise<void> {
   try {
     const ttlCount = await sweepTerminalTtl();
     if (ttlCount > 0) {
-      logger.debug({ ttlCount }, "[ttl-sweep] TTL pass set expiresAt on terminal rows");
+      logger.debug(
+        { ttlCount },
+        "[ttl-sweep] TTL pass set expiresAt on terminal rows",
+      );
     }
   } catch (err) {
     logger.error({ err }, "[ttl-sweep] TTL pass failed");

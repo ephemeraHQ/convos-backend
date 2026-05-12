@@ -134,9 +134,7 @@ export async function generationsGetHandler(req: Request, res: Response) {
   // 1. Validate wait_ms
   const waitMs = parseWaitMs(req.query.wait_ms);
   if (waitMs === -1) {
-    res
-      .status(400)
-      .json({ error: "wait_ms must be a non-negative integer" });
+    res.status(400).json({ error: "wait_ms must be a non-negative integer" });
     return;
   }
 

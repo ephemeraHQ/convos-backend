@@ -165,14 +165,12 @@ describe("SSE mode — keep-alive", () => {
     __resetGenerateTemplateForTests(
       () =>
         new Promise((resolve) => {
-          setTimeout(
-            () =>
-              resolve({
-                template: fakeTemplate,
-                metrics: DEFAULT_TEST_METRICS,
-              }),
-            500,
-          );
+          setTimeout(() => {
+            resolve({
+              template: fakeTemplate,
+              metrics: DEFAULT_TEST_METRICS,
+            });
+          }, 500);
         }),
     );
 
@@ -208,11 +206,12 @@ describe("SSE mode — client disconnect", () => {
           template: GeneratedTemplate;
           metrics: typeof DEFAULT_TEST_METRICS;
         }>((resolve) => {
-          resolveHang = () =>
+          resolveHang = () => {
             resolve({
               template: fakeTemplate,
               metrics: DEFAULT_TEST_METRICS,
             });
+          };
         }),
     );
 

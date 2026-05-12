@@ -14,7 +14,14 @@
  * AgentTemplateGeneration table — migration must be applied).
  */
 
-import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  describe,
+  expect,
+  test,
+} from "bun:test";
 import {
   __resetGenerationExecutorForTests,
   __setExecutorTimeoutMsForTests,
@@ -65,14 +72,12 @@ const installSlowGenerate = (delayMs: number) => {
   __resetGenerateTemplateForTests(
     () =>
       new Promise((resolve) => {
-        setTimeout(
-          () =>
-            resolve({
-              template: fakeTemplate,
-              metrics: DEFAULT_TEST_METRICS,
-            }),
-          delayMs,
-        );
+        setTimeout(() => {
+          resolve({
+            template: fakeTemplate,
+            metrics: DEFAULT_TEST_METRICS,
+          });
+        }, delayMs);
       }),
   );
 };
@@ -279,7 +284,9 @@ describe("generation-executor", () => {
       expect(event.outcome).toBe("done");
       expect(event.model).toBe(DEFAULT_TEST_METRICS.model);
       expect(event.promptTokens).toBe(DEFAULT_TEST_METRICS.promptTokens);
-      expect(event.completionTokens).toBe(DEFAULT_TEST_METRICS.completionTokens);
+      expect(event.completionTokens).toBe(
+        DEFAULT_TEST_METRICS.completionTokens,
+      );
       expect(event.latencyMs).toBe(DEFAULT_TEST_METRICS.latencyMs);
 
       // Reset to no-op so the afterEach cleanup doesn't trip

@@ -106,7 +106,8 @@ type CoalescedInput =
   | { kind: "imageBase64"; imageBase64: string };
 
 function coalesceInputs(inputs: Inputs): CoalescedInput | null {
-  if (inputs.pdfBase64) return { kind: "pdfBase64", pdfBase64: inputs.pdfBase64 };
+  if (inputs.pdfBase64)
+    return { kind: "pdfBase64", pdfBase64: inputs.pdfBase64 };
   if (inputs.imageBase64)
     return { kind: "imageBase64", imageBase64: inputs.imageBase64 };
   const text = inputs.text || inputs.idea || inputs.content || inputs.url;
