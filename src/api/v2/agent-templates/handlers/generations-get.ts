@@ -17,9 +17,6 @@
  *
  * Auth: authOrAgentApiKeyAuth + requireAccount.
  * Production guard: XMTP_ENV !== "production" (in v2/index.ts).
- *
- * (PR #201 will extend the response with an optional `reply` field for
- * twitterContext-bearing generations.)
  */
 
 import type { Request, Response } from "express";
