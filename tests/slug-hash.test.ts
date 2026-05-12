@@ -1,6 +1,13 @@
 import crypto from "node:crypto";
 import { describe, expect, test } from "bun:test";
-import { buildSlug, HASH_LEN, isHashedSlug, slugHash } from "@/utils/slug-hash";
+import {
+  buildSlug,
+  buildUniqueSlug,
+  HASH_LEN,
+  isHashedSlug,
+  MAX_SLUG_ATTEMPTS,
+  slugHash,
+} from "@/utils/slug-hash";
 
 function referenceSlugHash(id: string) {
   const sha = crypto.createHash("sha1").update(id).digest("hex");
@@ -61,5 +68,58 @@ describe("slug-hash utilities", () => {
     expect(isHashedSlug("brewski.")).toBe(false);
     expect(isHashedSlug("brewski.toolong")).toBe(false);
     expect(isHashedSlug("brewski.UPPER")).toBe(false);
+  });
+});
+
+describe("buildUniqueSlug", () => {
+  test("returns the first generated slug when nothing is taken", async () => {
+    const ids = ["tmpl_first", "tmpl_second"];
+    let calls = 0;
+    const result = await buildUniqueSlug({
+      baseSlug: "brewski",
+      idFactory: () => ids[calls++],
+      isTaken: () => Promise.resolve(false),
+    });
+
+    expect(calls).toBe(1);
+    expect(result.id).toBe("tmpl_first");
+    expect(result.slug).toBe(buildSlug("brewski", "tmpl_first"));
+  });
+
+  test("retries with a fresh id when the slug is taken", async () => {
+    const ids = ["tmpl_first", "tmpl_second", "tmpl_third"];
+    let calls = 0;
+    const taken = new Set([
+      buildSlug("brewski", "tmpl_first"),
+      buildSlug("brewski", "tmpl_second"),
+    ]);
+
+    const result = await buildUniqueSlug({
+      baseSlug: "brewski",
+      idFactory: () => ids[calls++],
+      isTaken: (slug) => Promise.resolve(taken.has(slug)),
+    });
+
+    expect(calls).toBe(3);
+    expect(result.id).toBe("tmpl_third");
+    expect(result.slug).toBe(buildSlug("brewski", "tmpl_third"));
+  });
+
+  test("throws after MAX_SLUG_ATTEMPTS when every candidate is taken", async () => {
+    let calls = 0;
+    let caught: unknown;
+    try {
+      await buildUniqueSlug({
+        baseSlug: "brewski",
+        idFactory: () => `tmpl_${calls++}`,
+        isTaken: () => Promise.resolve(true),
+      });
+    } catch (err) {
+      caught = err;
+    }
+
+    expect(caught).toBeInstanceOf(Error);
+    expect((caught as Error).message).toMatch(/exhausted 8 attempts/);
+    expect(calls).toBe(MAX_SLUG_ATTEMPTS);
   });
 });
