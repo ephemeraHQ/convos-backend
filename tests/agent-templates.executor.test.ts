@@ -321,6 +321,16 @@ describe("generation-executor", () => {
 
       const gen = await createPendingGeneration("timeout-race");
 
+      // Snapshot AgentTemplate rows for this agentName BEFORE the race so we
+      // can compare counts after. The fakeTemplate.agentName is reused across
+      // tests in this file; afterEach cleans up by agentName.
+      const beforeCount = await prisma.agentTemplate.count({
+        where: {
+          ownerAccountId: ADMIN_ACCOUNT_ID,
+          agentName: fakeTemplate.agentName,
+        },
+      });
+
       // Run executor and wait long enough for both the timeout AND the
       // slow LLM call to complete in the background.
       await executeGeneration(gen.id);
@@ -334,6 +344,17 @@ describe("generation-executor", () => {
       expect(final?.status).toBe("failed");
       expect(final?.templateId).toBeNull();
       expect(final?.error).toContain("timed out");
+
+      // The orphan AgentTemplate that the post-timeout pipeline created
+      // (via persistTemplate) must have been cleaned up. Count should be
+      // unchanged from before the race.
+      const afterCount = await prisma.agentTemplate.count({
+        where: {
+          ownerAccountId: ADMIN_ACCOUNT_ID,
+          agentName: fakeTemplate.agentName,
+        },
+      });
+      expect(afterCount).toBe(beforeCount);
     });
 
     test("timeout aborts the in-flight LLM call (signal.aborted)", async () => {

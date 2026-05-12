@@ -428,17 +428,31 @@ async function _runPipeline(
   // 5. Mark done (conditional on status=running). If markDone returns false,
   // the pipeline lost the race against the per-generation timeout — markFailed
   // has already set status=failed. Skip the success PostHog event so metering
-  // matches the row's terminal state, and log the orphan template for cleanup
-  // visibility.
+  // matches the row's terminal state, AND clean up the AgentTemplate we just
+  // created so it doesn't surface as an orphan draft in the user's template
+  // list. The template was created microseconds ago by this same execution and
+  // nothing else can hold a reference yet (generation.templateId is still NULL
+  // because markDone no-opped), so the delete is safe.
   const claimed = await markDone(generationId, persisted.id);
   if (!claimed) {
+    try {
+      await prisma.agentTemplate.delete({ where: { id: persisted.id } });
+    } catch (err) {
+      // Defensive: if delete fails (FK race, row already gone, etc.), log
+      // and continue. The orphan stays but the generation is already failed,
+      // so we don't block the executor on cleanup.
+      logger.error(
+        { err, generationId, templateId: persisted.id, slug: persisted.slug },
+        "[generation-executor] Failed to clean up orphan AgentTemplate after timeout race",
+      );
+    }
     logger.warn(
       {
         generationId,
         templateId: persisted.id,
         slug: persisted.slug,
       },
-      "[generation-executor] Pipeline finished after timeout — orphan AgentTemplate left in place",
+      "[generation-executor] Pipeline finished after timeout — orphan AgentTemplate deleted",
     );
     capturePostHog({
       ...templateResult.metrics,
