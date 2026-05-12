@@ -112,7 +112,9 @@ export function buildDeterministicFallback(input: ReplyInput): string {
 
   let sentence = firstSentence;
   if (sentence.length > availableForSentence) {
-    sentence = sentence.slice(0, Math.max(0, availableForSentence - 1)).trimEnd();
+    sentence = sentence
+      .slice(0, Math.max(0, availableForSentence - 1))
+      .trimEnd();
     const lastSpace = sentence.lastIndexOf(" ");
     if (lastSpace > 0) sentence = sentence.slice(0, lastSpace);
     sentence += "…";

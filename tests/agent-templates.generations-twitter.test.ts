@@ -133,14 +133,11 @@ const post = (
   body: unknown,
   opts: { headers?: Record<string, string>; query?: string } = {},
 ) =>
-  fetch(
-    `${baseURL}/api/v2/agent-templates/generations${opts.query ?? ""}`,
-    {
-      method: "POST",
-      headers: opts.headers ?? withKey(`tw-${Date.now()}-${Math.random()}`),
-      body: typeof body === "string" ? body : JSON.stringify(body),
-    },
-  );
+  fetch(`${baseURL}/api/v2/agent-templates/generations${opts.query ?? ""}`, {
+    method: "POST",
+    headers: opts.headers ?? withKey(`tw-${Date.now()}-${Math.random()}`),
+    body: typeof body === "string" ? body : JSON.stringify(body),
+  });
 
 // ---------------------------------------------------------------------------
 // Tests
@@ -184,7 +181,9 @@ describe("POST /generations — twitter intent moderation", () => {
       Promise.resolve({ allowed: false, reason: "not_agent_request" }),
     );
 
-    const res = await post(twitterBody(), { headers: withKey("tw-intent-blocked") });
+    const res = await post(twitterBody(), {
+      headers: withKey("tw-intent-blocked"),
+    });
     expect(res.status).toBe(422);
     const body = (await res.json()) as { reason: string; category: string };
     expect(body.reason).toBe("not_agent_request");
@@ -206,7 +205,9 @@ describe("POST /generations — twitter intent moderation", () => {
       return Promise.resolve({ allowed: true });
     });
 
-    const res = await post(twitterBody(), { headers: withKey("tw-content-blocks") });
+    const res = await post(twitterBody(), {
+      headers: withKey("tw-content-blocks"),
+    });
     expect(res.status).toBe(422);
     const body = (await res.json()) as { reason: string; category: string };
     expect(body.category).toBe("content");
@@ -248,10 +249,9 @@ describe("POST /generations — twitter happy path", () => {
   });
 
   test("LLM-composed reply is used when validator accepts it", async () => {
-    const llmReply = "@some_user Built it! Meet Tweet Replier — try it now https://convos.org/assistants/tweet-replier.abcde";
-    __resetComposeReplyForTests(() =>
-      Promise.resolve({ replyText: llmReply }),
-    );
+    const llmReply =
+      "@some_user Built it! Meet Tweet Replier — try it now https://convos.org/assistants/tweet-replier.abcde";
+    __resetComposeReplyForTests(() => Promise.resolve({ replyText: llmReply }));
 
     const res = await post(twitterBody(), {
       headers: withKey("tw-llm-reply"),

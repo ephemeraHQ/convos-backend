@@ -115,12 +115,10 @@ const inputsSchema = z
 
 const twitterContextSchema = z
   .object({
-    twitterHandle: z
-      .string()
-      .regex(/^@?[A-Za-z0-9_]{1,15}$/, {
-        message:
-          "twitterHandle must match /^@?[A-Za-z0-9_]{1,15}$/ (1-15 alphanumeric/underscore, optional @ prefix)",
-      }),
+    twitterHandle: z.string().regex(/^@?[A-Za-z0-9_]{1,15}$/, {
+      message:
+        "twitterHandle must match /^@?[A-Za-z0-9_]{1,15}$/ (1-15 alphanumeric/underscore, optional @ prefix)",
+    }),
     tweetId: z.string().regex(/^\d+$/, {
       message: "tweetId must be a numeric string",
     }),
@@ -142,7 +140,6 @@ const bodySchema = z
 
 type Body = z.infer<typeof bodySchema>;
 type Inputs = z.infer<typeof inputsSchema>;
-type TwitterContext = z.infer<typeof twitterContextSchema>;
 
 // ---------------------------------------------------------------------------
 // Coalescing — for length validation; also used in executor at runtime
@@ -646,7 +643,7 @@ export async function generationsPostHandler(req: Request, res: Response) {
         idempotencyKey,
         inputs: body.inputs as object,
         twitterContext: body.twitterContext
-          ? (body.twitterContext as TwitterContext as Prisma.InputJsonValue)
+          ? (body.twitterContext as Prisma.InputJsonValue)
           : Prisma.JsonNull,
         publishStatus: body.publishStatus,
         status: "pending",
