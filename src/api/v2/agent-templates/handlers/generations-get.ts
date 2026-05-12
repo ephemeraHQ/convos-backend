@@ -31,7 +31,31 @@ import { prisma } from "@/utils/prisma";
 // ---------------------------------------------------------------------------
 
 const MAX_WAIT_MS = 45_000;
-const POLL_INTERVAL_MS = 500;
+
+/**
+ * Adaptive backoff for the long-poll loop.
+ *
+ * Most generations complete in 10–30s. Fast early polls catch them with
+ * near-instant terminal detection; later polls back off so a hung 45s
+ * long-poll doesn't fire 90 DB queries.
+ *
+ * Per-request DB queries for a typical 30s generation drop from ~60
+ * (constant 500ms) to ~25.
+ *
+ * TODO(scale): When concurrent long-poll volume justifies it, replace
+ * polling entirely with Postgres LISTEN/NOTIFY. The executor would
+ * `pg_notify('generation_complete', generationId)` after each terminal
+ * write; long-poll handlers would `LISTEN` via a dedicated `pg` client
+ * (outside the Prisma pool) and await the notification with this
+ * timeout as the fallback. ~150 LOC; defer until polling load is real.
+ */
+function nextPollIntervalMs(attempt: number): number {
+  if (attempt < 2) return 100;
+  if (attempt < 4) return 250;
+  if (attempt < 8) return 500;
+  if (attempt < 16) return 1000;
+  return 2000;
+}
 
 // ---------------------------------------------------------------------------
 // Internal types
@@ -110,6 +134,7 @@ async function waitForTerminal(args: {
   isClosed: () => boolean;
 }): Promise<GenerationRow | null> {
   const deadline = Date.now() + args.waitMs;
+  let attempt = 0;
   while (Date.now() < deadline) {
     if (args.isClosed()) return null;
     const row = await fetchOwnedRow(args.generationId, args.ownerAccountId);
@@ -119,8 +144,9 @@ async function waitForTerminal(args: {
     const remaining = deadline - Date.now();
     if (remaining <= 0) break;
     await new Promise((resolve) =>
-      setTimeout(resolve, Math.min(POLL_INTERVAL_MS, remaining)),
+      setTimeout(resolve, Math.min(nextPollIntervalMs(attempt), remaining)),
     );
+    attempt += 1;
   }
   // Timeout — return current state, hide already-expired rows
   if (args.isClosed()) return null;

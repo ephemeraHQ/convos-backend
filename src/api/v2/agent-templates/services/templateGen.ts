@@ -381,6 +381,7 @@ async function selectInstructionsViaLLM(
   repoDescription: string,
   tree: string[],
   readme: string,
+  externalSignal?: AbortSignal,
 ): Promise<{
   selection: GithubInstructionSelection;
   tokens: PassthroughTokens;
@@ -473,6 +474,11 @@ Rules:
   const timeoutId = setTimeout(() => {
     controller.abort();
   }, OPENROUTER_TIMEOUT_MS);
+  // Compose the per-request timeout signal with any external cancellation
+  // signal so the fetch aborts whichever fires first.
+  const signal = externalSignal
+    ? AbortSignal.any([externalSignal, controller.signal])
+    : controller.signal;
   let data: any;
   try {
     const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
@@ -486,7 +492,7 @@ Rules:
         messages: [{ role: "user", content: selectorPrompt }],
         temperature: 0.2,
       }),
-      signal: controller.signal,
+      signal,
     });
 
     if (!res.ok) {
@@ -560,6 +566,7 @@ Rules:
  */
 async function tryGithubPassthrough(
   url: string,
+  externalSignal?: AbortSignal,
 ): Promise<GithubPrefetch | null> {
   const parsed = parseGithubRepoUrl(url);
   if (!parsed) return null;
@@ -579,7 +586,7 @@ async function tryGithubPassthrough(
       );
       return null;
     }
-    const bundle = await tryContentPassthrough(content);
+    const bundle = await tryContentPassthrough(content, externalSignal);
     if (bundle) return { kind: "passthrough", bundle };
     // Classifier said this isn't agent-ready, but the user linked directly
     // at the file — hand the raw content back to the caller so it can be
@@ -621,6 +628,7 @@ async function tryGithubPassthrough(
     repoDescription,
     tree,
     readme,
+    externalSignal,
   );
   if (!selectorResult?.selection.hasAgentInstructions) return null;
   const { selection, tokens: selectorTokens } = selectorResult;
@@ -690,7 +698,10 @@ interface ContentPassthroughResult {
 }
 
 /** Classify pasted content: is it agent-ready, or source material to generate from? */
-async function classifyPastedContent(content: string): Promise<{
+async function classifyPastedContent(
+  content: string,
+  externalSignal?: AbortSignal,
+): Promise<{
   classification: ContentPassthroughResult;
   tokens: PassthroughTokens;
 } | null> {
@@ -749,6 +760,9 @@ Rules:
   const timeoutId = setTimeout(() => {
     controller.abort();
   }, OPENROUTER_TIMEOUT_MS);
+  const signal = externalSignal
+    ? AbortSignal.any([externalSignal, controller.signal])
+    : controller.signal;
   let data: any;
   try {
     const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
@@ -762,7 +776,7 @@ Rules:
         messages: [{ role: "user", content: classifierPrompt }],
         temperature: 0.2,
       }),
-      signal: controller.signal,
+      signal,
     });
 
     if (!res.ok) {
@@ -835,10 +849,11 @@ Rules:
  */
 async function tryContentPassthrough(
   content: string,
+  externalSignal?: AbortSignal,
 ): Promise<PassthroughBundle | null> {
   if (content.length < PASSTHROUGH_MIN_LENGTH) return null;
 
-  const classifierResult = await classifyPastedContent(content);
+  const classifierResult = await classifyPastedContent(content, externalSignal);
   if (!classifierResult) return null;
   const { classification, tokens: classifierTokens } = classifierResult;
   if (!classification.isPassthrough || !classification.passthroughType) {
@@ -890,6 +905,7 @@ async function extractUrl(url: string): Promise<string> {
  */
 export async function generateTemplate(
   input: GenerateTemplateInput | string,
+  externalSignal?: AbortSignal,
 ): Promise<GenerationResult> {
   // Backward compat: string input = text
   const opts: GenerateTemplateInput =
@@ -960,7 +976,7 @@ export async function generateTemplate(
       //  - `rawContent`: the user linked a specific file but it's not
       //    agent-ready → use the fetched file content as source material
       //    (skip extractUrl, which would scrape GitHub's HTML viewer).
-      const githubResult = await tryGithubPassthrough(url);
+      const githubResult = await tryGithubPassthrough(url, externalSignal);
       if (githubResult?.kind === "passthrough") {
         const { bundle } = githubResult;
         return {
@@ -986,7 +1002,10 @@ export async function generateTemplate(
 
     // Before running full generation, classify the extracted text — if it's
     // already an agent install guide or skill definition, use it verbatim.
-    const passthroughBundle = await tryContentPassthrough(extracted);
+    const passthroughBundle = await tryContentPassthrough(
+      extracted,
+      externalSignal,
+    );
     if (passthroughBundle)
       return {
         template: passthroughBundle.template,
@@ -1052,6 +1071,9 @@ export async function generateTemplate(
   const timeoutId = setTimeout(() => {
     controller.abort();
   }, OPENROUTER_TIMEOUT_MS);
+  const signal = externalSignal
+    ? AbortSignal.any([externalSignal, controller.signal])
+    : controller.signal;
   let data: any;
   try {
     const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
@@ -1061,7 +1083,7 @@ export async function generateTemplate(
         "Content-Type": "application/json",
       },
       body: JSON.stringify(reqBody),
-      signal: controller.signal,
+      signal,
     });
 
     if (!res.ok) {
@@ -1189,14 +1211,19 @@ export function __resetGenerateTemplateForTests(
 /**
  * Dispatch function used by the handler — calls the override if installed,
  * otherwise delegates to the real `generateTemplate`.
+ *
+ * Optional `signal` aborts the in-flight OpenRouter fetches, so a caller
+ * (e.g. the generation executor's per-pipeline timeout) can cancel work
+ * mid-LLM-call and avoid paying tokens for a result it would discard.
  */
 export async function callGenerateTemplate(
   input: GenerateTemplateInput | string,
+  signal?: AbortSignal,
 ): Promise<GenerationResult> {
   if (_generateTemplateOverride) {
     return _generateTemplateOverride(input);
   }
-  return generateTemplate(input);
+  return generateTemplate(input, signal);
 }
 
 export { BREVITY_RAIL };

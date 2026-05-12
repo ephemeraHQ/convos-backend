@@ -313,27 +313,46 @@ async function _executeGeneration(generationId: string): Promise<void> {
     return;
   }
 
-  // 2. Race against the per-generation timeout
+  // 2. Race against the per-generation timeout. When the timeout fires we
+  // ALSO abort the AbortController whose signal is threaded through
+  // callGenerateTemplate → templateGen → OpenRouter fetches. That cancels
+  // the in-flight LLM call so we stop paying tokens for a result we'd
+  // discard. Pre-abort change: the LLM call ran to completion in the
+  // background after timeout, persisted an orphan AgentTemplate, and then
+  // no-opped on markDone. Post-abort change: fetch rejects with AbortError
+  // shortly after timeout; orphan-template path becomes rare.
   const timeoutMs = getTimeoutMs();
+  const abortController = new AbortController();
   let timer: ReturnType<typeof setTimeout> | undefined;
   const timeout = new Promise<never>((_resolve, reject) => {
     timer = setTimeout(() => {
+      abortController.abort();
       reject(new Error(`Generation timed out after ${timeoutMs}ms`));
     }, timeoutMs);
   });
 
   try {
-    await Promise.race([_runPipeline(generationId), timeout]);
+    await Promise.race([
+      _runPipeline(generationId, abortController.signal),
+      timeout,
+    ]);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     logger.warn({ err, generationId }, "[generation-executor] Pipeline failed");
     await markFailed(generationId, message);
   } finally {
     clearTimeout(timer);
+    // Defensive: ensure the signal is aborted in any return path so a
+    // background _runPipeline that hasn't yet checked the signal stops
+    // soon (the abort propagates to outstanding fetches).
+    if (!abortController.signal.aborted) abortController.abort();
   }
 }
 
-async function _runPipeline(generationId: string): Promise<void> {
+async function _runPipeline(
+  generationId: string,
+  signal: AbortSignal,
+): Promise<void> {
   // Reload to get the latest inputs + ownerAccountId + source
   const generation = await prisma.agentTemplateGeneration.findUnique({
     where: { id: generationId },
@@ -366,7 +385,7 @@ async function _runPipeline(generationId: string): Promise<void> {
   const startTime = performance.now();
   let templateResult: Awaited<ReturnType<typeof callGenerateTemplate>>;
   try {
-    templateResult = await callGenerateTemplate(coalesced);
+    templateResult = await callGenerateTemplate(coalesced, signal);
   } catch (err) {
     // Meter error path
     capturePostHog({

@@ -51,8 +51,25 @@ const MAX_TEXT_LEN = 50_000;
 const MAX_BASE64_LEN = 35_000_000;
 const MAX_BODY_BYTES = 40 * 1024 * 1024;
 const MAX_WAIT_MS = 45_000;
-const POLL_INTERVAL_MS = 500;
 const DEFAULT_SSE_KEEPALIVE_MS = 15_000;
+
+/**
+ * Adaptive backoff for long-poll + SSE poll loops.
+ *
+ * See generations-get.ts for full rationale. TL;DR: 100 → 250 → 500 →
+ * 1000 → 2000 ms reduces per-request DB queries from ~60 (constant 500ms
+ * over a 30s generation) to ~25 with no architectural change.
+ *
+ * TODO(scale): replace polling with Postgres LISTEN/NOTIFY when long-poll
+ * volume justifies the dedicated pg-client plumbing (~150 LOC).
+ */
+function nextPollIntervalMs(attempt: number): number {
+  if (attempt < 2) return 100;
+  if (attempt < 4) return 250;
+  if (attempt < 8) return 500;
+  if (attempt < 16) return 1000;
+  return 2000;
+}
 
 // ---------------------------------------------------------------------------
 // Test seams
@@ -153,6 +170,7 @@ async function waitForTerminal(args: {
   isClosed: () => boolean;
 }): Promise<GenerationRow | null> {
   const deadline = Date.now() + args.waitMs;
+  let attempt = 0;
   while (Date.now() < deadline) {
     if (args.isClosed()) return null;
     const row = await fetchOwnedGeneration(
@@ -164,8 +182,9 @@ async function waitForTerminal(args: {
     const remaining = deadline - Date.now();
     if (remaining <= 0) break;
     await new Promise((resolve) =>
-      setTimeout(resolve, Math.min(POLL_INTERVAL_MS, remaining)),
+      setTimeout(resolve, Math.min(nextPollIntervalMs(attempt), remaining)),
     );
+    attempt += 1;
   }
   if (args.isClosed()) return null;
   return fetchOwnedGeneration(args.generationId, args.ownerAccountId);
@@ -274,6 +293,7 @@ async function streamUntilTerminal(args: {
   // recoverable terminal frame instead of leaving the client hanging.
   try {
     let firstIteration = true;
+    let attempt = 0;
     for (;;) {
       if (args.isClosed() || res.writableEnded || res.destroyed) return;
 
@@ -304,7 +324,10 @@ async function streamUntilTerminal(args: {
         return;
       }
 
-      await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
+      await new Promise((resolve) =>
+        setTimeout(resolve, nextPollIntervalMs(attempt)),
+      );
+      attempt += 1;
     }
   } catch (err) {
     // DB error mid-poll, or write threw after disconnect race. Emit a final
