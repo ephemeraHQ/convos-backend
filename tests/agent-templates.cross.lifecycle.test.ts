@@ -57,7 +57,7 @@ describe("Agent template cross lifecycle flow", () => {
     await cleanupTemplates();
   });
 
-  test("publish locks delete, archive hides from list, and hashed-slug GET stays resolvable", async () => {
+  test("publish → archive hides from list, hashed-slug GET stays resolvable, and DELETE succeeds in any state", async () => {
     const created = await createTemplate({
       baseURL,
       body: {
@@ -78,21 +78,6 @@ describe("Agent template cross lifecycle flow", () => {
     expect(published.response.status).toBe(200);
     expect(published.body.status).toBe("published");
     expect(published.body.firstPublishedAt).toEqual(expect.any(String));
-
-    const deleteAttempt = await deleteTemplate({
-      baseURL,
-      id: created.body.id as string,
-    });
-
-    expect(deleteAttempt.response.status).toBe(409);
-    expect(JSON.stringify(deleteAttempt.body.error)).toContain(
-      "firstPublishedAt",
-    );
-    expect(
-      await prisma.agentTemplate.count({
-        where: { id: created.body.id as string },
-      }),
-    ).toBe(1);
 
     const archived = await patchTemplate({
       baseURL,
@@ -118,5 +103,20 @@ describe("Agent template cross lifecycle flow", () => {
       id: created.body.id,
       status: "archived",
     } satisfies Partial<TemplateBody>);
+
+    // DELETE is now permitted in any publish state (see commit a0a6861 —
+    // the previous ALREADY_PUBLISHED gate was removed). Owner accepts that
+    // the canonical URL will start 404'ing.
+    const deleted = await deleteTemplate({
+      baseURL,
+      id: created.body.id as string,
+    });
+
+    expect(deleted.response.status).toBe(200);
+    expect(
+      await prisma.agentTemplate.count({
+        where: { id: created.body.id as string },
+      }),
+    ).toBe(0);
   });
 });
