@@ -103,36 +103,3 @@ export const authOrAgentApiKeyAuth = async (
   req.log.debug("Attempting JWT authentication");
   await authMiddleware(req, res, next);
 };
-
-/**
- * Optional auth middleware for public read endpoints (list, detail).
- *
- * Sets res.locals.accountId and res.locals.isApiKeyListener when auth
- * headers are present, but does NOT reject if no auth is provided.
- * This allows unauthenticated users to access published templates
- * while giving authenticated users visibility into their own drafts.
- *
- * When no auth headers are present, res.locals.accountId remains
- * undefined and res.locals.isApiKeyListener defaults to false.
- *
- * If auth headers ARE present but invalid, the standard 401 rejection
- * applies — presenting credentials means they must be valid.
- */
-export const optionalAuthOrAgentApiKeyAuth = async (
-  req: Request,
-  res: Response,
-  next: NextFunction,
-) => {
-  const providedAgentApiKey = req.header(AGENT_API_KEY_HEADER)?.trim();
-  const providedAuthToken = req.header("X-Convos-AuthToken")?.trim();
-
-  // No auth headers at all — proceed as unauthenticated
-  if (!providedAgentApiKey && !providedAuthToken) {
-    next();
-    return;
-  }
-
-  // Auth headers present — delegate to the full auth chain
-  // (which will set locals on success or 401 on failure)
-  await authOrAgentApiKeyAuth(req, res, next);
-};
