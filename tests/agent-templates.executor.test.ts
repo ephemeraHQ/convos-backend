@@ -157,6 +157,82 @@ describe("generation-executor", () => {
     expect(template?.agentName).toBe(fakeTemplate.agentName);
     expect(template?.ownerAccountId).toBe(ADMIN_ACCOUNT_ID);
     expect(template?.status).toBe("draft");
+    expect(template?.firstPublishedAt).toBeNull();
+  });
+
+  test("publishStatus 'unlisted' on the generation lands template in unlisted with firstPublishedAt set", async () => {
+    installFakeTemplate();
+    const gen = await prisma.agentTemplateGeneration.create({
+      data: {
+        ownerAccountId: ADMIN_ACCOUNT_ID,
+        source: TEST_SOURCE,
+        idempotencyKey: "publish-status-unlisted",
+        inputs: { text: "test input" },
+        publishStatus: "unlisted",
+        status: "pending",
+      },
+    });
+
+    await executeGeneration(gen.id);
+
+    const final = await prisma.agentTemplateGeneration.findUnique({
+      where: { id: gen.id },
+    });
+    expect(final?.status).toBe("done");
+    const template = await prisma.agentTemplate.findUnique({
+      where: { id: final?.templateId as string },
+    });
+    expect(template?.status).toBe("unlisted");
+    expect(template?.firstPublishedAt).not.toBeNull();
+    expect(template?.version).toBe(1);
+  });
+
+  test("publishStatus 'published' on the generation lands template in published with firstPublishedAt set", async () => {
+    installFakeTemplate();
+    const gen = await prisma.agentTemplateGeneration.create({
+      data: {
+        ownerAccountId: ADMIN_ACCOUNT_ID,
+        source: TEST_SOURCE,
+        idempotencyKey: "publish-status-published",
+        inputs: { text: "test input" },
+        publishStatus: "published",
+        status: "pending",
+      },
+    });
+
+    await executeGeneration(gen.id);
+
+    const template = await prisma.agentTemplate.findFirst({
+      where: {
+        ownerAccountId: ADMIN_ACCOUNT_ID,
+        agentName: fakeTemplate.agentName,
+      },
+    });
+    expect(template?.status).toBe("published");
+    expect(template?.firstPublishedAt).not.toBeNull();
+  });
+
+  test("publishStatus 'archived' on the generation row fails the pipeline (defense-in-depth)", async () => {
+    installFakeTemplate();
+    const gen = await prisma.agentTemplateGeneration.create({
+      data: {
+        ownerAccountId: ADMIN_ACCOUNT_ID,
+        source: TEST_SOURCE,
+        idempotencyKey: "publish-status-archived",
+        inputs: { text: "test input" },
+        publishStatus: "archived",
+        status: "pending",
+      },
+    });
+
+    await executeGeneration(gen.id);
+
+    const final = await prisma.agentTemplateGeneration.findUnique({
+      where: { id: gen.id },
+    });
+    expect(final?.status).toBe("failed");
+    expect(final?.error).toContain("archived");
+    expect(final?.templateId).toBeNull();
   });
 
   test("atomic claim: concurrent executor calls only one pipeline runs", async () => {

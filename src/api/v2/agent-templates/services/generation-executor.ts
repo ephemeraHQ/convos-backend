@@ -183,8 +183,15 @@ async function persistTemplate(
     connections: string[];
   },
   ownerAccountId: string,
+  publishStatus: "draft" | "unlisted" | "published",
 ): Promise<{ id: string; slug: string }> {
   const baseSlug = deriveBaseSlug(template.agentName);
+  // Non-draft submissions land in their target status with firstPublishedAt
+  // stamped at insert time, so the caller doesn't need a follow-up
+  // POST /:id/publish to make the template reachable by URL. Once
+  // firstPublishedAt is set the slug becomes immutable per the patch
+  // handler's SLUG_IMMUTABLE rule — same lock as if publish had run.
+  const firstPublishedAt = publishStatus === "draft" ? null : new Date();
 
   for (let attempt = 0; attempt <= MAX_AUTO_SLUG_ATTEMPTS; attempt++) {
     if (attempt === 1) continue; // skip "-1"; first numeric suffix is "-2"
@@ -217,8 +224,8 @@ async function persistTemplate(
           tools: template.tools,
           connections: template.connections,
           version: 1,
-          firstPublishedAt: null,
-          status: "draft",
+          firstPublishedAt,
+          status: publishStatus,
           featured: false,
         },
       });
@@ -403,11 +410,23 @@ async function _runPipeline(
   }
 
   // 4. Persist stage
+  //
+  // The Prisma column is the full PublishStatus enum (which includes
+  // `archived`), but only `draft`/`unlisted`/`published` are valid initial
+  // states for a fresh template. The handler's zod schema enforces this on
+  // the API path; the assertion here is defense-in-depth for any row
+  // inserted directly into the DB.
+  if (generation.publishStatus === "archived") {
+    throw new Error(
+      `Invalid initial publishStatus: "archived" — must be draft, unlisted, or published`,
+    );
+  }
   let persisted: { id: string; slug: string };
   try {
     persisted = await persistTemplate(
       templateResult.template,
       generation.ownerAccountId,
+      generation.publishStatus,
     );
   } catch (err) {
     capturePostHog({

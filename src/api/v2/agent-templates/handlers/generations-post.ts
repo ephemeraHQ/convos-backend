@@ -112,6 +112,10 @@ const bodySchema = z
   .object({
     source: z.string().min(1, "source is required"),
     inputs: inputsSchema,
+    publishStatus: z
+      .enum(["draft", "unlisted", "published"])
+      .optional()
+      .default("draft"),
   })
   .strict();
 
@@ -584,6 +588,7 @@ export async function generationsPostHandler(req: Request, res: Response) {
         source: body.source,
         idempotencyKey,
         inputs: body.inputs as object,
+        publishStatus: body.publishStatus,
         status: "pending",
       },
       select: {

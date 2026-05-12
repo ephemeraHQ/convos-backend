@@ -158,6 +158,7 @@ model AgentTemplateGeneration {
   idempotencyKey  String
   inputs          Json
   templateId      String?          @db.Uuid
+  publishStatus   PublishStatus    @default(draft)
   status          GenerationStatus @default(pending)
   error           String?          @db.Text
   expiresAt       DateTime?

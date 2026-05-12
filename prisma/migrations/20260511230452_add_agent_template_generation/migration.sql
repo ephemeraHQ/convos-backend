@@ -9,6 +9,7 @@ CREATE TABLE "AgentTemplateGeneration" (
     "idempotencyKey" TEXT NOT NULL,
     "inputs" JSONB NOT NULL,
     "templateId" UUID,
+    "publishStatus" "PublishStatus" NOT NULL DEFAULT 'draft',
     "status" "GenerationStatus" NOT NULL DEFAULT 'pending',
     "error" TEXT,
     "expiresAt" TIMESTAMP(3),

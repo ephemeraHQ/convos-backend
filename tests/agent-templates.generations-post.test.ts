@@ -167,6 +167,41 @@ describe("POST /generations — validation", () => {
     const body = (await res.json()) as { error: string };
     expect(body.error).toBe("Idempotency-Key header required");
   });
+
+  test("publishStatus 'archived' → 400 (zod enum gate)", async () => {
+    const res = await post(
+      { ...sampleBody, publishStatus: "archived" },
+      { headers: withKey("publish-status-archived") },
+    );
+    expect(res.status).toBe(400);
+  });
+
+  test("publishStatus 'unlisted' is accepted and persisted on the generation row", async () => {
+    __resetGenerationExecutorForTests(() => Promise.resolve());
+    const res = await post(
+      { ...sampleBody, publishStatus: "unlisted" },
+      { headers: withKey("publish-status-unlisted-accept") },
+    );
+    expect(res.status).toBe(202);
+    const body = (await res.json()) as { generationId: string };
+    const row = await prisma.agentTemplateGeneration.findUnique({
+      where: { id: body.generationId },
+    });
+    expect(row?.publishStatus).toBe("unlisted");
+  });
+
+  test("publishStatus omitted defaults to 'draft' on the persisted row", async () => {
+    __resetGenerationExecutorForTests(() => Promise.resolve());
+    const res = await post(sampleBody, {
+      headers: withKey("publish-status-default"),
+    });
+    expect(res.status).toBe(202);
+    const body = (await res.json()) as { generationId: string };
+    const row = await prisma.agentTemplateGeneration.findUnique({
+      where: { id: body.generationId },
+    });
+    expect(row?.publishStatus).toBe("draft");
+  });
 });
 
 describe("POST /generations — moderation", () => {
