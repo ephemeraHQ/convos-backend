@@ -1,43 +1,11 @@
-import crypto from "node:crypto";
 import { Prisma } from "@prisma/client";
 import type { Request, Response } from "express";
 import { z } from "zod";
+import { pickCollisionFreeId } from "@/api/v2/agent-templates/lib/pick-collision-free-id";
 import { serializeAgentTemplate } from "@/api/v2/agent-templates/lib/serialize-agent-template";
 import { getEffectiveOwnerId } from "@/utils/auth-helpers";
 import { prisma } from "@/utils/prisma";
 import { validateSlug } from "@/utils/reserved-slugs";
-import { buildUniqueSlug, slugHash } from "@/utils/slug-hash";
-
-// Picks a row id whose slugHash doesn't collide with any existing row sharing
-// `baseSlug` across owners. The DB constraint is per-owner, but the public URL
-// `<base>.<hash5>` is cross-owner, so two owners on the same base slug can mint
-// indistinguishable URLs unless we pre-pick a non-colliding id.
-//
-// Residual race: between this read and the subsequent create, a concurrent
-// transaction could insert a row whose hash collides with our pick. The
-// per-owner unique constraint won't catch it (different owners). For that to
-// produce a real collision, two writes need to land in the same sub-ms window,
-// share the same base slug, and have UUIDs that hash to the same 5 chars
-// (~67M space). Compound probability is negligible at our scale; revisit with
-// a SERIALIZABLE transaction or a stored urlHash unique index if collisions
-// ever surface in monitoring.
-const pickCollisionFreeId = async (args: { baseSlug: string }) => {
-  const { id } = await buildUniqueSlug({
-    baseSlug: args.baseSlug,
-    idFactory: () => crypto.randomUUID(),
-    isTaken: async (candidate) => {
-      const dot = candidate.lastIndexOf(".");
-      const base = candidate.slice(0, dot);
-      const hash = candidate.slice(dot + 1);
-      const rows = await prisma.agentTemplate.findMany({
-        where: { slug: base },
-        select: { id: true },
-      });
-      return rows.some((row) => slugHash(row.id) === hash);
-    },
-  });
-  return id;
-};
 
 const MAX_AUTO_SLUG_ATTEMPTS = 50;
 

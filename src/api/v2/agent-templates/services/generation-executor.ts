@@ -19,8 +19,11 @@
  * overrides the per-generation timeout.
  */
 
-import { randomUUID } from "node:crypto";
 import { Prisma } from "@prisma/client";
+import {
+  isSlugExhaustionError,
+  pickCollisionFreeId,
+} from "@/api/v2/agent-templates/lib/pick-collision-free-id";
 import { capturePostHog } from "@/api/v2/agent-templates/services/posthog";
 import {
   callGenerateTemplate,
@@ -158,13 +161,19 @@ function isSlugUniqueConstraintError(error: unknown): boolean {
 }
 
 /** Persist the LLM-generated template as a draft AgentTemplate.
- *  Stores the **base slug** (e.g. "brewski") — the public hashed-slug URL
- *  is reconstructed by callers via `buildSlug(row.slug, row.id)` and resolved
- *  by `resolve-id-or-hashed-slug.ts` which queries `where: { slug: baseSlug }`.
- *  Storing the hashed form would make these rows unreachable via the resolver.
  *
- *  On per-owner slug conflict, suffixes `-2`, `-3`, ... up to MAX_AUTO_SLUG_ATTEMPTS,
- *  matching the CRUD handler's behaviour. */
+ *  Slug policy mirrors the CRUD handler (handlers/create.ts):
+ *  - Stores the **base slug** (e.g. "brewski"). The public hashed-slug URL
+ *    is reconstructed by callers via `buildSlug(row.slug, row.id)` and the
+ *    resolver in `resolve-id-or-hashed-slug.ts` queries `where: { slug: baseSlug }`.
+ *    Storing the hashed form would make these rows unreachable via the resolver.
+ *  - The row `id` is pre-picked via `pickCollisionFreeId` so its `slugHash(id)`
+ *    doesn't collide with any existing row sharing `baseSlug` across owners.
+ *    Without this, two owners on the same base could mint indistinguishable
+ *    `<base>.<hash>` URLs, and the resolver would 404 (multiple matches).
+ *  - On per-owner slug conflict (already-taken base), retry with `-2`, `-3`,
+ *    ... up to MAX_AUTO_SLUG_ATTEMPTS. If `pickCollisionFreeId` exhausts its
+ *    own 8-attempt budget on a given base, advance to the next `-N` too. */
 async function persistTemplate(
   template: {
     agentName: string;
@@ -183,7 +192,16 @@ async function persistTemplate(
     if (attempt === 1) continue; // skip "-1"; first numeric suffix is "-2"
 
     const candidate = attempt === 0 ? baseSlug : `${baseSlug}-${attempt}`;
-    const id = randomUUID();
+
+    let id: string;
+    try {
+      id = await pickCollisionFreeId({ baseSlug: candidate });
+    } catch (err) {
+      // 8-attempt hash-collision budget exhausted on this base. Move on
+      // to the next -N suffix; the new base has a fresh hash-space.
+      if (isSlugExhaustionError(err)) continue;
+      throw err;
+    }
 
     try {
       await prisma.agentTemplate.create({
