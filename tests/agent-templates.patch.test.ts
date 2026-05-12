@@ -373,25 +373,40 @@ describe("Agent template patch endpoint", () => {
     expect(archivedToUnlisted.body.status).toBe("unlisted");
   });
 
-  test("rejects status transitions into draft after publish and out of draft via PATCH", async () => {
+  test("allows published / unlisted / archived → draft (firstPublishedAt preserved, slug stays locked)", async () => {
     for (const status of ["published", "unlisted", "archived"] as const) {
       const template = await seedTemplate({
         slug: `patch-test-to-draft-${status}`,
         status,
       });
+      const originalFirstPublishedAt = template.firstPublishedAt;
 
       const result = await patchTemplate({
         id: template.id,
         body: { status: "draft" },
       });
-      expect(result.response.status).toBe(400);
-      expect(
-        await prisma.agentTemplate.findUniqueOrThrow({
-          where: { id: template.id },
-        }),
-      ).toMatchObject({ status });
-    }
+      expect(result.response.status).toBe(200);
+      expect(result.body.status).toBe("draft");
 
+      const row = await prisma.agentTemplate.findUniqueOrThrow({
+        where: { id: template.id },
+      });
+      expect(row.status).toBe("draft");
+      // firstPublishedAt is preserved so the slug stays locked and the
+      // next POST /publish takes the re-publish (version-bump) path.
+      expect(row.firstPublishedAt).toEqual(originalFirstPublishedAt);
+
+      // Slug is still immutable while back in draft.
+      const slugAttempt = await patchTemplate({
+        id: template.id,
+        body: { slug: `renamed-after-draft-${status}` },
+      });
+      expect(slugAttempt.response.status).toBe(400);
+      expect(slugAttempt.body.error).toMatchObject({ code: "SLUG_IMMUTABLE" });
+    }
+  });
+
+  test("rejects status transitions out of draft via PATCH (must use POST /publish)", async () => {
     for (const target of ["published", "unlisted", "archived"] as const) {
       const template = await seedTemplate({
         slug: `patch-test-from-draft-${target}`,

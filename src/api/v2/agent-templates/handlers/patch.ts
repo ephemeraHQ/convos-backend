@@ -145,9 +145,11 @@ const validateStatusTransition = (args: {
     return "Draft templates must be published with POST /publish";
   }
 
-  if (args.firstPublishedAt !== null && args.nextStatus === "draft") {
-    return "Published templates cannot transition back to draft";
-  }
+  // Published → draft IS allowed: lets a caller take a previously-public
+  // template out of public view (resolver only matches non-draft, so the
+  // canonical URL stops resolving for non-owners). `firstPublishedAt`
+  // stays set, so the slug remains locked and the next /publish call
+  // takes the re-publish path (version bump rather than version reset).
 
   return null;
 };
