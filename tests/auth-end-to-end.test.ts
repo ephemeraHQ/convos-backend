@@ -38,6 +38,7 @@ describe("auth end-to-end", () => {
     const nonceRes = await request(app)
       .post("/auth/nonce")
       .set("X-Firebase-AppCheck", "valid-app-check-token");
+    expect(nonceRes.status).toBe(200);
     const setCookie = nonceRes.headers["set-cookie"] as string | string[];
     const cookieStr = Array.isArray(setCookie) ? setCookie[0] : setCookie;
     expect(cookieStr).toBeTruthy();

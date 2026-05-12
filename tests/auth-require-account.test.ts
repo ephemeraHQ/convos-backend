@@ -25,6 +25,7 @@ describe("requireAccount middleware", () => {
   test("403 when accountId is empty string", async () => {
     const res = await request(makeApp("")).get("/gated");
     expect(res.status).toBe(403);
+    expect(res.body).toEqual({ error: "Account required" });
   });
 
   test("200 when accountId present", async () => {

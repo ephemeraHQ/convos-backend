@@ -41,6 +41,7 @@ async function buildSiwe(nonce: string) {
 }
 
 async function reset() {
+  await prisma.deviceRegistration.deleteMany();
   await prisma.authMethod.deleteMany();
   await prisma.account.deleteMany();
   await prisma.authNonce.deleteMany();
@@ -130,6 +131,21 @@ describe("POST /auth/token (legacy + SIWE)", () => {
     const res = await request(makeApp())
       .post("/auth/token")
       .set(...APPCHECK)
+      .send({ deviceId: "dev", siwe: { message: messageStr, signature } });
+    expect(res.status).toBe(401);
+  });
+
+  test("JSON-prefixed nonce cookie (cookie-parser parses to object) → 401, not 500", async () => {
+    const nonce = "00".repeat(32);
+    const { messageStr, signature } = await buildSiwe(nonce);
+    // cookie-parser parses values prefixed with `j:` as JSON. The cookie
+    // value below decodes to {x:1}, a plain object. Without a string-type
+    // guard the handler would crash; the contract is "treat as missing → 401".
+    const jsonCookie = `j:${encodeURIComponent('{"x":1}')}`;
+    const res = await request(makeApp())
+      .post("/auth/token")
+      .set(...APPCHECK)
+      .set("Cookie", `${NONCE_COOKIE_NAME}=${jsonCookie}`)
       .send({ deviceId: "dev", siwe: { message: messageStr, signature } });
     expect(res.status).toBe(401);
   });
