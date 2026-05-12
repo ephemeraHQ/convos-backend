@@ -135,11 +135,17 @@ export function buildMinimalFallback(input: ReplyInput): string {
 function buildReplyPrompt(input: ReplyInput): string {
   const { handle, agentName, firstSentence, slug } = input;
   const url = templateUrlFor(slug);
+  // Normalize once so the LLM is instructed to produce the same form that
+  // validateLlmReply() checks for. Otherwise a caller passing "alice" (no @)
+  // gets a prompt that says "start with: alice", LLM does exactly that,
+  // and validation rejects because it expects "@alice" — pushing every
+  // un-prefixed handle through the deterministic fallback unnecessarily.
+  const normalizedHandle = normalizeHandle(handle);
 
   return `You are composing a tweet reply for an AI agent that was just built from a Twitter @mention request.
 
 Requirements:
-- Start with the user's handle: ${handle}
+- Start with the user's handle: ${normalizedHandle}
 - Mention the agent by name: ${agentName}
 - Include the template URL: ${url}
 - Keep it under ${MAX_REPLY_LENGTH} characters (well under Twitter's 280 limit)
@@ -153,7 +159,7 @@ Agent details:
 - Description: ${firstSentence}
 - URL: ${url}
 
-Write ONLY the tweet reply text. No quotes, no explanation, no labels. Just the reply text starting with ${handle}.`;
+Write ONLY the tweet reply text. No quotes, no explanation, no labels. Just the reply text starting with ${normalizedHandle}.`;
 }
 
 // ---------------------------------------------------------------------------

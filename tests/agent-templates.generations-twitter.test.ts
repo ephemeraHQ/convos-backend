@@ -173,6 +173,27 @@ describe("POST /generations — twitterContext validation", () => {
     const res = await post(body, { headers: withKey("tw-missing-handle") });
     expect(res.status).toBe(400);
   });
+
+  test("twitterContext + binary-only inputs (no text, no idea) → 400", async () => {
+    // When the caller sends twitterContext but provides only a pdfBase64 or
+    // imageBase64 input AND no `twitterContext.idea`, there's no text for the
+    // intent moderation check to operate on. The handler should reject with
+    // 400 rather than send the placeholder "[binary input: ...]" string to
+    // the intent classifier.
+    const body = {
+      source: TEST_SOURCE,
+      inputs: { pdfBase64: "JVBERi0xLjQK" }, // minimal pdf base64 stub
+      twitterContext: {
+        twitterHandle: "@some_user",
+        tweetId: "1789432100123456789",
+        // no `idea`
+      },
+    };
+    const res = await post(body, { headers: withKey("tw-binary-no-idea") });
+    expect(res.status).toBe(400);
+    const errBody = (await res.json()) as { error: string };
+    expect(errBody.error.toLowerCase()).toContain("twittercontext.idea");
+  });
 });
 
 describe("POST /generations — twitter intent moderation", () => {
@@ -287,6 +308,42 @@ describe("POST /generations — twitter happy path", () => {
     });
     // Match prefix, since slug is dynamic
     expect(body.reply?.text.startsWith(expected.split(" — ")[0])).toBe(true);
+  });
+});
+
+describe("POST /generations — twitter idempotency", () => {
+  test("same key + same source + same inputs + different twitterContext → 409", async () => {
+    // Submit with twitter context A
+    const bodyA = twitterBody({
+      twitterContext: {
+        twitterHandle: "@alice",
+        tweetId: "1111111111111111111",
+        idea: "Build a SEC filings summarizer",
+      },
+    });
+    const firstRes = await post(bodyA, {
+      headers: withKey("tw-idem-cross-tweet"),
+      query: "?wait_ms=10000",
+    });
+    expect([200, 202]).toContain(firstRes.status);
+
+    // Submit with same source + same inputs but a DIFFERENT tweet under the
+    // same idempotency key. dedupeBodiesMatch now includes twitterContext,
+    // so this must 409 — without the fix, two unrelated tweets that share
+    // idea text would cross-link.
+    const bodyB = twitterBody({
+      twitterContext: {
+        twitterHandle: "@bob",
+        tweetId: "2222222222222222222",
+        idea: "Build a SEC filings summarizer",
+      },
+    });
+    const secondRes = await post(bodyB, {
+      headers: withKey("tw-idem-cross-tweet"),
+    });
+    expect(secondRes.status).toBe(409);
+    const errBody = (await secondRes.json()) as { error: string };
+    expect(errBody.error.toLowerCase()).toContain("idempotency-key");
   });
 });
 
