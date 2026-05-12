@@ -3,6 +3,7 @@ import cookieParser from "cookie-parser";
 import cors from "cors";
 import express from "express";
 import helmet from "helmet";
+import { startTtlSweep as startGenerationTtlSweep } from "@/api/v2/agent-templates/services/ttl-sweep";
 import apiRouter from "./api";
 import { IS_DEVELOPMENT } from "./config";
 import { errorHandlerMiddleware } from "./middleware/errorHandler";
@@ -76,6 +77,12 @@ validateJWTKeys()
         localIps.forEach((ip) => {
           logger.info(`Available at: http://${ip}:${port}`);
         });
+      }
+
+      // Generation pipeline sweep — only when the agent-templates router is
+      // mounted (gated on XMTP_ENV !== "production"; see src/api/v2/index.ts).
+      if (process.env.XMTP_ENV !== "production") {
+        startGenerationTtlSweep();
       }
     });
 

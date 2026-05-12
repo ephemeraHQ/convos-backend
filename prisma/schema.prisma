@@ -99,8 +99,9 @@ model Account {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  authMethods    AuthMethod[]
-  agentTemplates AgentTemplate[]
+  authMethods               AuthMethod[]
+  agentTemplates            AgentTemplate[]
+  agentTemplateGenerations  AgentTemplateGeneration[]
 }
 
 enum PublishStatus {
@@ -130,9 +131,10 @@ model AgentTemplate {
   createdAt        DateTime      @default(now())
   updatedAt        DateTime      @updatedAt
 
-  owner      Account         @relation(fields: [ownerAccountId], references: [id])
-  forkedFrom AgentTemplate?  @relation("Forks", fields: [forkedFromId], references: [id])
-  forks      AgentTemplate[] @relation("Forks")
+  owner       Account                   @relation(fields: [ownerAccountId], references: [id])
+  forkedFrom  AgentTemplate?            @relation("Forks", fields: [forkedFromId], references: [id])
+  forks       AgentTemplate[]           @relation("Forks")
+  generations AgentTemplateGeneration[]
 
   @@unique([ownerAccountId, slug])
   @@index([slug])
@@ -140,6 +142,35 @@ model AgentTemplate {
   @@index([status, category, createdAt, id])
   @@index([status, featured, createdAt, id])
   @@index([forkedFromId])
+}
+
+enum GenerationStatus {
+  pending
+  running
+  done
+  failed
+}
+
+model AgentTemplateGeneration {
+  id              String           @id @default(uuid()) @db.Uuid
+  ownerAccountId  String           @db.Uuid
+  source          String
+  idempotencyKey  String
+  inputs          Json
+  templateId      String?          @db.Uuid
+  status          GenerationStatus @default(pending)
+  error           String?          @db.Text
+  expiresAt       DateTime?
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+
+  owner    Account        @relation(fields: [ownerAccountId], references: [id])
+  template AgentTemplate? @relation(fields: [templateId], references: [id])
+
+  @@unique([ownerAccountId, idempotencyKey])
+  @@index([ownerAccountId])
+  @@index([status, updatedAt])
+  @@index([expiresAt])
 }
 
 model AuthMethod {
