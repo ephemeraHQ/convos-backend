@@ -86,9 +86,7 @@ function getTimeoutMs(): number {
   // allowed to take (default 5 min). Distinct from
   // GENERATION_STUCK_SWEEP_THRESHOLD_MS in ttl-sweep.ts, which is the
   // out-of-band cutoff for marking abandoned `running` rows as failed.
-  const raw =
-    process.env.GENERATION_EXECUTOR_TIMEOUT_MS ??
-    process.env.GENERATION_STUCK_TIMEOUT_MS; // legacy alias; remove after rename ships
+  const raw = process.env.GENERATION_EXECUTOR_TIMEOUT_MS;
   const parsed = raw ? Number.parseInt(raw, 10) : NaN;
   if (Number.isFinite(parsed) && parsed > 0) return parsed;
   return DEFAULT_EXECUTOR_TIMEOUT_MS;
