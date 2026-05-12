@@ -134,7 +134,6 @@ const applyContentFields = (
 
 const validateStatusTransition = (args: {
   currentStatus: PublishStatus;
-  firstPublishedAt: Date | null;
   nextStatus: PublishStatus;
 }) => {
   if (args.nextStatus === args.currentStatus) {
@@ -226,7 +225,6 @@ export async function patchHandler(req: Request, res: Response) {
     if (parsedBody.data.status !== undefined) {
       const transitionError = validateStatusTransition({
         currentStatus: template.status,
-        firstPublishedAt: template.firstPublishedAt,
         nextStatus: parsedBody.data.status,
       });
 
