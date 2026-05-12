@@ -43,8 +43,31 @@ describe("auth-nonce.repository", () => {
       UPDATE "AuthNonce" SET "createdAt" = now() - interval '6 minutes' WHERE nonce = ${nonce}
     `;
     expect(await consumeNonce(nonce)).toBe(false);
-    // Row remains because filter excluded it; sweep handles it later.
+    // Row remains because filter excluded it; inline sweep on next issueNonce
+    // will purge it.
     const row = await prisma.authNonce.findUnique({ where: { nonce } });
     expect(row).not.toBeNull();
+  });
+
+  test("issueNonce sweeps rows older than 1 hour, leaves recent rows alone", async () => {
+    const old = "a".repeat(64);
+    const recent = "b".repeat(64);
+    await prisma.authNonce.create({ data: { nonce: old } });
+    await prisma.authNonce.create({ data: { nonce: recent } });
+    await prisma.$executeRaw`
+      UPDATE "AuthNonce" SET "createdAt" = now() - interval '2 hours' WHERE nonce = ${old}
+    `;
+
+    const fresh = await issueNonce();
+
+    expect(
+      await prisma.authNonce.findUnique({ where: { nonce: old } }),
+    ).toBeNull();
+    expect(
+      await prisma.authNonce.findUnique({ where: { nonce: recent } }),
+    ).not.toBeNull();
+    expect(
+      await prisma.authNonce.findUnique({ where: { nonce: fresh } }),
+    ).not.toBeNull();
   });
 });
