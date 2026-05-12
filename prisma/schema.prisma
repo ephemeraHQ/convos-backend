@@ -93,3 +93,33 @@ model InviteCodeRedemption {
   @@index([inviteCodeId])
   @@index([childCodeId])
 }
+
+model Account {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  authMethods AuthMethod[]
+}
+
+model AuthMethod {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  accountId   String   @db.Uuid
+  // Validated by CHECK constraint in migration + AuthMethodType TS union in
+  // src/accounts/auth-method-type.ts. Postgres enums are avoided because
+  // adding/removing values is non-transactional and new values can't be used
+  // in the same migration that defines them.
+  type        String
+  externalKey String
+  addedAt     DateTime @default(now())
+
+  account     Account  @relation(fields: [accountId], references: [id])
+
+  @@unique([type, externalKey])
+  @@index([accountId])
+}
+
+model AuthNonce {
+  nonce     String   @id
+  createdAt DateTime @default(now())
+}

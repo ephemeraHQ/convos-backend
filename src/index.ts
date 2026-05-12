@@ -1,4 +1,5 @@
 import os from "node:os";
+import cookieParser from "cookie-parser";
 import cors from "cors";
 import express from "express";
 import helmet from "helmet";
@@ -38,6 +39,7 @@ app.set("trust proxy", 1);
 app.use(helmet()); // Set security headers
 app.use(cors()); // Handle CORS
 app.use(jsonMiddleware); // Parse JSON requests
+app.use(cookieParser()); // Parse cookies (required for SIWE nonce flow)
 app.use(pinoMiddleware);
 
 // Rate limiting should be before routes but after logging
