@@ -165,7 +165,7 @@ describe("Agent template delete endpoint", () => {
     ).toBe(0);
   });
 
-  test("rejects deleting a published row with ALREADY_PUBLISHED and preserves it", async () => {
+  test("deletes a published row (no more ALREADY_PUBLISHED gate)", async () => {
     const template = await seedTemplate({
       slug: "delete-test-published",
       status: "published",
@@ -174,49 +174,45 @@ describe("Agent template delete endpoint", () => {
 
     const { body, response } = await deleteTemplate(template.id);
 
-    expect(response.status).toBe(409);
-    expect(body.error).toMatchObject({ code: "ALREADY_PUBLISHED" });
-    expect(typeof (body.error as { message?: unknown }).message).toBe("string");
-    expect((body.error as { message: string }).message.length).toBeGreaterThan(
-      0,
-    );
-
-    const row = await prisma.agentTemplate.findUniqueOrThrow({
-      where: { id: template.id },
+    expect(response.status).toBe(200);
+    expect(body).toMatchObject({
+      object: "agent_template",
+      id: template.id,
+      deleted: true,
     });
-    expect(row.firstPublishedAt).not.toBeNull();
+    expect(
+      await prisma.agentTemplate.count({ where: { id: template.id } }),
+    ).toBe(0);
   });
 
-  test("rejects deleting an unlisted formerly published row", async () => {
+  test("deletes an unlisted formerly published row", async () => {
     const template = await seedTemplate({
       slug: "delete-test-unlisted",
       status: "unlisted",
       firstPublishedAt: publishedAt,
     });
 
-    const { body, response } = await deleteTemplate(template.id);
+    const { response } = await deleteTemplate(template.id);
 
-    expect(response.status).toBe(409);
-    expect(body.error).toMatchObject({ code: "ALREADY_PUBLISHED" });
+    expect(response.status).toBe(200);
     expect(
       await prisma.agentTemplate.count({ where: { id: template.id } }),
-    ).toBe(1);
+    ).toBe(0);
   });
 
-  test("rejects deleting an archived formerly published row", async () => {
+  test("deletes an archived formerly published row", async () => {
     const template = await seedTemplate({
       slug: "delete-test-archived",
       status: "archived",
       firstPublishedAt: publishedAt,
     });
 
-    const { body, response } = await deleteTemplate(template.id);
+    const { response } = await deleteTemplate(template.id);
 
-    expect(response.status).toBe(409);
-    expect(body.error).toMatchObject({ code: "ALREADY_PUBLISHED" });
+    expect(response.status).toBe(200);
     expect(
       await prisma.agentTemplate.count({ where: { id: template.id } }),
-    ).toBe(1);
+    ).toBe(0);
   });
 
   test("keeps forked children and clears forkedFromId when deleting a draft parent", async () => {

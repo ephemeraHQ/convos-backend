@@ -6,16 +6,6 @@ const paramsSchema = z.object({
   id: z.string().uuid(),
 });
 
-const sendAlreadyPublished = (res: Response) => {
-  res.status(409).json({
-    error: {
-      code: "ALREADY_PUBLISHED",
-      message:
-        "Agent templates with firstPublishedAt set cannot be hard-deleted",
-    },
-  });
-};
-
 export async function deleteHandler(req: Request, res: Response) {
   const parsedParams = paramsSchema.safeParse(req.params);
   if (!parsedParams.success) {
@@ -29,7 +19,7 @@ export async function deleteHandler(req: Request, res: Response) {
   try {
     const template = await prisma.agentTemplate.findUnique({
       where: { id: parsedParams.data.id },
-      select: { id: true, ownerAccountId: true, firstPublishedAt: true },
+      select: { id: true, ownerAccountId: true },
     });
 
     if (template === null) {
@@ -45,29 +35,18 @@ export async function deleteHandler(req: Request, res: Response) {
       return;
     }
 
-    if (template.firstPublishedAt !== null) {
-      sendAlreadyPublished(res);
-      return;
-    }
-
-    // Atomic delete: a concurrent publish could set firstPublishedAt between
-    // the read above and the delete here, so re-check the invariant in the
-    // delete WHERE clause and return 409 if a publish slipped in.
+    // Hard delete is permitted in any publish state. Forks of this template
+    // have `forkedFromId` set to null (FK is ON DELETE SET NULL); generations
+    // (PR #204+) have `templateId` cleared the same way. The owner accepts
+    // that any cached/bookmarked URL pointing at this template will start
+    // 404'ing after delete.
     const deleted = await prisma.agentTemplate.deleteMany({
-      where: { id: template.id, firstPublishedAt: null },
+      where: { id: template.id },
     });
 
     if (deleted.count === 0) {
-      const stillExists = await prisma.agentTemplate.findUnique({
-        where: { id: template.id },
-        select: { id: true },
-      });
-
-      if (stillExists !== null) {
-        sendAlreadyPublished(res);
-      } else {
-        res.status(404).json({ error: "Agent template not found" });
-      }
+      // Lost a race with another concurrent delete.
+      res.status(404).json({ error: "Agent template not found" });
       return;
     }
 
