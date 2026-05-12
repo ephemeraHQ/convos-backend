@@ -1,6 +1,3 @@
--- CreateEnum
-CREATE TYPE "AuthMethodType" AS ENUM ('SIWE');
-
 -- CreateTable
 CREATE TABLE "Account" (
     "id" UUID NOT NULL DEFAULT gen_random_uuid(),
@@ -14,12 +11,15 @@ CREATE TABLE "Account" (
 CREATE TABLE "AuthMethod" (
     "id" UUID NOT NULL DEFAULT gen_random_uuid(),
     "accountId" UUID NOT NULL,
-    "type" "AuthMethodType" NOT NULL,
+    "type" TEXT NOT NULL,
     "externalKey" TEXT NOT NULL,
     "addedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
     CONSTRAINT "AuthMethod_pkey" PRIMARY KEY ("id")
 );
+
+-- AddCheckConstraint
+ALTER TABLE "AuthMethod" ADD CONSTRAINT "AuthMethod_type_check" CHECK ("type" IN ('SIWE'));
 
 -- CreateTable
 CREATE TABLE "AuthNonce" (

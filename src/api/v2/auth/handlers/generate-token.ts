@@ -1,4 +1,3 @@
-import { AuthMethodType } from "@prisma/client";
 import type { Request, Response } from "express";
 import { z } from "zod";
 import { upsertAuthMethodAndAccount } from "@/accounts/repository";
@@ -98,7 +97,7 @@ export async function generateToken(
 
     // 3d. Upsert Account + AuthMethod
     const upserted = await upsertAuthMethodAndAccount({
-      type: AuthMethodType.SIWE,
+      type: "SIWE",
       externalKey: address,
     });
     accountId = upserted.accountId;

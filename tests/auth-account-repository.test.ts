@@ -1,4 +1,3 @@
-import { AuthMethodType } from "@prisma/client";
 import { afterEach, beforeAll, describe, expect, test } from "bun:test";
 import { upsertAuthMethodAndAccount } from "@/accounts/repository";
 import { prisma } from "@/utils/prisma";
@@ -17,7 +16,7 @@ describe("upsertAuthMethodAndAccount", () => {
 
   test("first login: creates Account + AuthMethod, returns accountId", async () => {
     const { accountId } = await upsertAuthMethodAndAccount({
-      type: AuthMethodType.SIWE,
+      type: "SIWE",
       externalKey: ADDR_A,
     });
     const account = await prisma.account.findUnique({
@@ -25,18 +24,18 @@ describe("upsertAuthMethodAndAccount", () => {
     });
     expect(account).not.toBeNull();
     const method = await prisma.authMethod.findFirst({
-      where: { accountId, type: AuthMethodType.SIWE },
+      where: { accountId, type: "SIWE" },
     });
     expect(method?.externalKey).toBe(ADDR_A);
   });
 
   test("second login same wallet: returns same accountId, does not insert", async () => {
     const first = await upsertAuthMethodAndAccount({
-      type: AuthMethodType.SIWE,
+      type: "SIWE",
       externalKey: ADDR_A,
     });
     const second = await upsertAuthMethodAndAccount({
-      type: AuthMethodType.SIWE,
+      type: "SIWE",
       externalKey: ADDR_A,
     });
     expect(second.accountId).toBe(first.accountId);
@@ -48,11 +47,11 @@ describe("upsertAuthMethodAndAccount", () => {
 
   test("two different wallets create two accounts", async () => {
     const a = await upsertAuthMethodAndAccount({
-      type: AuthMethodType.SIWE,
+      type: "SIWE",
       externalKey: ADDR_A,
     });
     const b = await upsertAuthMethodAndAccount({
-      type: AuthMethodType.SIWE,
+      type: "SIWE",
       externalKey: ADDR_B,
     });
     expect(a.accountId).not.toBe(b.accountId);
@@ -63,11 +62,11 @@ describe("upsertAuthMethodAndAccount", () => {
     const ADDR_C = "0x" + "c".repeat(40);
     const [a, b] = await Promise.all([
       upsertAuthMethodAndAccount({
-        type: AuthMethodType.SIWE,
+        type: "SIWE",
         externalKey: ADDR_C,
       }),
       upsertAuthMethodAndAccount({
-        type: AuthMethodType.SIWE,
+        type: "SIWE",
         externalKey: ADDR_C,
       }),
     ]);
