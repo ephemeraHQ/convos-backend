@@ -1180,10 +1180,22 @@ export function parseTemplateResponse(
     throw new Error("LLM response missing agentName");
   }
 
+  // `prompt` is a required column on AgentTemplate. Persisting an empty
+  // prompt would create a semantically-broken template (no instructions
+  // for the agent), so reject the LLM response here rather than swallow
+  // it with `parsed.prompt || ""`. Mirrors the agentName check above.
+  if (
+    !parsed.prompt ||
+    typeof parsed.prompt !== "string" ||
+    parsed.prompt.trim() === ""
+  ) {
+    throw new Error("LLM response missing prompt");
+  }
+
   return {
     agentName: parsed.agentName,
     description: parsed.description || "",
-    prompt: parsed.prompt || "",
+    prompt: parsed.prompt,
     category: parsed.category || "",
     emoji: parsed.emoji || "",
     tools: Array.isArray(parsed.tools) ? parsed.tools : [],

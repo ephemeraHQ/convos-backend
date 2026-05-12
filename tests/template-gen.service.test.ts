@@ -738,7 +738,7 @@ describe("templateGen service — OpenRouter integration", () => {
   // -----------------------------------------------------------------------
   // Soft defaults: agentName is the only fatal-required parse field
   // -----------------------------------------------------------------------
-  test("soft defaults: missing description/prompt/category/emoji/tools default to empty/[]", async () => {
+  test("soft defaults: missing description/category/emoji/tools default to empty/[]", async () => {
     const mod = await import("@/api/v2/agent-templates/services/templateGen");
     generateTemplate = mod.generateTemplate;
     BREVITY_RAIL = mod.BREVITY_RAIL;
@@ -750,7 +750,8 @@ describe("templateGen service — OpenRouter integration", () => {
           message: {
             content: JSON.stringify({
               agentName: "MinimalBot",
-              // Missing: description, prompt, category, emoji, tools
+              prompt: "You are a minimal bot.",
+              // Missing: description, category, emoji, tools
             }),
           },
         },
@@ -763,15 +764,40 @@ describe("templateGen service — OpenRouter integration", () => {
     });
 
     expect(result.agentName).toBe("MinimalBot");
-    expect(result.description).toBe("");
-    // Prompt defaults to "" before brevity rail is appended;
-    // the final prompt is just the rail separator + rail content.
-    expect(result.prompt).toContain("---");
+    // Prompt is REQUIRED on AgentTemplate, so the parser no longer
+    // soft-defaults it. The LLM supplied a prompt; the brevity rail
+    // is appended on the way out.
+    expect(result.prompt).toContain("You are a minimal bot.");
     expect(result.prompt.endsWith(BREVITY_RAIL)).toBe(true);
+    expect(result.description).toBe("");
     expect(result.category).toBe("");
     expect(result.emoji).toBe("");
     expect(result.tools).toEqual([]);
     expect(result.connections).toEqual([]);
+  });
+
+  test("missing prompt causes service to throw", async () => {
+    const mod = await import("@/api/v2/agent-templates/services/templateGen");
+    generateTemplate = mod.generateTemplate;
+
+    setOpenRouterResponse({
+      model: "@preset/assistants-pro",
+      choices: [
+        {
+          message: {
+            content: JSON.stringify({
+              agentName: "PromptlessBot",
+              // No prompt — should reject with a 502-class error.
+            }),
+          },
+        },
+      ],
+      usage: { prompt_tokens: 10, completion_tokens: 5 },
+    });
+
+    await expect(
+      generateTemplate({ text: "Build me a bot" }),
+    ).rejects.toThrow(/prompt/i);
   });
 
   test("missing agentName causes service to throw", async () => {
@@ -1140,18 +1166,41 @@ describe("templateGen service — OpenRouter integration", () => {
     expect(result.agentName).toBe("Bot");
   });
 
-  test("parseTemplateResponse applies soft defaults for missing fields", async () => {
+  test("parseTemplateResponse applies soft defaults for missing optional fields", async () => {
     const mod = await import("@/api/v2/agent-templates/services/templateGen");
     const { parseTemplateResponse } = mod;
 
-    const result = parseTemplateResponse(JSON.stringify({ agentName: "Bot" }));
+    // agentName + prompt are required (both are non-null columns on
+    // AgentTemplate). The rest fall back to "" / []. This test exercises
+    // the soft-default path for the optional fields only.
+    const result = parseTemplateResponse(
+      JSON.stringify({ agentName: "Bot", prompt: "Be helpful" }),
+    );
 
     expect(result.agentName).toBe("Bot");
+    expect(result.prompt).toBe("Be helpful");
     expect(result.description).toBe("");
-    expect(result.prompt).toBe("");
     expect(result.category).toBe("");
     expect(result.emoji).toBe("");
     expect(result.tools).toEqual([]);
+  });
+
+  test("parseTemplateResponse throws on missing prompt", async () => {
+    const mod = await import("@/api/v2/agent-templates/services/templateGen");
+    const { parseTemplateResponse } = mod;
+
+    expect(() =>
+      parseTemplateResponse(JSON.stringify({ agentName: "Bot" })),
+    ).toThrow(/prompt/i);
+  });
+
+  test("parseTemplateResponse throws on empty prompt", async () => {
+    const mod = await import("@/api/v2/agent-templates/services/templateGen");
+    const { parseTemplateResponse } = mod;
+
+    expect(() =>
+      parseTemplateResponse(JSON.stringify({ agentName: "Bot", prompt: "  " })),
+    ).toThrow(/prompt/i);
   });
 
   test("parseTemplateResponse throws on missing agentName", async () => {
