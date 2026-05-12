@@ -41,6 +41,7 @@ import {
 import { GENERATION_EXECUTOR_TIMEOUT_MS, GENERATION_TTL_HOURS } from "@/config";
 import logger from "@/utils/logger";
 import { prisma } from "@/utils/prisma";
+import { buildSlug } from "@/utils/slug-hash";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -457,11 +458,17 @@ async function _runPipeline(
     const firstSentence = firstSentenceOf(
       templateResult.template.description || templateResult.template.prompt,
     );
+    // composeReply expects the canonical/hashed slug (e.g. "brewski.x4f9k")
+    // — that's the form the resolver in resolve-id-or-hashed-slug.ts matches
+    // against. `persisted.slug` is the BASE form ("brewski") because of the
+    // store-base-not-hashed convention from PR #199. Construct the public
+    // hashed slug here via buildSlug so the URL the reply contains
+    // (`${TEMPLATE_SITE_URL}/<hashed>`) actually resolves.
     const replyInput = {
       handle: twitterContext.twitterHandle,
       agentName: templateResult.template.agentName,
       firstSentence,
-      slug: persisted.slug,
+      slug: buildSlug(persisted.slug, persisted.id),
     };
     try {
       const reply = await composeReply(replyInput);

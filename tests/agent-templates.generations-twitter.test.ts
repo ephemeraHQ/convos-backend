@@ -256,6 +256,11 @@ describe("POST /generations — twitter happy path", () => {
     expect(body.reply?.text.length).toBeGreaterThan(0);
     // Default deterministic fallback should at least include the handle
     expect(body.reply?.text).toContain("@some_user");
+    // The reply URL must use the canonical hashed slug (`<base>.<hash5>`),
+    // not the bare base slug. Resolver in resolve-id-or-hashed-slug.ts
+    // requires the hash; passing the base would 404. Regression guard for
+    // the executor's buildSlug call.
+    expect(body.reply?.text).toMatch(/[a-z0-9-]+\.[0-9a-z]{5}/i);
 
     // Verify the row stores both templateId and reply
     const row = await prisma.agentTemplateGeneration.findUnique({

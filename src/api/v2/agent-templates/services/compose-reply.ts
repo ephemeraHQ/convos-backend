@@ -36,7 +36,11 @@ export interface ReplyInput {
   agentName: string;
   /** First sentence of the agent's description or prompt. */
   firstSentence: string;
-  /** Slug of the persisted template. */
+  /** **Canonical (hashed) public slug** — e.g. `"brewski.x4f9k"`, the value
+   *  produced by `buildSlug(baseSlug, templateId)`. Callers must NOT pass the
+   *  base slug stored on `AgentTemplate.slug` directly: the public URL
+   *  resolver (resolve-id-or-hashed-slug.ts) requires the `<base>.<hash>`
+   *  form, so passing the base alone would render a reply URL that 404s. */
   slug: string;
 }
 
