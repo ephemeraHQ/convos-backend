@@ -23,6 +23,11 @@
  * Test seam: __resetComposeReplyForTests(override | null).
  */
 
+import {
+  BUILDER_OPENROUTER_API_KEY,
+  TEMPLATE_SITE_URL,
+  TWITTER_REPLY_MODEL,
+} from "@/config";
 import logger from "@/utils/logger";
 
 // ---------------------------------------------------------------------------
@@ -54,30 +59,20 @@ export type ReplyOverride = (input: ReplyInput) => Promise<ReplyResult>;
 // Constants
 // ---------------------------------------------------------------------------
 
-const DEFAULT_REPLY_MODEL = "anthropic/claude-3-5-haiku-20241022";
-const DEFAULT_TEMPLATE_SITE_URL = "https://convos.org/assistants";
 const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
 const REPLY_TIMEOUT_MS = 10_000;
 const MAX_REPLY_LENGTH = 270;
 
-// ---------------------------------------------------------------------------
-// Lazy env var access
-// ---------------------------------------------------------------------------
-
 function getApiKey(): string | null {
-  return process.env.BUILDER_OPENROUTER_API_KEY || null;
+  return BUILDER_OPENROUTER_API_KEY || null;
 }
 
 function getModel(): string {
-  return process.env.TWITTER_REPLY_MODEL || DEFAULT_REPLY_MODEL;
-}
-
-function getTemplateSiteUrl(): string {
-  return process.env.TEMPLATE_SITE_URL || DEFAULT_TEMPLATE_SITE_URL;
+  return TWITTER_REPLY_MODEL;
 }
 
 function templateUrlFor(slug: string): string {
-  return `${getTemplateSiteUrl()}/${slug}`;
+  return `${TEMPLATE_SITE_URL}/${slug}`;
 }
 
 function normalizeHandle(handle: string): string {

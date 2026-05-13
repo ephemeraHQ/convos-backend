@@ -24,7 +24,11 @@
  *     checkContent passes, only when twitterContext is present.
  */
 
-import { BUILDER_OPENROUTER_API_KEY, CONTENT_MODERATION_MODEL } from "@/config";
+import {
+  BUILDER_OPENROUTER_API_KEY,
+  CONTENT_MODERATION_MODEL,
+  TWITTER_MODERATION_MODEL,
+} from "@/config";
 import logger from "@/utils/logger";
 
 // ---------------------------------------------------------------------------
@@ -79,7 +83,7 @@ export function __setContentModelOverrideForTests(model: string | null): void {
 }
 
 function getTwitterIntentModel(): string {
-  return process.env.TWITTER_MODERATION_MODEL || DEFAULT_MODERATION_MODEL;
+  return TWITTER_MODERATION_MODEL;
 }
 
 // ---------------------------------------------------------------------------

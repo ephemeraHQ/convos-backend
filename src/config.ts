@@ -98,6 +98,19 @@ export const CONTENT_MODERATION_MODEL =
   "anthropic/claude-3-5-haiku-20241022";
 export const EXA_SERVICE_KEY = process.env.EXA_SERVICE_KEY?.trim() || "";
 
+// Twitter integration (optional — moderation/reply paths only fire when
+// twitterContext is present on a generation; defaults match the content
+// moderation model so a single env var change can pin everything to one
+// model if desired).
+export const TWITTER_MODERATION_MODEL =
+  process.env.TWITTER_MODERATION_MODEL?.trim() ||
+  "anthropic/claude-3-5-haiku-20241022";
+export const TWITTER_REPLY_MODEL =
+  process.env.TWITTER_REPLY_MODEL?.trim() ||
+  "anthropic/claude-3-5-haiku-20241022";
+export const TEMPLATE_SITE_URL =
+  process.env.TEMPLATE_SITE_URL?.trim() || "https://convos.org/assistants";
+
 // PostHog metering (optional — capture is no-op if either is unset).
 export const POSTHOG_API_KEY = process.env.POSTHOG_API_KEY?.trim() || "";
 export const POSTHOG_HOST = process.env.POSTHOG_HOST?.trim() || "";
