@@ -11,6 +11,7 @@ import {
 } from "bun:test";
 import express from "express";
 import { agentTemplatesRouter } from "@/api/v2/agent-templates/agent-templates.router";
+import { __setAgentAssetsApiKeyOverrideForTests } from "@/middleware/agentAuth";
 import { jsonMiddleware } from "@/middleware/json";
 import { noRouteMiddleware } from "@/middleware/noRoute";
 import { pinoMiddleware } from "@/middleware/pino";
@@ -29,7 +30,6 @@ app.use(noRouteMiddleware);
 
 let server: Server;
 const baseURL = "http://localhost:4067";
-const originalAgentAssetsApiKey = process.env.AGENT_ASSETS_API_KEY;
 const validAgentAssetsApiKey =
   "test-agent-assets-api-key-that-is-at-least-32-characters";
 const createdAt = new Date("2026-01-31T12:00:00.000Z");
@@ -55,12 +55,7 @@ const cleanupTemplates = async () => {
 };
 
 const restoreAgentAssetsApiKey = () => {
-  if (originalAgentAssetsApiKey === undefined) {
-    delete process.env.AGENT_ASSETS_API_KEY;
-    return;
-  }
-
-  process.env.AGENT_ASSETS_API_KEY = originalAgentAssetsApiKey;
+  __setAgentAssetsApiKeyOverrideForTests(undefined);
 };
 
 const jwtHeaders = async (token?: string) => ({
@@ -221,7 +216,7 @@ describe("Agent template write auth", () => {
   });
 
   beforeEach(async () => {
-    process.env.AGENT_ASSETS_API_KEY = validAgentAssetsApiKey;
+    __setAgentAssetsApiKeyOverrideForTests(validAgentAssetsApiKey);
     await cleanupTemplates();
   });
 
@@ -309,14 +304,14 @@ describe("Agent template write auth", () => {
   });
 
   test("returns 503 on the agent-key path when the configured key is unset or too short", async () => {
-    process.env.AGENT_ASSETS_API_KEY = "";
+    __setAgentAssetsApiKeyOverrideForTests("");
     const unset = await postTemplate("unset-key", agentKeyHeaders());
     expect(unset.status).toBe(503);
     expect(await unset.json()).toEqual({
       error: "Agent assets API key not configured",
     });
 
-    process.env.AGENT_ASSETS_API_KEY = "too-short";
+    __setAgentAssetsApiKeyOverrideForTests("too-short");
     const short = await postTemplate("short-key", agentKeyHeaders());
     expect(short.status).toBe(503);
     expect(await short.json()).toEqual({

@@ -19,6 +19,7 @@ import {
 } from "bun:test";
 import express from "express";
 import { agentTemplatesRouter } from "@/api/v2/agent-templates/agent-templates.router";
+import { __setAgentAssetsApiKeyOverrideForTests } from "@/middleware/agentAuth";
 import { jsonMiddleware } from "@/middleware/json";
 import { noRouteMiddleware } from "@/middleware/noRoute";
 import { pinoMiddleware } from "@/middleware/pino";
@@ -39,8 +40,6 @@ const USER_B_ID = "11111111-2222-4333-4444-555555666667";
 
 const validAgentAssetsApiKey =
   "test-agent-assets-api-key-that-is-at-least-32-characters";
-
-const originalAgentAssetsApiKey = process.env.AGENT_ASSETS_API_KEY;
 
 const jwtHeadersFor = async (accountId: string) => ({
   "Content-Type": "application/json",
@@ -111,7 +110,7 @@ const deleteAccounts = async () => {
 
 describe("Cross-area auth flows", () => {
   beforeAll(async () => {
-    process.env.AGENT_ASSETS_API_KEY = validAgentAssetsApiKey;
+    __setAgentAssetsApiKeyOverrideForTests(validAgentAssetsApiKey);
     await ensureUserBAccount();
     await new Promise<void>((resolve) => {
       server = app.listen(4089, () => {
@@ -121,11 +120,7 @@ describe("Cross-area auth flows", () => {
   });
 
   afterAll(async () => {
-    if (originalAgentAssetsApiKey === undefined) {
-      delete process.env.AGENT_ASSETS_API_KEY;
-    } else {
-      process.env.AGENT_ASSETS_API_KEY = originalAgentAssetsApiKey;
-    }
+    __setAgentAssetsApiKeyOverrideForTests(undefined);
     await new Promise<void>((resolve) => {
       server.close(() => {
         resolve();
@@ -136,7 +131,7 @@ describe("Cross-area auth flows", () => {
   });
 
   beforeEach(async () => {
-    process.env.AGENT_ASSETS_API_KEY = validAgentAssetsApiKey;
+    __setAgentAssetsApiKeyOverrideForTests(validAgentAssetsApiKey);
     await cleanupTestRows();
   });
 

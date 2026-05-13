@@ -6,6 +6,7 @@ import {
   expect,
   test,
 } from "bun:test";
+import { __setAgentAssetsApiKeyOverrideForTests } from "@/middleware/agentAuth";
 import { ADMIN_ACCOUNT_ID } from "@/utils/constants";
 import { prisma } from "@/utils/prisma";
 import {
@@ -19,7 +20,6 @@ import {
 
 let baseURL: string;
 let closeServer: () => Promise<void>;
-const originalAgentAssetsApiKey = process.env.AGENT_ASSETS_API_KEY;
 
 const cleanupTemplates = () =>
   prisma.agentTemplate.deleteMany({
@@ -32,15 +32,6 @@ const cleanupTemplates = () =>
     },
   });
 
-const restoreAgentAssetsApiKey = () => {
-  if (originalAgentAssetsApiKey === undefined) {
-    delete process.env.AGENT_ASSETS_API_KEY;
-    return;
-  }
-
-  process.env.AGENT_ASSETS_API_KEY = originalAgentAssetsApiKey;
-};
-
 describe("Agent template cross auth flow", () => {
   beforeAll(async () => {
     const server = await startAgentTemplatesServer(4070);
@@ -49,13 +40,13 @@ describe("Agent template cross auth flow", () => {
   });
 
   afterAll(async () => {
-    restoreAgentAssetsApiKey();
+    __setAgentAssetsApiKeyOverrideForTests(undefined);
     await cleanupTemplates();
     await closeServer();
   });
 
   beforeEach(async () => {
-    process.env.AGENT_ASSETS_API_KEY = validAgentAssetsApiKey;
+    __setAgentAssetsApiKeyOverrideForTests(validAgentAssetsApiKey);
     await cleanupTemplates();
   });
 
