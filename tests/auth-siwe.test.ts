@@ -196,4 +196,118 @@ describe("verifySiwe", () => {
       now: NOW,
     });
   });
+
+  test("rejects when Resources field is empty", async () => {
+    const { messageStr, signature } = await buildMessage({ resources: [] });
+    await expectInvalidSiwe(
+      {
+        message: messageStr,
+        signature,
+        expectedNonce: NONCE,
+        expectedDeviceId: TEST_DEVICE_ID,
+        now: NOW,
+      },
+      "device_resource_missing",
+    );
+  });
+
+  test("rejects when Resources lacks a convos://device/ entry", async () => {
+    const { messageStr, signature } = await buildMessage({
+      resources: ["https://example.com/something"],
+    });
+    await expectInvalidSiwe(
+      {
+        message: messageStr,
+        signature,
+        expectedNonce: NONCE,
+        expectedDeviceId: TEST_DEVICE_ID,
+        now: NOW,
+      },
+      "device_resource_missing",
+    );
+  });
+
+  test("rejects when Resources contains two convos://device/ entries", async () => {
+    const { messageStr, signature } = await buildMessage({
+      resources: [
+        `convos://device/${TEST_DEVICE_ID}`,
+        `convos://device/${TEST_DEVICE_ID}-2`,
+      ],
+    });
+    await expectInvalidSiwe(
+      {
+        message: messageStr,
+        signature,
+        expectedNonce: NONCE,
+        expectedDeviceId: TEST_DEVICE_ID,
+        now: NOW,
+      },
+      "device_resource_duplicate",
+    );
+  });
+
+  test("rejects when signed deviceId differs from expectedDeviceId", async () => {
+    const { messageStr, signature } = await buildMessage({
+      resources: ["convos://device/some-other-device"],
+    });
+    await expectInvalidSiwe(
+      {
+        message: messageStr,
+        signature,
+        expectedNonce: NONCE,
+        expectedDeviceId: TEST_DEVICE_ID,
+        now: NOW,
+      },
+      "device_mismatch",
+    );
+  });
+
+  test("rejects case-different deviceId (opaque, exact match)", async () => {
+    const { messageStr, signature } = await buildMessage({
+      resources: [`convos://device/${TEST_DEVICE_ID.toUpperCase()}`],
+    });
+    await expectInvalidSiwe(
+      {
+        message: messageStr,
+        signature,
+        expectedNonce: NONCE,
+        expectedDeviceId: TEST_DEVICE_ID,
+        now: NOW,
+      },
+      "device_mismatch",
+    );
+  });
+
+  test("accepts when an extra non-device Resources entry is present", async () => {
+    const { messageStr, signature, address } = await buildMessage({
+      resources: [
+        "https://example.com/unrelated",
+        `convos://device/${TEST_DEVICE_ID}`,
+      ],
+    });
+    const result = await verifySiwe({
+      message: messageStr,
+      signature,
+      expectedNonce: NONCE,
+      expectedDeviceId: TEST_DEVICE_ID,
+      now: NOW,
+    });
+    expect(result.address).toBe(address);
+  });
+
+  test("device check runs before msg.verify (tampered signature with valid URI still throws signature)", async () => {
+    const { messageStr } = await buildMessage();
+    // Replace the signature with a syntactically valid but wrong one.
+    const badSignature = "0x" + "00".repeat(65);
+    await expectInvalidSiwe(
+      {
+        message: messageStr,
+        signature: badSignature,
+        expectedNonce: NONCE,
+        expectedDeviceId: TEST_DEVICE_ID,
+        now: NOW,
+      },
+      "signature",
+    );
+  });
 });

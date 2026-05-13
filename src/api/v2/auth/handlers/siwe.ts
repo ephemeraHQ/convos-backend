@@ -3,6 +3,7 @@ import { SIWE_ALLOWED_CHAIN_IDS, SIWE_DOMAIN, SIWE_URI } from "@/config";
 
 const ISSUED_AT_SKEW_MS = 5 * 60 * 1000;
 const MAX_EXPIRATION_FUTURE_MS = 10 * 60 * 1000;
+const DEVICE_URI_PREFIX = "convos://device/";
 
 export class InvalidSiweError extends Error {
   constructor(public readonly reason: string) {
@@ -60,6 +61,24 @@ export async function verifySiwe(args: {
     if (!Number.isNaN(nbf) && nbf > args.now.getTime()) {
       throw new InvalidSiweError("notBefore");
     }
+  }
+
+  // Cryptographic device binding via Resources URI.
+  // Checked before msg.verify() so tampered messages fail fast without
+  // paying ecrecover cost.
+  const resources = msg.resources ?? [];
+  const deviceResources = resources.filter((r) =>
+    r.startsWith(DEVICE_URI_PREFIX),
+  );
+  if (deviceResources.length === 0) {
+    throw new InvalidSiweError("device_resource_missing");
+  }
+  if (deviceResources.length > 1) {
+    throw new InvalidSiweError("device_resource_duplicate");
+  }
+  const signedDeviceId = deviceResources[0].slice(DEVICE_URI_PREFIX.length);
+  if (signedDeviceId !== args.expectedDeviceId) {
+    throw new InvalidSiweError("device_mismatch");
   }
 
   let result;
