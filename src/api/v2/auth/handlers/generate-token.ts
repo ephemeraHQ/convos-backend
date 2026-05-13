@@ -105,6 +105,35 @@ export async function generateToken(
       externalKey: address,
     });
     accountId = upserted.accountId;
+
+    // Best-effort backfill of DeviceRegistration.accountId.
+    // Runs OUTSIDE the upsert transaction so a transient DB issue here
+    // can't fail token mint. updateMany silently no-ops when the device
+    // row doesn't exist (legitimate case: client called /auth/token
+    // before /device/register). Self-heals on next mint after device
+    // registers. Last-write-wins on wallet switch by design.
+    try {
+      const { count } = await prisma.deviceRegistration.updateMany({
+        where: { deviceId: body.deviceId },
+        data: { accountId },
+      });
+      if (count > 0) {
+        req.log.info(
+          { deviceId: body.deviceId, accountId },
+          "auth.device.account_backfill",
+        );
+      } else {
+        req.log.info(
+          { deviceId: body.deviceId, accountId },
+          "auth.device.account_backfill_noop",
+        );
+      }
+    } catch (err) {
+      req.log.warn(
+        { err, deviceId: body.deviceId, accountId },
+        "auth.device.account_backfill_failed",
+      );
+    }
   }
 
   // 4. Mint JWT

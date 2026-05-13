@@ -221,4 +221,168 @@ describe("POST /auth/token (legacy + SIWE)", () => {
     const row = await prisma.authNonce.findUnique({ where: { nonce } });
     expect(row).toBeNull();
   });
+
+  test("first SIWE on registered device sets DeviceRegistration.accountId", async () => {
+    const deviceId = "dev-backfill-1";
+    await prisma.deviceRegistration.create({ data: { deviceId } });
+
+    const nonce = await issueNonce();
+    const cookieValue = signNonce(nonce);
+    const { messageStr, signature } = await buildSiwe(nonce, deviceId);
+
+    const res = await request(makeApp())
+      .post("/auth/token")
+      .set(...APPCHECK)
+      .set("Cookie", `${NONCE_COOKIE_NAME}=${cookieValue}`)
+      .send({ deviceId, siwe: { message: messageStr, signature } });
+
+    expect(res.status).toBe(200);
+
+    const dr = await prisma.deviceRegistration.findUnique({
+      where: { deviceId },
+    });
+    expect(dr?.accountId).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
+    );
+  });
+
+  test("second SIWE same wallet same device: column unchanged (idempotent)", async () => {
+    const deviceId = "dev-backfill-2";
+    await prisma.deviceRegistration.create({ data: { deviceId } });
+
+    const nonce1 = await issueNonce();
+    const cookie1 = signNonce(nonce1);
+    const built1 = await buildSiwe(nonce1, deviceId);
+    const res1 = await request(makeApp())
+      .post("/auth/token")
+      .set(...APPCHECK)
+      .set("Cookie", `${NONCE_COOKIE_NAME}=${cookie1}`)
+      .send({
+        deviceId,
+        siwe: { message: built1.messageStr, signature: built1.signature },
+      });
+    expect(res1.status).toBe(200);
+    const after1 = await prisma.deviceRegistration.findUnique({
+      where: { deviceId },
+    });
+
+    const nonce2 = await issueNonce();
+    const cookie2 = signNonce(nonce2);
+    const built2 = await buildSiwe(nonce2, deviceId);
+    const res2 = await request(makeApp())
+      .post("/auth/token")
+      .set(...APPCHECK)
+      .set("Cookie", `${NONCE_COOKIE_NAME}=${cookie2}`)
+      .send({
+        deviceId,
+        siwe: { message: built2.messageStr, signature: built2.signature },
+      });
+    expect(res2.status).toBe(200);
+    const after2 = await prisma.deviceRegistration.findUnique({
+      where: { deviceId },
+    });
+
+    expect(after2?.accountId ?? null).toBe(after1?.accountId ?? null);
+  });
+
+  test("different wallet on same device flips column (last-write-wins)", async () => {
+    const deviceId = "dev-backfill-3";
+    await prisma.deviceRegistration.create({ data: { deviceId } });
+
+    // First wallet — uses default signerKey (helper default)
+    const nonce1 = await issueNonce();
+    const cookie1 = signNonce(nonce1);
+    const built1 = await buildSiwe(nonce1, deviceId);
+    const res1 = await request(makeApp())
+      .post("/auth/token")
+      .set(...APPCHECK)
+      .set("Cookie", `${NONCE_COOKIE_NAME}=${cookie1}`)
+      .send({
+        deviceId,
+        siwe: { message: built1.messageStr, signature: built1.signature },
+      });
+    expect(res1.status).toBe(200);
+    const after1 = await prisma.deviceRegistration.findUnique({
+      where: { deviceId },
+    });
+    const firstAccountId = after1?.accountId;
+    expect(firstAccountId).toBeTruthy();
+
+    // Second wallet — distinct private key produces different address → different account
+    const nonce2 = await issueNonce();
+    const cookie2 = signNonce(nonce2);
+    const built2 = await buildSiweMessage({
+      deviceId,
+      nonce: nonce2,
+      signerKey: "0x" + "2".repeat(64),
+    });
+    const res2 = await request(makeApp())
+      .post("/auth/token")
+      .set(...APPCHECK)
+      .set("Cookie", `${NONCE_COOKIE_NAME}=${cookie2}`)
+      .send({
+        deviceId,
+        siwe: { message: built2.messageStr, signature: built2.signature },
+      });
+    expect(res2.status).toBe(200);
+    const after2 = await prisma.deviceRegistration.findUnique({
+      where: { deviceId },
+    });
+
+    expect(after2?.accountId).toBeTruthy();
+    expect(after2?.accountId).not.toBe(firstAccountId);
+  });
+
+  test("SIWE on never-registered device: token still 200, no row to update", async () => {
+    const deviceId = "dev-backfill-noop";
+    // Intentionally do NOT pre-create DeviceRegistration row.
+
+    const nonce = await issueNonce();
+    const cookieValue = signNonce(nonce);
+    const { messageStr, signature } = await buildSiwe(nonce, deviceId);
+
+    const res = await request(makeApp())
+      .post("/auth/token")
+      .set(...APPCHECK)
+      .set("Cookie", `${NONCE_COOKIE_NAME}=${cookieValue}`)
+      .send({ deviceId, siwe: { message: messageStr, signature } });
+
+    expect(res.status).toBe(200);
+
+    const dr = await prisma.deviceRegistration.findUnique({
+      where: { deviceId },
+    });
+    expect(dr).toBeNull();
+  });
+
+  test("legacy /auth/token (no siwe) preserves existing accountId column", async () => {
+    const deviceId = "dev-backfill-legacy";
+    await prisma.deviceRegistration.create({ data: { deviceId } });
+
+    // Seed column via SIWE upgrade
+    const nonce = await issueNonce();
+    const cookieValue = signNonce(nonce);
+    const { messageStr, signature } = await buildSiwe(nonce, deviceId);
+    await request(makeApp())
+      .post("/auth/token")
+      .set(...APPCHECK)
+      .set("Cookie", `${NONCE_COOKIE_NAME}=${cookieValue}`)
+      .send({ deviceId, siwe: { message: messageStr, signature } });
+    const seeded = await prisma.deviceRegistration.findUnique({
+      where: { deviceId },
+    });
+    expect(seeded?.accountId).toBeTruthy();
+
+    // Legacy mint — no siwe in body
+    const legacyRes = await request(makeApp())
+      .post("/auth/token")
+      .set(...APPCHECK)
+      .send({ deviceId });
+    expect(legacyRes.status).toBe(200);
+
+    const after = await prisma.deviceRegistration.findUnique({
+      where: { deviceId },
+    });
+    expect(after?.accountId ?? null).toBe(seeded?.accountId ?? null);
+  });
 });
