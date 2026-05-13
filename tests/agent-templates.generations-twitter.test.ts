@@ -40,6 +40,7 @@ import { __setAgentAssetsApiKeyOverrideForTests } from "@/middleware/agentAuth";
 import { ADMIN_ACCOUNT_ID } from "@/utils/constants";
 import { prisma } from "@/utils/prisma";
 import {
+  stableUuid,
   startAgentTemplatesServer,
   validAgentAssetsApiKey,
 } from "./agent-templates.cross.helpers";
@@ -61,7 +62,13 @@ const baseHeaders = () => ({
   "X-Agent-API-Key": validAgentAssetsApiKey,
 });
 
-const withKey = (key: string) => ({ ...baseHeaders(), "Idempotency-Key": key });
+// Tests pass mnemonic labels; `stableUuid` wraps them in a deterministic
+// UUIDv5 shape so the handler's UUID-format requirement is satisfied while
+// retries against the same label still dedupe.
+const withKey = (key: string) => ({
+  ...baseHeaders(),
+  "Idempotency-Key": stableUuid(key),
+});
 
 const twitterBody = (overrides: Record<string, unknown> = {}) => ({
   source: TEST_SOURCE,
@@ -204,10 +211,11 @@ describe("POST /generations — twitterContext auth gate", () => {
   // any handle.
   test("anonymous caller with twitterContext → 403", async () => {
     const body = twitterBody();
+    const anonKey = stableUuid("tw-anon-gate");
     const res = await post(body, {
       headers: {
         "Content-Type": "application/json",
-        "Idempotency-Key": "tw-anon-gate",
+        "Idempotency-Key": anonKey,
       },
     });
     expect(res.status).toBe(403);
@@ -216,7 +224,7 @@ describe("POST /generations — twitterContext auth gate", () => {
 
     // No row was persisted.
     const rows = await prisma.agentTemplateGeneration.findMany({
-      where: { idempotencyKey: "tw-anon-gate" },
+      where: { idempotencyKey: anonKey },
     });
     expect(rows).toHaveLength(0);
   });

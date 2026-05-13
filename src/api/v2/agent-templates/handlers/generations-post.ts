@@ -61,6 +61,11 @@ const MAX_BODY_BYTES = 40 * 1024 * 1024;
 const MAX_WAIT_MS = 45_000;
 const DEFAULT_SSE_KEEPALIVE_MS = 15_000;
 
+// RFC 4122 UUID format. Version digit is any 1-5 (accepts v4 random,
+// v5 namespaced, etc.); variant nibble is 8/9/a/b.
+const IDEMPOTENCY_KEY_UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
 /**
  * Adaptive backoff for long-poll + SSE poll loops.
  *
@@ -617,10 +622,25 @@ export async function generationsPostHandler(req: Request, res: Response) {
     return;
   }
 
-  // 6. Idempotency-Key required
+  // 6. Idempotency-Key required and MUST be a UUID (any RFC 4122 version).
+  //    Both the agent API key path and anonymous submissions are owned by
+  //    `ADMIN_ACCOUNT_ID`, so they share an idempotency namespace; using
+  //    UUIDs (122 bits of entropy) keeps that shared namespace safe from
+  //    accidental and adversarial collisions — without UUIDs, an attacker
+  //    could pick a key they know another caller will use and read back
+  //    that caller's `generationId` (which is itself a bearer secret) via
+  //    the dedupe path. Callers needing stable retries can derive a
+  //    deterministic UUID from their external identifier (e.g. `uuidv5`
+  //    of the tweet ID in the twitter bot's case).
   const idempotencyKey = req.get("idempotency-key");
   if (!idempotencyKey || idempotencyKey.length === 0) {
     res.status(400).json({ error: "Idempotency-Key header required" });
+    return;
+  }
+  if (!IDEMPOTENCY_KEY_UUID_RE.test(idempotencyKey)) {
+    res.status(400).json({
+      error: "Idempotency-Key must be a UUID",
+    });
     return;
   }
 

@@ -36,6 +36,7 @@ import { __setAgentAssetsApiKeyOverrideForTests } from "@/middleware/agentAuth";
 import { ADMIN_ACCOUNT_ID } from "@/utils/constants";
 import { prisma } from "@/utils/prisma";
 import {
+  stableUuid,
   startAgentTemplatesServer,
   validAgentAssetsApiKey,
 } from "./agent-templates.cross.helpers";
@@ -95,10 +96,12 @@ afterAll(async () => {
 // Helpers
 // ---------------------------------------------------------------------------
 
+// `stableUuid(label)` keeps the mnemonic-label style of the existing
+// tests while satisfying the handler's UUID-format requirement.
 const sseHeaders = (key: string) => ({
   "Content-Type": "application/json",
   "X-Agent-API-Key": validAgentAssetsApiKey,
-  "Idempotency-Key": key,
+  "Idempotency-Key": stableUuid(key),
   Accept: "text/event-stream",
 });
 

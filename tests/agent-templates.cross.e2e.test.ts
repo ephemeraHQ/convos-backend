@@ -31,6 +31,7 @@ import {
   hashedSlugFor,
   listTemplates,
   publishTemplate,
+  stableUuid,
   startAgentTemplatesServer,
   validAgentAssetsApiKey,
 } from "./agent-templates.cross.helpers";
@@ -121,7 +122,7 @@ describe("Cross-area E2E: Generate → Create → Publish → List → Hashed-sl
         headers: {
           "Content-Type": "application/json",
           "X-Agent-API-Key": validAgentAssetsApiKey,
-          "Idempotency-Key": "cross-e2e-step1",
+          "Idempotency-Key": stableUuid("cross-e2e-step1"),
         },
         body: JSON.stringify({
           source: "cross-e2e",

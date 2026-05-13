@@ -128,10 +128,14 @@ export const optionalAuthOrAgentApiKeyAuth = async (
   res: Response,
   next: NextFunction,
 ) => {
-  const providedAgentApiKey = req.header(AGENT_API_KEY_HEADER)?.trim();
-  const providedAuthToken = req.header("X-Convos-AuthToken")?.trim();
+  // Check presence on the RAW header, not on the trimmed value. A blank
+  // header (`X-Convos-AuthToken: "   "`) is still an attempt to
+  // authenticate — fall through to the strict auth path so it 401s,
+  // matching the "present but invalid → 401" contract documented below.
+  const providedAgentApiKey = req.header(AGENT_API_KEY_HEADER);
+  const providedAuthToken = req.header("X-Convos-AuthToken");
 
-  if (!providedAgentApiKey && !providedAuthToken) {
+  if (providedAgentApiKey === undefined && providedAuthToken === undefined) {
     next();
     return;
   }
