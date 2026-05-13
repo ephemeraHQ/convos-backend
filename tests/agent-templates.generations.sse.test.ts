@@ -32,6 +32,7 @@ import {
   DEFAULT_TEST_METRICS,
   type GeneratedTemplate,
 } from "@/api/v2/agent-templates/services/templateGen";
+import { __setAgentAssetsApiKeyOverrideForTests } from "@/middleware/agentAuth";
 import { ADMIN_ACCOUNT_ID } from "@/utils/constants";
 import { prisma } from "@/utils/prisma";
 import {
@@ -68,7 +69,7 @@ async function cleanup() {
 }
 
 beforeAll(async () => {
-  process.env.AGENT_ASSETS_API_KEY = validAgentAssetsApiKey;
+  __setAgentAssetsApiKeyOverrideForTests(validAgentAssetsApiKey);
   __resetPostHogForTests(() => {});
   __resetModerationForTests(() => Promise.resolve({ allowed: true }));
 
