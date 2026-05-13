@@ -65,7 +65,7 @@ export async function detailHandler(req: Request, res: Response) {
       template === null &&
       uuidPattern.test(parsedParams.data.idOrHashedSlug)
     ) {
-      const accountId = res.locals.accountId as string | undefined;
+      const accountId: string | undefined = res.locals.accountId;
       const isApiKeyListener = res.locals.isApiKeyListener ?? false;
 
       const draftTemplate = await prisma.agentTemplate.findUnique({

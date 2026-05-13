@@ -101,7 +101,7 @@ export async function listHandler(req: Request, res: Response) {
   // The router uses `optionalAuthOrAgentApiKeyAuth`, so `accountId` is set
   // when the caller presented valid credentials and `undefined` for
   // anonymous callers. Anonymous = published-only view.
-  const accountId = res.locals.accountId as string | undefined;
+  const accountId: string | undefined = res.locals.accountId;
   const isApiKeyListener = res.locals.isApiKeyListener ?? false;
 
   // Status filter handling. Express + qs can deliver `?status=draft` as a
