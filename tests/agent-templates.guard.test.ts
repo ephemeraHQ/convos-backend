@@ -123,30 +123,35 @@ describe("agent templates production guard", () => {
     expect(hasMountedRouter(localRouter, "/agent-templates")).toBe(true);
 
     await withServer(localRouter, async (baseURL) => {
-      // The agent-templates list/detail routes are auth-required, so an
-      // unauthenticated read returns 401 (not 200/404). 401 here means the
-      // router is mounted but auth gated; 404 in production above means the
-      // router isn't mounted at all.
-      const paths = [
-        "/api/v2/agent-templates",
-        "/api/v2/agent-templates/anything",
-        "/api/v2/agent-templates/generations/some-id",
-      ];
+      // The agent-templates read/generation routes are public now, so an
+      // anonymous caller doesn't 401 anymore. We still want to prove the
+      // router is mounted (i.e. the handler ran) instead of falling
+      // through to noRouteMiddleware's bare 404. The discriminator here
+      // is the response body: handlers return JSON envelopes; the
+      // unmounted-production path returns 404 with an *empty* body.
 
-      const responses = await Promise.all(
-        paths.map((path) => fetch(`${baseURL}${path}`)),
+      // GET /agent-templates → 200 with `data` envelope (handler ran).
+      const listResponse = await fetch(`${baseURL}/api/v2/agent-templates`);
+      expect(listResponse.status).toBe(200);
+      const listBody = (await listResponse.json()) as { data: unknown[] };
+      expect(Array.isArray(listBody.data)).toBe(true);
+
+      // GET /agent-templates/anything → 404 *with* a JSON `error` body from
+      // the detail handler (mounted), vs the bare 404 with empty body that
+      // noRouteMiddleware would return if the router weren't mounted.
+      const detailResponse = await fetch(
+        `${baseURL}/api/v2/agent-templates/anything`,
       );
+      expect(detailResponse.status).toBe(404);
+      const detailBody = (await detailResponse.json()) as { error: string };
+      expect(detailBody.error).toBe("Agent template not found");
 
-      expect(responses.map((response) => response.status)).toEqual([
-        401, 401, 401,
-      ]);
-
-      // POST /generations is also mounted and auth-gated.
+      // POST /generations without a body → 400 (handler's zod gate ran).
       const generationsPost = await fetch(
         `${baseURL}/api/v2/agent-templates/generations`,
         { method: "POST" },
       );
-      expect(generationsPost.status).toBe(401);
+      expect(generationsPost.status).toBe(400);
     });
   });
 });
