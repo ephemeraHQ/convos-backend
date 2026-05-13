@@ -19,7 +19,7 @@
  *   2. Content-Length > 40 MB                                   → 413
  *   3. Coalesced inputs present                                 → 400
  *   4. Input length limits (text ≤ 50k, base64 ≤ 35M)           → 400
- *   5. Auth + getEffectiveOwnerId                               → 403
+ *   5. Owner resolution (auth account or admin fallback)
  *   6. Idempotency-Key header present                           → 400
  *   7. Idempotency lookup → existing { source, inputs } match   → respondPerMode
  *   8.                  → existing different body              → 409
@@ -32,7 +32,9 @@
  * the requested mode (the previous behaviour was to immediately return JSON
  * regardless of how the replay was framed).
  *
- * Auth: authOrAgentApiKeyAuth + requireAccount.
+ * Auth: optionalAuthOrAgentApiKeyAuth. Anonymous submissions are accepted
+ * and owned by ADMIN_ACCOUNT_ID; authenticated submissions are owned by
+ * the JWT/API-key account.
  * Production guard: XMTP_ENV !== "production" (in v2/index.ts).
  * Body size: 40 MB (route-specific middleware).
  */
@@ -46,6 +48,7 @@ import {
   checkTwitterIntent,
 } from "@/api/v2/agent-templates/services/moderation";
 import { getEffectiveOwnerId } from "@/utils/auth-helpers";
+import { ADMIN_ACCOUNT_ID } from "@/utils/constants";
 import { prisma } from "@/utils/prisma";
 
 // ---------------------------------------------------------------------------
@@ -594,12 +597,10 @@ export async function generationsPostHandler(req: Request, res: Response) {
     return;
   }
 
-  // 5. Auth → ownerAccountId
-  const ownerAccountId = getEffectiveOwnerId(res);
-  if (!ownerAccountId) {
-    res.status(403).json({ error: "Account required" });
-    return;
-  }
+  // 5. Owner account. The route now uses optional auth so anonymous
+  //    submissions are allowed; those rows are owned by the admin seed
+  //    account (the closest thing we have to a system identity).
+  const ownerAccountId = getEffectiveOwnerId(res) ?? ADMIN_ACCOUNT_ID;
 
   // 6. Idempotency-Key required
   const idempotencyKey = req.get("idempotency-key");

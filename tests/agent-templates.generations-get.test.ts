@@ -204,12 +204,18 @@ describe("GET /generations/:id", () => {
     expect(body.error).toContain("kaboom");
   });
 
-  test("cross-account access → 404 (no existence leak)", async () => {
+  test("cross-account access → 200 (generation ID is the capability)", async () => {
+    // The GET status endpoint is public — anyone with the UUID can read
+    // the row. This matches anonymous-submission semantics: callers get
+    // the ID handed back from POST and poll status without minting a
+    // token.
     const gen = await insertGeneration({ status: "pending" });
 
     const headers = await otherAccountHeaders();
     const res = await get(gen.id, { headers });
-    expect(res.status).toBe(404);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { generationId: string };
+    expect(body.generationId).toBe(gen.id);
   });
 
   test("expired row → 404", async () => {

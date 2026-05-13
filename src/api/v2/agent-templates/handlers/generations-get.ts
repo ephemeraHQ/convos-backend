@@ -5,7 +5,9 @@
  * terminal via `?wait_ms=N` (capped at 45_000, polled every 500 ms).
  *
  * Visibility:
- *   - Cross-account access returns 404 (don't leak existence).
+ *   - The generation ID itself is the capability — anyone with the UUID
+ *     can read the row. (Anonymous submissions need this; once they have
+ *     the ID handed back from POST, no auth is required to poll status.)
  *   - Expired rows (expiresAt < NOW()) return 404.
  *
  * Response shape:
@@ -15,12 +17,12 @@
  *     createdAt, updatedAt
  *   }
  *
- * Auth: authOrAgentApiKeyAuth + requireAccount.
+ * Auth: optionalAuthOrAgentApiKeyAuth. Anonymous reads are permitted; the
+ * generation ID is treated as a bearer secret.
  * Production guard: XMTP_ENV !== "production" (in v2/index.ts).
  */
 
 import type { Request, Response } from "express";
-import { getEffectiveOwnerId } from "@/utils/auth-helpers";
 import { prisma } from "@/utils/prisma";
 
 // ---------------------------------------------------------------------------
@@ -98,12 +100,9 @@ function toResponse(row: GenerationRow): GenerationResponse {
   return out;
 }
 
-async function fetchOwnedRow(
-  generationId: string,
-  ownerAccountId: string,
-): Promise<GenerationRow | null> {
-  return prisma.agentTemplateGeneration.findFirst({
-    where: { id: generationId, ownerAccountId },
+async function fetchRow(generationId: string): Promise<GenerationRow | null> {
+  return prisma.agentTemplateGeneration.findUnique({
+    where: { id: generationId },
     select: {
       id: true,
       status: true,
@@ -128,7 +127,6 @@ function parseWaitMs(raw: unknown): number {
 
 async function waitForTerminal(args: {
   generationId: string;
-  ownerAccountId: string;
   waitMs: number;
   /** Returns true once the client has hung up the request. The loop bails
    *  early in that case to avoid wasted DB queries when nobody is listening. */
@@ -138,7 +136,7 @@ async function waitForTerminal(args: {
   let attempt = 0;
   while (Date.now() < deadline) {
     if (args.isClosed()) return null;
-    const row = await fetchOwnedRow(args.generationId, args.ownerAccountId);
+    const row = await fetchRow(args.generationId);
     if (!row) return null;
     if (isExpired(row)) return null;
     if (isTerminal(row.status)) return row;
@@ -151,7 +149,7 @@ async function waitForTerminal(args: {
   }
   // Timeout — return current state, hide already-expired rows
   if (args.isClosed()) return null;
-  const final = await fetchOwnedRow(args.generationId, args.ownerAccountId);
+  const final = await fetchRow(args.generationId);
   if (final && isExpired(final)) return null;
   return final;
 }
@@ -180,24 +178,17 @@ export async function generationsGetHandler(req: Request, res: Response) {
     return;
   }
 
-  // 2. Auth → ownerAccountId
-  const ownerAccountId = getEffectiveOwnerId(res);
-  if (!ownerAccountId) {
-    res.status(403).json({ error: "Account required" });
-    return;
-  }
-
-  // 3. Fetch (with optional long-poll)
+  // 2. Fetch (with optional long-poll). No ownership check — the
+  //    generation ID is the capability.
   let row: GenerationRow | null;
   if (waitMs > 0) {
     row = await waitForTerminal({
       generationId,
-      ownerAccountId,
       waitMs,
       isClosed: () => closed,
     });
   } else {
-    row = await fetchOwnedRow(generationId, ownerAccountId);
+    row = await fetchRow(generationId);
     if (row && isExpired(row)) row = null;
   }
 
@@ -207,7 +198,7 @@ export async function generationsGetHandler(req: Request, res: Response) {
   // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
   if (closed || res.writableEnded) return;
 
-  // 4. Not found / expired / cross-account → 404
+  // 3. Not found / expired → 404
   if (!row) {
     res.status(404).json({ error: "Generation not found" });
     return;
