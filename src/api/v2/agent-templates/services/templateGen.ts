@@ -18,6 +18,11 @@
 
 /* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-return, @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-argument */
 
+import {
+  BUILDER_MODEL,
+  BUILDER_OPENROUTER_API_KEY,
+  EXA_SERVICE_KEY,
+} from "@/config";
 import { AppError } from "@/utils/errors";
 import { SYSTEM_PROMPT } from "../lib/system-prompt";
 
@@ -34,10 +39,50 @@ const DEFAULT_MODEL = "@preset/assistants-pro";
 // from upstream, that path needs a separate per-chunk inactivity timer.
 const OPENROUTER_TIMEOUT_MS = 120_000;
 
-/** Read the model from env at call time so BUILDER_MODEL override works.
- *  Exported for the generate handler (needed for error-path PostHog metrics). */
+// ---------------------------------------------------------------------------
+// Config-backed accessors (with test-only override seams)
+// ---------------------------------------------------------------------------
+
+let _apiKeyOverride: string | null | undefined = undefined;
+let _builderModelOverride: string | null = null;
+let _exaKeyOverride: string | null | undefined = undefined;
+
+function getApiKey(): string | null {
+  if (_apiKeyOverride !== undefined) return _apiKeyOverride;
+  return BUILDER_OPENROUTER_API_KEY || null;
+}
+
+function getExaKey(): string | null {
+  if (_exaKeyOverride !== undefined) return _exaKeyOverride;
+  return EXA_SERVICE_KEY || null;
+}
+
+/** Read the model. Exported for the generate handler (needed for error-path
+ *  PostHog metrics). */
 export function getModel(): string {
-  return process.env.BUILDER_MODEL || DEFAULT_MODEL;
+  return _builderModelOverride ?? (BUILDER_MODEL || DEFAULT_MODEL);
+}
+
+/** Override `BUILDER_OPENROUTER_API_KEY` for tests.
+ *  Pass a string to override, `null` to simulate "no API key set", or
+ *  `undefined` to clear and fall back to config. */
+export function __setBuilderApiKeyOverrideForTests(
+  key: string | null | undefined,
+): void {
+  _apiKeyOverride = key;
+}
+
+/** Override `BUILDER_MODEL` for tests. Pass `null` to clear. */
+export function __setBuilderModelOverrideForTests(model: string | null): void {
+  _builderModelOverride = model;
+}
+
+/** Override `EXA_SERVICE_KEY` for tests. Pass `null` to simulate "unset",
+ *  `undefined` to clear and fall back to config. */
+export function __setExaKeyOverrideForTests(
+  key: string | null | undefined,
+): void {
+  _exaKeyOverride = key;
 }
 
 // Appended to every generated template prompt (and to the passthrough rail)
@@ -161,7 +206,7 @@ function isTwitterUrl(url: string): boolean {
 
 /** Extract content from a URL using Exa's /contents API. */
 async function extractViaExa(url: string): Promise<string> {
-  const exaKey = process.env.EXA_SERVICE_KEY;
+  const exaKey = getExaKey();
   if (!exaKey) {
     throw new Error("EXA_SERVICE_KEY not configured");
   }
@@ -386,7 +431,7 @@ async function selectInstructionsViaLLM(
   selection: GithubInstructionSelection;
   tokens: PassthroughTokens;
 } | null> {
-  const apiKey = process.env.BUILDER_OPENROUTER_API_KEY;
+  const apiKey = getApiKey();
   if (!apiKey) return null;
 
   const filteredTree = tree
@@ -705,7 +750,7 @@ async function classifyPastedContent(
   classification: ContentPassthroughResult;
   tokens: PassthroughTokens;
 } | null> {
-  const apiKey = process.env.BUILDER_OPENROUTER_API_KEY;
+  const apiKey = getApiKey();
   if (!apiKey) return null;
 
   const truncated = content.slice(0, 8_000);
@@ -911,7 +956,7 @@ export async function generateTemplate(
   const opts: GenerateTemplateInput =
     typeof input === "string" ? { text: input } : input;
 
-  const apiKey = process.env.BUILDER_OPENROUTER_API_KEY;
+  const apiKey = getApiKey();
   if (!apiKey) {
     throw new Error("BUILDER_OPENROUTER_API_KEY not configured");
   }

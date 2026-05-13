@@ -53,19 +53,21 @@ function restoreTimerSpy() {
 }
 
 describe("templateGen service — OpenRouter wallclock timeout", () => {
-  beforeEach(() => {
-    process.env.BUILDER_OPENROUTER_API_KEY = TEST_API_KEY;
-    delete process.env.BUILDER_MODEL;
-    delete process.env.EXA_SERVICE_KEY;
+  beforeEach(async () => {
+    const mod = await import("@/api/v2/agent-templates/services/templateGen");
+    mod.__setBuilderApiKeyOverrideForTests(TEST_API_KEY);
+    mod.__setBuilderModelOverrideForTests(null);
+    mod.__setExaKeyOverrideForTests(null);
     installTimerSpy();
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     globalThis.fetch = originalFetch;
     restoreTimerSpy();
-    delete process.env.BUILDER_OPENROUTER_API_KEY;
-    delete process.env.BUILDER_MODEL;
-    delete process.env.EXA_SERVICE_KEY;
+    const mod = await import("@/api/v2/agent-templates/services/templateGen");
+    mod.__setBuilderApiKeyOverrideForTests(undefined);
+    mod.__setBuilderModelOverrideForTests(null);
+    mod.__setExaKeyOverrideForTests(undefined);
   });
 
   test("OpenRouter fetch is invoked with an AbortSignal", async () => {

@@ -23,6 +23,10 @@
  * timing in tests, or `null` to disable it entirely.
  */
 
+import {
+  GENERATION_STUCK_SWEEP_THRESHOLD_MS,
+  GENERATION_TTL_HOURS,
+} from "@/config";
 import logger from "@/utils/logger";
 import { prisma } from "@/utils/prisma";
 
@@ -33,27 +37,15 @@ import { prisma } from "@/utils/prisma";
 /** Default sweep interval: 60 seconds. */
 const DEFAULT_SWEEP_INTERVAL_MS = 60_000;
 
-/** Default TTL for terminal generations: 24 hours. */
-const DEFAULT_TTL_HOURS = 24;
-
-/** Default stuck-row threshold: 10 minutes (must be > the 5-min in-process timeout). */
-const DEFAULT_STUCK_THRESHOLD_MS = 10 * 60 * 1000;
-
 function getTtlSeconds(): number {
-  const raw = process.env.GENERATION_TTL_HOURS;
-  const hours = raw ? Number.parseInt(raw, 10) : NaN;
-  if (Number.isFinite(hours) && hours > 0) return hours * 3600;
-  return DEFAULT_TTL_HOURS * 3600;
+  return GENERATION_TTL_HOURS * 3600;
 }
 
 function getStuckThresholdMs(): number {
   // Keep the threshold in milliseconds (and use a millisecond Postgres
   // interval below) so sub-second overrides like `500` don't truncate to
   // zero and match *every* running row.
-  const raw = process.env.GENERATION_STUCK_SWEEP_THRESHOLD_MS;
-  const ms = raw ? Number.parseInt(raw, 10) : NaN;
-  if (Number.isFinite(ms) && ms > 0) return ms;
-  return DEFAULT_STUCK_THRESHOLD_MS;
+  return GENERATION_STUCK_SWEEP_THRESHOLD_MS;
 }
 
 // ---------------------------------------------------------------------------

@@ -21,6 +21,7 @@ import {
 } from "bun:test";
 import {
   __resetModerationForTests,
+  __setBuilderApiKeyOverrideForTests,
   checkContent,
 } from "@/api/v2/agent-templates/services/moderation";
 
@@ -49,22 +50,17 @@ const llmResponse = (content: string) =>
   });
 
 // ---------------------------------------------------------------------------
-// Env snapshot/restore
+// Test seam reset
 // ---------------------------------------------------------------------------
 
-const originalApiKey = process.env.BUILDER_OPENROUTER_API_KEY;
-
 afterAll(() => {
-  if (originalApiKey === undefined) {
-    delete process.env.BUILDER_OPENROUTER_API_KEY;
-  } else {
-    process.env.BUILDER_OPENROUTER_API_KEY = originalApiKey;
-  }
+  __setBuilderApiKeyOverrideForTests(undefined);
   __resetModerationForTests(null);
   restoreFetch();
 });
 
 afterEach(() => {
+  __setBuilderApiKeyOverrideForTests(undefined);
   __resetModerationForTests(null);
   restoreFetch();
 });
@@ -87,7 +83,7 @@ describe("moderation.checkContent", () => {
 
   describe("LLM-backed path (no override)", () => {
     beforeEach(() => {
-      process.env.BUILDER_OPENROUTER_API_KEY = "test-key";
+      __setBuilderApiKeyOverrideForTests("test-key");
     });
 
     test("LLM returns 'safe' → allowed", async () => {
@@ -144,7 +140,7 @@ describe("moderation.checkContent", () => {
 
   describe("LLM-backed path (no API key)", () => {
     beforeEach(() => {
-      delete process.env.BUILDER_OPENROUTER_API_KEY;
+      __setBuilderApiKeyOverrideForTests(null);
     });
 
     test("no BUILDER_OPENROUTER_API_KEY → fails open without fetch", async () => {

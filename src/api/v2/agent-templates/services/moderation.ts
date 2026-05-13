@@ -24,6 +24,7 @@
  * intent classification.)
  */
 
+import { BUILDER_OPENROUTER_API_KEY, CONTENT_MODERATION_MODEL } from "@/config";
 import logger from "@/utils/logger";
 
 // ---------------------------------------------------------------------------
@@ -41,20 +42,40 @@ export type ModerationOverride = (input: string) => Promise<ModerationResult>;
 // Constants
 // ---------------------------------------------------------------------------
 
-const DEFAULT_MODERATION_MODEL = "anthropic/claude-3-5-haiku-20241022";
 const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
 const MODERATION_TIMEOUT_MS = 5_000;
 
 // ---------------------------------------------------------------------------
-// Lazy env var access — reads at call time, not import time
+// Config-backed accessors (with test-only override seams)
 // ---------------------------------------------------------------------------
 
+let _apiKeyOverride: string | null | undefined = undefined;
+let _contentModelOverride: string | null = null;
+
 function getApiKey(): string | null {
-  return process.env.BUILDER_OPENROUTER_API_KEY || null;
+  // `undefined` ⇒ fall through to config; `null` ⇒ explicitly "no key set"
+  // (tests use this to exercise the fail-open / skip-fetch path).
+  if (_apiKeyOverride !== undefined) return _apiKeyOverride;
+  return BUILDER_OPENROUTER_API_KEY || null;
 }
 
 function getContentModel(): string {
-  return process.env.CONTENT_MODERATION_MODEL || DEFAULT_MODERATION_MODEL;
+  return _contentModelOverride ?? CONTENT_MODERATION_MODEL;
+}
+
+/** Override `BUILDER_OPENROUTER_API_KEY` for tests.
+ *  - Pass a string to override.
+ *  - Pass `null` to simulate "no API key set" (forces fail-open path).
+ *  - Pass `undefined` to clear the override and fall back to config. */
+export function __setBuilderApiKeyOverrideForTests(
+  key: string | null | undefined,
+): void {
+  _apiKeyOverride = key;
+}
+
+/** Override `CONTENT_MODERATION_MODEL` for tests. Pass `null` to clear. */
+export function __setContentModelOverrideForTests(model: string | null): void {
+  _contentModelOverride = model;
 }
 
 // ---------------------------------------------------------------------------

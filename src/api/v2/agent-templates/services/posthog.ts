@@ -14,6 +14,7 @@
 
 /* eslint-disable @typescript-eslint/no-require-imports, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-explicit-any */
 
+import { POSTHOG_API_KEY, POSTHOG_HOST } from "@/config";
 import type { GenerationMetrics } from "./templateGen";
 
 // ---------------------------------------------------------------------------
@@ -64,16 +65,14 @@ let _posthogClient: any = null;
 function getPostHogClient(): any {
   if (_posthogClient) return _posthogClient;
 
-  const apiKey = process.env.POSTHOG_API_KEY;
-  const host = process.env.POSTHOG_HOST;
-  if (!apiKey || !host) return null;
+  if (!POSTHOG_API_KEY || !POSTHOG_HOST) return null;
 
   // Dynamic import would require top-level await; use require() for
   // synchronous lazy init at call time (matches mission constraint).
   const { PostHog } = require("posthog-node") as {
     PostHog: new (apiKey: string, opts: { host: string }) => any;
   };
-  _posthogClient = new PostHog(apiKey, { host });
+  _posthogClient = new PostHog(POSTHOG_API_KEY, { host: POSTHOG_HOST });
   return _posthogClient;
 }
 

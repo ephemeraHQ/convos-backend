@@ -147,25 +147,24 @@ describe("templateGen service — OpenRouter integration", () => {
   let generateTemplate: typeof import("@/api/v2/agent-templates/services/templateGen").generateTemplate;
   let BREVITY_RAIL: string;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     capturedRequests = [];
     clearMockResponses();
     globalThis.fetch = mockFetch as any;
 
-    // Set env vars for the service to read
-    process.env.BUILDER_OPENROUTER_API_KEY = TEST_API_KEY;
-    delete process.env.BUILDER_MODEL;
-    delete process.env.EXA_SERVICE_KEY;
-
-    // Import fresh for each test to pick up env changes
-    // Bun caches modules, so we re-import via the test mechanism
+    // Install test overrides for the config-backed accessors
+    const mod = await import("@/api/v2/agent-templates/services/templateGen");
+    mod.__setBuilderApiKeyOverrideForTests(TEST_API_KEY);
+    mod.__setBuilderModelOverrideForTests(null);
+    mod.__setExaKeyOverrideForTests(null);
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     globalThis.fetch = originalFetch;
-    delete process.env.BUILDER_OPENROUTER_API_KEY;
-    delete process.env.BUILDER_MODEL;
-    delete process.env.EXA_SERVICE_KEY;
+    const mod = await import("@/api/v2/agent-templates/services/templateGen");
+    mod.__setBuilderApiKeyOverrideForTests(undefined);
+    mod.__setBuilderModelOverrideForTests(null);
+    mod.__setExaKeyOverrideForTests(undefined);
   });
 
   // -----------------------------------------------------------------------
@@ -244,8 +243,8 @@ describe("templateGen service — OpenRouter integration", () => {
   });
 
   test("BUILDER_MODEL env override works", async () => {
-    process.env.BUILDER_MODEL = "custom/model";
     const mod = await import("@/api/v2/agent-templates/services/templateGen");
+    mod.__setBuilderModelOverrideForTests("custom/model");
     generateTemplate = mod.generateTemplate;
 
     setOpenRouterResponse({
@@ -271,8 +270,6 @@ describe("templateGen service — OpenRouter integration", () => {
 
     const req = getLastOpenRouterRequest();
     expect(req.body.model).toBe("custom/model");
-
-    delete process.env.BUILDER_MODEL;
   });
 
   // -----------------------------------------------------------------------
@@ -996,8 +993,8 @@ describe("templateGen service — OpenRouter integration", () => {
   // Missing BUILDER_OPENROUTER_API_KEY throws
   // -----------------------------------------------------------------------
   test("missing BUILDER_OPENROUTER_API_KEY throws error", async () => {
-    delete process.env.BUILDER_OPENROUTER_API_KEY;
     const mod = await import("@/api/v2/agent-templates/services/templateGen");
+    mod.__setBuilderApiKeyOverrideForTests(null);
     generateTemplate = mod.generateTemplate;
 
     await expect(

@@ -109,19 +109,21 @@ function mockOpenRouterError(status: number, message: string) {
 describe("templateGen service — OpenRouter error handling", () => {
   let generateTemplate: typeof import("@/api/v2/agent-templates/services/templateGen").generateTemplate;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     capturedRequests = [];
     globalThis.fetch = mockFetch as any;
-    process.env.BUILDER_OPENROUTER_API_KEY = TEST_API_KEY;
-    delete process.env.BUILDER_MODEL;
-    delete process.env.EXA_SERVICE_KEY;
+    const mod = await import("@/api/v2/agent-templates/services/templateGen");
+    mod.__setBuilderApiKeyOverrideForTests(TEST_API_KEY);
+    mod.__setBuilderModelOverrideForTests(null);
+    mod.__setExaKeyOverrideForTests(null);
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     globalThis.fetch = originalFetch;
-    delete process.env.BUILDER_OPENROUTER_API_KEY;
-    delete process.env.BUILDER_MODEL;
-    delete process.env.EXA_SERVICE_KEY;
+    const mod = await import("@/api/v2/agent-templates/services/templateGen");
+    mod.__setBuilderApiKeyOverrideForTests(undefined);
+    mod.__setBuilderModelOverrideForTests(null);
+    mod.__setExaKeyOverrideForTests(undefined);
   });
 
   // -----------------------------------------------------------------------
@@ -288,8 +290,8 @@ describe("templateGen service — OpenRouter error handling", () => {
   // canonical "extraction failed" path.)
   // -----------------------------------------------------------------------
   test("Exa returning no content surfaces as an extraction error", async () => {
-    process.env.EXA_SERVICE_KEY = "test-exa-key";
     const mod = await import("@/api/v2/agent-templates/services/templateGen");
+    mod.__setExaKeyOverrideForTests("test-exa-key");
     generateTemplate = mod.generateTemplate;
 
     const customFetch = (input: any) => {

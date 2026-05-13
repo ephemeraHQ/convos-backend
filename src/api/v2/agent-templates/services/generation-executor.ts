@@ -30,6 +30,7 @@ import {
   getModel,
   type GenerateTemplateInput,
 } from "@/api/v2/agent-templates/services/templateGen";
+import { GENERATION_EXECUTOR_TIMEOUT_MS, GENERATION_TTL_HOURS } from "@/config";
 import logger from "@/utils/logger";
 import { prisma } from "@/utils/prisma";
 
@@ -37,18 +38,8 @@ import { prisma } from "@/utils/prisma";
 // Constants
 // ---------------------------------------------------------------------------
 
-/** TTL for terminal generations: 24 hours by default, env-configurable. */
-const DEFAULT_TTL_HOURS = 24;
-
-/** Default timeout for entire generation: 5 minutes. */
-const DEFAULT_EXECUTOR_TIMEOUT_MS = 5 * 60 * 1000;
-
 function getTtlMs(): number {
-  const raw = process.env.GENERATION_TTL_HOURS;
-  const hours = raw ? Number.parseInt(raw, 10) : DEFAULT_TTL_HOURS;
-  if (!Number.isFinite(hours) || hours <= 0)
-    return DEFAULT_TTL_HOURS * 3600 * 1000;
-  return hours * 3600 * 1000;
+  return GENERATION_TTL_HOURS * 3600 * 1000;
 }
 
 // ---------------------------------------------------------------------------
@@ -74,22 +65,21 @@ export function __resetGenerationExecutorForTests(
 
 /**
  * Override the per-generation timeout for tests.
- * Pass `null` to restore the default.
+ * Pass `null` to restore the default
+ * (`GENERATION_EXECUTOR_TIMEOUT_MS` from config, default 5 min).
+ *
+ * `GENERATION_EXECUTOR_TIMEOUT_MS` is distinct from
+ * `GENERATION_STUCK_SWEEP_THRESHOLD_MS` in ttl-sweep.ts, which is the
+ * out-of-band cutoff for marking abandoned `running` rows as failed.
  */
 export function __setExecutorTimeoutMsForTests(ms: number | null): void {
   _timeoutMsOverride = ms;
 }
 
 function getTimeoutMs(): number {
-  if (_timeoutMsOverride !== null) return _timeoutMsOverride;
-  // GENERATION_EXECUTOR_TIMEOUT_MS controls how long a single pipeline run is
-  // allowed to take (default 5 min). Distinct from
-  // GENERATION_STUCK_SWEEP_THRESHOLD_MS in ttl-sweep.ts, which is the
-  // out-of-band cutoff for marking abandoned `running` rows as failed.
-  const raw = process.env.GENERATION_EXECUTOR_TIMEOUT_MS;
-  const parsed = raw ? Number.parseInt(raw, 10) : NaN;
-  if (Number.isFinite(parsed) && parsed > 0) return parsed;
-  return DEFAULT_EXECUTOR_TIMEOUT_MS;
+  return _timeoutMsOverride !== null
+    ? _timeoutMsOverride
+    : GENERATION_EXECUTOR_TIMEOUT_MS;
 }
 
 // ---------------------------------------------------------------------------
