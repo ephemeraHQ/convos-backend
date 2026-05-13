@@ -86,3 +86,53 @@ export const SIWE_DOMAIN = process.env.SIWE_DOMAIN;
 export const SIWE_URI = process.env.SIWE_URI;
 export const SIWE_ALLOWED_CHAIN_IDS: readonly number[] = parsedChainIds;
 export const NONCE_HMAC_SECRET = process.env.NONCE_HMAC_SECRET;
+
+// Builder / template-gen + moderation (optional — services fail open / no-op
+// when these are unset; cached at module-load to avoid call-time process.env
+// reads on every generation).
+export const BUILDER_OPENROUTER_API_KEY =
+  process.env.BUILDER_OPENROUTER_API_KEY?.trim() || "";
+export const BUILDER_MODEL = process.env.BUILDER_MODEL?.trim() || "";
+export const CONTENT_MODERATION_MODEL =
+  process.env.CONTENT_MODERATION_MODEL?.trim() ||
+  "anthropic/claude-3-5-haiku-20241022";
+export const EXA_SERVICE_KEY = process.env.EXA_SERVICE_KEY?.trim() || "";
+
+// PostHog metering (optional — capture is no-op if either is unset).
+export const POSTHOG_API_KEY = process.env.POSTHOG_API_KEY?.trim() || "";
+export const POSTHOG_HOST = process.env.POSTHOG_HOST?.trim() || "";
+
+// Generation pipeline timing knobs (override via env in tests / staging).
+const parsePositiveInt = (
+  raw: string | undefined,
+  fallback: number,
+): number => {
+  if (!raw) return fallback;
+  const n = Number.parseInt(raw, 10);
+  return Number.isFinite(n) && n > 0 ? n : fallback;
+};
+
+export const GENERATION_TTL_HOURS = parsePositiveInt(
+  process.env.GENERATION_TTL_HOURS,
+  24,
+);
+export const GENERATION_STUCK_SWEEP_THRESHOLD_MS = parsePositiveInt(
+  process.env.GENERATION_STUCK_SWEEP_THRESHOLD_MS,
+  10 * 60 * 1000,
+);
+export const GENERATION_EXECUTOR_TIMEOUT_MS = parsePositiveInt(
+  process.env.GENERATION_EXECUTOR_TIMEOUT_MS,
+  5 * 60 * 1000,
+);
+
+// Operational invariant: the stuck-row sweep must allow the in-process
+// timeout to win under normal operation. If a misconfiguration inverts
+// these (e.g. STUCK_THRESHOLD=60s + EXECUTOR_TIMEOUT=5min), the sweep
+// would fire on live generations and mark them `failed` while the
+// executor is still working. Fail fast at startup rather than silently
+// corrupting generation state.
+if (GENERATION_STUCK_SWEEP_THRESHOLD_MS <= GENERATION_EXECUTOR_TIMEOUT_MS) {
+  throw new Error(
+    `Configuration error: GENERATION_STUCK_SWEEP_THRESHOLD_MS (${GENERATION_STUCK_SWEEP_THRESHOLD_MS}ms) must be greater than GENERATION_EXECUTOR_TIMEOUT_MS (${GENERATION_EXECUTOR_TIMEOUT_MS}ms).`,
+  );
+}

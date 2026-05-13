@@ -36,11 +36,20 @@ describe("Builder dependency and optional env setup", () => {
     }
   });
 
-  test("does not require new optional env vars at config load time", () => {
+  test("config.ts caches each new optional env var with a non-throwing default", () => {
+    // After the neekolas-feedback refactor (commit 3273f9b), these env
+    // vars are cached at module load via src/config.ts instead of being
+    // read at call time inside the agent-templates services. Assert:
+    //   1. Each var is referenced in config.ts.
+    //   2. Each is read with a fallback ("" for strings) rather than a
+    //      `throw new Error`, so an unset env var does not block server
+    //      startup. This is the "still optional, just cached" contract.
     const configSource = readRepoFile("src/config.ts");
 
     for (const envVar of newOptionalEnvVars) {
-      expect(configSource).not.toContain(envVar);
+      expect(configSource).toContain(envVar);
+      const throwForVar = new RegExp(`throw\\s+new\\s+Error\\([^)]*${envVar}`);
+      expect(configSource).not.toMatch(throwForVar);
     }
   });
 });

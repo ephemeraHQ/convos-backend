@@ -259,10 +259,10 @@ describe("requireAccount chained on every agent-templates route", () => {
     // surface — there is no unauth list/detail branch.
     const requireAccountCount = (source.match(/requireAccount/g) ?? []).length;
 
-    // 4 write routes (POST, PATCH, DELETE, POST /:id/publish) + 2 read routes
-    // (GET /, GET /:idOrHashedSlug) + 1 import = 7 occurrences.
-    // (generate and create-job routes are on later branches.)
-    expect(requireAccountCount).toBe(7);
+    // 5 write routes (POST /, POST /generations, PATCH /:id, DELETE /:id,
+    // POST /:id/publish) + 3 read routes (GET /, GET /generations/:id,
+    // GET /:idOrHashedSlug) + 1 import = 9 occurrences.
+    expect(requireAccountCount).toBe(9);
 
     // Read routes DO have requireAccount chained.
     expect(source).toContain("requireAccount,\n  listHandler");

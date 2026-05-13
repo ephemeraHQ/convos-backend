@@ -104,6 +104,18 @@ describe("agent templates production guard", () => {
         `${baseURL}/api/v2/agent-templates`,
       );
       expect(templatesResponse.status).toBe(404);
+
+      // Same guarantee for the async generation surface.
+      const generationsPost = await fetch(
+        `${baseURL}/api/v2/agent-templates/generations`,
+        { method: "POST" },
+      );
+      expect(generationsPost.status).toBe(404);
+
+      const generationsGet = await fetch(
+        `${baseURL}/api/v2/agent-templates/generations/anything`,
+      );
+      expect(generationsGet.status).toBe(404);
     });
 
     process.env.XMTP_ENV = "local";
@@ -118,13 +130,23 @@ describe("agent templates production guard", () => {
       const paths = [
         "/api/v2/agent-templates",
         "/api/v2/agent-templates/anything",
+        "/api/v2/agent-templates/generations/some-id",
       ];
 
       const responses = await Promise.all(
         paths.map((path) => fetch(`${baseURL}${path}`)),
       );
 
-      expect(responses.map((response) => response.status)).toEqual([401, 401]);
+      expect(responses.map((response) => response.status)).toEqual([
+        401, 401, 401,
+      ]);
+
+      // POST /generations is also mounted and auth-gated.
+      const generationsPost = await fetch(
+        `${baseURL}/api/v2/agent-templates/generations`,
+        { method: "POST" },
+      );
+      expect(generationsPost.status).toBe(401);
     });
   });
 });
