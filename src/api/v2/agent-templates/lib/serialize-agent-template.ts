@@ -6,6 +6,17 @@ export const serializeAccount = (account: Account) => ({
   createdAt: account.createdAt.toISOString(),
 });
 
+/**
+ * Pure formatter — must NOT perform I/O. Pass related rows through
+ * `options`.
+ *
+ * Called per-row inside the list handler's `page.map(...)`, so any
+ * Prisma call added inside this function would turn a single bounded
+ * query into an N+1 fan-out. For list endpoints, materialise relations
+ * via Prisma's `include` on the initial `findMany` and read them off
+ * each row before calling this; do not call this from inside an async
+ * map.
+ */
 export const serializeAgentTemplate = (
   template: AgentTemplate,
   options: { includeSkills?: boolean; owner?: Account } = {},
