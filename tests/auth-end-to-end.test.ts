@@ -1,14 +1,13 @@
 import { afterEach, beforeAll, describe, expect, test } from "bun:test";
 import cookieParser from "cookie-parser";
-import { Wallet } from "ethers";
 import express from "express";
-import { SiweMessage } from "siwe";
 import request from "supertest";
 import { authRouter } from "@/api/v2/auth/auth.router";
 import { authMiddleware, requireAccount } from "@/middleware/auth";
 import { pinoMiddleware } from "@/middleware/pino";
 import { ADMIN_ACCOUNT_ID } from "@/utils/constants";
 import { prisma } from "@/utils/prisma";
+import { buildSiweMessage } from "./helpers/siwe";
 
 function makeApp() {
   const app = express();
@@ -50,20 +49,11 @@ describe("auth end-to-end", () => {
     const nonce = cookie.split(".").pop()!;
 
     // 2. Sign SIWE
-    const wallet = new Wallet("0x" + "5".repeat(64));
-    const msg = new SiweMessage({
-      domain: "convos.app",
-      address: wallet.address,
-      statement: "Sign in to Convos",
-      uri: "https://convos.app",
-      version: "1",
-      chainId: 1,
+    const { messageStr, signature } = await buildSiweMessage({
+      deviceId: "dev-e2e",
       nonce,
-      issuedAt: new Date().toISOString(),
-      expirationTime: new Date(Date.now() + 5 * 60_000).toISOString(),
+      signerKey: "0x" + "5".repeat(64),
     });
-    const messageStr = msg.prepareMessage();
-    const signature = await wallet.signMessage(messageStr);
 
     // 3. Token
     const tokenRes = await request(app)

@@ -1,31 +1,24 @@
 import { describe, expect, test } from "bun:test";
 import { Wallet } from "ethers";
-import { SiweMessage } from "siwe";
+import type { SiweMessage } from "siwe";
 import { InvalidSiweError, verifySiwe } from "@/api/v2/auth/handlers/siwe";
+import { buildSiweMessage } from "./helpers/siwe";
 
 const NONCE = "abcdef".padEnd(64, "0");
 const NOW = new Date("2026-05-08T12:00:00Z");
+const TEST_DEVICE_ID = "test-device-id";
 
 async function buildMessage(
   overrides: Partial<SiweMessage> = {},
   signerKey?: string,
 ) {
-  const wallet = new Wallet(signerKey ?? "0x" + "1".repeat(64));
-  const base: ConstructorParameters<typeof SiweMessage>[0] = {
-    domain: "convos.app",
-    address: wallet.address,
-    statement: "Sign in to Convos",
-    uri: "https://convos.app",
-    version: "1",
-    chainId: 1,
+  return buildSiweMessage({
+    deviceId: TEST_DEVICE_ID,
     nonce: NONCE,
-    issuedAt: NOW.toISOString(),
-    expirationTime: new Date(NOW.getTime() + 5 * 60_000).toISOString(),
-  };
-  const msg = new SiweMessage({ ...base, ...overrides });
-  const messageStr = msg.prepareMessage();
-  const signature = await wallet.signMessage(messageStr);
-  return { messageStr, signature, address: wallet.address.toLowerCase() };
+    signerKey,
+    now: NOW,
+    overrides,
+  });
 }
 
 async function expectInvalidSiwe(

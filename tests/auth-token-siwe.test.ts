@@ -2,7 +2,6 @@ import { afterEach, beforeAll, describe, expect, test } from "bun:test";
 import cookieParser from "cookie-parser";
 import { Wallet } from "ethers";
 import express from "express";
-import { SiweMessage } from "siwe";
 import request from "supertest";
 import { issueNonce } from "@/api/v2/auth/auth-nonce.repository";
 import { authRouter } from "@/api/v2/auth/auth.router";
@@ -11,6 +10,7 @@ import { pinoMiddleware } from "@/middleware/pino";
 import { ADMIN_ACCOUNT_ID } from "@/utils/constants";
 import { verifyJwtToken } from "@/utils/jwt";
 import { prisma } from "@/utils/prisma";
+import { buildSiweMessage } from "./helpers/siwe";
 
 function makeApp() {
   const app = express();
@@ -23,22 +23,12 @@ function makeApp() {
 
 const APPCHECK = ["X-Firebase-AppCheck", "valid-app-check-token"] as const;
 
-async function buildSiwe(nonce: string) {
-  const wallet = new Wallet("0x" + "1".repeat(64));
-  const msg = new SiweMessage({
-    domain: "convos.app",
-    address: wallet.address,
-    statement: "Sign in to Convos",
-    uri: "https://convos.app",
-    version: "1",
-    chainId: 1,
+async function buildSiwe(nonce: string, deviceId = "test-device-id") {
+  const { messageStr, signature, address } = await buildSiweMessage({
+    deviceId,
     nonce,
-    issuedAt: new Date().toISOString(),
-    expirationTime: new Date(Date.now() + 5 * 60_000).toISOString(),
   });
-  const messageStr = msg.prepareMessage();
-  const signature = await wallet.signMessage(messageStr);
-  return { messageStr, signature, address: wallet.address.toLowerCase() };
+  return { messageStr, signature, address };
 }
 
 async function reset() {
@@ -69,7 +59,10 @@ describe("POST /auth/token (legacy + SIWE)", () => {
   test("siwe happy path → upserts account, JWT carries accountId, clears cookie", async () => {
     const nonce = await issueNonce();
     const cookieValue = signNonce(nonce);
-    const { messageStr, signature, address } = await buildSiwe(nonce);
+    const { messageStr, signature, address } = await buildSiwe(
+      nonce,
+      "dev-siwe",
+    );
 
     const res = await request(makeApp())
       .post("/auth/token")
@@ -104,7 +97,7 @@ describe("POST /auth/token (legacy + SIWE)", () => {
   test("replay: same nonce twice → 401 on second attempt", async () => {
     const nonce = await issueNonce();
     const cookieValue = signNonce(nonce);
-    const { messageStr, signature } = await buildSiwe(nonce);
+    const { messageStr, signature } = await buildSiwe(nonce, "dev-replay");
 
     const first = await request(makeApp())
       .post("/auth/token")
@@ -129,7 +122,7 @@ describe("POST /auth/token (legacy + SIWE)", () => {
 
   test("siwe present but no cookie → 401", async () => {
     const nonce = "00".repeat(32);
-    const { messageStr, signature } = await buildSiwe(nonce);
+    const { messageStr, signature } = await buildSiwe(nonce, "dev");
     const res = await request(makeApp())
       .post("/auth/token")
       .set(...APPCHECK)
@@ -139,7 +132,7 @@ describe("POST /auth/token (legacy + SIWE)", () => {
 
   test("JSON-prefixed nonce cookie (cookie-parser parses to object) → 401, not 500", async () => {
     const nonce = "00".repeat(32);
-    const { messageStr, signature } = await buildSiwe(nonce);
+    const { messageStr, signature } = await buildSiwe(nonce, "dev");
     // cookie-parser parses values prefixed with `j:` as JSON. The cookie
     // value below decodes to {x:1}, a plain object. Without a string-type
     // guard the handler would crash; the contract is "treat as missing → 401".
@@ -156,7 +149,7 @@ describe("POST /auth/token (legacy + SIWE)", () => {
     const nonce = await issueNonce();
     const valid = signNonce(nonce);
     const tampered = "AAAA" + valid.slice(4);
-    const { messageStr, signature } = await buildSiwe(nonce);
+    const { messageStr, signature } = await buildSiwe(nonce, "dev");
     const res = await request(makeApp())
       .post("/auth/token")
       .set(...APPCHECK)
@@ -182,7 +175,7 @@ describe("POST /auth/token (legacy + SIWE)", () => {
 
     const nonce = await issueNonce();
     const cookieValue = signNonce(nonce);
-    const { messageStr, signature } = await buildSiwe(nonce);
+    const { messageStr, signature } = await buildSiwe(nonce, "dev-disabled");
 
     const res = await request(makeApp())
       .post("/auth/token")
@@ -207,7 +200,7 @@ describe("POST /auth/token (legacy + SIWE)", () => {
   test("valid HMAC + bad SIWE signature → 401 AND nonce is consumed (locks in atomic-consume-before-verify ordering)", async () => {
     const nonce = await issueNonce();
     const cookieValue = signNonce(nonce);
-    const { messageStr } = await buildSiwe(nonce);
+    const { messageStr } = await buildSiwe(nonce, "dev-bad-sig");
 
     // Sign the same message with a different wallet so signature fails verifySiwe
     const otherWallet = new Wallet("0x" + "9".repeat(64));
