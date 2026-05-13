@@ -28,7 +28,6 @@ import { __resetPostHogForTests } from "@/api/v2/agent-templates/services/postho
 import {
   __resetGenerateTemplateForTests,
   DEFAULT_TEST_METRICS,
-  type GeneratedTemplate,
 } from "@/api/v2/agent-templates/services/templateGen";
 import { __setAgentAssetsApiKeyOverrideForTests } from "@/middleware/agentAuth";
 import { ADMIN_ACCOUNT_ID } from "@/utils/constants";
@@ -38,20 +37,18 @@ import {
   startAgentTemplatesServer,
   validAgentAssetsApiKey,
 } from "./agent-templates.cross.helpers";
+import { makeFakeTemplate } from "./agent-templates.generation.helpers";
 
 const TEST_PORT = 4076;
 const TEST_SOURCE = "generations-get-test";
 const OTHER_ACCOUNT_ID = "00000000-0000-4000-8000-bbbbbbbb0001";
 
-const fakeTemplate: GeneratedTemplate = {
+const fakeTemplate = makeFakeTemplate({
   agentName: "Get Test Agent",
   description: "desc",
   prompt: "prompt",
-  category: "Test",
   emoji: "📥",
-  tools: [],
-  connections: [],
-};
+});
 
 let baseURL: string;
 let closeServer: () => Promise<void>;

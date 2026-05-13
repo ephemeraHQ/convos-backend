@@ -22,7 +22,6 @@ import { __resetPostHogForTests } from "@/api/v2/agent-templates/services/postho
 import {
   __resetGenerateTemplateForTests,
   DEFAULT_TEST_METRICS,
-  type GeneratedTemplate,
 } from "@/api/v2/agent-templates/services/templateGen";
 import { __setAgentAssetsApiKeyOverrideForTests } from "@/middleware/agentAuth";
 import { ADMIN_ACCOUNT_ID } from "@/utils/constants";
@@ -35,6 +34,7 @@ import {
   startAgentTemplatesServer,
   validAgentAssetsApiKey,
 } from "./agent-templates.cross.helpers";
+import { makeFakeTemplate } from "./agent-templates.generation.helpers";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -46,15 +46,14 @@ const TEST_PORT = 4074;
 // Mock generateTemplate at the service-singleton seam
 // ---------------------------------------------------------------------------
 
-const generatedTemplate: GeneratedTemplate = {
+const generatedTemplate = makeFakeTemplate({
   agentName: "Grocery Tracker",
   description: "A cheery grocery-sharing assistant",
   prompt: "You help people track and share grocery lists",
   category: "Productivity",
   emoji: "🛒",
   tools: ["Search"],
-  connections: [],
-};
+});
 
 const mockGenerate = () => {
   __resetGenerateTemplateForTests(() =>

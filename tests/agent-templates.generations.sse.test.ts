@@ -39,19 +39,17 @@ import {
   startAgentTemplatesServer,
   validAgentAssetsApiKey,
 } from "./agent-templates.cross.helpers";
+import { makeFakeTemplate } from "./agent-templates.generation.helpers";
 
 const TEST_PORT = 4077;
 const TEST_SOURCE = "generations-sse-test";
 
-const fakeTemplate: GeneratedTemplate = {
+const fakeTemplate = makeFakeTemplate({
   agentName: "SSE Test Agent",
   description: "desc",
   prompt: "prompt",
-  category: "Test",
   emoji: "📡",
-  tools: [],
-  connections: [],
-};
+});
 
 let baseURL: string;
 let closeServer: () => Promise<void>;

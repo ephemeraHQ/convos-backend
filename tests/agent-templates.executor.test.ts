@@ -34,10 +34,10 @@ import {
 import {
   __resetGenerateTemplateForTests,
   DEFAULT_TEST_METRICS,
-  type GeneratedTemplate,
 } from "@/api/v2/agent-templates/services/templateGen";
 import { ADMIN_ACCOUNT_ID } from "@/utils/constants";
 import { prisma } from "@/utils/prisma";
+import { makeFakeTemplate } from "./agent-templates.generation.helpers";
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -45,15 +45,9 @@ import { prisma } from "@/utils/prisma";
 
 const TEST_SOURCE = "executor-test";
 
-const fakeTemplate: GeneratedTemplate = {
+const fakeTemplate = makeFakeTemplate({
   agentName: "Executor Test Agent",
-  description: "test description",
-  prompt: "you are a test",
-  category: "Test",
-  emoji: "🧪",
-  tools: [],
-  connections: [],
-};
+});
 
 const installFakeTemplate = () => {
   __resetGenerateTemplateForTests(() =>
