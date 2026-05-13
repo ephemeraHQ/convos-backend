@@ -127,8 +127,11 @@ const inputsSchema = z
  * an unverified twitterHandle would let an attacker produce a reply
  * impersonating any handle, so the bot's pre-call check is load-bearing.
  *
- * This endpoint is also gated by `authOrAgentApiKeyAuth`, so only authorised
- * server-side callers can reach it in the first place.
+ * The endpoint itself is reachable anonymously (optional auth), so
+ * `twitterContext` is gated separately: the handler rejects the field
+ * unless the caller authenticated with the agent API key
+ * (`isApiKeyListener`). That means only the twitter bot — the one party
+ * able to verify handle ownership — can attach this context.
  */
 const twitterContextSchema = z
   .object({
@@ -601,6 +604,18 @@ export async function generationsPostHandler(req: Request, res: Response) {
   //    submissions are allowed; those rows are owned by the admin seed
   //    account (the closest thing we have to a system identity).
   const ownerAccountId = getEffectiveOwnerId(res) ?? ADMIN_ACCOUNT_ID;
+  const isApiKeyListener = res.locals.isApiKeyListener ?? false;
+
+  // 5b. twitterContext is privileged — it ends up attributed to a real
+  //     twitter handle. Only the bot (agent API key) is in a position to
+  //     verify handle ownership against the tweet author, so reject the
+  //     field for anonymous and JWT-only callers.
+  if (body.twitterContext && !isApiKeyListener) {
+    res.status(403).json({
+      error: "twitterContext requires agent API key authentication",
+    });
+    return;
+  }
 
   // 6. Idempotency-Key required
   const idempotencyKey = req.get("idempotency-key");

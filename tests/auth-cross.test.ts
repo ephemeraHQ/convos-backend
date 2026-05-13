@@ -287,9 +287,9 @@ describe("Cross-area auth flows", () => {
     expect(bPublishResponse.status).toBe(403);
   });
 
-  // Unauthenticated callers are rejected from every
-  // agent-templates route — no public discovery surface.
-  test("Unauthenticated callers cannot list or detail any template", async () => {
+  // Anonymous callers can hit GET list/detail but only see published rows;
+  // draft templates 404 and `?status=draft` returns an empty envelope.
+  test("Anonymous callers see published-only and cannot reach drafts", async () => {
     // Seed a draft template so we have a concrete URL to attempt.
     const draftResponse = await fetch(`${baseURL}/api/v2/agent-templates`, {
       method: "POST",
@@ -303,24 +303,39 @@ describe("Cross-area auth flows", () => {
     const draftBody = (await draftResponse.json()) as Record<string, unknown>;
     const draftId = draftBody.id as string;
 
-    // (1) Unauthenticated GET list — 401
+    // (1) Anonymous GET list — 200, draft is invisible (published-only view)
     const listResponse = await fetch(
       `${baseURL}/api/v2/agent-templates?limit=100`,
     );
-    expect(listResponse.status).toBe(401);
+    expect(listResponse.status).toBe(200);
+    const listBody = (await listResponse.json()) as {
+      data: Array<{ id: string; status: string }>;
+    };
+    expect(listBody.data.some((row) => row.id === draftId)).toBe(false);
+    for (const row of listBody.data) {
+      expect(row.status).toBe("published");
+    }
 
-    // (2) Unauthenticated GET ?status=draft — 401 (auth check runs before
-    // query validation, so this is the same code path as #1)
+    // (2) Anonymous GET ?status=draft — 200 with an empty envelope
+    //     (no enumeration of non-public rows)
     const statusFilterResponse = await fetch(
       `${baseURL}/api/v2/agent-templates?status=draft`,
     );
-    expect(statusFilterResponse.status).toBe(401);
+    expect(statusFilterResponse.status).toBe(200);
+    const statusFilterBody = (await statusFilterResponse.json()) as {
+      data: unknown[];
+      hasMore: boolean;
+      nextCursor: string | null;
+    };
+    expect(statusFilterBody.data).toEqual([]);
+    expect(statusFilterBody.hasMore).toBe(false);
+    expect(statusFilterBody.nextCursor).toBeNull();
 
-    // (3) Unauthenticated GET detail — 401
+    // (3) Anonymous GET detail on the draft — 404 (drafts are not visible)
     const draftDetailResponse = await fetch(
       `${baseURL}/api/v2/agent-templates/${draftId}`,
     );
-    expect(draftDetailResponse.status).toBe(401);
+    expect(draftDetailResponse.status).toBe(404);
   });
 
   // JWT-only user (no accountId) is rejected from write routes with 403
