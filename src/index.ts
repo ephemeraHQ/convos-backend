@@ -5,7 +5,7 @@ import express from "express";
 import helmet from "helmet";
 import { startTtlSweep as startGenerationTtlSweep } from "@/api/v2/agent-templates/services/ttl-sweep";
 import apiRouter from "./api";
-import { IS_DEVELOPMENT } from "./config";
+import { IS_DEVELOPMENT, XMTP_ENV } from "./config";
 import { errorHandlerMiddleware } from "./middleware/errorHandler";
 import { jsonMiddleware } from "./middleware/json";
 import { noRouteMiddleware } from "./middleware/noRoute";
@@ -81,7 +81,7 @@ validateJWTKeys()
 
       // Generation pipeline sweep — only when the agent-templates router is
       // mounted (gated on XMTP_ENV !== "production"; see src/api/v2/index.ts).
-      if (process.env.XMTP_ENV !== "production") {
+      if (XMTP_ENV !== "production") {
         startGenerationTtlSweep();
       }
     });
