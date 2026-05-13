@@ -23,7 +23,8 @@
  *   6. Idempotency-Key header present                           → 400
  *   7. Idempotency lookup → existing { source, inputs } match   → respondPerMode
  *   8.                  → existing different body              → 409
- *   9. Content moderation (universal)                           → 422
+ *   9. Content moderation (universal)                           → 422 (content)
+ *   9b. Twitter intent moderation (when twitterContext present)  → 422 (intent)
  *  10. Persist row + fire executor + respondPerMode
  *
  * Idempotent replays go through the SAME respondPerMode path as the original
@@ -36,10 +37,14 @@
  * Body size: 40 MB (route-specific middleware).
  */
 
+import { Prisma } from "@prisma/client";
 import type { Request, Response } from "express";
 import { z } from "zod";
 import { executeGeneration } from "@/api/v2/agent-templates/services/generation-executor";
-import { checkContent } from "@/api/v2/agent-templates/services/moderation";
+import {
+  checkContent,
+  checkTwitterIntent,
+} from "@/api/v2/agent-templates/services/moderation";
 import { getEffectiveOwnerId } from "@/utils/auth-helpers";
 import { prisma } from "@/utils/prisma";
 
@@ -108,10 +113,44 @@ const inputsSchema = z
   })
   .strict();
 
+/**
+ * Twitter context for the optional ComposeReply pipeline stage.
+ *
+ * Trust boundary: this schema validates the *format* of `twitterHandle` and
+ * `tweetId`, but does NOT verify ownership — i.e. it doesn't check that the
+ * caller has the right to act as `@twitterHandle` or that `tweetId` was
+ * authored by them. That verification MUST happen at the caller (the twitter
+ * bot, which has access to the tweet author via the Twitter API). Passing
+ * an unverified twitterHandle would let an attacker produce a reply
+ * impersonating any handle, so the bot's pre-call check is load-bearing.
+ *
+ * This endpoint is also gated by `authOrAgentApiKeyAuth`, so only authorised
+ * server-side callers can reach it in the first place.
+ */
+const twitterContextSchema = z
+  .object({
+    /** Twitter handle of the user who @mentioned the bot. Format-only check;
+     *  caller is responsible for verifying ownership against the tweet author. */
+    twitterHandle: z.string().regex(/^@?[A-Za-z0-9_]{1,15}$/, {
+      message:
+        "twitterHandle must match /^@?[A-Za-z0-9_]{1,15}$/ (1-15 alphanumeric/underscore, optional @ prefix)",
+    }),
+    /** ID of the tweet that triggered the request. Numeric string per Twitter's
+     *  snowflake format. Caller is responsible for matching this against the
+     *  authenticated request context. */
+    tweetId: z.string().regex(/^\d+$/, {
+      message: "tweetId must be a numeric string",
+    }),
+    /** Optional override for the moderation/reply input. Defaults to inputs.text. */
+    idea: z.string().optional(),
+  })
+  .strict();
+
 const bodySchema = z
   .object({
     source: z.string().min(1, "source is required"),
     inputs: inputsSchema,
+    twitterContext: twitterContextSchema.optional(),
     publishStatus: z
       .enum(["draft", "unlisted", "published"])
       .optional()
@@ -210,6 +249,7 @@ interface GenerationRow {
   id: string;
   status: string;
   templateId: string | null;
+  reply: string | null;
   error: string | null;
   createdAt: Date;
   updatedAt: Date;
@@ -219,6 +259,7 @@ interface GenerationResponse {
   generationId: string;
   status: string;
   templateId?: string;
+  reply?: { text: string };
   error?: string;
   createdAt: string;
   updatedAt: string;
@@ -232,6 +273,7 @@ function toResponse(row: GenerationRow): GenerationResponse {
     updatedAt: row.updatedAt.toISOString(),
   };
   if (row.templateId) out.templateId = row.templateId;
+  if (row.reply) out.reply = { text: row.reply };
   if (row.error) out.error = row.error;
   return out;
 }
@@ -246,6 +288,7 @@ async function fetchOwnedGeneration(
       id: true,
       status: true,
       templateId: true,
+      reply: true,
       error: true,
       createdAt: true,
       updatedAt: true,
@@ -364,31 +407,45 @@ async function streamUntilTerminal(args: {
 // Handler
 // ---------------------------------------------------------------------------
 
-/** Internal type for the idempotency dedupe lookup. Includes `source` so the
- *  body comparison can detect cross-source key reuse (e.g. same Idempotency-Key
- *  with source="twitter-bot" vs source="ios-app"). */
+/** Internal type for the idempotency dedupe lookup. Includes `source` and
+ *  `twitterContext` so the body comparison can detect cross-source or
+ *  cross-tweet key reuse (e.g. same Idempotency-Key with source="twitter-bot"
+ *  vs source="ios-app", or same key with different tweetIds). */
 interface DedupeRow extends GenerationRow {
   source: string;
   inputs: unknown;
+  twitterContext: unknown;
 }
 
 const dedupeSelect = {
   id: true,
   source: true,
   inputs: true,
+  twitterContext: true,
   status: true,
   templateId: true,
+  reply: true,
   error: true,
   createdAt: true,
   updatedAt: true,
 } as const;
 
-/** Compare the full idempotent contract (source + inputs), not just inputs.
- *  Matches the docstring's "409 on body mismatch" promise. */
+/** Compare the full idempotent contract (source + inputs + twitterContext),
+ *  not just inputs. Matches the docstring's "409 on body mismatch" promise
+ *  and prevents two different tweets that happen to share idea text from
+ *  cross-linking under the same Idempotency-Key. */
 function dedupeBodiesMatch(existing: DedupeRow, body: Body): boolean {
   return bodiesMatch(
-    { source: existing.source, inputs: existing.inputs },
-    { source: body.source, inputs: body.inputs },
+    {
+      source: existing.source,
+      inputs: existing.inputs,
+      twitterContext: existing.twitterContext,
+    },
+    {
+      source: body.source,
+      inputs: body.inputs,
+      twitterContext: body.twitterContext ?? null,
+    },
   );
 }
 
@@ -587,6 +644,28 @@ export async function generationsPostHandler(req: Request, res: Response) {
     return;
   }
 
+  // 9b. Twitter intent gate — only when twitterContext is present
+  if (body.twitterContext) {
+    const intentInput =
+      body.twitterContext.idea ??
+      (coalesced.kind === "text" ? coalesced.text : "");
+    if (!intentInput || intentInput.trim().length === 0) {
+      res.status(400).json({
+        error:
+          "twitterContext.idea or inputs.text required for twitter intent check",
+      });
+      return;
+    }
+    const intent = await checkTwitterIntent(intentInput);
+    if (!intent.allowed) {
+      res.status(422).json({
+        reason: intent.reason || "not_agent_request",
+        category: "intent",
+      });
+      return;
+    }
+  }
+
   // 10. Persist + fire executor
   let created: GenerationRow;
   try {
@@ -596,6 +675,9 @@ export async function generationsPostHandler(req: Request, res: Response) {
         source: body.source,
         idempotencyKey,
         inputs: body.inputs as object,
+        twitterContext: body.twitterContext
+          ? (body.twitterContext as Prisma.InputJsonValue)
+          : Prisma.JsonNull,
         publishStatus: body.publishStatus,
         status: "pending",
       },
@@ -603,6 +685,7 @@ export async function generationsPostHandler(req: Request, res: Response) {
         id: true,
         status: true,
         templateId: true,
+        reply: true,
         error: true,
         createdAt: true,
         updatedAt: true,

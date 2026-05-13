@@ -157,8 +157,10 @@ model AgentTemplateGeneration {
   source          String
   idempotencyKey  String
   inputs          Json
+  twitterContext  Json?
   templateId      String?          @db.Uuid
   publishStatus   PublishStatus    @default(draft)
+  reply           String?          @db.Text
   status          GenerationStatus @default(pending)
   error           String?          @db.Text
   expiresAt       DateTime?
