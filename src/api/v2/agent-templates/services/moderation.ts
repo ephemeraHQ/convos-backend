@@ -311,12 +311,3 @@ async function _classify(opts: ClassifyOptions): Promise<ModerationResult> {
     clearTimeout(timeoutId);
   }
 }
-
-// ---------------------------------------------------------------------------
-// Internal — exported for PR #201 to extend with checkTwitterIntent.
-// PR #200 only ships checkContent.
-// ---------------------------------------------------------------------------
-
-export const __internal = {
-  classify: _classify,
-};
