@@ -136,8 +136,16 @@ function coalesceInputs(inputs: Inputs): CoalescedInput | null {
     return { kind: "pdfBase64", pdfBase64: inputs.pdfBase64 };
   if (inputs.imageBase64)
     return { kind: "imageBase64", imageBase64: inputs.imageBase64 };
-  const text = inputs.text || inputs.idea || inputs.content || inputs.url;
-  if (text && text.trim().length > 0) return { kind: "text", text };
+  // Pick the first text-bearing field whose content is non-whitespace.
+  // A naive `||` chain short-circuits on truthy-but-whitespace values
+  // (`"   "` is truthy in JS), so a payload like
+  // `{ text: "   ", idea: "real prompt" }` would lose "real prompt" and
+  // surface as a 400 instead of falling through to `idea`.
+  const text = [inputs.text, inputs.idea, inputs.content, inputs.url].find(
+    (value): value is string =>
+      typeof value === "string" && value.trim().length > 0,
+  );
+  if (text) return { kind: "text", text };
   return null;
 }
 

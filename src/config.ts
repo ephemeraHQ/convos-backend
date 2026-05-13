@@ -124,3 +124,15 @@ export const GENERATION_EXECUTOR_TIMEOUT_MS = parsePositiveInt(
   process.env.GENERATION_EXECUTOR_TIMEOUT_MS,
   5 * 60 * 1000,
 );
+
+// Operational invariant: the stuck-row sweep must allow the in-process
+// timeout to win under normal operation. If a misconfiguration inverts
+// these (e.g. STUCK_THRESHOLD=60s + EXECUTOR_TIMEOUT=5min), the sweep
+// would fire on live generations and mark them `failed` while the
+// executor is still working. Fail fast at startup rather than silently
+// corrupting generation state.
+if (GENERATION_STUCK_SWEEP_THRESHOLD_MS <= GENERATION_EXECUTOR_TIMEOUT_MS) {
+  throw new Error(
+    `Configuration error: GENERATION_STUCK_SWEEP_THRESHOLD_MS (${GENERATION_STUCK_SWEEP_THRESHOLD_MS}ms) must be greater than GENERATION_EXECUTOR_TIMEOUT_MS (${GENERATION_EXECUTOR_TIMEOUT_MS}ms).`,
+  );
+}

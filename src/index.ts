@@ -3,7 +3,10 @@ import cookieParser from "cookie-parser";
 import cors from "cors";
 import express from "express";
 import helmet from "helmet";
-import { startTtlSweep as startGenerationTtlSweep } from "@/api/v2/agent-templates/services/ttl-sweep";
+import {
+  startTtlSweep as startGenerationTtlSweep,
+  stopTtlSweep as stopGenerationTtlSweep,
+} from "@/api/v2/agent-templates/services/ttl-sweep";
 import apiRouter from "./api";
 import { IS_DEVELOPMENT, XMTP_ENV } from "./config";
 import { errorHandlerMiddleware } from "./middleware/errorHandler";
@@ -88,6 +91,10 @@ validateJWTKeys()
 
     process.on("SIGTERM", () => {
       logger.info("SIGTERM signal received: closing Convos API service");
+      // Stop the generation TTL sweep so its setInterval doesn't keep
+      // dispatching DB queries against a closing pool during the drain
+      // window. No-op if the sweep was never started (production gate).
+      stopGenerationTtlSweep();
       server.close(() => {
         logger.info("Convos API service closed");
       });
