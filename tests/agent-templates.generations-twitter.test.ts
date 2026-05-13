@@ -35,7 +35,6 @@ import { __resetPostHogForTests } from "@/api/v2/agent-templates/services/postho
 import {
   __resetGenerateTemplateForTests,
   DEFAULT_TEST_METRICS,
-  type GeneratedTemplate,
 } from "@/api/v2/agent-templates/services/templateGen";
 import { __setAgentAssetsApiKeyOverrideForTests } from "@/middleware/agentAuth";
 import { ADMIN_ACCOUNT_ID } from "@/utils/constants";
@@ -44,19 +43,18 @@ import {
   startAgentTemplatesServer,
   validAgentAssetsApiKey,
 } from "./agent-templates.cross.helpers";
+import { makeFakeTemplate } from "./agent-templates.generation.helpers";
 
 const TEST_PORT = 4078;
 const TEST_SOURCE = "generations-twitter-test";
 
-const fakeTemplate: GeneratedTemplate = {
+const fakeTemplate = makeFakeTemplate({
   agentName: "Tweet Replier",
   description: "Helps reply to tweets quickly.",
   prompt: "You compose pithy tweet replies",
   category: "Social",
   emoji: "🐦",
-  tools: [],
-  connections: [],
-};
+});
 
 const baseHeaders = () => ({
   "Content-Type": "application/json",
