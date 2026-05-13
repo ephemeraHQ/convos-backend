@@ -50,9 +50,12 @@ const bodySchema = z
     description: z.string().nullable().optional(),
     emoji: z.string().nullable().optional(),
     featured: z.boolean().optional(),
-    prompt: z.string().refine((value) => value.trim().length > 0, {
-      message: "prompt is required",
-    }),
+    prompt: z
+      .string()
+      .max(50_000, { message: "prompt exceeds maximum length of 50_000 characters" })
+      .refine((value) => value.trim().length > 0, {
+        message: "prompt is required",
+      }),
     slug: z.string().optional(),
     tools: z.array(z.string()).optional(),
   })

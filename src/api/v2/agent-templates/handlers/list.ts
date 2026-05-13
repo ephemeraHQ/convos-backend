@@ -104,12 +104,18 @@ export async function listHandler(req: Request, res: Response) {
   const accountId = res.locals.accountId as string;
   const isApiKeyListener = res.locals.isApiKeyListener ?? false;
 
-  // Status filter handling
+  // Status filter handling. Express + qs can deliver `?status=draft` as a
+  // string OR `?status=draft&status=published` as an array of strings (and
+  // bracket-notation `?status[foo]=bar` as a nested object). Narrow to a
+  // single string explicitly so a repeated/object form is rejected with
+  // the same 400 as an invalid enum value instead of slipping through a
+  // silent cast.
   const hasStatusFilter = Object.prototype.hasOwnProperty.call(
     req.query,
     "status",
   );
-  const statusFilter = req.query.status as string | undefined;
+  const rawStatus = req.query.status;
+  const statusFilter = typeof rawStatus === "string" ? rawStatus : undefined;
 
   if (hasStatusFilter) {
     if (

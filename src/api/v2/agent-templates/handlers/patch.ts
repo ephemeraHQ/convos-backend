@@ -21,6 +21,7 @@ const bodySchema = z
     emoji: z.string().nullable().optional(),
     prompt: z
       .string()
+      .max(50_000, { message: "prompt exceeds maximum length of 50_000 characters" })
       .refine((value) => value.trim().length > 0, {
         message: "prompt must not be empty",
       })
@@ -186,6 +187,15 @@ export async function patchHandler(req: Request, res: Response) {
     const callerAccountId = res.locals.accountId;
     const isApiKeyListener = res.locals.isApiKeyListener ?? false;
     if (template.ownerAccountId !== callerAccountId && !isApiKeyListener) {
+      req.log.warn(
+        {
+          callerAccountId,
+          templateId: template.id,
+          ownerAccountId: template.ownerAccountId,
+          action: "patch",
+        },
+        "Unauthorized agent-template access attempt",
+      );
       res.status(403).json({ error: "Not authorized to modify this template" });
       return;
     }

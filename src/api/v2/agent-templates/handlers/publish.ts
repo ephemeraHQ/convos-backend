@@ -52,6 +52,15 @@ export async function publishHandler(req: Request, res: Response) {
     const callerAccountId = res.locals.accountId;
     const isApiKeyListener = res.locals.isApiKeyListener ?? false;
     if (template.ownerAccountId !== callerAccountId && !isApiKeyListener) {
+      req.log.warn(
+        {
+          callerAccountId,
+          templateId: template.id,
+          ownerAccountId: template.ownerAccountId,
+          action: "publish",
+        },
+        "Unauthorized agent-template access attempt",
+      );
       res
         .status(403)
         .json({ error: "Not authorized to publish this template" });
