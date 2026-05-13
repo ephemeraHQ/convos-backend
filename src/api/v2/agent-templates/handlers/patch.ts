@@ -21,7 +21,9 @@ const bodySchema = z
     emoji: z.string().nullable().optional(),
     prompt: z
       .string()
-      .max(50_000, { message: "prompt exceeds maximum length of 50_000 characters" })
+      .max(50_000, {
+        message: "prompt exceeds maximum length of 50_000 characters",
+      })
       .refine((value) => value.trim().length > 0, {
         message: "prompt must not be empty",
       })
