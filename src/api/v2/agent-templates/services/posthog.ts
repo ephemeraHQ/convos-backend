@@ -113,14 +113,16 @@ export function capturePostHog(properties: PostHogCaptureProperties): void {
     return;
   }
 
-  const client = getPostHogClient();
-  if (!client) return; // silent no-op when env not set
-
   // Fire-and-forget: capture is buffered internally by the SDK.
   // No await — the route returns immediately. Wrap in try/catch so a
-  // synchronous SDK failure (serialization, internal state) cannot bubble
-  // up and break the request that triggered this analytics call.
+  // synchronous SDK failure (serialization, internal state, or lazy
+  // `require("posthog-node")` / `new PostHog()` failure inside
+  // getPostHogClient) cannot bubble up and break the request that
+  // triggered this analytics call.
   try {
+    const client = getPostHogClient();
+    if (!client) return; // silent no-op when env not set
+
     client.capture({
       distinctId: "builder",
       event: BUILDER_GENERATION_COMPLETED_EVENT,
