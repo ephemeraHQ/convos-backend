@@ -1,5 +1,8 @@
 import { Router } from "express";
-import { authOrAgentApiKeyAuth } from "@/middleware/agentAuth";
+import {
+  authOrAgentApiKeyAuth,
+  optionalAuthOrAgentApiKeyAuth,
+} from "@/middleware/agentAuth";
 import { requireAccount } from "@/middleware/auth";
 import { createHandler } from "./handlers/create";
 import { deleteHandler } from "./handlers/delete";
@@ -12,12 +15,11 @@ import { publishHandler } from "./handlers/publish";
 
 export const agentTemplatesRouter = Router();
 
-agentTemplatesRouter.get(
-  "/",
-  authOrAgentApiKeyAuth,
-  requireAccount,
-  listHandler,
-);
+// Read endpoints (list, detail) are public. `optionalAuthOrAgentApiKeyAuth`
+// still sets res.locals.accountId when credentials are provided, so a
+// signed-in user can still see their own drafts; anonymous callers get
+// the published-only view.
+agentTemplatesRouter.get("/", optionalAuthOrAgentApiKeyAuth, listHandler);
 agentTemplatesRouter.post(
   "/",
   authOrAgentApiKeyAuth,
@@ -60,7 +62,6 @@ agentTemplatesRouter.post(
 );
 agentTemplatesRouter.get(
   "/:idOrHashedSlug",
-  authOrAgentApiKeyAuth,
-  requireAccount,
+  optionalAuthOrAgentApiKeyAuth,
   detailHandler,
 );

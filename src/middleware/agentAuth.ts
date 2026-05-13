@@ -103,3 +103,38 @@ export const authOrAgentApiKeyAuth = async (
   req.log.debug("Attempting JWT authentication");
   await authMiddleware(req, res, next);
 };
+
+/**
+ * Optional auth middleware for endpoints that should be reachable
+ * without credentials but still pick up account context when it's
+ * provided.
+ *
+ * Behaviour:
+ *   - Auth header (X-Agent-API-Key OR X-Convos-AuthToken) present →
+ *     delegate to `authOrAgentApiKeyAuth` (same shape as today, sets
+ *     `res.locals.accountId` and `res.locals.isApiKeyListener`).
+ *   - No auth header → skip auth entirely. `res.locals.accountId`
+ *     remains `undefined`; downstream handlers branch on that to
+ *     return the public/anonymous view.
+ *   - Auth header present but INVALID → 401. Presenting credentials
+ *     is opt-in; if you opt in, they have to be valid.
+ *
+ * Used by the agent-templates list/detail/generation-{post,status}
+ * endpoints. Write endpoints (POST /, PATCH, DELETE, /publish) stay
+ * on `authOrAgentApiKeyAuth + requireAccount`.
+ */
+export const optionalAuthOrAgentApiKeyAuth = async (
+  req: Request,
+  res: Response,
+  next: NextFunction,
+) => {
+  const providedAgentApiKey = req.header(AGENT_API_KEY_HEADER)?.trim();
+  const providedAuthToken = req.header("X-Convos-AuthToken")?.trim();
+
+  if (!providedAgentApiKey && !providedAuthToken) {
+    next();
+    return;
+  }
+
+  await authOrAgentApiKeyAuth(req, res, next);
+};

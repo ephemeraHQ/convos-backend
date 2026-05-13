@@ -98,10 +98,10 @@ const decodeCursor = (cursor: string | undefined) => {
 };
 
 export async function listHandler(req: Request, res: Response) {
-  // The router pins this route to authOrAgentApiKeyAuth + requireAccount, so
-  // accountId is always set by the time we get here. We don't expose the list
-  // surface to unauthenticated callers — there's no public discovery API.
-  const accountId = res.locals.accountId as string;
+  // The router uses `optionalAuthOrAgentApiKeyAuth`, so `accountId` is set
+  // when the caller presented valid credentials and `undefined` for
+  // anonymous callers. Anonymous = published-only view.
+  const accountId = res.locals.accountId as string | undefined;
   const isApiKeyListener = res.locals.isApiKeyListener ?? false;
 
   // Status filter handling. Express + qs can deliver `?status=draft` as a
@@ -147,14 +147,23 @@ export async function listHandler(req: Request, res: Response) {
     return;
   }
 
-  // Build the where clause based on caller type (regular user vs API key).
+  // Build the where clause based on caller type (anonymous vs regular user
+  // vs API key listener).
   const where: Prisma.AgentTemplateWhereInput = {};
 
   if (hasStatusFilter && statusFilter) {
     // API key listeners see all templates with that status (admin-like access);
-    // regular users see only their own templates with the requested status.
+    // regular users see only their own templates with the requested status;
+    // anonymous callers can only ask for `published` — any other status
+    // returns an empty result (no enumeration of drafts/unlisted/archived).
     if (isApiKeyListener) {
       where.status = statusFilter as Prisma.EnumPublishStatusFilter;
+    } else if (accountId === undefined) {
+      if (statusFilter !== "published") {
+        res.status(200).json({ data: [], hasMore: false, nextCursor: null });
+        return;
+      }
+      where.status = "published";
     } else {
       where.AND = [
         { status: statusFilter as Prisma.EnumPublishStatusFilter },
@@ -163,6 +172,9 @@ export async function listHandler(req: Request, res: Response) {
     }
   } else if (isApiKeyListener) {
     // API key listener sees everything (admin-like access). No filter needed.
+  } else if (accountId === undefined) {
+    // Anonymous caller with no status filter: published-only view.
+    where.status = "published";
   } else {
     // Regular authenticated user without status filter:
     // Published templates from any owner + own drafts/unlisted/archived.

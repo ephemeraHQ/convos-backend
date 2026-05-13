@@ -58,12 +58,14 @@ export async function detailHandler(req: Request, res: Response) {
     });
 
     // If not found, check if it's a draft template accessible to the caller.
-    // accountId is guaranteed by the router (authOrAgentApiKeyAuth + requireAccount).
+    // The router uses `optionalAuthOrAgentApiKeyAuth`, so `accountId` may be
+    // undefined for anonymous callers — they never own a draft, so the
+    // ownership check below falls through and they get a 404.
     if (
       template === null &&
       uuidPattern.test(parsedParams.data.idOrHashedSlug)
     ) {
-      const accountId = res.locals.accountId as string;
+      const accountId = res.locals.accountId as string | undefined;
       const isApiKeyListener = res.locals.isApiKeyListener ?? false;
 
       const draftTemplate = await prisma.agentTemplate.findUnique({
@@ -71,8 +73,13 @@ export async function detailHandler(req: Request, res: Response) {
       });
 
       if (draftTemplate !== null && draftTemplate.status === "draft") {
-        // Draft is only visible to the owner or API key listener
-        if (draftTemplate.ownerAccountId === accountId || isApiKeyListener) {
+        // Draft is only visible to the owner or API key listener.
+        // `accountId === undefined` (anonymous) won't match the owner column.
+        if (
+          isApiKeyListener ||
+          (accountId !== undefined &&
+            draftTemplate.ownerAccountId === accountId)
+        ) {
           template = draftTemplate;
         }
         // If not authorized, template stays null → 404
