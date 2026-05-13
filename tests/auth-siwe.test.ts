@@ -44,6 +44,7 @@ describe("verifySiwe", () => {
       message: messageStr,
       signature,
       expectedNonce: NONCE,
+      expectedDeviceId: TEST_DEVICE_ID,
       now: NOW,
     });
     expect(result.address).toBe(address);
@@ -57,6 +58,7 @@ describe("verifySiwe", () => {
       message: messageStr,
       signature,
       expectedNonce: NONCE,
+      expectedDeviceId: TEST_DEVICE_ID,
       now: NOW,
     });
   });
@@ -67,6 +69,7 @@ describe("verifySiwe", () => {
       message: messageStr,
       signature,
       expectedNonce: "00".repeat(32),
+      expectedDeviceId: TEST_DEVICE_ID,
       now: NOW,
     });
   });
@@ -77,6 +80,7 @@ describe("verifySiwe", () => {
       message: messageStr,
       signature,
       expectedNonce: NONCE,
+      expectedDeviceId: TEST_DEVICE_ID,
       now: NOW,
     });
   });
@@ -89,6 +93,7 @@ describe("verifySiwe", () => {
       message: messageStr,
       signature,
       expectedNonce: NONCE,
+      expectedDeviceId: TEST_DEVICE_ID,
       now: NOW,
     });
   });
@@ -107,6 +112,7 @@ describe("verifySiwe", () => {
         message: tampered,
         signature,
         expectedNonce: NONCE,
+        expectedDeviceId: TEST_DEVICE_ID,
         now: NOW,
       },
       "parse",
@@ -121,6 +127,7 @@ describe("verifySiwe", () => {
       message: messageStr,
       signature,
       expectedNonce: NONCE,
+      expectedDeviceId: TEST_DEVICE_ID,
       now: NOW,
     });
   });
@@ -133,6 +140,7 @@ describe("verifySiwe", () => {
       message: messageStr,
       signature,
       expectedNonce: NONCE,
+      expectedDeviceId: TEST_DEVICE_ID,
       now: NOW,
     });
   });
@@ -145,6 +153,7 @@ describe("verifySiwe", () => {
       message: messageStr,
       signature,
       expectedNonce: NONCE,
+      expectedDeviceId: TEST_DEVICE_ID,
       now: NOW,
     });
   });
@@ -157,6 +166,7 @@ describe("verifySiwe", () => {
       message: messageStr,
       signature,
       expectedNonce: NONCE,
+      expectedDeviceId: TEST_DEVICE_ID,
       now: NOW,
     });
   });
@@ -169,6 +179,7 @@ describe("verifySiwe", () => {
       message: messageStr,
       signature,
       expectedNonce: NONCE,
+      expectedDeviceId: TEST_DEVICE_ID,
       now: NOW,
     });
   });
@@ -181,6 +192,7 @@ describe("verifySiwe", () => {
       message: messageStr,
       signature: badSig,
       expectedNonce: NONCE,
+      expectedDeviceId: TEST_DEVICE_ID,
       now: NOW,
     });
   });

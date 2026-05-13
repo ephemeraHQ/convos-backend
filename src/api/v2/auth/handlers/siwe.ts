@@ -15,6 +15,7 @@ export async function verifySiwe(args: {
   message: string;
   signature: string;
   expectedNonce: string;
+  expectedDeviceId: string;
   now: Date;
 }): Promise<{ address: string }> {
   let msg: SiweMessage;

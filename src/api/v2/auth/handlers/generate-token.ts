@@ -86,6 +86,7 @@ export async function generateToken(
         message: body.siwe.message,
         signature: body.siwe.signature,
         expectedNonce: nonce,
+        expectedDeviceId: body.deviceId,
         now: new Date(),
       });
       address = result.address;
