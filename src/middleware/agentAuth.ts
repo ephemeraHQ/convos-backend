@@ -1,10 +1,37 @@
 import { createHash, timingSafeEqual } from "crypto";
 import type { NextFunction, Request, Response } from "express";
+import { AGENT_ASSETS_API_KEY } from "@/config";
 import { ADMIN_ACCOUNT_ID } from "@/utils/constants";
 import { authMiddleware } from "./auth";
 
 export const AGENT_API_KEY_HEADER = "X-Agent-API-Key";
 const MIN_AGENT_API_KEY_LENGTH = 32;
+
+// ---------------------------------------------------------------------------
+// Config-backed accessor (with test-only override seam)
+// ---------------------------------------------------------------------------
+
+let _agentAssetsApiKeyOverride: string | null | undefined = undefined;
+
+function getAgentAssetsApiKey(): string {
+  // `undefined` ⇒ fall through to config; `null`/empty string ⇒ explicitly
+  // unset (forces 503 path). Tests use this seam instead of mutating
+  // process.env at runtime so the cached config value isn't bypassed.
+  if (_agentAssetsApiKeyOverride !== undefined) {
+    return (_agentAssetsApiKeyOverride ?? "").trim();
+  }
+  return AGENT_ASSETS_API_KEY.trim();
+}
+
+/** Override `AGENT_ASSETS_API_KEY` for tests.
+ *  - Pass a string to override.
+ *  - Pass `null` to simulate "key unset" (forces 503).
+ *  - Pass `undefined` to clear the override and fall back to config. */
+export function __setAgentAssetsApiKeyOverrideForTests(
+  key: string | null | undefined,
+): void {
+  _agentAssetsApiKeyOverride = key;
+}
 
 function constantTimeSecretCompare(
   provided: string,
@@ -21,7 +48,7 @@ export const agentApiKeyAuth = (
   res: Response,
   next: NextFunction,
 ) => {
-  const expectedKey = (process.env.AGENT_ASSETS_API_KEY ?? "").trim();
+  const expectedKey = getAgentAssetsApiKey();
 
   if (!expectedKey) {
     res.status(503).json({ error: "Agent assets API key not configured" });
