@@ -5,6 +5,7 @@ import { AGENT_POOL_API_KEY, AGENT_POOL_URL, XMTP_ENV } from "@/config";
 const bodySchema = z.object({
   slug: z.string().min(1, "Slug is required").max(2048),
   instructions: z.string().max(4096, "Instructions too long").optional(),
+  skipGreeting: z.boolean().optional(),
 });
 
 const FORCE_ERROR_DELAY_MS = 5_000;
@@ -99,8 +100,8 @@ export async function joinHandler(req: Request, res: Response) {
     return;
   }
 
-  const { slug, instructions } = parsed.data;
-  req.log.info({ slug }, "Agent join request received");
+  const { slug, instructions, skipGreeting } = parsed.data;
+  req.log.info({ slug, skipGreeting }, "Agent join request received");
 
   try {
     const joinUrl = buildInviteUrl(slug);
@@ -117,6 +118,7 @@ export async function joinHandler(req: Request, res: Response) {
         agentName: "Assistant",
         instructions: instructions || "You are a helpful assistant.",
         joinUrl,
+        ...(skipGreeting !== undefined && { skipGreeting }),
       }),
     });
 
