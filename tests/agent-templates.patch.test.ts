@@ -9,24 +9,16 @@ import {
   expect,
   test,
 } from "bun:test";
-import express from "express";
-import { agentTemplatesRouter } from "@/api/v2/agent-templates/agent-templates.router";
-import { jsonMiddleware } from "@/middleware/json";
-import { noRouteMiddleware } from "@/middleware/noRoute";
-import { pinoMiddleware } from "@/middleware/pino";
 import { ADMIN_ACCOUNT_ID } from "@/utils/constants";
 import { createJwtToken } from "@/utils/jwt";
 import { prisma } from "@/utils/prisma";
+import { buildAgentTemplatesApp } from "./agent-templates.cross.helpers";
 
 type TemplateBody = Record<string, unknown>;
 
 const OTHER_ACCOUNT_ID = "bbbbbbbb-cccc-4ddd-eeee-ffffffff0001";
 
-const app = express();
-app.use(pinoMiddleware);
-app.use(jsonMiddleware);
-app.use("/api/v2/agent-templates", agentTemplatesRouter);
-app.use(noRouteMiddleware);
+const app = buildAgentTemplatesApp();
 
 let server: Server;
 const baseURL = "http://localhost:4061";

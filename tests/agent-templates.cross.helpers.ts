@@ -18,12 +18,27 @@ export type ListBody = {
 export const validAgentAssetsApiKey =
   "test-agent-assets-api-key-that-is-at-least-32-characters";
 
-export const startAgentTemplatesServer = async (port: number) => {
+/**
+ * Build the standard agent-templates Express app used across in-process
+ * test files. Wires up the four middlewares + the `/api/v2/agent-templates`
+ * router mount that every router-level test needs:
+ *
+ *   pinoMiddleware → jsonMiddleware → agentTemplatesRouter → noRouteMiddleware
+ *
+ * Caller is responsible for `app.listen()` (or driving via `request(app)`).
+ * For an http-server-based setup, use `startAgentTemplatesServer` below.
+ */
+export const buildAgentTemplatesApp = (): express.Express => {
   const app = express();
   app.use(pinoMiddleware);
   app.use(jsonMiddleware);
   app.use("/api/v2/agent-templates", agentTemplatesRouter);
   app.use(noRouteMiddleware);
+  return app;
+};
+
+export const startAgentTemplatesServer = async (port: number) => {
+  const app = buildAgentTemplatesApp();
 
   let server: Server;
   await new Promise<void>((resolve) => {
