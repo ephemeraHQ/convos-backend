@@ -26,6 +26,7 @@ async function reset() {
   // Preserve the admin account seeded by migration; only wipe test-created rows.
   await prisma.account.deleteMany({ where: { id: { not: ADMIN_ACCOUNT_ID } } });
   await prisma.authNonce.deleteMany();
+  await prisma.deviceRegistration.deleteMany();
 }
 
 describe("auth end-to-end", () => {
@@ -34,6 +35,11 @@ describe("auth end-to-end", () => {
 
   test("nonce → SIWE → token → gated route", async () => {
     const app = makeApp();
+
+    // Pre-create device row for assertion later.
+    await prisma.deviceRegistration.create({
+      data: { deviceId: "dev-e2e" },
+    });
 
     // 1. Get nonce
     const nonceRes = await request(app)
@@ -79,6 +85,14 @@ describe("auth end-to-end", () => {
     expect(gatedBody.accountId).toMatch(
       /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
     );
+
+    // Backfill check: DeviceRegistration row for dev-e2e should have
+    // accountId equal to the minted account in the JWT.
+    const deviceRow = await prisma.deviceRegistration.findUnique({
+      where: { deviceId: "dev-e2e" },
+    });
+    expect(deviceRow).toBeTruthy();
+    expect(deviceRow!.accountId).toBe(gatedBody.accountId);
   });
 
   test("legacy device-only token cannot reach gated route", async () => {

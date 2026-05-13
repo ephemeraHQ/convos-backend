@@ -1,5 +1,5 @@
 -- AlterTable
-ALTER TABLE "DeviceRegistration" ADD COLUMN     "accountId" UUID;
+ALTER TABLE "DeviceRegistration" ADD COLUMN "accountId" UUID;
 
 -- CreateIndex
 CREATE INDEX "DeviceRegistration_accountId_idx" ON "DeviceRegistration"("accountId");
