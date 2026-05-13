@@ -11,7 +11,10 @@
 import type { Server } from "node:http";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import express, { type Response } from "express";
-import { authOrAgentApiKeyAuth } from "@/middleware/agentAuth";
+import {
+  __setAgentAssetsApiKeyOverrideForTests,
+  authOrAgentApiKeyAuth,
+} from "@/middleware/agentAuth";
 import { requireAccount } from "@/middleware/auth";
 import { jsonMiddleware } from "@/middleware/json";
 import { pinoMiddleware } from "@/middleware/pino";
@@ -26,11 +29,12 @@ import { createJwtToken } from "@/utils/jwt";
 const validAgentAssetsApiKey =
   "test-agent-assets-api-key-that-is-at-least-32-characters";
 
-// Set the API key once at module load. The agentApiKeyAuth middleware reads
-// process.env.AGENT_ASSETS_API_KEY at request time, so toggling it across
-// describe-block transitions can race with in-flight requests under Bun's
-// CI runner. Setting it once for the entire test file avoids that transition.
-process.env.AGENT_ASSETS_API_KEY = validAgentAssetsApiKey;
+// Set the test override once at module load. After commit 6f0be85,
+// AGENT_ASSETS_API_KEY is cached by config.ts at import time and
+// agentApiKeyAuth reads it via the override seam, so a single setup
+// here covers every request in the file (the previous race comment
+// no longer applies — the cached value can't drift between requests).
+__setAgentAssetsApiKeyOverrideForTests(validAgentAssetsApiKey);
 
 const agentKeyHeaders = (key = validAgentAssetsApiKey) => ({
   "Content-Type": "application/json",
