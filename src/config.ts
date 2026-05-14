@@ -96,7 +96,8 @@ export const BUILDER_MODEL = process.env.BUILDER_MODEL?.trim() || "";
 export const CONTENT_MODERATION_MODEL =
   process.env.CONTENT_MODERATION_MODEL?.trim() ||
   "anthropic/claude-3-5-haiku-20241022";
-export const EXA_SERVICE_KEY = process.env.EXA_SERVICE_KEY?.trim() || "";
+export const BUILDER_EXA_SERVICE_KEY =
+  process.env.BUILDER_EXA_SERVICE_KEY?.trim() || "";
 
 // Twitter integration (optional — moderation/reply paths only fire when
 // twitterContext is present on a generation; defaults match the content
@@ -108,11 +109,12 @@ export const TWITTER_MODERATION_MODEL =
 export const TWITTER_REPLY_MODEL =
   process.env.TWITTER_REPLY_MODEL?.trim() ||
   "anthropic/claude-3-5-haiku-20241022";
-export const TEMPLATE_SITE_URL =
-  process.env.TEMPLATE_SITE_URL?.trim() || "https://convos.org/assistants";
+export const BUILDER_SITE_URL =
+  process.env.BUILDER_SITE_URL?.trim() || "https://convos.org/assistants";
 
 // PostHog metering (optional — capture is no-op if either is unset).
-export const POSTHOG_API_KEY = process.env.POSTHOG_API_KEY?.trim() || "";
+export const POSTHOG_PROJECT_TOKEN =
+  process.env.POSTHOG_PROJECT_TOKEN?.trim() || "";
 export const POSTHOG_HOST = process.env.POSTHOG_HOST?.trim() || "";
 
 // Generation pipeline timing knobs (override via env in tests / staging).

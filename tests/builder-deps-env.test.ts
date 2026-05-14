@@ -7,8 +7,8 @@ const readRepoFile = (path: string) =>
 const newOptionalEnvVars = [
   "BUILDER_OPENROUTER_API_KEY",
   "BUILDER_MODEL",
-  "EXA_SERVICE_KEY",
-  "POSTHOG_API_KEY",
+  "BUILDER_EXA_SERVICE_KEY",
+  "POSTHOG_PROJECT_TOKEN",
   "POSTHOG_HOST",
 ] as const;
 

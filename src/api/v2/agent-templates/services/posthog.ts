@@ -4,7 +4,7 @@
  * Fires a single `builder.generation.completed` event per generation
  * pipeline invocation that reaches the LLM call (both success and error
  * paths). Capture is fire-and-forget — no blocking await on `capture()` or
- * `flush()`. Missing `POSTHOG_API_KEY`/`POSTHOG_HOST` env vars are
+ * `flush()`. Missing `POSTHOG_PROJECT_TOKEN`/`POSTHOG_HOST` env vars are
  * a silent no-op (the SDK never initialises, no outbound requests).
  *
  * Test seam: `__resetPostHogForTests(override)` mirrors the
@@ -14,7 +14,7 @@
 
 /* eslint-disable @typescript-eslint/no-require-imports, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-explicit-any */
 
-import { POSTHOG_API_KEY, POSTHOG_HOST } from "@/config";
+import { POSTHOG_HOST, POSTHOG_PROJECT_TOKEN } from "@/config";
 import type { GenerationMetrics } from "./templateGen";
 
 // ---------------------------------------------------------------------------
@@ -65,14 +65,14 @@ let _posthogClient: any = null;
 function getPostHogClient(): any {
   if (_posthogClient) return _posthogClient;
 
-  if (!POSTHOG_API_KEY || !POSTHOG_HOST) return null;
+  if (!POSTHOG_PROJECT_TOKEN || !POSTHOG_HOST) return null;
 
   // Dynamic import would require top-level await; use require() for
   // synchronous lazy init at call time (matches mission constraint).
   const { PostHog } = require("posthog-node") as {
     PostHog: new (apiKey: string, opts: { host: string }) => any;
   };
-  _posthogClient = new PostHog(POSTHOG_API_KEY, { host: POSTHOG_HOST });
+  _posthogClient = new PostHog(POSTHOG_PROJECT_TOKEN, { host: POSTHOG_HOST });
   return _posthogClient;
 }
 
@@ -103,7 +103,7 @@ export function __resetPostHogForTests(
  * Fire a `builder.template.generated` PostHog event.
  *
  * - When a test override is installed, delegates to the override.
- * - When `POSTHOG_API_KEY`/`POSTHOG_HOST` are unset, returns immediately (no-op).
+ * - When `POSTHOG_PROJECT_TOKEN`/`POSTHOG_HOST` are unset, returns immediately (no-op).
  * - Otherwise, calls `posthog.capture()` which is buffered/async internally —
  *   we do NOT await it, keeping the route response fast.
  */

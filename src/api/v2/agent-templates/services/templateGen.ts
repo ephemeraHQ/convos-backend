@@ -19,9 +19,9 @@
 /* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-return, @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-argument */
 
 import {
+  BUILDER_EXA_SERVICE_KEY,
   BUILDER_MODEL,
   BUILDER_OPENROUTER_API_KEY,
-  EXA_SERVICE_KEY,
 } from "@/config";
 import { AppError } from "@/utils/errors";
 import { SYSTEM_PROMPT } from "../lib/system-prompt";
@@ -54,7 +54,7 @@ function getApiKey(): string | null {
 
 function getExaKey(): string | null {
   if (_exaKeyOverride !== undefined) return _exaKeyOverride;
-  return EXA_SERVICE_KEY || null;
+  return BUILDER_EXA_SERVICE_KEY || null;
 }
 
 /** Read the model. Exported for the generate handler (needed for error-path
@@ -77,7 +77,7 @@ export function __setBuilderModelOverrideForTests(model: string | null): void {
   _builderModelOverride = model;
 }
 
-/** Override `EXA_SERVICE_KEY` for tests. Pass `null` to simulate "unset",
+/** Override `BUILDER_EXA_SERVICE_KEY` for tests. Pass `null` to simulate "unset",
  *  `undefined` to clear and fall back to config. */
 export function __setExaKeyOverrideForTests(
   key: string | null | undefined,
@@ -208,7 +208,7 @@ function isTwitterUrl(url: string): boolean {
 async function extractViaExa(url: string): Promise<string> {
   const exaKey = getExaKey();
   if (!exaKey) {
-    throw new Error("EXA_SERVICE_KEY not configured");
+    throw new Error("BUILDER_EXA_SERVICE_KEY not configured");
   }
 
   const res = await fetch("https://api.exa.ai/contents", {
