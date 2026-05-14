@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type { Server } from "node:http";
 import express from "express";
 import { agentTemplatesRouter } from "@/api/v2/agent-templates/agent-templates.router";
@@ -7,6 +8,24 @@ import { pinoMiddleware } from "@/middleware/pino";
 import { ADMIN_ACCOUNT_ID } from "@/utils/constants";
 import { createJwtToken } from "@/utils/jwt";
 import { buildSlug } from "@/utils/slug-hash";
+
+/**
+ * Derive a deterministic UUIDv5-shaped string from a human-readable label
+ * so test fixtures can keep using mnemonic keys ("idem-1", "tw-happy")
+ * while still satisfying the handler's UUID validation. The same label
+ * always produces the same UUID, so two calls to `withKey("idem-1")`
+ * still dedupe correctly inside an idempotency test.
+ *
+ * Pure SHA-1 of `namespace:label`, sliced into the UUIDv5 layout and
+ * pinned to version=5/variant=10xx. Not cryptographically meaningful;
+ * this is purely a format-compliant identifier generator for tests.
+ */
+export const stableUuid = (label: string): string => {
+  const hex = createHash("sha1")
+    .update(`agent-templates-test:${label}`)
+    .digest("hex");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-5${hex.slice(13, 16)}-8${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
+};
 
 export type TemplateBody = Record<string, unknown>;
 export type ListBody = {

@@ -240,8 +240,8 @@ describe("getEffectiveOwnerId utility", () => {
   });
 });
 
-describe("requireAccount chained on every agent-templates route", () => {
-  test("router source chains requireAccount on read and write routes", () => {
+describe("agent-templates router auth wiring", () => {
+  test("write routes require an account; read + generations routes use optional auth", () => {
     const source = readFileSync(
       new URL(
         "../src/api/v2/agent-templates/agent-templates.router.ts",
@@ -250,22 +250,36 @@ describe("requireAccount chained on every agent-templates route", () => {
       "utf8",
     );
 
-    // Check that requireAccount is imported
+    // Both middlewares are imported.
+    expect(source).toContain("authOrAgentApiKeyAuth");
+    expect(source).toContain("optionalAuthOrAgentApiKeyAuth");
     expect(source).toContain("requireAccount");
     expect(source).toContain('from "@/middleware/auth"');
 
-    // Every route on this router requires an account, so the chain is always
-    // `authOrAgentApiKeyAuth, requireAccount, handler`. No public discovery
-    // surface — there is no unauth list/detail branch.
+    // Write routes (POST /, PATCH /:id, DELETE /:id, POST /:id/publish)
+    // chain `authOrAgentApiKeyAuth + requireAccount`. That's 4 routes,
+    // and one import, for 5 occurrences of `requireAccount` total.
     const requireAccountCount = (source.match(/requireAccount/g) ?? []).length;
+    expect(requireAccountCount).toBe(5);
 
-    // 5 write routes (POST /, POST /generations, PATCH /:id, DELETE /:id,
-    // POST /:id/publish) + 3 read routes (GET /, GET /generations/:id,
-    // GET /:idOrHashedSlug) + 1 import = 9 occurrences.
-    expect(requireAccountCount).toBe(9);
+    expect(source).toContain("requireAccount,\n  createHandler");
+    expect(source).toContain("requireAccount,\n  patchHandler");
+    expect(source).toContain("requireAccount,\n  deleteHandler");
+    expect(source).toContain("requireAccount,\n  publishHandler");
 
-    // Read routes DO have requireAccount chained.
-    expect(source).toContain("requireAccount,\n  listHandler");
-    expect(source).toContain("requireAccount,\n  detailHandler");
+    // Public routes use the optional middleware: GET /, GET /:idOrHashedSlug,
+    // POST /generations, GET /generations/:generationId. The optional
+    // middleware MUST NOT be followed by requireAccount.
+    expect(source).toContain("optionalAuthOrAgentApiKeyAuth, listHandler");
+    expect(source).toContain("optionalAuthOrAgentApiKeyAuth,\n  detailHandler");
+    expect(source).toContain(
+      "optionalAuthOrAgentApiKeyAuth,\n  generationsPostHandler",
+    );
+    expect(source).toContain(
+      "optionalAuthOrAgentApiKeyAuth,\n  generationsGetHandler",
+    );
+    expect(source).not.toMatch(
+      /optionalAuthOrAgentApiKeyAuth,\s*requireAccount/,
+    );
   });
 });

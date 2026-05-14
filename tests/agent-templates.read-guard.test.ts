@@ -8,7 +8,6 @@ import { agentTemplatesRouter } from "@/api/v2/agent-templates/agent-templates.r
 import { noRouteMiddleware } from "@/middleware/noRoute";
 import { pinoMiddleware } from "@/middleware/pino";
 import { ADMIN_ACCOUNT_ID } from "@/utils/constants";
-import { createJwtToken } from "@/utils/jwt";
 import { prisma } from "@/utils/prisma";
 
 type ListEnvelope = {
@@ -182,16 +181,8 @@ describe("Agent template read production guard", () => {
       slug: "read-guard-reachable",
     });
 
-    // Reader token — list requires auth now. Non-owner reader sees only
-    // published, which matches what this test creates.
-    const READER_ID = "00000000-0000-4000-8000-cccccccc0003";
-    const authToken = await createJwtToken({
-      deviceId: "test-device-agent-templates-read-guard",
-      accountId: READER_ID,
-    });
-    const authHeader: Record<string, string> = {
-      "X-Convos-AuthToken": authToken,
-    };
+    // List is public; anonymous callers get the published-only view, which
+    // matches what this test creates.
 
     const envCases = [
       { label: "dev", value: "dev" },
@@ -203,9 +194,7 @@ describe("Agent template read production guard", () => {
 
     for (const envCase of envCases) {
       await withGuardedServer(envCase.value, async (baseURL) => {
-        const response = await fetch(`${baseURL}/api/v2/agent-templates`, {
-          headers: authHeader,
-        });
+        const response = await fetch(`${baseURL}/api/v2/agent-templates`);
         const body = (await response.json()) as ListEnvelope;
 
         expect(response.status).toBe(200);

@@ -36,6 +36,7 @@ import { __setAgentAssetsApiKeyOverrideForTests } from "@/middleware/agentAuth";
 import { ADMIN_ACCOUNT_ID } from "@/utils/constants";
 import { prisma } from "@/utils/prisma";
 import {
+  stableUuid,
   startAgentTemplatesServer,
   validAgentAssetsApiKey,
 } from "./agent-templates.cross.helpers";
@@ -55,7 +56,14 @@ const baseHeaders = () => ({
   "X-Agent-API-Key": validAgentAssetsApiKey,
 });
 
-const withKey = (key: string) => ({ ...baseHeaders(), "Idempotency-Key": key });
+// Tests pass mnemonic labels; `stableUuid` wraps them in a deterministic
+// UUIDv5 shape so the same label always yields the same key (required for
+// the idempotency replay tests) while still passing the handler's UUID
+// validation.
+const withKey = (key: string) => ({
+  ...baseHeaders(),
+  "Idempotency-Key": stableUuid(key),
+});
 
 const sampleBody = {
   source: TEST_SOURCE,
@@ -165,6 +173,20 @@ describe("POST /generations — validation", () => {
     expect(body.error).toBe("Idempotency-Key header required");
   });
 
+  test("non-UUID Idempotency-Key → 400", async () => {
+    // The agent API key path and anonymous submissions share one idempotency
+    // namespace (both owned by ADMIN_ACCOUNT_ID), so the handler requires
+    // every key to be a UUID — that's what keeps the shared namespace safe
+    // from accidental and adversarial collisions. Any non-UUID string here
+    // (a raw tweet ID, a slug, a counter, etc.) must be rejected.
+    const res = await post(sampleBody, {
+      headers: { ...baseHeaders(), "Idempotency-Key": "1789432100123456789" },
+    });
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toBe("Idempotency-Key must be a UUID");
+  });
+
   test("publishStatus 'archived' → 400 (zod enum gate)", async () => {
     const res = await post(
       { ...sampleBody, publishStatus: "archived" },
@@ -240,7 +262,7 @@ describe("POST /generations — happy path", () => {
     });
     expect(row).not.toBeNull();
     expect(row?.source).toBe(TEST_SOURCE);
-    expect(row?.idempotencyKey).toBe("happy-1");
+    expect(row?.idempotencyKey).toBe(stableUuid("happy-1"));
   });
 
   test("wait_ms long-polls inline → 200 with terminal state + templateId", async () => {

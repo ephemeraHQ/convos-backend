@@ -40,6 +40,7 @@ import { __setAgentAssetsApiKeyOverrideForTests } from "@/middleware/agentAuth";
 import { ADMIN_ACCOUNT_ID } from "@/utils/constants";
 import { prisma } from "@/utils/prisma";
 import {
+  stableUuid,
   startAgentTemplatesServer,
   validAgentAssetsApiKey,
 } from "./agent-templates.cross.helpers";
@@ -61,7 +62,13 @@ const baseHeaders = () => ({
   "X-Agent-API-Key": validAgentAssetsApiKey,
 });
 
-const withKey = (key: string) => ({ ...baseHeaders(), "Idempotency-Key": key });
+// Tests pass mnemonic labels; `stableUuid` wraps them in a deterministic
+// UUIDv5 shape so the handler's UUID-format requirement is satisfied while
+// retries against the same label still dedupe.
+const withKey = (key: string) => ({
+  ...baseHeaders(),
+  "Idempotency-Key": stableUuid(key),
+});
 
 const twitterBody = (overrides: Record<string, unknown> = {}) => ({
   source: TEST_SOURCE,
@@ -192,6 +199,34 @@ describe("POST /generations — twitterContext validation", () => {
     expect(res.status).toBe(400);
     const errBody = (await res.json()) as { error: string };
     expect(errBody.error.toLowerCase()).toContain("twittercontext.idea");
+  });
+});
+
+describe("POST /generations — twitterContext auth gate", () => {
+  // twitterContext is privileged: it is published as a reply attributed to a
+  // real twitter handle. Only the bot (agent API key) is in a position to
+  // verify handle ownership against the tweet author, so the handler rejects
+  // the field for anonymous and JWT-only callers. These tests are the safety
+  // net for that gate — without it, an anonymous attacker could impersonate
+  // any handle.
+  test("anonymous caller with twitterContext → 403", async () => {
+    const body = twitterBody();
+    const anonKey = stableUuid("tw-anon-gate");
+    const res = await post(body, {
+      headers: {
+        "Content-Type": "application/json",
+        "Idempotency-Key": anonKey,
+      },
+    });
+    expect(res.status).toBe(403);
+    const errBody = (await res.json()) as { error: string };
+    expect(errBody.error.toLowerCase()).toContain("agent api key");
+
+    // No row was persisted.
+    const rows = await prisma.agentTemplateGeneration.findMany({
+      where: { idempotencyKey: anonKey },
+    });
+    expect(rows).toHaveLength(0);
   });
 });
 

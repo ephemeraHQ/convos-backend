@@ -1,13 +1,14 @@
 /**
  * List/detail visibility rule tests
  *
- * The list and detail endpoints both require auth — there is no public
- * discovery surface. Unauthenticated callers always receive 401.
+ * The list and detail endpoints are public. Anonymous callers see only
+ * published templates; authenticated callers additionally see their own
+ * drafts/unlisted/archived rows.
  *
  * Tests that:
- *   - Unauthenticated GET /agent-templates returns 401
+ *   - Unauthenticated GET /agent-templates returns published-only
  *   - Authenticated GET /agent-templates returns published + own drafts/unlisted/archived
- *   - GET /agent-templates?status=draft returns 401 for unauthenticated users
+ *   - GET /agent-templates?status=draft returns empty result for anonymous callers
  *   - GET /agent-templates?status=draft returns caller's own drafts for authenticated users
  *   - GET /agent-templates/:id returns 404 for draft templates not owned by caller
  *   - GET /agent-templates/:id returns template for drafts owned by caller
@@ -115,12 +116,86 @@ describe("List/detail visibility rules", () => {
     await cleanupTestRows();
   });
 
-  // Unauthenticated GET returns 401
-  test("Unauthenticated GET /agent-templates returns 401", async () => {
+  // Unauthenticated GET returns 200 with the published-only view
+  test("Unauthenticated GET /agent-templates returns 200 with published-only view", async () => {
+    // Create one published and one draft template — the anonymous lister
+    // should see the published row but not the draft.
+    const pubResponse = await fetch(`${baseURL}/api/v2/agent-templates`, {
+      method: "POST",
+      headers: await jwtHeadersFor(USER_A_ID),
+      body: JSON.stringify({
+        agentName: "Vis Test Anon Pub",
+        prompt: "Published",
+        slug: "vis-test-anon-pub",
+      }),
+    });
+    expect(pubResponse.status).toBe(201);
+    const pubBody = (await pubResponse.json()) as Record<string, unknown>;
+    const pubId = pubBody.id as string;
+    expect(pubId).toBeDefined();
+    const publishResponse = await fetch(
+      `${baseURL}/api/v2/agent-templates/${pubId}/publish`,
+      {
+        method: "POST",
+        headers: await jwtHeadersFor(USER_A_ID),
+      },
+    );
+    expect(publishResponse.status).toBe(200);
+
+    const draftResponse = await fetch(`${baseURL}/api/v2/agent-templates`, {
+      method: "POST",
+      headers: await jwtHeadersFor(USER_A_ID),
+      body: JSON.stringify({
+        agentName: "Vis Test Anon Draft",
+        prompt: "Draft",
+        slug: "vis-test-anon-draft",
+      }),
+    });
+    expect(draftResponse.status).toBe(201);
+    const draftBody = (await draftResponse.json()) as Record<string, unknown>;
+    const draftId = draftBody.id as string;
+    expect(draftId).toBeDefined();
+
     const listResponse = await fetch(
       `${baseURL}/api/v2/agent-templates?limit=100`,
     );
-    expect(listResponse.status).toBe(401);
+    expect(listResponse.status).toBe(200);
+    const listBody = (await listResponse.json()) as {
+      data: Record<string, unknown>[];
+    };
+
+    expect(listBody.data.some((t) => t.id === pubId)).toBe(true);
+    expect(listBody.data.some((t) => t.id === draftId)).toBe(false);
+    for (const t of listBody.data) {
+      expect(t.status).toBe("published");
+    }
+  });
+
+  // Optional-auth: present-but-invalid credentials must still 401.
+  // "No header" → anonymous path; "header with garbage value" → strict
+  // auth path → 401. The middleware's contract is "opt-in: if you opt in,
+  // they have to be valid", so we verify that for both header shapes.
+  test("Invalid credentials on optional-auth routes still return 401", async () => {
+    const garbageJwt = await fetch(
+      `${baseURL}/api/v2/agent-templates?limit=10`,
+      { headers: { "X-Convos-AuthToken": "not-a-real-jwt" } },
+    );
+    expect(garbageJwt.status).toBe(401);
+
+    const garbageAgentKey = await fetch(
+      `${baseURL}/api/v2/agent-templates?limit=10`,
+      { headers: { "X-Agent-API-Key": "not-the-real-key-just-a-stub" } },
+    );
+    expect(garbageAgentKey.status).toBe(401);
+
+    // Whitespace-only token is *present* and therefore opt-in to auth —
+    // strict path runs and fails. This is what the trimmed-vs-raw header
+    // check in `optionalAuthOrAgentApiKeyAuth` enforces.
+    const whitespaceJwt = await fetch(
+      `${baseURL}/api/v2/agent-templates?limit=10`,
+      { headers: { "X-Convos-AuthToken": "   " } },
+    );
+    expect(whitespaceJwt.status).toBe(401);
   });
 
   // Authenticated GET returns published + own drafts/unlisted/archived
@@ -135,12 +210,18 @@ describe("List/detail visibility rules", () => {
         slug: "vis-test-pub-a",
       }),
     });
+    expect(pubResponse.status).toBe(201);
     const pubBody = (await pubResponse.json()) as Record<string, unknown>;
     const pubId = pubBody.id as string;
-    await fetch(`${baseURL}/api/v2/agent-templates/${pubId}/publish`, {
-      method: "POST",
-      headers: await jwtHeadersFor(USER_A_ID),
-    });
+    expect(pubId).toBeDefined();
+    const publishResponse = await fetch(
+      `${baseURL}/api/v2/agent-templates/${pubId}/publish`,
+      {
+        method: "POST",
+        headers: await jwtHeadersFor(USER_A_ID),
+      },
+    );
+    expect(publishResponse.status).toBe(200);
 
     // User B creates a draft
     const bDraftResponse = await fetch(`${baseURL}/api/v2/agent-templates`, {
@@ -152,8 +233,10 @@ describe("List/detail visibility rules", () => {
         slug: "vis-test-draft-b",
       }),
     });
+    expect(bDraftResponse.status).toBe(201);
     const bDraftBody = (await bDraftResponse.json()) as Record<string, unknown>;
     const bDraftId = bDraftBody.id as string;
+    expect(bDraftId).toBeDefined();
 
     // User A creates a draft
     const aDraftResponse = await fetch(`${baseURL}/api/v2/agent-templates`, {
@@ -165,8 +248,10 @@ describe("List/detail visibility rules", () => {
         slug: "vis-test-draft-a",
       }),
     });
+    expect(aDraftResponse.status).toBe(201);
     const aDraftBody = (await aDraftResponse.json()) as Record<string, unknown>;
     const aDraftId = aDraftBody.id as string;
+    expect(aDraftId).toBeDefined();
 
     // User B lists — should see published + own draft, NOT User A's draft
     const bListResponse = await fetch(
@@ -188,12 +273,32 @@ describe("List/detail visibility rules", () => {
     expect(bListBody.data.some((t) => t.id === aDraftId)).toBe(false);
   });
 
-  // GET ?status=draft returns 401 for unauthenticated users
-  test("GET ?status=draft returns 401 for unauthenticated users", async () => {
+  // GET ?status=draft returns empty result for anonymous callers
+  test("GET ?status=draft returns empty result for anonymous callers", async () => {
+    // Create a draft so the table is non-empty for this filter; anonymous
+    // callers still see nothing.
+    await fetch(`${baseURL}/api/v2/agent-templates`, {
+      method: "POST",
+      headers: await jwtHeadersFor(USER_A_ID),
+      body: JSON.stringify({
+        agentName: "Vis Test Anon Filter",
+        prompt: "Draft",
+        slug: "vis-test-anon-filter",
+      }),
+    });
+
     const response = await fetch(
       `${baseURL}/api/v2/agent-templates?status=draft`,
     );
-    expect(response.status).toBe(401);
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as {
+      data: Record<string, unknown>[];
+      hasMore: boolean;
+      nextCursor: string | null;
+    };
+    expect(body.data).toEqual([]);
+    expect(body.hasMore).toBe(false);
+    expect(body.nextCursor).toBeNull();
   });
 
   // GET ?status=draft returns caller's own drafts for authed users
@@ -271,27 +376,27 @@ describe("List/detail visibility rules", () => {
     expect(detailResponse.status).toBe(404);
   });
 
-  test("GET /:id returns 401 for unauthenticated users", async () => {
+  test("GET /:id returns 404 for anonymous callers on a draft template", async () => {
     // User A creates a draft
     const createResponse = await fetch(`${baseURL}/api/v2/agent-templates`, {
       method: "POST",
       headers: await jwtHeadersFor(USER_A_ID),
       body: JSON.stringify({
-        agentName: "Vis Test Detail Unauth",
+        agentName: "Vis Test Detail Anon",
         prompt: "Draft by A",
-        slug: "vis-test-detail-unauth",
+        slug: "vis-test-detail-anon",
       }),
     });
     const createBody = (await createResponse.json()) as Record<string, unknown>;
     const templateId = createBody.id as string;
 
-    // Unauthenticated user — should be rejected at the auth layer regardless
-    // of template status (draft or published). 401, not 404.
+    // Anonymous caller — drafts are not visible to anonymous callers,
+    // so the response is 404 (indistinguishable from a missing row).
     const detailResponse = await fetch(
       `${baseURL}/api/v2/agent-templates/${templateId}`,
     );
 
-    expect(detailResponse.status).toBe(401);
+    expect(detailResponse.status).toBe(404);
   });
 
   // Detail returns template for drafts owned by the caller
@@ -360,13 +465,19 @@ describe("List/detail visibility rules", () => {
         slug: "vis-test-pub-detail",
       }),
     });
+    expect(createResponse.status).toBe(201);
     const createBody = (await createResponse.json()) as Record<string, unknown>;
     const templateId = createBody.id as string;
+    expect(templateId).toBeDefined();
 
-    await fetch(`${baseURL}/api/v2/agent-templates/${templateId}/publish`, {
-      method: "POST",
-      headers: await jwtHeadersFor(USER_A_ID),
-    });
+    const publishResponse = await fetch(
+      `${baseURL}/api/v2/agent-templates/${templateId}/publish`,
+      {
+        method: "POST",
+        headers: await jwtHeadersFor(USER_A_ID),
+      },
+    );
+    expect(publishResponse.status).toBe(200);
 
     // Any authenticated user can see it
     const bDetailResponse = await fetch(
@@ -375,12 +486,14 @@ describe("List/detail visibility rules", () => {
     );
     expect(bDetailResponse.status).toBe(200);
 
-    // Unauthenticated callers are rejected at the auth layer — published
-    // templates are not publicly discoverable through this API.
+    // Anonymous callers can also see published rows (public discovery).
     const unauthResponse = await fetch(
       `${baseURL}/api/v2/agent-templates/${templateId}`,
     );
-    expect(unauthResponse.status).toBe(401);
+    expect(unauthResponse.status).toBe(200);
+    const unauthBody = (await unauthResponse.json()) as Record<string, unknown>;
+    expect(unauthBody.id).toBe(templateId);
+    expect(unauthBody.status).toBe("published");
   });
 
   // Status filter with unlisted/archived for authenticated users
