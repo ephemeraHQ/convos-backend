@@ -82,7 +82,7 @@ model Account {
 
 model AgentTemplate {
   id                   String   @id                  // tmpl_<random>
-  slug                 String                         // per-owner; URL form is `<slug>.<hash5>` where hash5 is derived from id (pool's `lib/slug-hash.ts` pattern)
+  slug                 String                         // NOT unique (no DB constraint — see URL slug discriminator); URL form is `<slug>.<hash5>` where hash5 is derived from id (pool's `lib/slug-hash.ts` pattern)
   ownerAccountId       String
   forkedFromId         String?
   agentName            String
@@ -105,8 +105,7 @@ model AgentTemplate {
   forks       AgentTemplate[]     @relation("Forks")
   skills      AgentTemplateSkill[]
 
-  @@unique([ownerAccountId, slug])
-  @@index([slug])                                       // public hashed-slug lookup queries slug=base across all rows
+  @@index([slug])                                       // public hashed-slug lookup queries slug=base across all rows; slugs are NOT unique
   @@index([status, createdAt, id])                      // keyset pagination on status=published lists
   @@index([status, category, createdAt, id])            // keyset pagination on status+category filter
   @@index([status, featured, createdAt, id])            // keyset pagination on status+featured filter (admin-curated gallery rail)
@@ -223,13 +222,15 @@ Trade-off accepted: the gallery cannot answer "what did template T look like at 
 
 ### URL slug discriminator
 
-`slug` is per-owner unique in the DB (`@@unique([ownerAccountId, slug])`). URLs use `<slug>.<hash5>` where `hash5` is derived from the row's `id` via pool's existing `slugHash` algorithm: take the first 32 bits of `sha1(id)` (8 hex chars), parse as a base-16 integer, render as base-36, and pad/truncate to exactly 5 chars. Pool's `pool/src/lib/slug-hash.ts` (`buildSlug` / `slugHash` / `isHashedSlug`) is lifted verbatim into backend so the algorithm stays identical.
+> **Update (2026-05-14):** `AgentTemplate.slug` is no longer per-owner unique — the `@@unique([ownerAccountId, slug])` constraint was dropped (PR #212). Duplicate slugs are allowed and disambiguated entirely by the `hash5` discriminator. Rationale: pre-SIWE every anonymous generation is owned by the single ADMIN account, so per-owner uniqueness forced unbounded `-N` suffixing on common agent names; the hashed URL already makes every row individually addressable. `AgentSkill.slug` keeps its per-owner unique constraint.
+
+`AgentSkill.slug` is per-owner unique in the DB (`@@unique([ownerAccountId, slug])`); `AgentTemplate.slug` is **not unique** — there is no DB constraint. URLs use `<slug>.<hash5>` where `hash5` is derived from the row's `id` via pool's existing `slugHash` algorithm: take the first 32 bits of `sha1(id)` (8 hex chars), parse as a base-16 integer, render as base-36, and pad/truncate to exactly 5 chars. Pool's `pool/src/lib/slug-hash.ts` (`buildSlug` / `slugHash` / `isHashedSlug`) is lifted verbatim into backend so the algorithm stays identical.
 
 **Slug validation:** `slug` must match `^[a-z0-9][a-z0-9-]*$` (lowercase alphanumeric + hyphens, must start with alphanumeric, no dots), max 64 chars. This guarantees the URL form `<slug>.<hash5>` parses unambiguously.
 
 **Slug mutability:** `slug` may be changed via `PATCH` while the row has never been published (`AgentSkill.lastPublishedVersion IS NULL` for skills; `AgentTemplate.firstPublishedAt IS NULL` for templates). Once the row has published once, `slug` is **immutable** — old links continue working. (`hash5` is derived from `id`, which never changes, so links survive ownership transfer too. Slug changes after publish would break in-the-wild links since the `slug = base` lookup keys off the current value.)
 
-The hash is **one-way** (sha1-truncated); resolvers cannot derive `id` from `hash5`. Public URLs don't carry owner identity, so the resolver always queries by `slug = base` across **all** rows (no owner narrowing — the per-owner unique constraint means at most one match per owner, but multiple owners can share a base slug). For each candidate row, compute `slugHash(row.id)` and compare to the URL's `hash5`. Exactly one match → resolved. Zero or multiple matches → 404. (The 5-char hash gives ~60M values; collisions across same-`base` rows are vanishingly rare but the resolver handles them by 404'ing rather than guessing.)
+The hash is **one-way** (sha1-truncated); resolvers cannot derive `id` from `hash5`. Public URLs don't carry owner identity, so the resolver always queries by `slug = base` across **all** rows (no owner narrowing — any number of rows can share a base slug). For each candidate row, compute `slugHash(row.id)` and compare to the URL's `hash5`. Exactly one match → resolved. Zero or multiple matches → 404. (The 5-char hash gives ~60M values; collisions across same-`base` rows are vanishingly rare but the resolver handles them by 404'ing rather than guessing. With `AgentTemplate` slugs now non-unique, more rows can share a base slug — `pickCollisionFreeId` pre-picks each row's `id` so its `hash5` doesn't collide with existing same-`base` rows, keeping "exactly one match" the norm.)
 
 ### Reserved slugs
 
@@ -305,8 +306,10 @@ Fork behavior changes between PR 3 (shallow) and PR 5 (deep). Both ship the same
 
 Both fork endpoints (standalone skill fork, deep-forked template + internal skills) need a slug for each new row. Strategy:
 
-1. **Caller-supplied slug** (via `{ "slug": "<override>" }` in the fork body, where the API supports it): validated against the slug regex, reserved-slug list, and the per-owner uniqueness constraint. Rejected on conflict (caller picks a different slug and retries).
-2. **Auto-generated** when no slug is supplied: server picks `<source.slug>` if available per the calling owner, else `<source.slug>-2`, `-3`, … incrementing until a free slot is found. Implementation: a single transaction with `INSERT ... ON CONFLICT (ownerAccountId, slug) DO NOTHING` retried with the next suffix, capped at e.g. 1000 attempts before erroring (defense against pathological collision storms).
+> **Note (2026-05-14):** the conflict/suffix handling below applies to **`AgentSkill`** rows, which keep their per-owner unique constraint. **`AgentTemplate`** slugs are not unique (constraint dropped in PR #212): a forked template simply takes `<source.slug>` verbatim (or the caller's override), runs regex + reserved-slug validation, and is inserted — no uniqueness check, no suffixing, no `SLUG_CONFLICT`.
+
+1. **Caller-supplied slug** (via `{ "slug": "<override>" }` in the fork body, where the API supports it): validated against the slug regex and reserved-slug list. For skills, also validated against the per-owner uniqueness constraint and rejected on conflict (caller picks a different slug and retries); for templates, duplicates are accepted.
+2. **Auto-generated** when no slug is supplied: for templates, the server takes `<source.slug>` verbatim. For skills, the server picks `<source.slug>` if available per the calling owner, else `<source.slug>-2`, `-3`, … incrementing until a free slot is found. Implementation: a single transaction with `INSERT ... ON CONFLICT (ownerAccountId, slug) DO NOTHING` retried with the next suffix, capped at e.g. 1000 attempts before erroring (defense against pathological collision storms).
 3. For **deep-forked internal skills** (which auto-publish as `unlisted` and thus have immutable slugs from the moment they land), the same auto-generation rule applies. Callers who care about internal-skill slug aesthetics can supply per-skill overrides via the deep-fork body (`{ "skill_slugs": { "<source_skill_id>": "<new_slug>", ... }}`) — otherwise auto-generation handles it. The deep-forked skill slugs are typically not user-facing because the bundled skills resolve through the template's URL, not as standalone gallery entries.
 
 The forking caller ends up with a fully owned copy of the template _and_ every bundled skill. Editing the forked template's skills doesn't affect the original. Trade-off: forking is heavier than a shallow reference-fork; favored here because it matches the "give me my own copy of everything" mental model of an agent builder. Honoring the source's pinned `skillVersion` (not its current `lastPublishedVersion`) means the fork captures the bundle as-deployed, not as the source skill stands today — symmetric with how instances snapshot at deploy.
@@ -371,19 +374,19 @@ Migration: `Account` model only, with `acct_admin` seed embedded in SQL (`INSERT
 
 ### PR 2 — Templates MVP (first shippable user-visible release)
 
-Migration: `AgentTemplate` + `PublishStatus` enum + indexes (`@@unique([ownerAccountId, slug])`, `@@index([slug])`, `[status, createdAt, id]`, `[status, category, createdAt, id]`, `[status, featured, createdAt, id]`, `forkedFromId`).
+Migration: `AgentTemplate` + `PublishStatus` enum + indexes (`@@index([slug])`, `[status, createdAt, id]`, `[status, category, createdAt, id]`, `[status, featured, createdAt, id]`, `forkedFromId`). Slugs are **not** unique — no `@@unique([ownerAccountId, slug])` (see the 2026-05-14 update under "URL slug discriminator").
 
 Routes:
 
 - `GET /agent_templates` (public; `status = published` only by default; filters: `category`, `owner`, `featured`).
 - `GET /agent_templates/{id_or_hashed_slug}` (public; resolves for `published`/`unlisted`/`archived`; 404 for `draft`; `?expand[]=owner` works, `skills`/`skills.files` return empty until PR 5).
-- `POST /agent_templates` (server pins `status=draft`, `version=1`, `firstPublishedAt=null` regardless of body. `slug` is optional in the body — if omitted, server auto-derives it from `agent_name` via `slugify` + per-owner collision-suffix retry, mirroring pool's existing pattern. Supplied or derived slug runs through reserved-slug + slug-regex validation).
+- `POST /agent_templates` (server pins `status=draft`, `version=1`, `firstPublishedAt=null` regardless of body. `slug` is optional in the body — if omitted, server auto-derives it from `agent_name` via `slugify`. Supplied or derived slug runs through reserved-slug + slug-regex validation; slugs are not unique, so duplicates are accepted — no collision-suffix retry, no `SLUG_CONFLICT`).
 - `PATCH /agent_templates/{id}` (content fields + slug pre-publish + post-publish status transitions; reserved-slug check on slug; `draft → *` rejected — first publish must go through `/publish`).
 - `DELETE /agent_templates/{id}` (rejects when `firstPublishedAt IS NOT NULL` — published rows must be archived via PATCH instead).
 - `POST /agent_templates/{id}/publish` (first publish: sets `firstPublishedAt`, leaves `version=1`, flips `status` to `published` or `unlisted` if `?status=unlisted`. Subsequent: increments `version`, leaves status alone).
 - `POST /agent_templates/generate` (the **builder** — SSE; lifts `pool/src/services/skillGen.ts` + `pool/data/skill-generator-prompt.txt`. snake_case response. PostHog event per generation with `request_id`, `auth_mode`).
 
-Tests: full template state machine, slug uniqueness/validation/immutability/reserved-rejection, slug auto-derivation from `agent_name` when body omits it, hashed-slug multi-owner resolution, server-pins-create-fields, DELETE-rejects-published, PATCH-rejects-draft-transitions, builder SSE keep-alive on staging, **first true end-to-end production-guard verification** (live HTTP request against `/api/v2/agent_templates` returns the expected route handler in `dev`/`staging` and 404s in `production`/unset/unknown).
+Tests: full template state machine, slug validation/immutability/reserved-rejection, duplicate-slug acceptance, slug auto-derivation from `agent_name` when body omits it, hashed-slug multi-owner resolution, server-pins-create-fields, DELETE-rejects-published, PATCH-rejects-draft-transitions, builder SSE keep-alive on staging, **first true end-to-end production-guard verification** (live HTTP request against `/api/v2/agent_templates` returns the expected route handler in `dev`/`staging` and 404s in `production`/unset/unknown).
 
 **Ships:** end-to-end usable templates surface. A user can generate a template via builder, edit, publish to gallery, share via hashed-slug URL. No skills bundled yet — but a template with `prompt + tools + connections + avatar` describes a usable agent on its own. Pool's `/api/skills/generate` and `/api/proxy/skills/generate` stay live; the runtime workstream handles cutover.
 
@@ -395,7 +398,7 @@ Routes:
 
 - `POST /agent_templates/{id}/fork` (allowed on any source `status` except `draft`; auto-generates fork slug per the fork-slug strategy or accepts `{ "slug": "<override>" }`; new template starts at `version=1`, `status=draft`, `firstPublishedAt=NULL`).
 
-Tests: fork-slug auto-generation including conflict suffix incrementation, fork from archived sources, fork from unlisted, fork rejected from draft, and direct-DB referential-action verification — `forkedFromId` cleared to NULL when a _draft_ parent is hard-deleted (Prisma default `SetNull`). Note: `DELETE /agent_templates/{id}` rejects on published parents (must archive instead), so the SetNull path is only reachable when a draft template with forks is hard-deleted.
+Tests: fork-slug auto-generation (templates take the source slug verbatim — non-unique, no suffixing), fork from archived sources, fork from unlisted, fork rejected from draft, and direct-DB referential-action verification — `forkedFromId` cleared to NULL when a _draft_ parent is hard-deleted (Prisma default `SetNull`). Note: `DELETE /agent_templates/{id}` rejects on published parents (must archive instead), so the SetNull path is only reachable when a draft template with forks is hard-deleted.
 
 **Ships:** users can fork any non-draft template into their own draft. Existing forks made before PR 5 stay shallow forever (their `AgentTemplateSkill` set is empty, just like the source's was at the time).
 
@@ -467,6 +470,6 @@ PR 2 is the only PR that ships both schema and a long-running route (the builder
 - `connections` **field shape:** `String[]` with prefix convention (`composio:<slug>`, `apple_health`, …). Validated by a Zod enum-with-passthrough — unknown prefixes log a warning rather than 400, so non-Composio additions don't require a backend release.
 - **Authorization until SIWE:** every owner is `acct_admin`. Writes accept either the existing JWT (any authed device) or `X-Agent-API-Key`; reads are public. No per-row author tracking, no admin allowlist. This slice does not ship to production until real accounts land.
 - **Builder OpenRouter spend caps.** The builder's OpenRouter API key has its own credit limit at the OpenRouter side. No in-app circuit breaker needed.
-- **Slug DB shape vs URL form.** DB uniqueness is per-owner (`@@unique([ownerAccountId, slug])`). URL form is `<slug>.<hash5>` derived from the row id, lifted from pool's `lib/slug-hash.ts` so the convention is identical.
+- **Slug DB shape vs URL form.** `AgentSkill` slugs are per-owner unique (`@@unique([ownerAccountId, slug])`); `AgentTemplate` slugs are **not** unique (constraint dropped in PR #212 — see "URL slug discriminator"). URL form is `<slug>.<hash5>` derived from the row id, lifted from pool's `lib/slug-hash.ts` so the convention is identical.
 - **File write limits.** Tight per-file (256 KB) and per-skill (64 files / 4 MB) caps in this plan. Runtime materialization workstream may relax them once it owns the on-disk contract.
 - **Public reads.** Direct lookup (`/{type}/{id_or_slug}`) resolves for `published | unlisted | archived`; 404 for `draft`. List endpoints return only `published` rows; `?status=` is rejected pre-SIWE. File reads always return `lastPublishedVersion`. Per-account "view my own drafts" lands with SIWE.

@@ -1,4 +1,4 @@
-import { Prisma, type PublishStatus } from "@prisma/client";
+import type { Prisma, PublishStatus } from "@prisma/client";
 import type { Request, Response } from "express";
 import { z } from "zod";
 import { serializeAgentTemplate } from "@/api/v2/agent-templates/lib/serialize-agent-template";
