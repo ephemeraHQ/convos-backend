@@ -107,11 +107,27 @@ export async function generateToken(
     accountId = upserted.accountId;
 
     // Best-effort backfill of DeviceRegistration.accountId.
+    //
     // Runs OUTSIDE the upsert transaction so a transient DB issue here
     // can't fail token mint. updateMany silently no-ops when the device
     // row doesn't exist (legitimate case: client called /auth/token
     // before /device/register). Self-heals on next mint after device
-    // registers. Last-write-wins on wallet switch by design.
+    // registers.
+    //
+    // Concurrency: Postgres serializes UPDATEs on the same row, but commit
+    // order does NOT track request arrival order — a slower older request
+    // can land its UPDATE after a faster newer request, leaving the column
+    // pointing at the older intent. For typical iOS UX this is bounded
+    // because /auth/token is single-flight per device (user taps sign-in,
+    // waits for response). Two concurrent SIWE upgrades on the same device
+    // require two wallet signatures essentially simultaneously, which is
+    // physically rare. Even when it hits, impact is brief and self-healing
+    // (next SIWE rewrites the column) and JWT integrity is unaffected.
+    // Promoting this to an atomic transaction with the account upsert is
+    // intentionally rejected — see spec § "Locked design decisions"
+    // (Transaction grouping: best-effort over atomic) and § Risks
+    // (wallet-switch race). Revisit (e.g. add an issuedAt-scoped WHERE
+    // clause) if/when account-scoped push routing makes the race visible.
     try {
       const { count } = await prisma.deviceRegistration.updateMany({
         where: { deviceId: body.deviceId },
