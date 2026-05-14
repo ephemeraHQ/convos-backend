@@ -14,7 +14,7 @@
 
 /* eslint-disable @typescript-eslint/no-require-imports, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-explicit-any */
 
-import { POSTHOG_PROJECT_TOKEN, POSTHOG_HOST } from "@/config";
+import { POSTHOG_HOST, POSTHOG_PROJECT_TOKEN } from "@/config";
 import type { GenerationMetrics } from "./templateGen";
 
 // ---------------------------------------------------------------------------
@@ -72,9 +72,7 @@ function getPostHogClient(): any {
   const { PostHog } = require("posthog-node") as {
     PostHog: new (apiKey: string, opts: { host: string }) => any;
   };
-  _posthogClient = new PostHog(POSTHOG_PROJECT_TOKEN, {
-    host: POSTHOG_HOST,
-  });
+  _posthogClient = new PostHog(POSTHOG_PROJECT_TOKEN, { host: POSTHOG_HOST });
   return _posthogClient;
 }
 

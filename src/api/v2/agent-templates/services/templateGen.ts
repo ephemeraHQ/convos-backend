@@ -19,9 +19,9 @@
 /* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-return, @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-argument */
 
 import {
+  BUILDER_EXA_SERVICE_KEY,
   BUILDER_MODEL,
   BUILDER_OPENROUTER_API_KEY,
-  BUILDER_EXA_SERVICE_KEY,
 } from "@/config";
 import { AppError } from "@/utils/errors";
 import { SYSTEM_PROMPT } from "../lib/system-prompt";
