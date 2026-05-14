@@ -18,7 +18,7 @@
  * Env vars:
  *   BUILDER_OPENROUTER_API_KEY — required for LLM calls
  *   TWITTER_REPLY_MODEL        — model override (default: anthropic/claude-3-5-haiku-20241022)
- *   BUILDER_SITE_URL           — base URL for templates (default: https://convos.org/assistants)
+ *   BUILDER_SITE_URL           — base URL for builder (default: https://convos.org/assistants)
  *
  * Test seam: __resetComposeReplyForTests(override | null).
  */
