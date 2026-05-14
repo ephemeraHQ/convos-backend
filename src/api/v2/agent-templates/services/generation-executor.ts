@@ -37,6 +37,7 @@ import {
 import { GENERATION_EXECUTOR_TIMEOUT_MS, GENERATION_TTL_HOURS } from "@/config";
 import logger from "@/utils/logger";
 import { prisma } from "@/utils/prisma";
+import { validateSlug } from "@/utils/reserved-slugs";
 import { buildSlug } from "@/utils/slug-hash";
 
 // ---------------------------------------------------------------------------
@@ -144,6 +145,24 @@ const deriveBaseSlug = (agentName: string): string =>
     .replace(/^-+|-+$/g, "")
     .slice(0, 48);
 
+/** Fallback slug used when an agentName doesn't yield a valid base slug.
+ *  Slugs are non-unique, so a shared fallback is fine — the hashed URL
+ *  still disambiguates each row. Must itself pass `validateSlug`. */
+const FALLBACK_SLUG = "agent";
+
+/** Derive a persistable slug from the generated agentName.
+ *
+ *  `deriveBaseSlug` can yield an empty (emoji-only / non-Latin name),
+ *  reserved ("Generate" → "generate"), or malformed string. The CRUD
+ *  create handler rejects those with a 400, but the async pipeline has no
+ *  caller to reject to — and an empty slug would make the row unreachable
+ *  via its hashed URL. So fall back to `FALLBACK_SLUG` rather than failing
+ *  the generation or persisting a broken slug. */
+function deriveTemplateSlug(agentName: string): string {
+  const validated = validateSlug(deriveBaseSlug(agentName));
+  return validated.valid ? validated.slug : FALLBACK_SLUG;
+}
+
 /** Persist the LLM-generated template as a draft AgentTemplate.
  *
  *  Slug policy mirrors the CRUD handler (handlers/create.ts):
@@ -151,6 +170,9 @@ const deriveBaseSlug = (agentName: string): string =>
  *    is reconstructed by callers via `buildSlug(row.slug, row.id)` and the
  *    resolver in `resolve-id-or-hashed-slug.ts` queries `where: { slug: baseSlug }`.
  *    Storing the hashed form would make these rows unreachable via the resolver.
+ *  - The slug is derived from agentName and run through `validateSlug`,
+ *    falling back to `FALLBACK_SLUG` when the derivation is empty/reserved/
+ *    malformed (see `deriveTemplateSlug`).
  *  - Slugs are NOT unique (no DB constraint). Any number of rows can share a
  *    base slug; the row `id` is pre-picked via `pickCollisionFreeId` so its
  *    `slugHash(id)` doesn't collide with any existing row sharing `baseSlug`,
@@ -168,7 +190,7 @@ async function persistTemplate(
   ownerAccountId: string,
   publishStatus: "draft" | "unlisted" | "published",
 ): Promise<{ id: string; slug: string }> {
-  const slug = deriveBaseSlug(template.agentName);
+  const slug = deriveTemplateSlug(template.agentName);
   // Non-draft submissions land in their target status with firstPublishedAt
   // stamped at insert time, so the caller doesn't need a follow-up
   // POST /:id/publish to make the template reachable by URL. Once

@@ -154,6 +154,36 @@ describe("generation-executor", () => {
     expect(template?.firstPublishedAt).toBeNull();
   });
 
+  test("non-sluggable agentName falls back to a safe default slug", async () => {
+    // deriveBaseSlug("🤖 ✨ 🚀") strips to "" — validateSlug rejects it, so
+    // persistTemplate must fall back to a valid slug rather than persist an
+    // empty slug (which would be unreachable via its hashed URL).
+    const emojiTemplate = makeFakeTemplate({ agentName: "🤖 ✨ 🚀" });
+    __resetGenerateTemplateForTests(() =>
+      Promise.resolve({
+        template: emojiTemplate,
+        metrics: DEFAULT_TEST_METRICS,
+      }),
+    );
+    const gen = await createPendingGeneration("fallback-slug");
+
+    await executeGeneration(gen.id);
+
+    const final = await prisma.agentTemplateGeneration.findUnique({
+      where: { id: gen.id },
+    });
+    expect(final?.status).toBe("done");
+
+    const template = await prisma.agentTemplate.findUniqueOrThrow({
+      where: { id: final?.templateId as string },
+    });
+    expect(template.slug).toBe("agent");
+
+    // afterEach cleans templates by the shared fixture agentName; this row
+    // has a different agentName, so delete it here.
+    await prisma.agentTemplate.delete({ where: { id: template.id } });
+  });
+
   test("publishStatus 'unlisted' on the generation lands template in unlisted with firstPublishedAt set", async () => {
     installFakeTemplate();
     const gen = await prisma.agentTemplateGeneration.create({
