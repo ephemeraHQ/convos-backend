@@ -108,30 +108,36 @@ export async function generateToken(
 
     // Best-effort backfill of DeviceRegistration.accountId.
     //
-    // Runs OUTSIDE the upsert transaction so a transient DB issue here
-    // can't fail token mint. updateMany silently no-ops when the device
-    // row doesn't exist (legitimate case: client called /auth/token
-    // before /device/register). Self-heals on next mint after device
-    // registers.
+    // Runs in its own small transaction, SEPARATE from the upsert
+    // transaction. A transient DB issue here cannot fail token mint
+    // (try/catch below). updateMany silently no-ops when the device row
+    // doesn't exist (legitimate case: client called /auth/token before
+    // /device/register). Self-heals on next mint after device registers.
     //
-    // Concurrency: Postgres serializes UPDATEs on the same row, but commit
-    // order does NOT track request arrival order — a slower older request
-    // can land its UPDATE after a faster newer request, leaving the column
-    // pointing at the older intent. For typical iOS UX this is bounded
-    // because /auth/token is single-flight per device (user taps sign-in,
-    // waits for response). Two concurrent SIWE upgrades on the same device
-    // require two wallet signatures essentially simultaneously, which is
-    // physically rare. Even when it hits, impact is brief and self-healing
-    // (next SIWE rewrites the column) and JWT integrity is unaffected.
-    // Promoting this to an atomic transaction with the account upsert is
-    // intentionally rejected — see spec § "Locked design decisions"
-    // (Transaction grouping: best-effort over atomic) and § Risks
-    // (wallet-switch race). Revisit (e.g. add an issuedAt-scoped WHERE
-    // clause) if/when account-scoped push routing makes the race visible.
+    // Concurrency: a `SELECT ... FOR UPDATE` on the device row serializes
+    // concurrent backfills targeting the same deviceId. Without the lock,
+    // commit order can diverge from request-arrival order, so a slower
+    // older request can overwrite a faster newer one. With the lock, the
+    // second request blocks until the first commits, so the request that
+    // acquires the lock last is also the one whose value ends up in the
+    // column — restoring "later request wins" semantics for the sequential
+    // wallet-switch case. Truly simultaneous arrivals resolve to lock
+    // acquisition order (non-deterministic, but final state is still a
+    // valid one of the two — no torn writes).
     try {
-      const { count } = await prisma.deviceRegistration.updateMany({
-        where: { deviceId: body.deviceId },
-        data: { accountId },
+      const count = await prisma.$transaction(async (tx) => {
+        // Acquire row-level lock; no-op if device row doesn't exist
+        // (returns 0 rows, no lock taken, subsequent updateMany also 0).
+        await tx.$queryRaw`
+          SELECT 1 FROM "DeviceRegistration"
+          WHERE "deviceId" = ${body.deviceId}
+          FOR UPDATE
+        `;
+        const result = await tx.deviceRegistration.updateMany({
+          where: { deviceId: body.deviceId },
+          data: { accountId },
+        });
+        return result.count;
       });
       if (count > 0) {
         req.log.info(
