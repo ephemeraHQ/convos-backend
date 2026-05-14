@@ -51,15 +51,6 @@ const sendSlugValidationError = (
   });
 };
 
-const sendSlugConflict = (res: Response) => {
-  res.status(409).json({
-    error: {
-      code: "SLUG_CONFLICT",
-      message: "Slug already exists for this owner",
-    },
-  });
-};
-
 const sendBadRequest = (
   res: Response,
   args: { code: string; message: string },
@@ -70,39 +61,6 @@ const sendBadRequest = (
       message: args.message,
     },
   });
-};
-
-const isSlugUniqueConstraintError = (error: unknown) => {
-  if (
-    !(error instanceof Prisma.PrismaClientKnownRequestError) ||
-    error.code !== "P2002"
-  ) {
-    return false;
-  }
-
-  const target = error.meta?.target;
-  if (Array.isArray(target)) {
-    return target.includes("ownerAccountId") && target.includes("slug");
-  }
-
-  return typeof target === "string" && target.includes("slug");
-};
-
-const hasSlugConflict = async (args: {
-  ownerAccountId: string;
-  slug: string;
-  templateId: string;
-}) => {
-  const existing = await prisma.agentTemplate.findFirst({
-    where: {
-      ownerAccountId: args.ownerAccountId,
-      slug: args.slug,
-      id: { not: args.templateId },
-    },
-    select: { id: true },
-  });
-
-  return existing !== null;
 };
 
 const applyContentFields = (
@@ -214,20 +172,12 @@ export async function patchHandler(req: Request, res: Response) {
         return;
       }
 
+      // Slugs are not unique (no DB constraint); the new slug only has to
+      // pass format / reserved-word validation. Duplicates are allowed and
+      // disambiguated by the hashed-slug URL.
       const validation = validateSlug(parsedBody.data.slug);
       if (!validation.valid) {
         sendSlugValidationError(res, validation);
-        return;
-      }
-
-      if (
-        await hasSlugConflict({
-          ownerAccountId: template.ownerAccountId,
-          slug: validation.slug,
-          templateId: template.id,
-        })
-      ) {
-        sendSlugConflict(res);
         return;
       }
 
@@ -256,55 +206,46 @@ export async function patchHandler(req: Request, res: Response) {
       return;
     }
 
-    try {
-      // Pin the WHERE clause to the row state we just validated. A concurrent
-      // publish, slug rename, ownership transfer or status flip would
-      // invalidate our invariant checks above, so any such mutation drops us
-      // into the count === 0 branch and surfaces as a 409 (or 404 if the row
-      // was deleted).
-      const result = await prisma.agentTemplate.updateMany({
-        where: {
-          id: template.id,
-          ownerAccountId: template.ownerAccountId,
-          slug: template.slug,
-          status: template.status,
-          firstPublishedAt: template.firstPublishedAt,
-        },
-        data,
-      });
+    // Pin the WHERE clause to the row state we just validated. A concurrent
+    // publish, slug rename, ownership transfer or status flip would
+    // invalidate our invariant checks above, so any such mutation drops us
+    // into the count === 0 branch and surfaces as a 409 (or 404 if the row
+    // was deleted).
+    const result = await prisma.agentTemplate.updateMany({
+      where: {
+        id: template.id,
+        ownerAccountId: template.ownerAccountId,
+        slug: template.slug,
+        status: template.status,
+        firstPublishedAt: template.firstPublishedAt,
+      },
+      data,
+    });
 
-      if (result.count === 0) {
-        const stillExists = await prisma.agentTemplate.findUnique({
-          where: { id: template.id },
-          select: { id: true },
-        });
-        if (stillExists === null) {
-          res.status(404).json({ error: "Agent template not found" });
-        } else {
-          res.status(409).json({
-            error: {
-              code: "TEMPLATE_MODIFIED",
-              message:
-                "Agent template was modified by another request; reload and retry",
-            },
-          });
-        }
-        return;
-      }
-
-      const updated = await prisma.agentTemplate.findUniqueOrThrow({
+    if (result.count === 0) {
+      const stillExists = await prisma.agentTemplate.findUnique({
         where: { id: template.id },
+        select: { id: true },
       });
-
-      res.status(200).json(serializeAgentTemplate(updated));
-    } catch (error) {
-      if (isSlugUniqueConstraintError(error)) {
-        sendSlugConflict(res);
-        return;
+      if (stillExists === null) {
+        res.status(404).json({ error: "Agent template not found" });
+      } else {
+        res.status(409).json({
+          error: {
+            code: "TEMPLATE_MODIFIED",
+            message:
+              "Agent template was modified by another request; reload and retry",
+          },
+        });
       }
-
-      throw error;
+      return;
     }
+
+    const updated = await prisma.agentTemplate.findUniqueOrThrow({
+      where: { id: template.id },
+    });
+
+    res.status(200).json(serializeAgentTemplate(updated));
   } catch (error) {
     req.log.error(
       { error, stack: error instanceof Error ? error.stack : undefined },

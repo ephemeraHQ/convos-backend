@@ -170,8 +170,8 @@ describe("Agent template create endpoint", () => {
     expect(row.forkedFromId).toBeNull();
   });
 
-  test("auto-derives slugs and retries collisions with numeric suffixes", async () => {
-    const slugs: string[] = [];
+  test("auto-derives slugs and allows duplicates (disambiguated by hashed-slug URL)", async () => {
+    const ids: string[] = [];
 
     for (let i = 0; i < 3; i++) {
       const { body, response } = await createTemplate({
@@ -180,25 +180,24 @@ describe("Agent template create endpoint", () => {
       });
 
       expect(response.status).toBe(201);
-      expect(typeof body.slug).toBe("string");
-      slugs.push(body.slug as string);
+      // Slugs are not unique — every row keeps the bare derived slug;
+      // there is no numeric suffixing.
+      expect(body.slug).toBe("create-test-my-cool-helper");
+      ids.push(body.id as string);
     }
 
-    expect(slugs).toEqual([
-      "create-test-my-cool-helper",
-      "create-test-my-cool-helper-2",
-      "create-test-my-cool-helper-3",
-    ]);
+    expect(new Set(ids).size).toBe(3);
 
     const rows = await prisma.agentTemplate.findMany({
       where: {
         ownerAccountId: ADMIN_ACCOUNT_ID,
-        slug: { in: slugs },
+        slug: "create-test-my-cool-helper",
       },
-      orderBy: { createdAt: "asc" },
-      select: { slug: true },
+      select: { id: true },
     });
-    expect(rows.map((row) => row.slug)).toEqual(slugs);
+    // Three distinct rows share one slug; their ids (and thus hashed-slug
+    // URLs) differ.
+    expect(rows.map((row) => row.id).sort()).toEqual([...ids].sort());
   });
 
   test("rejects auto-derived reserved slugs with 400 and rejects reserved explicit slugs", async () => {
@@ -278,7 +277,7 @@ describe("Agent template create endpoint", () => {
     }
   });
 
-  test("returns 409 for same-owner slug conflicts", async () => {
+  test("allows same-owner duplicate slugs", async () => {
     const first = await createTemplate({
       agentName: "Create Test Taken A",
       prompt: "First",
@@ -291,13 +290,15 @@ describe("Agent template create endpoint", () => {
       prompt: "Second",
       slug: "create-test-taken",
     });
-    expect(second.response.status).toBe(409);
-    expect(second.body.error).toMatchObject({ code: "SLUG_CONFLICT" });
+    // Slugs are not unique — a same-owner duplicate is accepted, not 409.
+    expect(second.response.status).toBe(201);
+    expect(second.body.slug).toBe("create-test-taken");
+    expect(second.body.id).not.toBe(first.body.id);
 
     const rows = await prisma.agentTemplate.count({
       where: { ownerAccountId: ADMIN_ACCOUNT_ID, slug: "create-test-taken" },
     });
-    expect(rows).toBe(1);
+    expect(rows).toBe(2);
   });
 
   test("rejects missing or empty agentName and prompt", async () => {

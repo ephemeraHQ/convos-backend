@@ -35,7 +35,7 @@ describe("AgentTemplate schema", () => {
     expect(accountBlock).toMatch(/\bagentTemplates\s+AgentTemplate\[\]/);
   });
 
-  test("declares AgentTemplate fields, relations, and all six required indexes", () => {
+  test("declares AgentTemplate fields, relations, and all five required indexes", () => {
     const agentTemplateBlock = getSchemaBlock({
       kind: "model",
       name: "AgentTemplate",
@@ -80,8 +80,8 @@ describe("AgentTemplate schema", () => {
       /\bforks\s+AgentTemplate\[\]\s+@relation\("Forks"\)/,
     );
 
+    // Slugs are intentionally NOT unique — no @@unique([ownerAccountId, slug]).
     const requiredIndexes = [
-      "@@unique([ownerAccountId, slug])",
       "@@index([slug])",
       "@@index([status, createdAt, id])",
       "@@index([status, category, createdAt, id])",
@@ -93,7 +93,8 @@ describe("AgentTemplate schema", () => {
       expect(agentTemplateBlock).toContain(indexDeclaration);
     }
 
-    expect(agentTemplateBlock.match(/@@(?:unique|index)\(/g)).toHaveLength(6);
+    expect(agentTemplateBlock).not.toMatch(/@@unique\(/);
+    expect(agentTemplateBlock.match(/@@(?:unique|index)\(/g)).toHaveLength(5);
   });
 
   test("applies PublishStatus enum, foreign keys, and required indexes in Postgres", async () => {
@@ -172,7 +173,6 @@ describe("AgentTemplate schema", () => {
 
     expect(indexes.map((index) => index.indexname).sort()).toEqual([
       "AgentTemplate_forkedFromId_idx",
-      "AgentTemplate_ownerAccountId_slug_key",
       "AgentTemplate_slug_idx",
       "AgentTemplate_status_category_createdAt_id_idx",
       "AgentTemplate_status_createdAt_id_idx",
@@ -183,14 +183,12 @@ describe("AgentTemplate schema", () => {
       index.indexdef.replace(/\s+/g, " "),
     );
 
+    // Slugs are not unique — there must be no UNIQUE index on slug.
     expect(
-      indexDefinitions.some(
-        (indexDefinition) =>
-          indexDefinition.includes(
-            'UNIQUE INDEX "AgentTemplate_ownerAccountId_slug_key"',
-          ) && indexDefinition.includes('("ownerAccountId", slug)'),
+      indexDefinitions.some((indexDefinition) =>
+        indexDefinition.includes("UNIQUE INDEX"),
       ),
-    ).toBe(true);
+    ).toBe(false);
     expect(
       indexDefinitions.some((indexDefinition) =>
         indexDefinition.includes("(slug)"),

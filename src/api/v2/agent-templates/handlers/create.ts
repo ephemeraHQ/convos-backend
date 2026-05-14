@@ -1,4 +1,3 @@
-import { Prisma } from "@prisma/client";
 import type { Request, Response } from "express";
 import { z } from "zod";
 import { pickCollisionFreeId } from "@/api/v2/agent-templates/lib/pick-collision-free-id";
@@ -6,8 +5,6 @@ import { serializeAgentTemplate } from "@/api/v2/agent-templates/lib/serialize-a
 import { getEffectiveOwnerId } from "@/utils/auth-helpers";
 import { prisma } from "@/utils/prisma";
 import { validateSlug } from "@/utils/reserved-slugs";
-
-const MAX_AUTO_SLUG_ATTEMPTS = 50;
 
 const bodySchema = z
   .object({
@@ -51,46 +48,6 @@ const sendSlugValidationError = (
   });
 };
 
-const sendSlugConflict = (res: Response) => {
-  res.status(409).json({
-    error: {
-      code: "SLUG_CONFLICT",
-      message: "Slug already exists for this owner",
-    },
-  });
-};
-
-const isSlugUniqueConstraintError = (error: unknown) => {
-  if (
-    !(error instanceof Prisma.PrismaClientKnownRequestError) ||
-    error.code !== "P2002"
-  ) {
-    return false;
-  }
-
-  const target = error.meta?.target;
-  if (Array.isArray(target)) {
-    return target.includes("ownerAccountId") && target.includes("slug");
-  }
-
-  return typeof target === "string" && target.includes("slug");
-};
-
-const hasSlugConflict = async (args: {
-  ownerAccountId: string;
-  slug: string;
-}) => {
-  const existing = await prisma.agentTemplate.findFirst({
-    where: {
-      ownerAccountId: args.ownerAccountId,
-      slug: args.slug,
-    },
-    select: { id: true },
-  });
-
-  return existing !== null;
-};
-
 const createTemplateRow = (args: {
   body: CreateBody;
   id: string;
@@ -118,109 +75,6 @@ const createTemplateRow = (args: {
     },
   });
 
-const createWithExplicitSlug = async (args: {
-  body: CreateBody;
-  res: Response;
-  slug: string;
-  ownerAccountId: string;
-}) => {
-  const validation = validateSlug(args.slug);
-  if (!validation.valid) {
-    sendSlugValidationError(args.res, validation);
-    return null;
-  }
-
-  if (
-    await hasSlugConflict({
-      ownerAccountId: args.ownerAccountId,
-      slug: validation.slug,
-    })
-  ) {
-    sendSlugConflict(args.res);
-    return null;
-  }
-
-  try {
-    const id = await pickCollisionFreeId({ baseSlug: validation.slug });
-    return await createTemplateRow({
-      body: args.body,
-      id,
-      slug: validation.slug,
-      ownerAccountId: args.ownerAccountId,
-    });
-  } catch (error) {
-    if (isSlugUniqueConstraintError(error)) {
-      sendSlugConflict(args.res);
-      return null;
-    }
-
-    throw error;
-  }
-};
-
-const createWithAutoSlug = async (args: {
-  body: CreateBody;
-  res: Response;
-  ownerAccountId: string;
-}) => {
-  const baseSlug = deriveSlugFromAgentName(args.body.agentName);
-  const baseValidation = validateSlug(baseSlug);
-  if (!baseValidation.valid) {
-    sendSlugValidationError(args.res, baseValidation);
-    return null;
-  }
-
-  // attempt 0 → bare base slug; attempt 2+ → baseSlug-N (skip -1)
-  const startAttempt = 0;
-
-  for (
-    let attempt = startAttempt;
-    attempt <= MAX_AUTO_SLUG_ATTEMPTS;
-    attempt++
-  ) {
-    if (attempt === 1) {
-      continue; // skip -1 suffix; first suffix is -2
-    }
-
-    const candidate = attempt === 0 ? baseSlug : `${baseSlug}-${attempt}`;
-    const candidateValidation = validateSlug(candidate);
-    if (!candidateValidation.valid) {
-      sendSlugValidationError(args.res, candidateValidation);
-      return null;
-    }
-
-    if (
-      await hasSlugConflict({
-        ownerAccountId: args.ownerAccountId,
-        slug: candidateValidation.slug,
-      })
-    ) {
-      continue;
-    }
-
-    try {
-      const id = await pickCollisionFreeId({
-        baseSlug: candidateValidation.slug,
-      });
-      return await createTemplateRow({
-        body: args.body,
-        id,
-        slug: candidateValidation.slug,
-        ownerAccountId: args.ownerAccountId,
-      });
-    } catch (error) {
-      if (isSlugUniqueConstraintError(error)) {
-        continue;
-      }
-
-      throw error;
-    }
-  }
-
-  sendSlugConflict(args.res);
-  return null;
-};
-
 export async function createHandler(req: Request, res: Response) {
   const parsed = bodySchema.safeParse(req.body);
   if (!parsed.success) {
@@ -237,25 +91,28 @@ export async function createHandler(req: Request, res: Response) {
     return;
   }
 
+  // Slugs are not unique. An explicit slug is taken verbatim; an absent one
+  // is derived from agentName. Either way it only has to pass format /
+  // reserved-word validation — duplicate slugs (within or across owners) are
+  // allowed and disambiguated by the hashed-slug URL (`<slug>.<hash>`).
+  const rawSlug =
+    parsed.data.slug === undefined
+      ? deriveSlugFromAgentName(parsed.data.agentName)
+      : parsed.data.slug;
+  const validation = validateSlug(rawSlug);
+  if (!validation.valid) {
+    sendSlugValidationError(res, validation);
+    return;
+  }
+
   try {
-    const template =
-      parsed.data.slug === undefined
-        ? await createWithAutoSlug({
-            body: parsed.data,
-            res,
-            ownerAccountId,
-          })
-        : await createWithExplicitSlug({
-            body: parsed.data,
-            res,
-            slug: parsed.data.slug,
-            ownerAccountId,
-          });
-
-    if (template === null) {
-      return;
-    }
-
+    const id = await pickCollisionFreeId({ baseSlug: validation.slug });
+    const template = await createTemplateRow({
+      body: parsed.data,
+      id,
+      slug: validation.slug,
+      ownerAccountId,
+    });
     res.status(201).json(serializeAgentTemplate(template));
   } catch (error) {
     req.log.error(

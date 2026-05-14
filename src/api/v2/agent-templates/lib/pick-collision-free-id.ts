@@ -2,12 +2,13 @@
  * Pick a row id whose `slugHash(id)` doesn't collide with any existing
  * AgentTemplate row sharing the given `baseSlug` — ACROSS owners.
  *
- * Context: the per-owner DB unique constraint catches owner-local slug
- * conflicts, but the public hashed URL `<base>.<hash5>` is cross-owner.
- * Two owners on the same base slug can mint indistinguishable URLs
- * unless we pre-pick a non-colliding id. With ~67M values in the 5-char
- * base36 space, collisions are negligible at small scale but grow with
- * the birthday bound (~1% at 1.1k rows sharing a base, ~50% at 9k).
+ * Context: AgentTemplate slugs are NOT unique — there is no DB constraint,
+ * so any number of rows (within or across owners) can share a base slug.
+ * The public hashed URL `<base>.<hash5>` is what disambiguates them, so it
+ * is load-bearing: this helper pre-picks a row id whose hash doesn't
+ * collide with any existing row on the same base. With ~67M values in the
+ * 5-char base36 space, collisions are negligible at small scale but grow
+ * with the birthday bound (~1% at 1.1k rows sharing a base, ~50% at 9k).
  *
  * Residual race: between this read and the subsequent INSERT, a concurrent
  * transaction could insert a row whose hash collides with our pick. For
@@ -19,7 +20,7 @@
  *
  * Used by both the CRUD create path (handlers/create.ts) and the async
  * generation pipeline (services/generation-executor.ts) so both surfaces
- * mint cross-owner-unique URLs by the same policy.
+ * mint hash-unique URLs by the same policy.
  */
 
 import { randomUUID } from "node:crypto";
@@ -44,13 +45,4 @@ export async function pickCollisionFreeId(args: {
     },
   });
   return id;
-}
-
-/** Thrown by `buildUniqueSlug` when its retry budget is exhausted.
- *  Callers (auto-suffix retry loops) should treat this like a slug
- *  conflict on the current base and try the next `-N` candidate. */
-export function isSlugExhaustionError(err: unknown): boolean {
-  return (
-    err instanceof Error && err.message.startsWith("slug collision: exhausted")
-  );
 }

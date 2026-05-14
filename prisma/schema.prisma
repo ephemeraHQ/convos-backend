@@ -140,7 +140,6 @@ model AgentTemplate {
   forks       AgentTemplate[]           @relation("Forks")
   generations AgentTemplateGeneration[]
 
-  @@unique([ownerAccountId, slug])
   @@index([slug])
   @@index([status, createdAt, id])
   @@index([status, category, createdAt, id])
