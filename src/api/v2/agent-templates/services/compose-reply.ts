@@ -18,14 +18,14 @@
  * Env vars:
  *   BUILDER_OPENROUTER_API_KEY — required for LLM calls
  *   TWITTER_REPLY_MODEL        — model override (default: anthropic/claude-3-5-haiku-20241022)
- *   TEMPLATE_SITE_URL          — base URL for templates (default: https://convos.org/assistants)
+ *   BUILDER_SITE_URL           — base URL for templates (default: https://convos.org/assistants)
  *
  * Test seam: __resetComposeReplyForTests(override | null).
  */
 
 import {
   BUILDER_OPENROUTER_API_KEY,
-  TEMPLATE_SITE_URL,
+  BUILDER_SITE_URL,
   TWITTER_REPLY_MODEL,
 } from "@/config";
 import logger from "@/utils/logger";
@@ -72,7 +72,7 @@ function getModel(): string {
 }
 
 function templateUrlFor(slug: string): string {
-  return `${TEMPLATE_SITE_URL}/${slug}`;
+  return `${BUILDER_SITE_URL}/${slug}`;
 }
 
 function normalizeHandle(handle: string): string {

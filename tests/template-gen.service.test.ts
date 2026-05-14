@@ -509,7 +509,7 @@ describe("templateGen service — OpenRouter integration", () => {
     // selector response, so the GitHub passthrough returns null and the
     // generate path falls through to URL extraction. URL extraction now
     // requires Exa (the direct-fetch SSRF fallback was removed); without
-    // EXA_SERVICE_KEY set in tests, the call throws. We only care that
+    // BUILDER_EXA_SERVICE_KEY set in tests, the call throws. We only care that
     // the selector LLM was invoked with the right shape — swallow the
     // downstream error.
     await generateTemplate({

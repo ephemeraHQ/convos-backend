@@ -463,7 +463,7 @@ async function _runPipeline(
     // against. `persisted.slug` is the BASE form ("brewski") because of the
     // store-base-not-hashed convention from PR #199. Construct the public
     // hashed slug here via buildSlug so the URL the reply contains
-    // (`${TEMPLATE_SITE_URL}/<hashed>`) actually resolves.
+    // (`${BUILDER_SITE_URL}/<hashed>`) actually resolves.
     const replyInput = {
       handle: twitterContext.twitterHandle,
       agentName: templateResult.template.agentName,

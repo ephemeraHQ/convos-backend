@@ -356,8 +356,8 @@ Differences from the pool version:
 
 - `BUILDER_OPENROUTER_API_KEY` — separate from any future runtime spend key so builder's OpenRouter usage is attributable in invoices.
 - `BUILDER_MODEL` — defaults to whatever `pool/src/services/skillGen.ts` uses today (`@preset/assistants-pro`).
-- `EXA_SERVICE_KEY` — required by the lifted URL-extraction path in `skillGen.ts:83`. Same value as pool's existing key.
-- `POSTHOG_API_KEY` and `POSTHOG_HOST` — for the spend-event emitter.
+- `BUILDER_EXA_SERVICE_KEY` — required by the lifted URL-extraction path in `skillGen.ts:83`. Same value as pool's existing key.
+- `POSTHOG_PROJECT_TOKEN` and `POSTHOG_HOST` — for the spend-event emitter (`POSTHOG_HOST` is the shared PostHog instance URL, not builder-scoped).
 
 ## PR sequencing
 
@@ -365,7 +365,7 @@ Five PRs, each shippable on its own. The first user-facing MVP lands at PR 2 (te
 
 ### PR 1 — Foundation
 
-Migration: `Account` model only, with `acct_admin` seed embedded in SQL (`INSERT … ON CONFLICT DO NOTHING`). Lift `pool/src/lib/slug-hash.ts` (`buildSlug`, `slugHash`, `isHashedSlug`) into `convos-backend/src/utils/slug-hash.ts`. Add reserved-slug validator helper. Add `posthog-node` dependency and the builder/PostHog env vars (`BUILDER_OPENROUTER_API_KEY`, `BUILDER_MODEL`, `EXA_SERVICE_KEY`, `POSTHOG_API_KEY`, `POSTHOG_HOST`). Env vars are read **lazily** by the builder route at request time — not validated at process startup — so PR 1 can land without these values being set anywhere yet. Mount empty `agentTemplatesRouter` and `agentSkillsRouter` shells at `/api/v2/agent_templates` and `/api/v2/agent_skills`, gated on `process.env.XMTP_ENV === "dev" || process.env.XMTP_ENV === "staging"` — no routes registered yet. Tests: unit-level coverage of the slug helpers and reserved-slug validator; integration tests that the routers conditionally mount based on `process.env.XMTP_ENV` (asserting via mount registry / app router introspection — no live HTTP routes to hit yet).
+Migration: `Account` model only, with `acct_admin` seed embedded in SQL (`INSERT … ON CONFLICT DO NOTHING`). Lift `pool/src/lib/slug-hash.ts` (`buildSlug`, `slugHash`, `isHashedSlug`) into `convos-backend/src/utils/slug-hash.ts`. Add reserved-slug validator helper. Add `posthog-node` dependency and the builder/PostHog env vars (`BUILDER_OPENROUTER_API_KEY`, `BUILDER_MODEL`, `BUILDER_EXA_SERVICE_KEY`, `POSTHOG_PROJECT_TOKEN`, `POSTHOG_HOST`). Env vars are read **lazily** by the builder route at request time — not validated at process startup — so PR 1 can land without these values being set anywhere yet. Mount empty `agentTemplatesRouter` and `agentSkillsRouter` shells at `/api/v2/agent_templates` and `/api/v2/agent_skills`, gated on `process.env.XMTP_ENV === "dev" || process.env.XMTP_ENV === "staging"` — no routes registered yet. Tests: unit-level coverage of the slug helpers and reserved-slug validator; integration tests that the routers conditionally mount based on `process.env.XMTP_ENV` (asserting via mount registry / app router introspection — no live HTTP routes to hit yet).
 
 **Ships:** nothing user-visible. Proves the production guard wiring is correct before any data route exists; PR 2's `404 vs response` test on `/api/v2/agent_templates/...` becomes the first true end-to-end guard check.
 
