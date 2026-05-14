@@ -1,14 +1,13 @@
 import { afterEach, beforeAll, describe, expect, test } from "bun:test";
 import cookieParser from "cookie-parser";
-import { Wallet } from "ethers";
 import express from "express";
-import { SiweMessage } from "siwe";
 import request from "supertest";
 import { authRouter } from "@/api/v2/auth/auth.router";
 import { authMiddleware, requireAccount } from "@/middleware/auth";
 import { pinoMiddleware } from "@/middleware/pino";
 import { ADMIN_ACCOUNT_ID } from "@/utils/constants";
 import { prisma } from "@/utils/prisma";
+import { buildSiweMessage } from "./helpers/siwe";
 
 function makeApp() {
   const app = express();
@@ -27,6 +26,7 @@ async function reset() {
   // Preserve the admin account seeded by migration; only wipe test-created rows.
   await prisma.account.deleteMany({ where: { id: { not: ADMIN_ACCOUNT_ID } } });
   await prisma.authNonce.deleteMany();
+  await prisma.deviceRegistration.deleteMany();
 }
 
 describe("auth end-to-end", () => {
@@ -35,6 +35,11 @@ describe("auth end-to-end", () => {
 
   test("nonce → SIWE → token → gated route", async () => {
     const app = makeApp();
+
+    // Pre-create device row for assertion later.
+    await prisma.deviceRegistration.create({
+      data: { deviceId: "dev-e2e" },
+    });
 
     // 1. Get nonce
     const nonceRes = await request(app)
@@ -50,20 +55,11 @@ describe("auth end-to-end", () => {
     const nonce = cookie.split(".").pop()!;
 
     // 2. Sign SIWE
-    const wallet = new Wallet("0x" + "5".repeat(64));
-    const msg = new SiweMessage({
-      domain: "convos.app",
-      address: wallet.address,
-      statement: "Sign in to Convos",
-      uri: "https://convos.app",
-      version: "1",
-      chainId: 1,
+    const { messageStr, signature } = await buildSiweMessage({
+      deviceId: "dev-e2e",
       nonce,
-      issuedAt: new Date().toISOString(),
-      expirationTime: new Date(Date.now() + 5 * 60_000).toISOString(),
+      signerKey: "0x" + "5".repeat(64),
     });
-    const messageStr = msg.prepareMessage();
-    const signature = await wallet.signMessage(messageStr);
 
     // 3. Token
     const tokenRes = await request(app)
@@ -89,6 +85,14 @@ describe("auth end-to-end", () => {
     expect(gatedBody.accountId).toMatch(
       /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
     );
+
+    // Backfill check: DeviceRegistration row for dev-e2e should have
+    // accountId equal to the minted account in the JWT.
+    const deviceRow = await prisma.deviceRegistration.findUnique({
+      where: { deviceId: "dev-e2e" },
+    });
+    expect(deviceRow).toBeTruthy();
+    expect(deviceRow!.accountId).toBe(gatedBody.accountId);
   });
 
   test("legacy device-only token cannot reach gated route", async () => {

@@ -86,6 +86,7 @@ export async function generateToken(
         message: body.siwe.message,
         signature: body.siwe.signature,
         expectedNonce: nonce,
+        expectedDeviceId: body.deviceId,
         now: new Date(),
       });
       address = result.address;
@@ -104,6 +105,57 @@ export async function generateToken(
       externalKey: address,
     });
     accountId = upserted.accountId;
+
+    // Best-effort backfill of DeviceRegistration.accountId.
+    //
+    // Runs in its own small transaction, SEPARATE from the upsert
+    // transaction. A transient DB issue here cannot fail token mint
+    // (try/catch below). updateMany silently no-ops when the device row
+    // doesn't exist (legitimate case: client called /auth/token before
+    // /device/register). Self-heals on next mint after device registers.
+    //
+    // Concurrency: a `SELECT ... FOR UPDATE` on the device row serializes
+    // concurrent backfills targeting the same deviceId. Without the lock,
+    // commit order can diverge from request-arrival order, so a slower
+    // older request can overwrite a faster newer one. With the lock, the
+    // second request blocks until the first commits, so the request that
+    // acquires the lock last is also the one whose value ends up in the
+    // column — restoring "later request wins" semantics for the sequential
+    // wallet-switch case. Truly simultaneous arrivals resolve to lock
+    // acquisition order (non-deterministic, but final state is still a
+    // valid one of the two — no torn writes).
+    try {
+      const count = await prisma.$transaction(async (tx) => {
+        // Acquire row-level lock; no-op if device row doesn't exist
+        // (returns 0 rows, no lock taken, subsequent updateMany also 0).
+        await tx.$queryRaw`
+          SELECT 1 FROM "DeviceRegistration"
+          WHERE "deviceId" = ${body.deviceId}
+          FOR UPDATE
+        `;
+        const result = await tx.deviceRegistration.updateMany({
+          where: { deviceId: body.deviceId },
+          data: { accountId },
+        });
+        return result.count;
+      });
+      if (count > 0) {
+        req.log.info(
+          { deviceId: body.deviceId, accountId },
+          "auth.device.account_backfill",
+        );
+      } else {
+        req.log.info(
+          { deviceId: body.deviceId, accountId },
+          "auth.device.account_backfill_noop",
+        );
+      }
+    } catch (err) {
+      req.log.warn(
+        { err, deviceId: body.deviceId, accountId },
+        "auth.device.account_backfill_failed",
+      );
+    }
   }
 
   // 4. Mint JWT

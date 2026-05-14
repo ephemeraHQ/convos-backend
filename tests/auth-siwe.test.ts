@@ -1,31 +1,24 @@
 import { describe, expect, test } from "bun:test";
 import { Wallet } from "ethers";
-import { SiweMessage } from "siwe";
+import type { SiweMessage } from "siwe";
 import { InvalidSiweError, verifySiwe } from "@/api/v2/auth/handlers/siwe";
+import { buildSiweMessage } from "./helpers/siwe";
 
 const NONCE = "abcdef".padEnd(64, "0");
 const NOW = new Date("2026-05-08T12:00:00Z");
+const TEST_DEVICE_ID = "test-device-id";
 
 async function buildMessage(
   overrides: Partial<SiweMessage> = {},
   signerKey?: string,
 ) {
-  const wallet = new Wallet(signerKey ?? "0x" + "1".repeat(64));
-  const base: ConstructorParameters<typeof SiweMessage>[0] = {
-    domain: "convos.app",
-    address: wallet.address,
-    statement: "Sign in to Convos",
-    uri: "https://convos.app",
-    version: "1",
-    chainId: 1,
+  return buildSiweMessage({
+    deviceId: TEST_DEVICE_ID,
     nonce: NONCE,
-    issuedAt: NOW.toISOString(),
-    expirationTime: new Date(NOW.getTime() + 5 * 60_000).toISOString(),
-  };
-  const msg = new SiweMessage({ ...base, ...overrides });
-  const messageStr = msg.prepareMessage();
-  const signature = await wallet.signMessage(messageStr);
-  return { messageStr, signature, address: wallet.address.toLowerCase() };
+    signerKey,
+    now: NOW,
+    overrides,
+  });
 }
 
 async function expectInvalidSiwe(
@@ -51,6 +44,7 @@ describe("verifySiwe", () => {
       message: messageStr,
       signature,
       expectedNonce: NONCE,
+      expectedDeviceId: TEST_DEVICE_ID,
       now: NOW,
     });
     expect(result.address).toBe(address);
@@ -64,6 +58,7 @@ describe("verifySiwe", () => {
       message: messageStr,
       signature,
       expectedNonce: NONCE,
+      expectedDeviceId: TEST_DEVICE_ID,
       now: NOW,
     });
   });
@@ -74,6 +69,7 @@ describe("verifySiwe", () => {
       message: messageStr,
       signature,
       expectedNonce: "00".repeat(32),
+      expectedDeviceId: TEST_DEVICE_ID,
       now: NOW,
     });
   });
@@ -84,6 +80,7 @@ describe("verifySiwe", () => {
       message: messageStr,
       signature,
       expectedNonce: NONCE,
+      expectedDeviceId: TEST_DEVICE_ID,
       now: NOW,
     });
   });
@@ -96,6 +93,7 @@ describe("verifySiwe", () => {
       message: messageStr,
       signature,
       expectedNonce: NONCE,
+      expectedDeviceId: TEST_DEVICE_ID,
       now: NOW,
     });
   });
@@ -114,6 +112,7 @@ describe("verifySiwe", () => {
         message: tampered,
         signature,
         expectedNonce: NONCE,
+        expectedDeviceId: TEST_DEVICE_ID,
         now: NOW,
       },
       "parse",
@@ -128,6 +127,7 @@ describe("verifySiwe", () => {
       message: messageStr,
       signature,
       expectedNonce: NONCE,
+      expectedDeviceId: TEST_DEVICE_ID,
       now: NOW,
     });
   });
@@ -140,6 +140,7 @@ describe("verifySiwe", () => {
       message: messageStr,
       signature,
       expectedNonce: NONCE,
+      expectedDeviceId: TEST_DEVICE_ID,
       now: NOW,
     });
   });
@@ -152,6 +153,7 @@ describe("verifySiwe", () => {
       message: messageStr,
       signature,
       expectedNonce: NONCE,
+      expectedDeviceId: TEST_DEVICE_ID,
       now: NOW,
     });
   });
@@ -164,6 +166,7 @@ describe("verifySiwe", () => {
       message: messageStr,
       signature,
       expectedNonce: NONCE,
+      expectedDeviceId: TEST_DEVICE_ID,
       now: NOW,
     });
   });
@@ -176,6 +179,7 @@ describe("verifySiwe", () => {
       message: messageStr,
       signature,
       expectedNonce: NONCE,
+      expectedDeviceId: TEST_DEVICE_ID,
       now: NOW,
     });
   });
@@ -188,7 +192,122 @@ describe("verifySiwe", () => {
       message: messageStr,
       signature: badSig,
       expectedNonce: NONCE,
+      expectedDeviceId: TEST_DEVICE_ID,
       now: NOW,
     });
+  });
+
+  test("rejects when Resources field is empty", async () => {
+    const { messageStr, signature } = await buildMessage({ resources: [] });
+    await expectInvalidSiwe(
+      {
+        message: messageStr,
+        signature,
+        expectedNonce: NONCE,
+        expectedDeviceId: TEST_DEVICE_ID,
+        now: NOW,
+      },
+      "device_resource_missing",
+    );
+  });
+
+  test("rejects when Resources lacks a convos://device/ entry", async () => {
+    const { messageStr, signature } = await buildMessage({
+      resources: ["https://example.com/something"],
+    });
+    await expectInvalidSiwe(
+      {
+        message: messageStr,
+        signature,
+        expectedNonce: NONCE,
+        expectedDeviceId: TEST_DEVICE_ID,
+        now: NOW,
+      },
+      "device_resource_missing",
+    );
+  });
+
+  test("rejects when Resources contains two convos://device/ entries", async () => {
+    const { messageStr, signature } = await buildMessage({
+      resources: [
+        `convos://device/${TEST_DEVICE_ID}`,
+        `convos://device/${TEST_DEVICE_ID}-2`,
+      ],
+    });
+    await expectInvalidSiwe(
+      {
+        message: messageStr,
+        signature,
+        expectedNonce: NONCE,
+        expectedDeviceId: TEST_DEVICE_ID,
+        now: NOW,
+      },
+      "device_resource_duplicate",
+    );
+  });
+
+  test("rejects when signed deviceId differs from expectedDeviceId", async () => {
+    const { messageStr, signature } = await buildMessage({
+      resources: ["convos://device/some-other-device"],
+    });
+    await expectInvalidSiwe(
+      {
+        message: messageStr,
+        signature,
+        expectedNonce: NONCE,
+        expectedDeviceId: TEST_DEVICE_ID,
+        now: NOW,
+      },
+      "device_mismatch",
+    );
+  });
+
+  test("rejects case-different deviceId (opaque, exact match)", async () => {
+    const { messageStr, signature } = await buildMessage({
+      resources: [`convos://device/${TEST_DEVICE_ID.toUpperCase()}`],
+    });
+    await expectInvalidSiwe(
+      {
+        message: messageStr,
+        signature,
+        expectedNonce: NONCE,
+        expectedDeviceId: TEST_DEVICE_ID,
+        now: NOW,
+      },
+      "device_mismatch",
+    );
+  });
+
+  test("accepts when an extra non-device Resources entry is present", async () => {
+    const { messageStr, signature, address } = await buildMessage({
+      resources: [
+        "https://example.com/unrelated",
+        `convos://device/${TEST_DEVICE_ID}`,
+      ],
+    });
+    const result = await verifySiwe({
+      message: messageStr,
+      signature,
+      expectedNonce: NONCE,
+      expectedDeviceId: TEST_DEVICE_ID,
+      now: NOW,
+    });
+    expect(result.address).toBe(address);
+  });
+
+  test("device check runs before msg.verify (tampered signature with valid URI still throws signature)", async () => {
+    const { messageStr } = await buildMessage();
+    // Replace the signature with a syntactically valid but wrong one.
+    const badSignature = "0x" + "00".repeat(65);
+    await expectInvalidSiwe(
+      {
+        message: messageStr,
+        signature: badSignature,
+        expectedNonce: NONCE,
+        expectedDeviceId: TEST_DEVICE_ID,
+        now: NOW,
+      },
+      "signature",
+    );
   });
 });
