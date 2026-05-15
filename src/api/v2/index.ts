@@ -35,6 +35,7 @@ import {
 import invitesV2Router from "./invites/invites.router";
 import { notificationsRouter } from "./notifications/notifications.router";
 import { webhookRouter } from "./notifications/webhook.router";
+import { subscriptionsRouter } from "./subscriptions/subscriptions.router";
 
 const v2Router = Router();
 
@@ -103,6 +104,7 @@ v2Router.use("/attachments", authMiddleware, attachmentsRouter);
 v2Router.use("/connections", authMiddleware, connectionsRouter);
 v2Router.use("/notifications/xmtp", webhookRouter);
 v2Router.use("/notifications", authMiddleware, notificationsRouter);
+v2Router.use("/subscriptions", authMiddleware, subscriptionsRouter);
 
 // Auth check endpoint - allows NSE tokens for diagnostics
 v2Router.get("/auth-check", authMiddlewareAllowNSE, (_req, res) => {
