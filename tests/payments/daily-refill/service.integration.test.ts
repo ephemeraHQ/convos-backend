@@ -323,3 +323,46 @@ describe("runDailyRefill — idempotency", () => {
     expect(await balanceOf(accountId)).toBe(40n);
   });
 });
+
+describe("runDailyRefill — failure isolation", () => {
+  test("pre-seeded idempotency-key collision with mismatched payload → error for that account, others succeed", async () => {
+    const goodAccountId = await seedAccount();
+    const collidingAccountId = await seedAccount();
+
+    // Pre-insert a ledger row using the same idempotency key the service
+    // will generate for `collidingAccountId` today, but with a different
+    // delta. The grant() call inside the service will see the prior row
+    // and throw IdempotencyMismatchError.
+    //
+    // IMPORTANT: createdAt is set to yesterday so the global rate-limit
+    // query (MAX createdAt WHERE grantKindId='daily_refill' >= startOfTodayUtc(NOW))
+    // does NOT short-circuit the batch. The date-keyed idempotency key
+    // ('daily_refill:<accountId>:2026-05-15') still collides with what the
+    // service generates for today, triggering the mismatch error.
+    const dayKey = ymdUtc(NOW);
+    const collidingKey = `daily_refill:${collidingAccountId}:${dayKey}`;
+    await prisma.creditLedger.create({
+      data: {
+        accountId: collidingAccountId,
+        delta: 99n,
+        reason: LedgerReason.grant,
+        idempotencyKey: collidingKey,
+        grantKindId: "daily_refill",
+        createdAt: new Date(NOW.getTime() - 24 * 60 * 60 * 1000),
+      },
+    });
+    // Also reflect the delta in UserCredits so balance is internally consistent
+    await prisma.userCredits.create({
+      data: { accountId: collidingAccountId, balance: 99n },
+    });
+
+    const summary = await runDailyRefill({ now: NOW });
+
+    expect(summary.refilled.map((r) => r.accountId)).toContain(goodAccountId);
+    expect(summary.errors.map((e) => e.accountId)).toContain(collidingAccountId);
+    const collidingError = summary.errors.find(
+      (e) => e.accountId === collidingAccountId,
+    );
+    expect(collidingError?.error).toMatch(/idempotency|replay|mismatch/i);
+  });
+});
