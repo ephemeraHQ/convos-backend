@@ -9,6 +9,9 @@ import {
   test,
 } from "bun:test";
 import express from "express";
+import { __setAssistantConfigOverridesForTests } from "@/api/v2/agents/handlers/assistant-config";
+import { joinHandler } from "@/api/v2/agents/handlers/join";
+import { joinStatusHandler } from "@/api/v2/agents/handlers/join-status";
 import { jsonMiddleware } from "@/middleware/json";
 import { pinoMiddleware } from "@/middleware/pino";
 
@@ -18,12 +21,6 @@ const originalFetch = globalThis.fetch;
 
 const ASSISTANT_URL = "https://assistants.test.local";
 const ASSISTANT_KEY = "test-assistant-key";
-
-const { joinHandler } = await import("@/api/v2/agents/handlers/join");
-const { joinStatusHandler } =
-  await import("@/api/v2/agents/handlers/join-status");
-const { __setAssistantConfigOverridesForTests } =
-  await import("@/api/v2/agents/handlers/assistant-config");
 
 const app = express();
 app.use(pinoMiddleware);

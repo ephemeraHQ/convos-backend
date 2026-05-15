@@ -2,6 +2,8 @@ import { Router } from "express";
 import { ASSISTANT_API_URL } from "@/config";
 import logger from "@/utils/logger";
 
+const UPSTREAM_FETCH_TIMEOUT_MS = 10_000;
+
 const wellKnownRouter = Router();
 
 /**
@@ -14,9 +16,10 @@ const wellKnownRouter = Router();
  * per-environment (dev/staging vs production).
  */
 wellKnownRouter.get("/agents.json", async (req, res) => {
-  // ASSISTANT_API_URL is already trimmed by @/config, but strip any
-  // trailing slashes before composing the upstream URL.
-  const assistantBaseUrl = ASSISTANT_API_URL.replace(/\/+$/, "");
+  // ASSISTANT_API_URL is already trimmed by @/config; re-trim defensively
+  // before stripping trailing slashes so any whitespace that sneaks in
+  // (e.g. via downstream injection) is still caught by the empty check.
+  const assistantBaseUrl = ASSISTANT_API_URL.trim().replace(/\/+$/, "");
 
   if (!assistantBaseUrl) {
     req.log.warn(
@@ -31,7 +34,7 @@ wellKnownRouter.get("/agents.json", async (req, res) => {
   try {
     const upstream = await fetch(upstreamUrl, {
       headers: { Accept: "application/json" },
-      signal: AbortSignal.timeout(10_000),
+      signal: AbortSignal.timeout(UPSTREAM_FETCH_TIMEOUT_MS),
     });
 
     if (!upstream.ok) {
