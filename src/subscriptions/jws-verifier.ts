@@ -7,8 +7,12 @@ import {
   type JWSTransactionDecodedPayload,
   type ResponseBodyV2DecodedPayload,
 } from "@apple/app-store-server-library";
-import { IS_PRODUCTION } from "@/config";
 import { AppError } from "@/utils/errors";
+
+// Read NODE_ENV dynamically (not from the cached `isProductionEnv()` config
+// constant) so the prod-only guard below stays testable. NODE_ENV doesn't
+// change mid-process in production, so the runtime behavior is identical.
+const isProductionEnv = () => process.env.NODE_ENV === "production";
 
 export type AppleEnvironment = Environment;
 export { Environment };
@@ -27,8 +31,19 @@ const resolveEnvironment = () => {
   const raw = process.env.APPLE_ENV?.trim();
   if (raw === "production") return Environment.PRODUCTION;
   if (raw === "sandbox") return Environment.SANDBOX;
-  if (raw === "local-testing") return Environment.LOCAL_TESTING;
-  return IS_PRODUCTION ? Environment.PRODUCTION : Environment.SANDBOX;
+  if (raw === "local-testing") {
+    // LOCAL_TESTING skips JWS signature + chain verification entirely. A
+    // misconfigured prod env with APPLE_ENV=local-testing would silently
+    // accept forged transactions. Fail loudly instead.
+    if (isProductionEnv()) {
+      throw new AppError(
+        500,
+        "APPLE_ENV=local-testing is forbidden in production",
+      );
+    }
+    return Environment.LOCAL_TESTING;
+  }
+  return isProductionEnv() ? Environment.PRODUCTION : Environment.SANDBOX;
 };
 
 const resolveBundleId = () => {

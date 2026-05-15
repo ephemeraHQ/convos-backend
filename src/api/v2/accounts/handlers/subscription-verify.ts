@@ -9,6 +9,7 @@ import { verifyAndDecodeTransaction } from "@/subscriptions/jws-verifier";
 import { productMapping } from "@/subscriptions/product-mapping";
 import {
   AppleEnv,
+  findByOriginalTransactionId,
   serializeUserSubscription,
   SubscriptionStatus,
   upsertFromVerify,
@@ -19,10 +20,15 @@ import { AppError } from "@/utils/errors";
 const uuidPattern =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+// Body intentionally takes ONLY the JWS. appAccountToken is extracted from
+// the verified payload — the iOS client created it, passed it to StoreKit
+// at purchase time, and Apple now echoes it in every receipt. Reading it
+// from the JWS (vs trusting a separate request field) eliminates a session-
+// stealing vector where a leaked JWS could be replayed under a different
+// caller's account.
 const bodySchema = z
   .object({
     jwsRepresentation: z.string().min(1),
-    appAccountToken: z.string().regex(uuidPattern),
   })
   .strict();
 
@@ -117,11 +123,23 @@ export async function subscriptionVerifyHandler(req: Request, res: Response) {
     return;
   }
 
+  // appAccountToken comes from the verified JWS — iOS set it at purchase
+  // time via StoreKit. Apple persists it; subsequent receipts echo it back.
+  // Reject if Apple's payload doesn't carry one (would mean a misconfigured
+  // client or a non-subscription product).
+  const appAccountToken = decoded.appAccountToken;
+  if (!appAccountToken || !uuidPattern.test(appAccountToken)) {
+    res
+      .status(400)
+      .json({ error: "Apple transaction has no valid appAccountToken" });
+    return;
+  }
+
   let input: VerifyInput;
   try {
     input = buildVerifyInput(
       accountId,
-      parsed.data.appAccountToken,
+      appAccountToken,
       decoded,
       parsed.data.jwsRepresentation,
     );
@@ -133,26 +151,30 @@ export async function subscriptionVerifyHandler(req: Request, res: Response) {
     throw err;
   }
 
-  // PRD §6.4 note: the JWS may carry a DIFFERENT appAccountToken than the
-  // caller passed (e.g. cross-device restore — the original purchase set
-  // appAccountToken A, the new install generates token B). We trust the
-  // caller-supplied token because it's bound to the currently-signed-in
-  // account; the repository reassigns accordingly. Log the divergence so
-  // it's auditable.
-  if (
-    decoded.appAccountToken &&
-    decoded.appAccountToken.toLowerCase() !==
-      parsed.data.appAccountToken.toLowerCase()
-  ) {
-    req.log.info(
+  // Strict ownership check: an existing Subscription with this
+  // originalTransactionId belongs to exactly one accountId for life. A
+  // re-verify from a different signed-in account is rejected. This blocks a
+  // class of session-stealing attacks where a leaked JWS could be replayed
+  // under a different caller's account. Cross-account transfer (rare:
+  // user signs up fresh on a new Convos account using the same Apple ID)
+  // becomes a support operation, not a code path.
+  const existing = await findByOriginalTransactionId(
+    input.originalTransactionId,
+  );
+  if (existing && existing.accountId !== accountId) {
+    req.log.warn(
       {
         accountId,
-        jwsAppAccountToken: decoded.appAccountToken,
-        suppliedAppAccountToken: parsed.data.appAccountToken,
+        existingAccountId: existing.accountId,
         originalTransactionId: input.originalTransactionId,
       },
-      "appAccountToken divergence on verify — reassigning subscription to caller's account",
+      "subscription.verify.account_mismatch",
     );
+    res.status(409).json({
+      error: "Subscription belongs to a different account. Contact support.",
+      code: "subscription_account_mismatch",
+    });
+    return;
   }
 
   try {

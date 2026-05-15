@@ -131,14 +131,14 @@ describe("GET /v2/accounts/me/subscription", () => {
     installLocalTestingVerifier();
     const accountId = await newAccount();
     const token = await tokenFor(accountId);
-    const appAccountToken = "11111111-2222-3333-4444-555555555555";
 
     await request(makeApp())
       .post("/v2/accounts/me/subscription/verify")
       .set("X-Convos-AuthToken", token)
       .send({
-        jwsRepresentation: signTransaction({ appAccountToken }),
-        appAccountToken,
+        jwsRepresentation: signTransaction({
+          appAccountToken: "11111111-2222-3333-4444-555555555555",
+        }),
       });
 
     const res = await request(makeApp())
@@ -164,25 +164,22 @@ describe("POST /v2/accounts/me/subscription/verify", () => {
     const res = await request(makeApp())
       .post("/v2/accounts/me/subscription/verify")
       .set("X-Convos-AuthToken", token)
-      .send({
-        jwsRepresentation: signTransaction({}),
-        appAccountToken: "11111111-2222-3333-4444-555555555555",
-      });
+      .send({ jwsRepresentation: signTransaction({}) });
     expect(res.status).toBe(403);
   });
 
-  test("returns 400 on missing fields", async () => {
+  test("returns 400 on missing jwsRepresentation", async () => {
     installLocalTestingVerifier();
     const accountId = await newAccount();
     const token = await tokenFor(accountId);
     const res = await request(makeApp())
       .post("/v2/accounts/me/subscription/verify")
       .set("X-Convos-AuthToken", token)
-      .send({ appAccountToken: "11111111-2222-3333-4444-555555555555" });
+      .send({});
     expect(res.status).toBe(400);
   });
 
-  test("returns 400 when appAccountToken is not a UUID", async () => {
+  test("rejects extra body fields (appAccountToken must come from JWS, not body)", async () => {
     installLocalTestingVerifier();
     const accountId = await newAccount();
     const token = await tokenFor(accountId);
@@ -191,7 +188,7 @@ describe("POST /v2/accounts/me/subscription/verify", () => {
       .set("X-Convos-AuthToken", token)
       .send({
         jwsRepresentation: signTransaction({}),
-        appAccountToken: "not-a-uuid",
+        appAccountToken: "11111111-2222-3333-4444-555555555555",
       });
     expect(res.status).toBe(400);
   });
@@ -203,12 +200,23 @@ describe("POST /v2/accounts/me/subscription/verify", () => {
     const res = await request(makeApp())
       .post("/v2/accounts/me/subscription/verify")
       .set("X-Convos-AuthToken", token)
-      .send({
-        jwsRepresentation: "garbage.not.jws",
-        appAccountToken: "11111111-2222-3333-4444-555555555555",
-      });
+      .send({ jwsRepresentation: "garbage.not.jws" });
     expect(res.status).toBe(400);
     expect((res.body as ErrorBody).error).toBe("Invalid signed transaction");
+  });
+
+  test("returns 400 when JWS carries no appAccountToken", async () => {
+    installLocalTestingVerifier();
+    const accountId = await newAccount();
+    const token = await tokenFor(accountId);
+    const res = await request(makeApp())
+      .post("/v2/accounts/me/subscription/verify")
+      .set("X-Convos-AuthToken", token)
+      .send({
+        jwsRepresentation: signTransaction({ appAccountToken: undefined }),
+      });
+    expect(res.status).toBe(400);
+    expect((res.body as ErrorBody).error).toMatch(/appAccountToken/);
   });
 
   test("returns 400 on unknown productId", async () => {
@@ -220,7 +228,6 @@ describe("POST /v2/accounts/me/subscription/verify", () => {
       .set("X-Convos-AuthToken", token)
       .send({
         jwsRepresentation: signTransaction({ productId: "app.bogus.sku" }),
-        appAccountToken: "11111111-2222-3333-4444-555555555555",
       });
     expect(res.status).toBe(400);
     expect((res.body as ErrorBody).error).toMatch(/Unrecognized productId/);
@@ -230,16 +237,14 @@ describe("POST /v2/accounts/me/subscription/verify", () => {
     installLocalTestingVerifier();
     const accountId = await newAccount();
     const token = await tokenFor(accountId);
-    const appAccountToken = "11111111-2222-3333-4444-555555555555";
     const res = await request(makeApp())
       .post("/v2/accounts/me/subscription/verify")
       .set("X-Convos-AuthToken", token)
       .send({
         jwsRepresentation: signTransaction({
           productId: "app.convos.subs.pro.annual",
-          appAccountToken,
+          appAccountToken: "11111111-2222-3333-4444-555555555555",
         }),
-        appAccountToken,
       });
     expect(res.status).toBe(200);
     const body = res.body as VerifyBody;
@@ -257,6 +262,9 @@ describe("POST /v2/accounts/me/subscription/verify", () => {
       where: { originalTransactionId: "2000000000000001" },
     });
     expect(persisted?.accountId).toBe(accountId);
+    expect(persisted?.appAccountToken).toBe(
+      "11111111-2222-3333-4444-555555555555",
+    );
     expect(persisted?.tier).toBe("pro");
   });
 
@@ -264,16 +272,14 @@ describe("POST /v2/accounts/me/subscription/verify", () => {
     installLocalTestingVerifier();
     const accountId = await newAccount();
     const token = await tokenFor(accountId);
-    const appAccountToken = "11111111-2222-3333-4444-555555555555";
     const res = await request(makeApp())
       .post("/v2/accounts/me/subscription/verify")
       .set("X-Convos-AuthToken", token)
       .send({
         jwsRepresentation: signTransaction({
-          appAccountToken,
+          appAccountToken: "11111111-2222-3333-4444-555555555555",
           offerType: 1, // INTRODUCTORY_OFFER
         }),
-        appAccountToken,
       });
     expect(res.status).toBe(200);
     const body = res.body as VerifyBody;
@@ -285,10 +291,10 @@ describe("POST /v2/accounts/me/subscription/verify", () => {
     installLocalTestingVerifier();
     const accountId = await newAccount();
     const token = await tokenFor(accountId);
-    const appAccountToken = "11111111-2222-3333-4444-555555555555";
     const body = {
-      jwsRepresentation: signTransaction({ appAccountToken }),
-      appAccountToken,
+      jwsRepresentation: signTransaction({
+        appAccountToken: "11111111-2222-3333-4444-555555555555",
+      }),
     };
 
     await request(makeApp())
@@ -307,43 +313,43 @@ describe("POST /v2/accounts/me/subscription/verify", () => {
     expect(receipts).toHaveLength(1);
   });
 
-  test("cross-device transfer: second account verifies same originalTransactionId → sub reassigned", async () => {
+  test("cross-account re-verify rejected with 409 (subscription belongs to original buyer)", async () => {
     installLocalTestingVerifier();
     const accountA = await newAccount();
     const accountB = await newAccount();
     const tokenA = await tokenFor(accountA);
     const tokenB = await tokenFor(accountB);
 
-    await request(makeApp())
+    const firstRes = await request(makeApp())
       .post("/v2/accounts/me/subscription/verify")
       .set("X-Convos-AuthToken", tokenA)
       .send({
         jwsRepresentation: signTransaction({
           appAccountToken: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
         }),
-        appAccountToken: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
       });
+    expect(firstRes.status).toBe(200);
 
+    // Account B tries to claim the same Apple subscription. Even though Apple
+    // signed the JWS, our strict ownership check rejects: the original buyer
+    // (account A) owns it for life. Transfer is a support operation.
     const res = await request(makeApp())
       .post("/v2/accounts/me/subscription/verify")
       .set("X-Convos-AuthToken", tokenB)
       .send({
-        // Same JWS (i.e. same Apple sub), different appAccountToken from
-        // device B. PRD §6.4: trust the caller's new token + account.
         jwsRepresentation: signTransaction({
           appAccountToken: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
-          transactionId: "2000000000000002", // different tx so receipt is new
+          transactionId: "2000000000000002",
         }),
-        appAccountToken: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
       });
-    expect(res.status).toBe(200);
+    expect(res.status).toBe(409);
+    const body = res.body as ErrorBody & { code?: string };
+    expect(body.code).toBe("subscription_account_mismatch");
 
+    // Persisted sub stays bound to accountA.
     const persisted = await prisma.subscription.findUnique({
       where: { originalTransactionId: "2000000000000001" },
     });
-    expect(persisted?.accountId).toBe(accountB);
-    expect(persisted?.appAccountToken).toBe(
-      "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
-    );
+    expect(persisted?.accountId).toBe(accountA);
   });
 });

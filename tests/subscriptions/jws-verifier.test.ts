@@ -138,6 +138,23 @@ describe("buildVerifierConfig", () => {
     expect(cfg.enableOnlineChecks).toBe(false);
   });
 
+  test("APPLE_ENV=local-testing throws 500 in production (defense against misconfig)", () => {
+    const priorNodeEnv = process.env.NODE_ENV;
+    process.env.NODE_ENV = "production";
+    process.env.APPLE_ENV = "local-testing";
+    try {
+      expect(() => buildVerifierConfig()).toThrow(
+        /local-testing is forbidden in production/,
+      );
+    } finally {
+      if (priorNodeEnv === undefined) {
+        delete process.env.NODE_ENV;
+      } else {
+        process.env.NODE_ENV = priorNodeEnv;
+      }
+    }
+  });
+
   test("missing APPLE_BUNDLE_ID throws 500", () => {
     delete process.env.APPLE_BUNDLE_ID;
     expect(() => buildVerifierConfig()).toThrow(/APPLE_BUNDLE_ID/);
