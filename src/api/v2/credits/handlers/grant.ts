@@ -6,15 +6,8 @@ import { isAccountIdFkViolation } from "../fk-violation";
 import { grantRequestSchema } from "../schemas";
 
 export async function grant(req: Request, res: Response): Promise<void> {
-  const parsed = grantRequestSchema.safeParse(req.body);
-  if (!parsed.success) {
-    res.status(400).json({
-      error: "Validation Error",
-      details: parsed.error.flatten(),
-    });
-    return;
-  }
-  const { accountId, credits, grantKindId, idempotencyKey, note } = parsed.data;
+  const { accountId, credits, grantKindId, idempotencyKey, note } =
+    grantRequestSchema.parse(req.body);
 
   try {
     const result = await grantCredits({
@@ -28,6 +21,15 @@ export async function grant(req: Request, res: Response): Promise<void> {
     // grant transaction. Concurrent grants could make this value reflect a
     // later state.
     const balance = await getBalance(accountId);
+    req.log.info(
+      {
+        accountId,
+        granted: result.granted,
+        replayed: result.replayed,
+        grantKindId,
+      },
+      result.replayed ? "credits.grant.replayed" : "credits.grant.accepted",
+    );
     res.status(200).json({
       granted: result.granted,
       balance: balance.toString(),
@@ -35,6 +37,10 @@ export async function grant(req: Request, res: Response): Promise<void> {
     });
   } catch (err) {
     if (err instanceof IdempotencyMismatchError) {
+      req.log.info(
+        { accountId, idempotencyKey },
+        "credits.grant.idempotency_mismatch",
+      );
       res.status(409).json({
         error: err.message,
         code: "idempotency_mismatch",

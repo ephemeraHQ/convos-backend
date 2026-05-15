@@ -9,16 +9,8 @@ import { isAccountIdFkViolation } from "../fk-violation";
 import { consumeRequestSchema } from "../schemas";
 
 export async function consume(req: Request, res: Response): Promise<void> {
-  const parsed = consumeRequestSchema.safeParse(req.body);
-  if (!parsed.success) {
-    res.status(400).json({
-      error: "Validation Error",
-      details: parsed.error.flatten(),
-    });
-    return;
-  }
   const { accountId, usdCostMicros, idempotencyKey, requestId, model } =
-    parsed.data;
+    consumeRequestSchema.parse(req.body);
 
   try {
     const result = await consumeCredits({
@@ -32,6 +24,10 @@ export async function consume(req: Request, res: Response): Promise<void> {
     // consumes on the same account may make this value reflect a later state.
     // Hermes uses it only as a UI signal, not for accounting.
     const balance = await getBalance(accountId);
+    req.log.info(
+      { accountId, spent: result.spent, replayed: result.replayed, requestId },
+      result.replayed ? "credits.consume.replayed" : "credits.consume.accepted",
+    );
     res.status(200).json({
       spent: result.spent,
       balance: balance.toString(),
@@ -39,6 +35,7 @@ export async function consume(req: Request, res: Response): Promise<void> {
     });
   } catch (err) {
     if (err instanceof InsufficientBalanceError) {
+      req.log.info({ accountId }, "credits.consume.insufficient_balance");
       res.status(402).json({
         error: err.message,
         code: "insufficient_balance",
@@ -47,6 +44,10 @@ export async function consume(req: Request, res: Response): Promise<void> {
       return;
     }
     if (err instanceof IdempotencyMismatchError) {
+      req.log.info(
+        { accountId, idempotencyKey },
+        "credits.consume.idempotency_mismatch",
+      );
       res.status(409).json({
         error: err.message,
         code: "idempotency_mismatch",
