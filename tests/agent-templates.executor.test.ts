@@ -167,21 +167,31 @@ describe("generation-executor", () => {
     );
     const gen = await createPendingGeneration("fallback-slug");
 
-    await executeGeneration(gen.id);
-
-    const final = await prisma.agentTemplateGeneration.findUnique({
-      where: { id: gen.id },
-    });
-    expect(final?.status).toBe("done");
-
-    const template = await prisma.agentTemplate.findUniqueOrThrow({
-      where: { id: final?.templateId as string },
-    });
-    expect(template.slug).toBe("agent");
-
     // afterEach cleans templates by the shared fixture agentName; this row
-    // has a different agentName, so delete it here.
-    await prisma.agentTemplate.delete({ where: { id: template.id } });
+    // has a different agentName, so capture the id and clean up in a finally
+    // — without this, an assertion failure before the explicit delete would
+    // leak the row into later tests.
+    let createdTemplateId: string | null = null;
+    try {
+      await executeGeneration(gen.id);
+
+      const final = await prisma.agentTemplateGeneration.findUnique({
+        where: { id: gen.id },
+      });
+      expect(final?.status).toBe("done");
+
+      const template = await prisma.agentTemplate.findUniqueOrThrow({
+        where: { id: final?.templateId as string },
+      });
+      createdTemplateId = template.id;
+      expect(template.slug).toBe("agent");
+    } finally {
+      if (createdTemplateId !== null) {
+        await prisma.agentTemplate.delete({
+          where: { id: createdTemplateId },
+        });
+      }
+    }
   });
 
   test("publishStatus 'unlisted' on the generation lands template in unlisted with firstPublishedAt set", async () => {
