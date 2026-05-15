@@ -39,19 +39,20 @@ const sumPeriodConsumes = async (
  * `{ balance, monthlyGrant, monthlyGrantUsed, nextRefreshAt, periodLabel }`.
  *
  * Derivation:
- *   - With an entitled Subscription: `monthlyGrant` comes from the tier × period
- *     config; `monthlyGrantUsed` is the sum of consume-ledger deltas since
+ *   - With an entitled Subscription (effective status in trial/active/grace/
+ *     billingRetry per `isEntitledSubscription`): `monthlyGrant` from tier ×
+ *     period config; `monthlyGrantUsed` = sum of consume-ledger deltas since
  *     `currentPeriodStart`; `balance = monthlyGrant - monthlyGrantUsed`;
  *     `nextRefreshAt = currentPeriodEnd`.
- *   - Without an entitled Subscription (free tier): balance is the daily-refill
- *     ledger value, `monthlyGrant` is the free-tier daily cap, `monthlyGrantUsed`
- *     is the cap minus the current balance, `nextRefreshAt` is the start of the
- *     next UTC day, `periodLabel` is "Daily".
+ *   - Without an entitled Subscription (no row, expired, revoked, or grace
+ *     past end): free-tier daily-refill semantics. `balance` = live ledger
+ *     balance clamped to 0; `monthlyGrant` = `PAYMENTS_FREE_TIER_DAILY_CAP_CREDITS`;
+ *     `monthlyGrantUsed` = `max(0, cap - balance)`; `nextRefreshAt` = start
+ *     of next UTC day; `periodLabel` = "Daily".
  *
- * Note for v1: additive grants (NUX trial, top-ups, manual ops) outside the
- * daily-refill ledger are NOT folded into the balance display yet. The iOS
- * `CreditBalance` model doesn't yet expose a separate "bonus credits" field.
- * When that surface ships, widen this handler to include them.
+ * Note for v1: field names reuse `monthlyGrant`/`monthlyGrantUsed` for the
+ * daily cap so iOS doesn't need a client-side change. Proper `dailyCap` /
+ * `dailyUsed` fields are a follow-up requiring iOS coordination.
  */
 export async function creditsGetHandler(req: Request, res: Response) {
   const accountId = res.locals.accountId as string;
