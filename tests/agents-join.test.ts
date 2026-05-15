@@ -27,9 +27,8 @@ const originalWaitBudget = process.env.ASSISTANT_JOIN_WAIT_BUDGET_MS;
 const originalPollInterval = process.env.ASSISTANT_JOIN_POLL_INTERVAL_MS;
 
 const { joinHandler } = await import("@/api/v2/agents/handlers/join");
-const { joinStatusHandler } = await import(
-  "@/api/v2/agents/handlers/join-status"
-);
+const { joinStatusHandler } =
+  await import("@/api/v2/agents/handlers/join-status");
 
 const app = express();
 app.use(pinoMiddleware);
@@ -144,9 +143,7 @@ describe("agents join (assistant API)", () => {
           expect(body.instructions).toBe("You are a helpful assistant.");
           expect(body.joinUrl).toContain("?i=test-slug");
 
-          return Promise.resolve(
-            jsonResponse(200, { instanceId: "inst-xyz" }),
-          );
+          return Promise.resolve(jsonResponse(200, { instanceId: "inst-xyz" }));
         }
         // GET poll
         expect(url).toBe(`${ASSISTANT_URL}/api/assistants/inst-xyz`);
@@ -175,9 +172,7 @@ describe("agents join (assistant API)", () => {
       let pollCount = 0;
       mockFetchImpl = (_url, init) => {
         if (init?.method === "POST") {
-          return Promise.resolve(
-            jsonResponse(200, { instanceId: "inst-1" }),
-          );
+          return Promise.resolve(jsonResponse(200, { instanceId: "inst-1" }));
         }
         pollCount += 1;
         if (pollCount < 3) {
@@ -233,9 +228,7 @@ describe("agents join (assistant API)", () => {
     test("returns 502 when upstream reports failed", async () => {
       mockFetchImpl = (_url, init) => {
         if (init?.method === "POST") {
-          return Promise.resolve(
-            jsonResponse(200, { instanceId: "inst-bad" }),
-          );
+          return Promise.resolve(jsonResponse(200, { instanceId: "inst-bad" }));
         }
         return Promise.resolve(
           jsonResponse(200, {
@@ -260,9 +253,7 @@ describe("agents join (assistant API)", () => {
             instructions: string;
           };
           expect(body.instructions).toBe("Be terse.");
-          return Promise.resolve(
-            jsonResponse(200, { instanceId: "inst-i" }),
-          );
+          return Promise.resolve(jsonResponse(200, { instanceId: "inst-i" }));
         }
         return Promise.resolve(
           jsonResponse(200, {
@@ -283,9 +274,7 @@ describe("agents join (assistant API)", () => {
         const headers = (init?.headers as Record<string, string>) ?? {};
         expect(headers.Authorization).toBeUndefined();
         if (init?.method === "POST") {
-          return Promise.resolve(
-            jsonResponse(200, { instanceId: "inst-na" }),
-          );
+          return Promise.resolve(jsonResponse(200, { instanceId: "inst-na" }));
         }
         return Promise.resolve(
           jsonResponse(200, {
@@ -305,9 +294,7 @@ describe("agents join (assistant API)", () => {
       mockFetchImpl = (url, init) => {
         if (init?.method === "POST") {
           expect(url).toBe(`${ASSISTANT_URL}/api/assistants`);
-          return Promise.resolve(
-            jsonResponse(200, { instanceId: "inst-3" }),
-          );
+          return Promise.resolve(jsonResponse(200, { instanceId: "inst-3" }));
         }
         expect(url).toBe(`${ASSISTANT_URL}/api/assistants/inst-3`);
         return Promise.resolve(
@@ -367,9 +354,7 @@ describe("agents join (assistant API)", () => {
     test("treats per-poll errors as non-fatal and falls back to pending", async () => {
       mockFetchImpl = (_url, init) => {
         if (init?.method === "POST") {
-          return Promise.resolve(
-            jsonResponse(200, { instanceId: "inst-err" }),
-          );
+          return Promise.resolve(jsonResponse(200, { instanceId: "inst-err" }));
         }
         return Promise.reject(new Error("ECONNREFUSED"));
       };
