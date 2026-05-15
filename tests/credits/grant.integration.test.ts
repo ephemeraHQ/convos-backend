@@ -79,7 +79,7 @@ describe("POST /api/v2/credits/grant", () => {
     });
   });
 
-  test("idempotent replay → 200 replayed:true", async () => {
+  test("idempotent replay → 200 replayed:true + balance unchanged", async () => {
     const accountId = await seedAccount();
     tracker.push(accountId);
     const body = {
@@ -88,12 +88,39 @@ describe("POST /api/v2/credits/grant", () => {
       grantKindId: "signup_bonus" as const,
       idempotencyKey: "idem-grant-replay-1",
     };
-    await post("/api/v2/credits/grant", body);
+    const first = (await (
+      await post("/api/v2/credits/grant", body)
+    ).json()) as Record<string, unknown>;
     const second = (await (
       await post("/api/v2/credits/grant", body)
     ).json()) as Record<string, unknown>;
+    expect(first.replayed).toBe(false);
     expect(second.replayed).toBe(true);
     expect(second.granted).toBe(500);
+    expect(second.balance).toBe(first.balance);
+  });
+
+  test("idempotency mismatch → 409 + code:idempotency_mismatch", async () => {
+    const accountId = await seedAccount();
+    tracker.push(accountId);
+
+    // First grant: 500 credits, key X
+    await post("/api/v2/credits/grant", {
+      accountId,
+      credits: 500,
+      grantKindId: "signup_bonus",
+      idempotencyKey: "idem-grant-mismatch-1",
+    });
+    // Second grant: same key, different credits amount → mismatch
+    const res = await post("/api/v2/credits/grant", {
+      accountId,
+      credits: 999,
+      grantKindId: "signup_bonus",
+      idempotencyKey: "idem-grant-mismatch-1",
+    });
+    expect(res.status).toBe(409);
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body.code).toBe("idempotency_mismatch");
   });
 
   test("unknown account → 409 + code:account_not_found", async () => {
