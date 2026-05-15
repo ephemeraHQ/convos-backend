@@ -32,8 +32,8 @@ export const IS_DEVELOPMENT = process.env.NODE_ENV === "development";
 // /api/v2/agents/join + /.well-known/agents.json.
 // ASSISTANT_API_KEY is optional — set if the deployed assistants service
 // requires a bearer token in front of POST /api/assistants.
-export const ASSISTANT_API_URL = process.env.ASSISTANT_API_URL || "";
-export const ASSISTANT_API_KEY = process.env.ASSISTANT_API_KEY || "";
+export const ASSISTANT_API_URL = (process.env.ASSISTANT_API_URL || "").trim();
+export const ASSISTANT_API_KEY = (process.env.ASSISTANT_API_KEY || "").trim();
 
 // Agent asset upload auth (optional — endpoint returns 503 if not configured)
 export const AGENT_ASSETS_API_KEY = process.env.AGENT_ASSETS_API_KEY || "";
@@ -141,6 +141,18 @@ export const GENERATION_STUCK_SWEEP_THRESHOLD_MS = parsePositiveInt(
 export const GENERATION_EXECUTOR_TIMEOUT_MS = parsePositiveInt(
   process.env.GENERATION_EXECUTOR_TIMEOUT_MS,
   5 * 60 * 1000,
+);
+
+// Server-side wait knobs for POST /api/v2/agents/join — the handler blocks
+// while the upstream assistant workflow boots a fresh container. Override
+// via env in tests / staging to shrink the wait.
+export const ASSISTANT_JOIN_WAIT_BUDGET_MS = parsePositiveInt(
+  process.env.ASSISTANT_JOIN_WAIT_BUDGET_MS,
+  25_000,
+);
+export const ASSISTANT_JOIN_POLL_INTERVAL_MS = parsePositiveInt(
+  process.env.ASSISTANT_JOIN_POLL_INTERVAL_MS,
+  1_500,
 );
 
 // Operational invariant: the stuck-row sweep must allow the in-process

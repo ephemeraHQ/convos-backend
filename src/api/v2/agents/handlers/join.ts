@@ -1,6 +1,13 @@
 import type { Request, Response } from "express";
 import { z } from "zod";
 import { XMTP_ENV } from "@/config";
+import {
+  assistantStatusSchema,
+  getAssistantApiKey,
+  getAssistantApiUrl,
+  getJoinPollIntervalMs,
+  getJoinWaitBudgetMs,
+} from "./assistant-config";
 
 const bodySchema = z.object({
   slug: z.string().min(1, "Slug is required").max(2048),
@@ -12,22 +19,9 @@ const bodySchema = z.object({
 
 const FORCE_ERROR_DELAY_MS = 5_000;
 
-// Server-side wait budget. The upstream workflow spins up a fresh per-assistant
-// container (wallet gen → key issuance → container boot → join), which is
-// materially slower than the old pre-warmed pool. We block long enough that
-// the common path returns joined:true synchronously; if the workflow runs
-// over, we hand the caller an instanceId and let it poll via
-// GET /api/v2/agents/join/:instanceId.
-const DEFAULT_JOIN_WAIT_BUDGET_MS = 25_000;
-const DEFAULT_JOIN_POLL_INTERVAL_MS = 1_500;
 const DISPATCH_TIMEOUT_MS = 10_000;
 const POLL_TIMEOUT_MS = 5_000;
-
-function readPositiveInt(raw: string | undefined, fallback: number): number {
-  if (!raw) return fallback;
-  const n = Number.parseInt(raw, 10);
-  return Number.isFinite(n) && n > 0 ? n : fallback;
-}
+const ERROR_BODY_LOG_LIMIT = 200;
 
 const ERRORS = {
   AGENT_PROVISION_FAILED: {
@@ -57,25 +51,28 @@ const assistantDispatchSchema = z.object({
   instanceId: z.string().min(1),
 });
 
-const assistantStatusSchema = z.object({
-  instanceId: z.string(),
-  joinStatus: z.enum(["starting", "pending_acceptance", "joined", "failed"]),
-  joinFailureReason: z.string().nullable().optional(),
-});
-
 type PollOutcome =
   | { kind: "joined" }
   | { kind: "failed"; reason: string | null }
   | { kind: "pending" };
 
-async function pollUntilJoined(
-  assistantBaseUrl: string,
-  instanceId: string,
-  authHeader: string | undefined,
-  deadlineMs: number,
-  pollIntervalMs: number,
-  log: Request["log"],
-): Promise<PollOutcome> {
+async function pollUntilJoined(args: {
+  assistantBaseUrl: string;
+  instanceId: string;
+  authHeader: string | undefined;
+  deadlineMs: number;
+  pollIntervalMs: number;
+  log: Request["log"];
+}): Promise<PollOutcome> {
+  const {
+    assistantBaseUrl,
+    instanceId,
+    authHeader,
+    deadlineMs,
+    pollIntervalMs,
+    log,
+  } = args;
+
   const headers: Record<string, string> = {};
   if (authHeader) headers.Authorization = authHeader;
 
@@ -176,8 +173,8 @@ export async function joinHandler(req: Request, res: Response) {
     return;
   }
 
-  const assistantApiUrl = (process.env.ASSISTANT_API_URL ?? "").trim();
-  const assistantApiKey = (process.env.ASSISTANT_API_KEY ?? "").trim();
+  const assistantApiUrl = getAssistantApiUrl();
+  const assistantApiKey = getAssistantApiKey();
 
   if (!assistantApiUrl) {
     req.log.error("Assistant API not configured");
@@ -227,11 +224,19 @@ export async function joinHandler(req: Request, res: Response) {
     if (!dispatchRes.ok) {
       const text = await dispatchRes.text();
       req.log.error(
-        { status: dispatchRes.status, body: text },
+        {
+          status: dispatchRes.status,
+          bodyPreview: text.substring(0, ERROR_BODY_LOG_LIMIT),
+          bodyLength: text.length,
+        },
         "Assistant dispatch failed",
       );
 
-      if (dispatchRes.status === 503 || dispatchRes.status === 404) {
+      // 503 = capacity / availability. 404 on the POST collection
+      // endpoint is a misconfiguration (wrong URL / deploy mismatch),
+      // not a transient capacity issue — fail loud rather than mask it
+      // as NO_AGENTS_AVAILABLE.
+      if (dispatchRes.status === 503) {
         const { status, ...body } = ERRORS.NO_AGENTS_AVAILABLE;
         res.status(status).json({ success: false, ...body });
         return;
@@ -274,23 +279,15 @@ export async function joinHandler(req: Request, res: Response) {
   // Dispatch succeeded — block while the workflow spins up. If we exceed the
   // wait budget, fall back to the async contract and hand the caller an
   // instanceId they can poll.
-  const waitBudgetMs = readPositiveInt(
-    process.env.ASSISTANT_JOIN_WAIT_BUDGET_MS,
-    DEFAULT_JOIN_WAIT_BUDGET_MS,
-  );
-  const pollIntervalMs = readPositiveInt(
-    process.env.ASSISTANT_JOIN_POLL_INTERVAL_MS,
-    DEFAULT_JOIN_POLL_INTERVAL_MS,
-  );
-  const deadlineMs = Date.now() + waitBudgetMs;
-  const outcome = await pollUntilJoined(
+  const deadlineMs = Date.now() + getJoinWaitBudgetMs();
+  const outcome = await pollUntilJoined({
     assistantBaseUrl,
     instanceId,
     authHeader,
     deadlineMs,
-    pollIntervalMs,
-    req.log,
-  );
+    pollIntervalMs: getJoinPollIntervalMs(),
+    log: req.log,
+  });
 
   if (outcome.kind === "joined") {
     res.status(200).json({ success: true, joined: true, instanceId });

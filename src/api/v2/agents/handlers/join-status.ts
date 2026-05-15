@@ -1,18 +1,16 @@
 import type { Request, Response } from "express";
 import { z } from "zod";
+import {
+  assistantStatusSchema,
+  getAssistantApiKey,
+  getAssistantApiUrl,
+} from "./assistant-config";
+
+const STATUS_FETCH_TIMEOUT_MS = 15_000;
+const ERROR_BODY_LOG_LIMIT = 200;
 
 const paramsSchema = z.object({
   instanceId: z.string().trim().min(1, "instanceId is required").max(256),
-});
-
-const assistantStatusSchema = z.object({
-  instanceId: z.string(),
-  joinStatus: z.enum(["starting", "pending_acceptance", "joined", "failed"]),
-  inboxId: z.string().nullable().optional(),
-  conversationId: z.string().nullable().optional(),
-  joinFailureReason: z.string().nullable().optional(),
-  createdAt: z.string().optional(),
-  destroyedAt: z.string().nullable().optional(),
 });
 
 const ERRORS = {
@@ -48,8 +46,8 @@ const ERRORS = {
  * boolean the legacy pool API returned synchronously from /api/pool/claim.
  */
 export async function joinStatusHandler(req: Request, res: Response) {
-  const assistantApiUrl = (process.env.ASSISTANT_API_URL ?? "").trim();
-  const assistantApiKey = (process.env.ASSISTANT_API_KEY ?? "").trim();
+  const assistantApiUrl = getAssistantApiUrl();
+  const assistantApiKey = getAssistantApiKey();
 
   if (!assistantApiUrl) {
     req.log.error("Assistant API not configured");
@@ -82,7 +80,7 @@ export async function joinStatusHandler(req: Request, res: Response) {
       {
         method: "GET",
         headers,
-        signal: AbortSignal.timeout(15_000),
+        signal: AbortSignal.timeout(STATUS_FETCH_TIMEOUT_MS),
       },
     );
 
@@ -97,7 +95,7 @@ export async function joinStatusHandler(req: Request, res: Response) {
       req.log.error(
         {
           status: upstream.status,
-          bodyPreview: text.substring(0, 200),
+          bodyPreview: text.substring(0, ERROR_BODY_LOG_LIMIT),
         },
         "Assistant status fetch failed",
       );

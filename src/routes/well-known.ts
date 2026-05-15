@@ -14,6 +14,8 @@ const wellKnownRouter = Router();
  * per-environment (dev/staging vs production).
  */
 wellKnownRouter.get("/agents.json", async (req, res) => {
+  // ASSISTANT_API_URL is already trimmed by @/config, but strip any
+  // trailing slashes before composing the upstream URL.
   const assistantBaseUrl = ASSISTANT_API_URL.replace(/\/+$/, "");
 
   if (!assistantBaseUrl) {

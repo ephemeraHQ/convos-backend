@@ -1,6 +1,7 @@
 import type { Server } from "node:http";
 import {
   afterAll,
+  afterEach,
   beforeAll,
   beforeEach,
   describe,
@@ -11,24 +12,18 @@ import express from "express";
 import { jsonMiddleware } from "@/middleware/json";
 import { pinoMiddleware } from "@/middleware/pino";
 
-type FetchCall = { url: string; init?: RequestInit };
-
 let mockFetchImpl: (url: string, init?: RequestInit) => Promise<Response>;
-let fetchCalls: FetchCall[] = [];
 
 const originalFetch = globalThis.fetch;
 
 const ASSISTANT_URL = "https://assistants.test.local";
 const ASSISTANT_KEY = "test-assistant-key";
 
-const originalAssistantUrl = process.env.ASSISTANT_API_URL;
-const originalAssistantKey = process.env.ASSISTANT_API_KEY;
-const originalWaitBudget = process.env.ASSISTANT_JOIN_WAIT_BUDGET_MS;
-const originalPollInterval = process.env.ASSISTANT_JOIN_POLL_INTERVAL_MS;
-
 const { joinHandler } = await import("@/api/v2/agents/handlers/join");
 const { joinStatusHandler } =
   await import("@/api/v2/agents/handlers/join-status");
+const { __setAssistantConfigOverridesForTests } =
+  await import("@/api/v2/agents/handlers/assistant-config");
 
 const app = express();
 app.use(pinoMiddleware);
@@ -43,21 +38,13 @@ function jsonResponse(status: number, body: unknown): Response {
   });
 }
 
-function restoreEnv(name: string, original: string | undefined) {
-  if (original !== undefined) {
-    process.env[name] = original;
-  } else {
-    delete process.env[name];
-  }
-}
-
 describe("agents join (assistant API)", () => {
   let server: Server;
-  const baseURL = "http://localhost:4012";
+  const baseURL = "http://localhost:4015";
 
   beforeAll(async () => {
     await new Promise<void>((resolve) => {
-      server = app.listen(4012, () => {
+      server = app.listen(4015, () => {
         resolve();
       });
     });
@@ -65,11 +52,7 @@ describe("agents join (assistant API)", () => {
 
   afterAll(async () => {
     globalThis.fetch = originalFetch;
-
-    restoreEnv("ASSISTANT_API_URL", originalAssistantUrl);
-    restoreEnv("ASSISTANT_API_KEY", originalAssistantKey);
-    restoreEnv("ASSISTANT_JOIN_WAIT_BUDGET_MS", originalWaitBudget);
-    restoreEnv("ASSISTANT_JOIN_POLL_INTERVAL_MS", originalPollInterval);
+    __setAssistantConfigOverridesForTests({});
 
     await new Promise<void>((resolve) => {
       server.close(() => {
@@ -79,18 +62,20 @@ describe("agents join (assistant API)", () => {
   });
 
   beforeEach(() => {
-    process.env.ASSISTANT_API_URL = ASSISTANT_URL;
-    process.env.ASSISTANT_API_KEY = ASSISTANT_KEY;
-    // Shrink the server-side wait so tests don't burn 25s each.
-    process.env.ASSISTANT_JOIN_WAIT_BUDGET_MS = "200";
-    process.env.ASSISTANT_JOIN_POLL_INTERVAL_MS = "20";
+    __setAssistantConfigOverridesForTests({
+      assistantApiUrl: ASSISTANT_URL,
+      assistantApiKey: ASSISTANT_KEY,
+      joinWaitBudgetMs: 200,
+      joinPollIntervalMs: 20,
+    });
 
-    fetchCalls = [];
     mockFetchImpl = () => Promise.reject(new Error("unmocked fetch"));
-    globalThis.fetch = ((url: string, init?: RequestInit) => {
-      fetchCalls.push({ url, init });
-      return mockFetchImpl(url, init);
-    }) as typeof fetch;
+    globalThis.fetch = ((url: string, init?: RequestInit) =>
+      mockFetchImpl(url, init)) as typeof fetch;
+  });
+
+  afterEach(() => {
+    __setAssistantConfigOverridesForTests({});
   });
 
   const post = (body: unknown) =>
@@ -110,7 +95,10 @@ describe("agents join (assistant API)", () => {
 
   describe("POST /api/v2/agents/join", () => {
     test("returns 503 when ASSISTANT_API_URL not configured", async () => {
-      process.env.ASSISTANT_API_URL = "";
+      __setAssistantConfigOverridesForTests({
+        assistantApiUrl: "",
+        assistantApiKey: ASSISTANT_KEY,
+      });
 
       const res = await post({ slug: "abc" });
       expect(res.status).toBe(503);
@@ -268,7 +256,12 @@ describe("agents join (assistant API)", () => {
     });
 
     test("omits Authorization header when ASSISTANT_API_KEY is empty", async () => {
-      process.env.ASSISTANT_API_KEY = "";
+      __setAssistantConfigOverridesForTests({
+        assistantApiUrl: ASSISTANT_URL,
+        assistantApiKey: "",
+        joinWaitBudgetMs: 200,
+        joinPollIntervalMs: 20,
+      });
 
       mockFetchImpl = (_url, init) => {
         const headers = (init?.headers as Record<string, string>) ?? {};
@@ -289,7 +282,12 @@ describe("agents join (assistant API)", () => {
     });
 
     test("strips trailing slashes from ASSISTANT_API_URL", async () => {
-      process.env.ASSISTANT_API_URL = `${ASSISTANT_URL}///`;
+      __setAssistantConfigOverridesForTests({
+        assistantApiUrl: `${ASSISTANT_URL}///`,
+        assistantApiKey: ASSISTANT_KEY,
+        joinWaitBudgetMs: 200,
+        joinPollIntervalMs: 20,
+      });
 
       mockFetchImpl = (url, init) => {
         if (init?.method === "POST") {
@@ -317,6 +315,16 @@ describe("agents join (assistant API)", () => {
       expect(res.status).toBe(503);
       const data = (await res.json()) as { success: boolean; error: string };
       expect(data.error).toBe("NO_AGENTS_AVAILABLE");
+    });
+
+    test("returns 502 AGENT_PROVISION_FAILED when dispatch 404s (misconfig)", async () => {
+      mockFetchImpl = () =>
+        Promise.resolve(jsonResponse(404, { error: "not found" }));
+
+      const res = await post({ slug: "a" });
+      expect(res.status).toBe(502);
+      const data = (await res.json()) as { success: boolean; error: string };
+      expect(data.error).toBe("AGENT_PROVISION_FAILED");
     });
 
     test("returns 502 on dispatch 500", async () => {
@@ -374,7 +382,10 @@ describe("agents join (assistant API)", () => {
 
   describe("GET /api/v2/agents/join/:instanceId", () => {
     test("returns 503 when ASSISTANT_API_URL not configured", async () => {
-      process.env.ASSISTANT_API_URL = "";
+      __setAssistantConfigOverridesForTests({
+        assistantApiUrl: "",
+        assistantApiKey: ASSISTANT_KEY,
+      });
 
       const res = await getStatus("inst-1");
       expect(res.status).toBe(503);
