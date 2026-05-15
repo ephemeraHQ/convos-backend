@@ -132,13 +132,11 @@ export async function appleSsnHandler(req: Request, res: Response) {
       return;
     }
 
-    // TODO(post-PR-191): on DID_RENEW (and SUBSCRIBED that bootstrapped) grant
-    // the tier's credit allotment to the account that owns this subscription:
-    //   payments.grant({ accountId, kind, idempotencyKey:
-    //     `${originalTransactionId}:${currentPeriodStart}` })
-    // The idempotency key intentionally combines originalTransactionId with
-    // the period start so renewals don't replay the previous period's grant.
-
+    // No grant() write on DID_RENEW: subscription credit allotments are
+    // derived from the Subscription row + per-tier config at read time (see
+    // GET /v2/credits/me/balance). Renewal updates currentPeriodStart, which
+    // resets monthlyGrantUsed on the next read. grant() is reserved for
+    // additive credits (top-ups, NUX trial, manual ops, promo).
     res.status(200).json({ ok: true, applied: result.kind === "applied" });
     return;
   } catch (error) {

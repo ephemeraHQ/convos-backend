@@ -79,7 +79,6 @@ afterEach(async () => {
 
 type ErrorBody = { error?: string };
 type VerifyBody = {
-  creditsBalance: number | null;
   subscription: {
     tier: string;
     period: string;
@@ -227,7 +226,7 @@ describe("POST /v2/subscriptions/me/verify", () => {
     expect((res.body as ErrorBody).error).toMatch(/Unrecognized productId/);
   });
 
-  test("happy path: creates subscription, returns iOS shape with creditsBalance:null", async () => {
+  test("happy path: creates subscription, returns iOS UserSubscription shape", async () => {
     installLocalTestingVerifier();
     const accountId = await newAccount();
     const token = await tokenFor(accountId);
@@ -244,7 +243,6 @@ describe("POST /v2/subscriptions/me/verify", () => {
       });
     expect(res.status).toBe(200);
     const body = res.body as VerifyBody;
-    expect(body.creditsBalance).toBeNull();
     expect(body.subscription).toEqual({
       tier: "pro",
       period: "annual",

@@ -158,13 +158,12 @@ export async function meVerifyHandler(req: Request, res: Response) {
   try {
     const { subscription } = await upsertFromVerify(input);
 
-    // TODO(post-PR-191): grant the tier's monthly credit allotment to
-    // res.locals.accountId via payments.grant({ accountId, kind, ... }) here.
-    // Idempotency: use originalTransactionId:currentPeriodStart as the grant
-    // idempotency key so renewals don't double-grant.
+    // Subscription credit allotments are derived from the Subscription row
+    // + per-tier config at read time (see GET /v2/credits/me/balance); we
+    // intentionally do NOT write a grant() ledger row on verify. grant() is
+    // reserved for additive credits — top-ups, NUX trial, manual ops, promo.
     res.status(200).json({
       subscription: serializeUserSubscription(subscription),
-      creditsBalance: null,
     });
     return;
   } catch (error) {
