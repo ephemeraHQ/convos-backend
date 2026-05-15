@@ -389,6 +389,46 @@ describe("payments/index — replay + concurrency", () => {
     ).rejects.toBeInstanceOf(IdempotencyMismatchError);
   });
 
+  test("grant replay succeeds even when GrantKind is deactivated after original grant", async () => {
+    const accountId = await seedAccount();
+    cleanupAccounts.push(accountId);
+
+    // First grant: active kind.
+    const first = await grant({
+      accountId,
+      credits: 100,
+      idempotencyKey: "g-deactivated-replay",
+      kind: "signup_bonus",
+    });
+    expect(first.replayed).toBe(false);
+
+    // Deactivate the kind.
+    await prisma.grantKind.update({
+      where: { id: "signup_bonus" },
+      data: { active: false },
+    });
+
+    try {
+      // Replay with same idempotency key must NOT throw GrantKindNotFoundError.
+      const replay = await grant({
+        accountId,
+        credits: 100,
+        idempotencyKey: "g-deactivated-replay",
+        kind: "signup_bonus",
+      });
+      expect(replay.replayed).toBe(true);
+      expect(replay.granted).toBe(100);
+      // Balance must remain 100 — no double-credit.
+      expect(await getBalance(accountId)).toBe(100n);
+    } finally {
+      // Restore the kind so other tests are not affected.
+      await prisma.grantKind.update({
+        where: { id: "signup_bonus" },
+        data: { active: true },
+      });
+    }
+  });
+
   test("concurrent consumes on same account serialize correctly (no lost updates)", async () => {
     const accountId = await seedAccount();
     cleanupAccounts.push(accountId);
