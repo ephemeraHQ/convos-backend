@@ -45,6 +45,11 @@ afterEach(async () => {
   }
   await cleanupAccounts(tracker);
   tracker.length = 0;
+  // Wipe any daily_refill ledger rows from other test files in the same
+  // suite run so the rate-limit anchor doesn't leak across tests.
+  await prisma.creditLedger.deleteMany({
+    where: { grantKindId: "daily_refill" },
+  });
 });
 
 afterAll(async () => {
@@ -103,18 +108,26 @@ describe("POST /api/v2/credits/daily", () => {
   });
 
   test("second call same UTC day → 200 skipped:true", async () => {
-    // First call
+    // Seed an eligible account so the first call writes a real rate-limit anchor.
+    const accountId = await seedAccount();
+    tracker.push(accountId);
+    await prisma.authMethod.create({
+      data: {
+        accountId,
+        type: "SIWE",
+        externalKey: `0xtest-second-call-${accountId}`,
+      },
+    });
+
+    // First call refills the account and writes the rate-limit anchor.
     const res1 = await post("/api/v2/credits/daily", {
       "X-Cron-API-Key": TEST_CRON_KEY,
     });
     expect(res1.status).toBe(200);
     const body1 = (await res1.json()) as Record<string, unknown>;
-    // May have been skipped from a prior test's run — either way, do a second call
-    if (body1.skipped) {
-      // Already skipped from prior run — second call must also skip
-    }
+    expect(body1.skipped).toBe(false);
 
-    // Second call — must be skipped (already_ran_today guard)
+    // Second call must be skipped (already_ran_today guard).
     const res2 = await post("/api/v2/credits/daily", {
       "X-Cron-API-Key": TEST_CRON_KEY,
     });
