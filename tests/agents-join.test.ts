@@ -116,10 +116,10 @@ describe("agents join (assistant API)", () => {
       mockFetchImpl = (url, init) => {
         if (init?.method === "POST") {
           expect(url).toBe(`${ASSISTANT_URL}/api/assistants`);
-          const headers = init?.headers as Record<string, string>;
+          const headers = init.headers as Record<string, string>;
           expect(headers.Authorization).toBe(`Bearer ${ASSISTANT_KEY}`);
 
-          const body = JSON.parse(init?.body as string) as {
+          const body = JSON.parse(init.body as string) as {
             name: string;
             instructions: string;
             joinUrl: string;
@@ -234,7 +234,7 @@ describe("agents join (assistant API)", () => {
     test("forwards custom instructions to /api/assistants", async () => {
       mockFetchImpl = (_url, init) => {
         if (init?.method === "POST") {
-          const body = JSON.parse(init?.body as string) as {
+          const body = JSON.parse(init.body as string) as {
             instructions: string;
           };
           expect(body.instructions).toBe("Be terse.");
@@ -261,7 +261,7 @@ describe("agents join (assistant API)", () => {
       });
 
       mockFetchImpl = (_url, init) => {
-        const headers = (init?.headers as Record<string, string>) ?? {};
+        const headers = (init?.headers ?? {}) as Record<string, string>;
         expect(headers.Authorization).toBeUndefined();
         if (init?.method === "POST") {
           return Promise.resolve(jsonResponse(200, { instanceId: "inst-na" }));
