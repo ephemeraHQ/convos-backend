@@ -1,4 +1,7 @@
-export type NotificationType = "Protocol" | "InviteJoinRequest";
+export type NotificationType =
+  | "Protocol"
+  | "InviteJoinRequest"
+  | "CreditsRefilled";
 
 export type ProtocolNotificationData = {
   contentTopic: string;
@@ -30,10 +33,18 @@ export type InviteJoinRequestNotificationData = {
   autoApprove: boolean;
 };
 
+export type CreditsRefilledNotificationData = {
+  creditsAdded: number;
+  newBalance: string;       // bigint serialized
+  refilledAt: string;       // ISO UTC
+  nextRefreshAt: string;    // ISO UTC, start of next UTC day
+};
+
 // Mapping from NotificationType to its payload shape
 export type NotificationTypeToData = {
   Protocol: ProtocolNotificationData;
   InviteJoinRequest: InviteJoinRequestNotificationData;
+  CreditsRefilled: CreditsRefilledNotificationData;
 };
 
 // Base notification payload with XOR semantics for v1/v2 transition
@@ -67,7 +78,16 @@ export type V2NotificationPayload = {
   notificationData: ProtocolNotificationData;
 };
 
+// Backend-originated push — no user JWT, no inboxId. Added so push services
+// (APNS/FCM) can accept payloads that don't carry an apiJWT.
+export type CreditsRefilledPayload = {
+  clientId: string;                            // deviceId, for v2-shaped routing
+  notificationType: "CreditsRefilled";
+  notificationData: CreditsRefilledNotificationData;
+};
+
 // Union type for push services that can handle both v1 and v2
 export type AnyNotificationPayloadWithJWT =
   | NotificationPayloadWithJWTToken
-  | V2NotificationPayload;
+  | V2NotificationPayload
+  | CreditsRefilledPayload;
