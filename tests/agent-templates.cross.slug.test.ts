@@ -8,7 +8,6 @@ import {
 } from "bun:test";
 import { ADMIN_ACCOUNT_ID } from "@/utils/constants";
 import { prisma } from "@/utils/prisma";
-import { buildSlug } from "@/utils/slug-hash";
 import {
   createTemplate,
   getTemplate,
@@ -36,9 +35,9 @@ const cleanupTemplates = () =>
     where: {
       ownerAccountId: ADMIN_ACCOUNT_ID,
       OR: [
-        { slug: { in: ["brewski", "brewski-2"] } },
+        { slug: "brewski" },
         { slug: { startsWith: "cross-reserved-" } },
-        { slug: { in: reservedWords.flatMap((word) => [word, `${word}-2`]) } },
+        { slug: { in: [...reservedWords] } },
         { agentName: "Brewski" },
         { agentName: { startsWith: "Cross Reserved" } },
         {
@@ -68,7 +67,7 @@ describe("Agent template cross slug flow", () => {
     await cleanupTemplates();
   });
 
-  test("duplicate agentName auto-suffixes, publishes, and hashed-slug URLs do not alias", async () => {
+  test("duplicate agentName keeps the same slug; hashed-slug URLs resolve to distinct rows", async () => {
     const first = await createTemplate({
       baseURL,
       body: { agentName: "Brewski", prompt: "First brew helper" },
@@ -80,8 +79,9 @@ describe("Agent template cross slug flow", () => {
 
     expect(first.response.status).toBe(201);
     expect(second.response.status).toBe(201);
+    // Slugs are not unique — both rows keep the bare derived slug.
     expect(first.body.slug).toBe("brewski");
-    expect(second.body.slug).toBe("brewski-2");
+    expect(second.body.slug).toBe("brewski");
     expect(first.body.id).not.toBe(second.body.id);
 
     expect(
@@ -101,16 +101,19 @@ describe("Agent template cross slug flow", () => {
       baseURL,
       path: hashedSlugFor(second.body),
     });
-    const crossAliased = await getTemplate({
-      baseURL,
-      path: buildSlug(first.body.slug as string, second.body.id as string),
-    });
 
+    // Each `brewski.<hash>` URL resolves to its own row — the shared base
+    // slug never aliases one row onto the other.
     expect(firstDirect.response.status).toBe(200);
     expect(firstDirect.body.id).toBe(first.body.id);
     expect(secondDirect.response.status).toBe(200);
     expect(secondDirect.body.id).toBe(second.body.id);
-    expect(crossAliased.response.status).toBe(404);
+    expect(firstDirect.body.id).not.toBe(secondDirect.body.id);
+
+    // A `brewski.<hash>` URL whose hash matches no row 404s rather than
+    // resolving ambiguously across the two rows sharing the slug.
+    const bogus = await getTemplate({ baseURL, path: "brewski.zzzzz" });
+    expect(bogus.response.status).toBe(404);
   });
 
   test("auto-derived reserved words are rejected with 400 RESERVED_SLUG", async () => {

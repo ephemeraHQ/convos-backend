@@ -242,7 +242,7 @@ describe("Agent template patch endpoint", () => {
     ).toMatchObject({ slug: maxLengthSlug });
   });
 
-  test("validates draft slug patches and leaves the row unchanged on invalid or conflicting slugs", async () => {
+  test("rejects invalid draft slug patches but allows duplicate slugs", async () => {
     await seedTemplate({
       slug: "patch-test-taken",
     });
@@ -260,18 +260,19 @@ describe("Agent template patch endpoint", () => {
       ).toMatchObject({ slug: "patch-test-original" });
     }
 
-    const conflict = await patchTemplate({
+    // Slugs are not unique — patching to an already-used slug is accepted.
+    const duplicate = await patchTemplate({
       id: template.id,
       body: {
         slug: "patch-test-taken",
       },
     });
-    expect(conflict.response.status).toBe(409);
+    expect(duplicate.response.status).toBe(200);
     expect(
       await prisma.agentTemplate.findUniqueOrThrow({
         where: { id: template.id },
       }),
-    ).toMatchObject({ slug: "patch-test-original" });
+    ).toMatchObject({ slug: "patch-test-taken" });
   });
 
   test("rejects slug changes after first publish and preserves the existing slug", async () => {

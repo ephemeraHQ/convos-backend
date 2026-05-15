@@ -1,4 +1,5 @@
 import type { PublishStatus } from "@prisma/client";
+import logger from "@/utils/logger";
 import { prisma } from "@/utils/prisma";
 import { slugHash } from "@/utils/slug-hash";
 
@@ -49,6 +50,22 @@ export async function resolveAgentTemplateByIdOrHashedSlug(args: {
   const matches = candidates.filter(
     (candidate) => slugHasher(candidate.id) === hash,
   );
+
+  if (matches.length > 1) {
+    // Two rows share both the base slug AND the 5-char hash. pickCollisionFreeId
+    // is supposed to make this impossible at insert time; if it surfaces here,
+    // the URL is genuinely ambiguous and we 404 rather than guess. Log it so a
+    // real hash collision is visible in monitoring instead of failing silently.
+    logger.error(
+      {
+        baseSlug,
+        hash,
+        matchedIds: matches.map((match) => match.id),
+      },
+      "[resolve-agent-template] hashed-slug collision: multiple rows match base slug + hash",
+    );
+    return null;
+  }
 
   if (matches.length !== 1) {
     return null;

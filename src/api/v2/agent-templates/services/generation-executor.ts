@@ -23,11 +23,7 @@
  * overrides the per-generation timeout.
  */
 
-import { Prisma } from "@prisma/client";
-import {
-  isSlugExhaustionError,
-  pickCollisionFreeId,
-} from "@/api/v2/agent-templates/lib/pick-collision-free-id";
+import { pickCollisionFreeId } from "@/api/v2/agent-templates/lib/pick-collision-free-id";
 import {
   buildDeterministicFallback,
   composeReply,
@@ -41,6 +37,7 @@ import {
 import { GENERATION_EXECUTOR_TIMEOUT_MS, GENERATION_TTL_HOURS } from "@/config";
 import logger from "@/utils/logger";
 import { prisma } from "@/utils/prisma";
+import { validateSlug } from "@/utils/reserved-slugs";
 import { buildSlug } from "@/utils/slug-hash";
 
 // ---------------------------------------------------------------------------
@@ -148,19 +145,36 @@ const deriveBaseSlug = (agentName: string): string =>
     .replace(/^-+|-+$/g, "")
     .slice(0, 48);
 
-/** Max attempts to auto-pick a non-conflicting slug. Matches the CRUD
- *  handler's MAX_AUTO_SLUG_ATTEMPTS so generated templates use the same
- *  retry semantics on per-owner slug conflicts. */
-const MAX_AUTO_SLUG_ATTEMPTS = 50;
+/** Fallback slug used when an agentName doesn't yield a valid base slug.
+ *  Slugs are non-unique, so a shared fallback is fine — the hashed URL
+ *  still disambiguates each row. Must itself pass `validateSlug`. */
+const FALLBACK_SLUG = "agent";
 
-function isSlugUniqueConstraintError(error: unknown): boolean {
-  if (!(error instanceof Prisma.PrismaClientKnownRequestError)) return false;
-  if (error.code !== "P2002") return false;
-  const target = error.meta?.target;
-  if (Array.isArray(target)) {
-    return target.includes("ownerAccountId") && target.includes("slug");
+// Fail fast at module load if FALLBACK_SLUG ever stops being a valid slug —
+// e.g. "agent" gets added to RESERVED_SLUGS, or the slug rules tighten.
+// Without this guard, deriveTemplateSlug would silently fall back to an
+// invalid slug and persist unreachable rows. A startup crash is the loud,
+// debuggable failure mode instead.
+{
+  const fallbackCheck = validateSlug(FALLBACK_SLUG);
+  if (!fallbackCheck.valid) {
+    throw new Error(
+      `FALLBACK_SLUG "${FALLBACK_SLUG}" is not a valid slug: ${fallbackCheck.message}`,
+    );
   }
-  return typeof target === "string" && target.includes("slug");
+}
+
+/** Derive a persistable slug from the generated agentName.
+ *
+ *  `deriveBaseSlug` can yield an empty (emoji-only / non-Latin name),
+ *  reserved ("Generate" → "generate"), or malformed string. The CRUD
+ *  create handler rejects those with a 400, but the async pipeline has no
+ *  caller to reject to — and an empty slug would make the row unreachable
+ *  via its hashed URL. So fall back to `FALLBACK_SLUG` rather than failing
+ *  the generation or persisting a broken slug. */
+function deriveTemplateSlug(agentName: string): string {
+  const validated = validateSlug(deriveBaseSlug(agentName));
+  return validated.valid ? validated.slug : FALLBACK_SLUG;
 }
 
 /** Persist the LLM-generated template as a draft AgentTemplate.
@@ -170,13 +184,13 @@ function isSlugUniqueConstraintError(error: unknown): boolean {
  *    is reconstructed by callers via `buildSlug(row.slug, row.id)` and the
  *    resolver in `resolve-id-or-hashed-slug.ts` queries `where: { slug: baseSlug }`.
  *    Storing the hashed form would make these rows unreachable via the resolver.
- *  - The row `id` is pre-picked via `pickCollisionFreeId` so its `slugHash(id)`
- *    doesn't collide with any existing row sharing `baseSlug` across owners.
- *    Without this, two owners on the same base could mint indistinguishable
- *    `<base>.<hash>` URLs, and the resolver would 404 (multiple matches).
- *  - On per-owner slug conflict (already-taken base), retry with `-2`, `-3`,
- *    ... up to MAX_AUTO_SLUG_ATTEMPTS. If `pickCollisionFreeId` exhausts its
- *    own 8-attempt budget on a given base, advance to the next `-N` too. */
+ *  - The slug is derived from agentName and run through `validateSlug`,
+ *    falling back to `FALLBACK_SLUG` when the derivation is empty/reserved/
+ *    malformed (see `deriveTemplateSlug`).
+ *  - Slugs are NOT unique (no DB constraint). Any number of rows can share a
+ *    base slug; the row `id` is pre-picked via `pickCollisionFreeId` so its
+ *    `slugHash(id)` doesn't collide with any existing row sharing `baseSlug`,
+ *    which is what keeps the public `<base>.<hash>` URL unambiguous. */
 async function persistTemplate(
   template: {
     agentName: string;
@@ -190,7 +204,7 @@ async function persistTemplate(
   ownerAccountId: string,
   publishStatus: "draft" | "unlisted" | "published",
 ): Promise<{ id: string; slug: string }> {
-  const baseSlug = deriveBaseSlug(template.agentName);
+  const slug = deriveTemplateSlug(template.agentName);
   // Non-draft submissions land in their target status with firstPublishedAt
   // stamped at insert time, so the caller doesn't need a follow-up
   // POST /:id/publish to make the template reachable by URL. Once
@@ -198,52 +212,28 @@ async function persistTemplate(
   // handler's SLUG_IMMUTABLE rule — same lock as if publish had run.
   const firstPublishedAt = publishStatus === "draft" ? null : new Date();
 
-  for (let attempt = 0; attempt <= MAX_AUTO_SLUG_ATTEMPTS; attempt++) {
-    if (attempt === 1) continue; // skip "-1"; first numeric suffix is "-2"
-
-    const candidate = attempt === 0 ? baseSlug : `${baseSlug}-${attempt}`;
-
-    let id: string;
-    try {
-      id = await pickCollisionFreeId({ baseSlug: candidate });
-    } catch (err) {
-      // 8-attempt hash-collision budget exhausted on this base. Move on
-      // to the next -N suffix; the new base has a fresh hash-space.
-      if (isSlugExhaustionError(err)) continue;
-      throw err;
-    }
-
-    try {
-      await prisma.agentTemplate.create({
-        data: {
-          id,
-          slug: candidate,
-          ownerAccountId,
-          forkedFromId: null,
-          agentName: template.agentName,
-          description: template.description || null,
-          prompt: template.prompt,
-          category: template.category || null,
-          emoji: template.emoji || null,
-          avatarUrl: null,
-          tools: template.tools,
-          connections: template.connections,
-          version: 1,
-          firstPublishedAt,
-          status: publishStatus,
-          featured: false,
-        },
-      });
-      return { id, slug: candidate };
-    } catch (err) {
-      if (isSlugUniqueConstraintError(err)) continue;
-      throw err;
-    }
-  }
-
-  throw new Error(
-    `Could not auto-pick a non-conflicting slug after ${MAX_AUTO_SLUG_ATTEMPTS} attempts (base: ${baseSlug})`,
-  );
+  const id = await pickCollisionFreeId({ baseSlug: slug });
+  await prisma.agentTemplate.create({
+    data: {
+      id,
+      slug,
+      ownerAccountId,
+      forkedFromId: null,
+      agentName: template.agentName,
+      description: template.description || null,
+      prompt: template.prompt,
+      category: template.category || null,
+      emoji: template.emoji || null,
+      avatarUrl: null,
+      tools: template.tools,
+      connections: template.connections,
+      version: 1,
+      firstPublishedAt,
+      status: publishStatus,
+      featured: false,
+    },
+  });
+  return { id, slug };
 }
 
 // ---------------------------------------------------------------------------
