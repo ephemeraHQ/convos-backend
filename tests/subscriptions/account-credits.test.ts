@@ -122,7 +122,7 @@ describe("GET /v2/accounts/me/credits", () => {
     expect(res.status).toBe(403);
   });
 
-  test("no subscription: returns zero-state shape with nextRefreshAt + periodLabel", async () => {
+  test("no subscription: returns free-tier daily shape (balance:0, cap:100, periodLabel:Daily)", async () => {
     const accountId = await newAccount();
     const token = await tokenFor(accountId);
     const res = await request(makeApp())
@@ -131,10 +131,9 @@ describe("GET /v2/accounts/me/credits", () => {
     expect(res.status).toBe(200);
     const body = res.body as BalanceBody;
     expect(body.balance).toBe(0);
-    expect(body.monthlyGrant).toBe(0);
-    expect(body.monthlyGrantUsed).toBe(0);
-    expect(typeof body.periodLabel).toBe("string");
-    expect(body.periodLabel.length).toBeGreaterThan(0);
+    expect(body.monthlyGrant).toBe(100);
+    expect(body.monthlyGrantUsed).toBe(100);
+    expect(body.periodLabel).toBe("Daily");
     expect(new Date(body.nextRefreshAt).getTime()).toBeGreaterThan(Date.now());
   });
 
@@ -303,5 +302,84 @@ describe("GET /v2/accounts/me/credits", () => {
     expect(body.monthlyGrant).toBe(10000 * 12);
     expect(body.balance).toBe(10000 * 12);
     expect(body.nextRefreshAt).toBe("2027-05-01T00:00:00.000Z");
+  });
+});
+
+describe("GET /v2/accounts/me/credits — free-tier (no subscription)", () => {
+  test("zero balance → balance:0, monthlyGrant: cap, monthlyGrantUsed: cap, periodLabel: Daily", async () => {
+    const accountId = await newAccount();
+    const token = await tokenFor(accountId);
+    const res = await request(makeApp())
+      .get("/v2/accounts/me/credits")
+      .set("X-Convos-AuthToken", token);
+    expect(res.status).toBe(200);
+    expect(res.body.balance).toBe(0);
+    expect(res.body.monthlyGrant).toBe(100);
+    expect(res.body.monthlyGrantUsed).toBe(100);
+    expect(res.body.periodLabel).toBe("Daily");
+    expect(typeof res.body.nextRefreshAt).toBe("string");
+  });
+
+  test("partial balance (60) → balance:60, monthlyGrantUsed:40", async () => {
+    const accountId = await newAccount();
+    const token = await tokenFor(accountId);
+    await prisma.userCredits.create({ data: { accountId, balance: 60n } });
+    const res = await request(makeApp())
+      .get("/v2/accounts/me/credits")
+      .set("X-Convos-AuthToken", token);
+    expect(res.body.balance).toBe(60);
+    expect(res.body.monthlyGrant).toBe(100);
+    expect(res.body.monthlyGrantUsed).toBe(40);
+  });
+
+  test("balance above cap (150) → balance:150, monthlyGrantUsed:0", async () => {
+    const accountId = await newAccount();
+    const token = await tokenFor(accountId);
+    await prisma.userCredits.create({ data: { accountId, balance: 150n } });
+    const res = await request(makeApp())
+      .get("/v2/accounts/me/credits")
+      .set("X-Convos-AuthToken", token);
+    expect(res.body.balance).toBe(150);
+    expect(res.body.monthlyGrant).toBe(100);
+    expect(res.body.monthlyGrantUsed).toBe(0);
+  });
+
+  test("negative balance → balance:0 (clamped), monthlyGrantUsed:cap", async () => {
+    const accountId = await newAccount();
+    const token = await tokenFor(accountId);
+    await prisma.userCredits.create({ data: { accountId, balance: -50n } });
+    const res = await request(makeApp())
+      .get("/v2/accounts/me/credits")
+      .set("X-Convos-AuthToken", token);
+    expect(res.body.balance).toBe(0);
+    expect(res.body.monthlyGrant).toBe(100);
+    expect(res.body.monthlyGrantUsed).toBe(100);
+  });
+
+  test("expired subscription → takes free-tier branch (NOT stale tierGrant)", async () => {
+    const accountId = await newAccount();
+    const token = await tokenFor(accountId);
+    const { randomUUID } = await import("node:crypto");
+    await prisma.subscription.create({
+      data: {
+        accountId,
+        productId: "app.convos.subs.builder.monthly",
+        tier: SubscriptionTier.builder,
+        period: SubscriptionPeriod.monthly,
+        status: SubscriptionStatus.expired,
+        originalTransactionId: `otx-expired-${accountId}`,
+        appAccountToken: randomUUID(),
+        startedAt: new Date("2026-04-01"),
+        currentPeriodStart: new Date("2026-04-01"),
+        currentPeriodEnd: new Date("2026-05-01"),
+        environment: AppleEnv.sandbox,
+      },
+    });
+    const res = await request(makeApp())
+      .get("/v2/accounts/me/credits")
+      .set("X-Convos-AuthToken", token);
+    expect(res.status).toBe(200);
+    expect(res.body.periodLabel).toBe("Daily");
+    expect(res.body.monthlyGrant).toBe(100);
   });
 });

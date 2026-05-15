@@ -1,5 +1,8 @@
 import { LedgerReason } from "@prisma/client";
 import type { Request, Response } from "express";
+import { getBalance } from "@/payments";
+import { config } from "@/payments/credits/config";
+import { startOfNextUtcDay } from "@/payments/daily-refill/utc";
 import { findCurrentByAccountId } from "@/subscriptions/repository";
 import { isEntitledSubscription } from "@/subscriptions/status";
 import { tierGrant } from "@/subscriptions/tier-config";
@@ -10,9 +13,6 @@ const MONTH_LABEL_FORMATTER = new Intl.DateTimeFormat("en-US", {
   year: "numeric",
   timeZone: "UTC",
 });
-
-const startOfNextMonth = (now: Date): Date =>
-  new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1));
 
 const sumPeriodConsumes = async (
   accountId: string,
@@ -39,18 +39,19 @@ const sumPeriodConsumes = async (
  * `{ balance, monthlyGrant, monthlyGrantUsed, nextRefreshAt, periodLabel }`.
  *
  * Derivation:
- *   - With an active Subscription: `monthlyGrant` comes from the tier × period
+ *   - With an entitled Subscription: `monthlyGrant` comes from the tier × period
  *     config; `monthlyGrantUsed` is the sum of consume-ledger deltas since
  *     `currentPeriodStart`; `balance = monthlyGrant - monthlyGrantUsed`;
  *     `nextRefreshAt = currentPeriodEnd`.
- *   - Without a Subscription: all credit fields are 0, `nextRefreshAt` is the
- *     start of next calendar month, `periodLabel` is the current month.
- *     iOS will render this as "no plan / paywall".
+ *   - Without an entitled Subscription (free tier): balance is the daily-refill
+ *     ledger value, `monthlyGrant` is the free-tier daily cap, `monthlyGrantUsed`
+ *     is the cap minus the current balance, `nextRefreshAt` is the start of the
+ *     next UTC day, `periodLabel` is "Daily".
  *
- * Note for v1: additive grants (NUX trial, top-ups, manual ops) are NOT
- * folded into the balance display yet. The iOS `CreditBalance` model doesn't
- * yet expose a separate "bonus credits" field. When that surface ships,
- * widen this handler to include them.
+ * Note for v1: additive grants (NUX trial, top-ups, manual ops) outside the
+ * daily-refill ledger are NOT folded into the balance display yet. The iOS
+ * `CreditBalance` model doesn't yet expose a separate "bonus credits" field.
+ * When that surface ships, widen this handler to include them.
  */
 export async function creditsGetHandler(req: Request, res: Response) {
   const accountId = res.locals.accountId as string;
@@ -59,13 +60,17 @@ export async function creditsGetHandler(req: Request, res: Response) {
     const subscription = await findCurrentByAccountId(accountId);
 
     if (!subscription || !isEntitledSubscription(subscription)) {
+      const balance = await getBalance(accountId);
+      const cap = config.freeTierDailyCapCredits;
+      const positiveBalance = balance < 0n ? 0n : balance;
+      const used = Math.max(0, cap - Number(positiveBalance));
       const now = new Date();
       res.status(200).json({
-        balance: 0,
-        monthlyGrant: 0,
-        monthlyGrantUsed: 0,
-        nextRefreshAt: startOfNextMonth(now).toISOString(),
-        periodLabel: MONTH_LABEL_FORMATTER.format(now),
+        balance: Number(positiveBalance),
+        monthlyGrant: cap,
+        monthlyGrantUsed: used,
+        nextRefreshAt: startOfNextUtcDay(now).toISOString(),
+        periodLabel: "Daily",
       });
       return;
     }
