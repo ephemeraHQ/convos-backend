@@ -9,31 +9,35 @@ import {
 } from "@/payments/ledger/repository";
 import { prisma } from "@/utils/prisma";
 
-const inbox = (suffix: string) =>
-  `inbox_test_${suffix}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+const seedAccount = async (): Promise<string> => {
+  const acct = await prisma.account.create({ data: {} });
+  return acct.id;
+};
 
 describe("payments/ledger/repository", () => {
-  const cleanupKeys: { inboxId: string }[] = [];
+  const cleanupAccounts: string[] = [];
 
   afterEach(async () => {
-    for (const c of cleanupKeys) {
-      await prisma.creditLedger.deleteMany({ where: { inboxId: c.inboxId } });
-      await prisma.userCredits.deleteMany({ where: { inboxId: c.inboxId } });
+    for (const accountId of cleanupAccounts) {
+      await prisma.creditLedger.deleteMany({ where: { accountId } });
+      await prisma.userCredits.deleteMany({ where: { accountId } });
+      await prisma.account.deleteMany({ where: { id: accountId } });
     }
-    cleanupKeys.length = 0;
+    cleanupAccounts.length = 0;
   });
 
-  test("getBalance returns 0n for unknown inboxId", async () => {
-    const id = inbox("unknown");
-    expect(await getBalance(id)).toBe(0n);
+  test("getBalance returns 0n for unknown accountId", async () => {
+    // Use a random UUID-shaped string that won't match any account
+    const fakeId = "00000000-0000-0000-0000-000000000001";
+    expect(await getBalance(fakeId)).toBe(0n);
   });
 
   test("applyDelta first-write creates UserCredits row + ledger row", async () => {
-    const id = inbox("firstwrite");
-    cleanupKeys.push({ inboxId: id });
+    const accountId = await seedAccount();
+    cleanupAccounts.push(accountId);
 
     const result = await applyDelta({
-      inboxId: id,
+      accountId,
       delta: 100n,
       reason: LedgerReason.grant,
       idempotencyKey: "k1",
@@ -42,21 +46,21 @@ describe("payments/ledger/repository", () => {
 
     expect(result.replayed).toBe(false);
 
-    const balance = await getBalance(id);
+    const balance = await getBalance(accountId);
     expect(balance).toBe(100n);
 
-    const rows = await prisma.creditLedger.findMany({ where: { inboxId: id } });
+    const rows = await prisma.creditLedger.findMany({ where: { accountId } });
     expect(rows).toHaveLength(1);
     expect(rows[0].delta).toBe(100n);
     expect(rows[0].idempotencyKey).toBe("k1");
   });
 
   test("applyDelta replay returns ledgerId, no double mutation", async () => {
-    const id = inbox("replay");
-    cleanupKeys.push({ inboxId: id });
+    const accountId = await seedAccount();
+    cleanupAccounts.push(accountId);
 
     await applyDelta({
-      inboxId: id,
+      accountId,
       delta: 50n,
       reason: LedgerReason.grant,
       idempotencyKey: "k1",
@@ -64,14 +68,14 @@ describe("payments/ledger/repository", () => {
     });
     // intervening mutation to prove replay does not double-apply
     await applyDelta({
-      inboxId: id,
+      accountId,
       delta: 25n,
       reason: LedgerReason.grant,
       idempotencyKey: "k2",
       grantKindId: "manual",
     });
     const replay = await applyDelta({
-      inboxId: id,
+      accountId,
       delta: 50n,
       reason: LedgerReason.grant,
       idempotencyKey: "k1",
@@ -79,17 +83,17 @@ describe("payments/ledger/repository", () => {
     });
 
     expect(replay.replayed).toBe(true);
-    expect(await getBalance(id)).toBe(75n); // current is unchanged by replay
-    const rows = await prisma.creditLedger.findMany({ where: { inboxId: id } });
+    expect(await getBalance(accountId)).toBe(75n); // current is unchanged by replay
+    const rows = await prisma.creditLedger.findMany({ where: { accountId } });
     expect(rows).toHaveLength(2);
   });
 
   test("applyDelta replay with different delta throws IdempotencyMismatchError", async () => {
-    const id = inbox("mismatch");
-    cleanupKeys.push({ inboxId: id });
+    const accountId = await seedAccount();
+    cleanupAccounts.push(accountId);
 
     await applyDelta({
-      inboxId: id,
+      accountId,
       delta: 50n,
       reason: LedgerReason.grant,
       idempotencyKey: "k1",
@@ -98,7 +102,7 @@ describe("payments/ledger/repository", () => {
 
     expect(
       applyDelta({
-        inboxId: id,
+        accountId,
         delta: 99n,
         reason: LedgerReason.grant,
         idempotencyKey: "k1",
@@ -106,44 +110,44 @@ describe("payments/ledger/repository", () => {
       }),
     ).rejects.toBeInstanceOf(IdempotencyMismatchError);
 
-    expect(await getBalance(id)).toBe(50n);
+    expect(await getBalance(accountId)).toBe(50n);
   });
 
   test("invariant: balance == SUM(delta) after mixed sequence", async () => {
-    const id = inbox("invariant");
-    cleanupKeys.push({ inboxId: id });
+    const accountId = await seedAccount();
+    cleanupAccounts.push(accountId);
 
     await applyDelta({
-      inboxId: id,
+      accountId,
       delta: 100n,
       reason: LedgerReason.grant,
       idempotencyKey: "g1",
       grantKindId: "manual",
     });
     await applyDelta({
-      inboxId: id,
+      accountId,
       delta: -30n,
       reason: LedgerReason.consume,
       idempotencyKey: "c1",
     });
     await applyDelta({
-      inboxId: id,
+      accountId,
       delta: 50n,
       reason: LedgerReason.grant,
       idempotencyKey: "g2",
       grantKindId: "manual",
     });
     await applyDelta({
-      inboxId: id,
+      accountId,
       delta: -10n,
       reason: LedgerReason.adjust,
       idempotencyKey: "a1",
       note: "fix",
     });
 
-    const balance = await getBalance(id);
+    const balance = await getBalance(accountId);
     const agg = await prisma.creditLedger.aggregate({
-      where: { inboxId: id },
+      where: { accountId },
       _sum: { delta: true },
     });
     expect(balance).toBe(BigInt(agg._sum.delta ?? 0));
@@ -151,23 +155,24 @@ describe("payments/ledger/repository", () => {
 });
 
 describe("payments/ledger/repository — floor + history", () => {
-  const cleanup: string[] = [];
+  const cleanupAccounts: string[] = [];
 
   afterEach(async () => {
-    for (const id of cleanup) {
-      await prisma.creditLedger.deleteMany({ where: { inboxId: id } });
-      await prisma.userCredits.deleteMany({ where: { inboxId: id } });
+    for (const accountId of cleanupAccounts) {
+      await prisma.creditLedger.deleteMany({ where: { accountId } });
+      await prisma.userCredits.deleteMany({ where: { accountId } });
+      await prisma.account.deleteMany({ where: { id: accountId } });
     }
-    cleanup.length = 0;
+    cleanupAccounts.length = 0;
   });
 
   test("floor breach throws and writes nothing", async () => {
-    const id = inbox("floor");
-    cleanup.push(id);
+    const accountId = await seedAccount();
+    cleanupAccounts.push(accountId);
 
     // seed at -500
     await applyDelta({
-      inboxId: id,
+      accountId,
       delta: -500n,
       reason: LedgerReason.adjust,
       idempotencyKey: "seed",
@@ -176,7 +181,7 @@ describe("payments/ledger/repository — floor + history", () => {
 
     expect(
       applyDelta({
-        inboxId: id,
+        accountId,
         delta: -1000n,
         reason: LedgerReason.consume,
         idempotencyKey: "breach",
@@ -184,18 +189,18 @@ describe("payments/ledger/repository — floor + history", () => {
       }),
     ).rejects.toBeInstanceOf(LedgerFloorBreachError);
 
-    expect(await getBalance(id)).toBe(-500n);
-    const rows = await prisma.creditLedger.findMany({ where: { inboxId: id } });
+    expect(await getBalance(accountId)).toBe(-500n);
+    const rows = await prisma.creditLedger.findMany({ where: { accountId } });
     expect(rows).toHaveLength(1);
   });
 
   test("getHistory orders DESC by (createdAt, id) and paginates by tuple cursor", async () => {
-    const id = inbox("history");
-    cleanup.push(id);
+    const accountId = await seedAccount();
+    cleanupAccounts.push(accountId);
 
     for (let i = 0; i < 5; i++) {
       await applyDelta({
-        inboxId: id,
+        accountId,
         delta: 1n,
         reason: LedgerReason.grant,
         idempotencyKey: `h${i}`,
@@ -203,11 +208,11 @@ describe("payments/ledger/repository — floor + history", () => {
       });
     }
 
-    const page1 = await getHistory(id, 2);
+    const page1 = await getHistory(accountId, 2);
     expect(page1).toHaveLength(2);
 
     const last = page1[page1.length - 1];
-    const page2 = await getHistory(id, 2, {
+    const page2 = await getHistory(accountId, 2, {
       createdAt: last.createdAt,
       id: last.id,
     });
@@ -218,8 +223,8 @@ describe("payments/ledger/repository — floor + history", () => {
   });
 
   test("getHistory tuple cursor breaks createdAt ties by id DESC", async () => {
-    const id = inbox("tiecursor");
-    cleanup.push(id);
+    const accountId = await seedAccount();
+    cleanupAccounts.push(accountId);
 
     // Force identical createdAt across rows by inserting directly with prisma.
     // applyDelta uses server-side now() and may not collide reliably.
@@ -227,12 +232,12 @@ describe("payments/ledger/repository — floor + history", () => {
     // Seed the UserCredits row so the FK / invariants stay sane (balance is
     // not asserted here — this test only exercises ordering).
     await prisma.userCredits.create({
-      data: { inboxId: id, balance: 0n },
+      data: { accountId, balance: 0n },
     });
     for (let i = 0; i < 3; i++) {
       await prisma.creditLedger.create({
         data: {
-          inboxId: id,
+          accountId,
           delta: 1n,
           reason: LedgerReason.grant,
           idempotencyKey: `tie${i}`,
@@ -242,7 +247,7 @@ describe("payments/ledger/repository — floor + history", () => {
       });
     }
 
-    const all = await getHistory(id, 10);
+    const all = await getHistory(accountId, 10);
     expect(all).toHaveLength(3);
     // All three share createdAt, so ordering must come from id DESC.
     const idsDesc = [...all.map((r) => r.id)].sort().reverse();
@@ -250,9 +255,9 @@ describe("payments/ledger/repository — floor + history", () => {
 
     // Paginate with a tuple cursor anchored on the first row. The remaining
     // page must continue id-DESC within the same createdAt bucket.
-    const page1 = await getHistory(id, 1);
+    const page1 = await getHistory(accountId, 1);
     expect(page1).toHaveLength(1);
-    const page2 = await getHistory(id, 10, {
+    const page2 = await getHistory(accountId, 10, {
       createdAt: page1[0].createdAt,
       id: page1[0].id,
     });

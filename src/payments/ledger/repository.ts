@@ -4,7 +4,7 @@ import { IdempotencyMismatchError } from "../errors";
 import type { HistoryCursor } from "../types";
 
 interface ApplyDeltaInput {
-  inboxId: string;
+  accountId: string;
   delta: bigint;
   reason: LedgerReason;
   idempotencyKey: string;
@@ -27,21 +27,21 @@ interface RawBalanceRow {
   balance: bigint;
 }
 
-export const getBalance = async (inboxId: string): Promise<bigint> => {
+export const getBalance = async (accountId: string): Promise<bigint> => {
   const row = await prisma.userCredits.findUnique({
-    where: { inboxId },
+    where: { accountId },
     select: { balance: true },
   });
   return row?.balance ?? 0n;
 };
 
 export const findLedgerByIdempotencyKey = async (
-  inboxId: string,
+  accountId: string,
   idempotencyKey: string,
 ): Promise<CreditLedger | null> =>
   prisma.creditLedger.findUnique({
     where: {
-      inboxId_idempotencyKey: { inboxId, idempotencyKey },
+      accountId_idempotencyKey: { accountId, idempotencyKey },
     },
   });
 
@@ -107,12 +107,12 @@ export class LedgerFloorBreachError extends Error {
 type TxClient = Prisma.TransactionClient;
 
 /**
- * Atomically ensure a `UserCredits` row exists for `inboxId`, take a row-level
+ * Atomically ensure a `UserCredits` row exists for `accountId`, take a row-level
  * lock on it for the rest of the transaction, and return its current balance.
  *
  * Implementation: a single `INSERT ... ON CONFLICT DO UPDATE ... RETURNING`
  * statement. The deliberately no-op self-assignment in the `DO UPDATE SET`
- * clause (`SET "inboxId" = EXCLUDED."inboxId"`) is the trick — without it,
+ * clause (`SET "accountId" = EXCLUDED."accountId"`) is the trick — without it,
  * a plain `INSERT ... ON CONFLICT DO NOTHING` returns no rows on conflict,
  * and a follow-up SELECT would race with concurrent transactions. The
  * self-assign forces Postgres to treat the existing row as updated, which:
@@ -128,13 +128,13 @@ type TxClient = Prisma.TransactionClient;
  */
 const lockOrCreateBalance = async (
   tx: TxClient,
-  inboxId: string,
+  accountId: string,
 ): Promise<bigint> => {
   const rows = await tx.$queryRaw<RawBalanceRow[]>`
-    INSERT INTO "UserCredits" ("inboxId", "balance", "createdAt", "updatedAt")
-    VALUES (${inboxId}, 0::bigint, now(), now())
-    ON CONFLICT ("inboxId") DO UPDATE
-      SET "inboxId" = EXCLUDED."inboxId"
+    INSERT INTO "UserCredits" ("accountId", "balance", "createdAt", "updatedAt")
+    VALUES (${accountId}::uuid, 0::bigint, now(), now())
+    ON CONFLICT ("accountId") DO UPDATE
+      SET "accountId" = EXCLUDED."accountId"
     RETURNING "balance"
   `;
   return rows[0]?.balance ?? 0n;
@@ -152,7 +152,7 @@ export const applyDeltaWithTx = async (
   tx: TxClient,
   input: ApplyDeltaInput,
 ): Promise<ApplyDeltaResult> => {
-  const before = await lockOrCreateBalance(tx, input.inboxId);
+  const before = await lockOrCreateBalance(tx, input.accountId);
   const after = before + input.delta;
 
   if (input.floorCheck && after < input.floorCheck.minBalance) {
@@ -164,13 +164,13 @@ export const applyDeltaWithTx = async (
   }
 
   await tx.userCredits.update({
-    where: { inboxId: input.inboxId },
+    where: { accountId: input.accountId },
     data: { balance: after },
   });
 
   const created = await tx.creditLedger.create({
     data: {
-      inboxId: input.inboxId,
+      accountId: input.accountId,
       delta: input.delta,
       reason: input.reason,
       idempotencyKey: input.idempotencyKey,
@@ -201,7 +201,7 @@ export const applyDelta = async (
       err.code === "P2002"
     ) {
       const prior = await findLedgerByIdempotencyKey(
-        input.inboxId,
+        input.accountId,
         input.idempotencyKey,
       );
       if (prior) {
@@ -214,13 +214,13 @@ export const applyDelta = async (
 };
 
 export const getHistory = async (
-  inboxId: string,
+  accountId: string,
   limit = 50,
   cursor?: HistoryCursor,
 ): Promise<CreditLedger[]> => {
   return prisma.creditLedger.findMany({
     where: {
-      inboxId,
+      accountId,
       ...(cursor
         ? {
             OR: [
