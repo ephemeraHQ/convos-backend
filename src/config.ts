@@ -35,6 +35,30 @@ export const IS_DEVELOPMENT = process.env.NODE_ENV === "development";
 export const ASSISTANT_API_URL = (process.env.ASSISTANT_API_URL || "").trim();
 export const ASSISTANT_API_KEY = (process.env.ASSISTANT_API_KEY || "").trim();
 
+// Reject plaintext ASSISTANT_API_URL deployments — the bearer key would
+// otherwise ride the wire in cleartext. Allow http://localhost for local
+// dev so `wrangler dev` against convos-assistants on 127.0.0.1 still works.
+if (ASSISTANT_API_URL) {
+  let parsedAssistantUrl: URL;
+  try {
+    parsedAssistantUrl = new URL(ASSISTANT_API_URL);
+  } catch {
+    throw new Error(
+      `ASSISTANT_API_URL is not a valid URL: ${ASSISTANT_API_URL}`,
+    );
+  }
+  const isLocal =
+    parsedAssistantUrl.hostname === "localhost" ||
+    parsedAssistantUrl.hostname === "127.0.0.1" ||
+    parsedAssistantUrl.hostname.endsWith(".test.local");
+  if (parsedAssistantUrl.protocol !== "https:" && !isLocal) {
+    throw new Error(
+      `ASSISTANT_API_URL must use https:// (got ${parsedAssistantUrl.protocol}). ` +
+        `Plaintext is only permitted for localhost / *.test.local hosts.`,
+    );
+  }
+}
+
 // Agent asset upload auth (optional — endpoint returns 503 if not configured)
 export const AGENT_ASSETS_API_KEY = process.env.AGENT_ASSETS_API_KEY || "";
 
