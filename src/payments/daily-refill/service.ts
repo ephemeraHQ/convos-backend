@@ -3,6 +3,7 @@ import { getBalance, grant } from "@/payments";
 import { config } from "@/payments/credits/config";
 import { prisma } from "@/utils/prisma";
 import { startOfTodayUtc, ymdUtc } from "./utc";
+import { fanOutCreditsRefilled } from "./notify";
 
 export type DailyRefillSummary = {
   skipped: boolean;
@@ -120,6 +121,16 @@ export async function runDailyRefill(opts?: {
     },
     "daily_refill.completed",
   );
+
+  // Fire-and-forget — never block the response on push delivery.
+  if (summary.refilled.length > 0) {
+    void fanOutCreditsRefilled(summary.refilled, now).catch((err) => {
+      logger.error(
+        { err, op: "daily_refill_notify" },
+        "daily_refill.notify.fanout_failed",
+      );
+    });
+  }
 
   return summary;
 }
