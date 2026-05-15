@@ -115,25 +115,16 @@ const loadMinBalanceCredits = (): bigint => {
 //   Daily top-up-to-cap amount applied by the /credits/daily cron to
 //   SIWE-verified non-subscriber accounts. Must be a positive integer.
 export const loadFreeTierDailyCapCredits = (): number => {
-  const raw = process.env.PAYMENTS_FREE_TIER_DAILY_CAP_CREDITS;
-  if (raw === undefined || raw.trim() === "") {
+  const big = requireBigInt(
+    "PAYMENTS_FREE_TIER_DAILY_CAP_CREDITS",
+    process.env.PAYMENTS_FREE_TIER_DAILY_CAP_CREDITS,
+  );
+  if (big <= 0n || big > BigInt(Number.MAX_SAFE_INTEGER)) {
     throw new ValidationError(
-      "PAYMENTS_FREE_TIER_DAILY_CAP_CREDITS not configured",
+      `PAYMENTS_FREE_TIER_DAILY_CAP_CREDITS must be a positive safe integer, got: ${big}`,
     );
   }
-  const trimmed = raw.trim();
-  if (!/^-?\d+$/.test(trimmed)) {
-    throw new ValidationError(
-      `PAYMENTS_FREE_TIER_DAILY_CAP_CREDITS must be an integer: ${raw}`,
-    );
-  }
-  const n = Number(trimmed);
-  if (!Number.isSafeInteger(n) || n <= 0) {
-    throw new ValidationError(
-      `PAYMENTS_FREE_TIER_DAILY_CAP_CREDITS must be > 0, got: ${n}`,
-    );
-  }
-  return n;
+  return Number(big);
 };
 
 export const loadConfig = (): PaymentsConfig => ({

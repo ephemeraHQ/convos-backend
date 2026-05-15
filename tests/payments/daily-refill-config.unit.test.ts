@@ -32,7 +32,9 @@ describe("PAYMENTS_FREE_TIER_DAILY_CAP_CREDITS", () => {
     const { loadFreeTierDailyCapCredits } = await import(
       "@/payments/credits/config"
     );
-    expect(() => loadFreeTierDailyCapCredits()).toThrow(/must be > 0/);
+    expect(() => loadFreeTierDailyCapCredits()).toThrow(
+      /must be a positive safe integer/,
+    );
   });
 
   test("rejects negative", async () => {
@@ -40,11 +42,21 @@ describe("PAYMENTS_FREE_TIER_DAILY_CAP_CREDITS", () => {
     const { loadFreeTierDailyCapCredits } = await import(
       "@/payments/credits/config"
     );
-    expect(() => loadFreeTierDailyCapCredits()).toThrow(/must be > 0/);
+    expect(() => loadFreeTierDailyCapCredits()).toThrow(
+      /must be a positive safe integer/,
+    );
   });
 
   test("rejects non-integer", async () => {
     process.env.PAYMENTS_FREE_TIER_DAILY_CAP_CREDITS = "1.5";
+    const { loadFreeTierDailyCapCredits } = await import(
+      "@/payments/credits/config"
+    );
+    expect(() => loadFreeTierDailyCapCredits()).toThrow(/must be an integer/);
+  });
+
+  test("rejects alpha string", async () => {
+    process.env.PAYMENTS_FREE_TIER_DAILY_CAP_CREDITS = "abc";
     const { loadFreeTierDailyCapCredits } = await import(
       "@/payments/credits/config"
     );
