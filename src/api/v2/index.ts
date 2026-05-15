@@ -25,6 +25,7 @@ import { testLifecycleHandler } from "./assets/handlers/test-lifecycle";
 import { attachmentsRouter } from "./attachments/attachments.router";
 import { authRouter } from "./auth/auth.router";
 import { connectionsRouter } from "./connections/connections.router";
+import { creditsMeRouter } from "./credits/credits-me.router";
 import { creditsRouter } from "./credits/credits.router";
 import { devRouter } from "./dev/dev.router";
 import { deviceRouter } from "./device/device.router";
@@ -57,6 +58,9 @@ v2Router.use(
   inviteCodesRouter,
 );
 v2Router.use("/auth", authRouter);
+// User-facing /credits/me/* — JWT-authed, mounted before /credits so the
+// /me prefix routes here instead of falling through to the agent router.
+v2Router.use("/credits/me", authMiddleware, creditsMeRouter);
 v2Router.use("/credits", creditsRouter);
 v2Router.use("/device", appCheckOnlyMiddleware, deviceRouter);
 
