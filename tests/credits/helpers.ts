@@ -35,6 +35,11 @@ export const seedBalance = async (
       `seedBalance only supports positive credits; got ${credits}`,
     );
   }
+  if (credits > BigInt(Number.MAX_SAFE_INTEGER)) {
+    throw new Error(
+      `seedBalance credits exceeds Number.MAX_SAFE_INTEGER: ${credits}`,
+    );
+  }
   await grant({
     accountId,
     credits: Number(credits),

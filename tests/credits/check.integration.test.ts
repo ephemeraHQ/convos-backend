@@ -17,7 +17,7 @@ import {
   TEST_AGENT_API_KEY,
 } from "./helpers";
 
-const BASE = "http://localhost:4071";
+let BASE = "";
 let server: Server;
 
 const tracker: string[] = [];
@@ -26,7 +26,12 @@ beforeAll(async () => {
   __setAgentAssetsApiKeyOverrideForTests(TEST_AGENT_API_KEY);
   const app = buildCreditsApp();
   await new Promise<void>((resolve) => {
-    server = app.listen(4071, () => {
+    server = app.listen(0, () => {
+      const addr = server.address();
+      if (!addr || typeof addr === "string") {
+        throw new Error("Failed to resolve test server address");
+      }
+      BASE = `http://127.0.0.1:${addr.port}`;
       resolve();
     });
   });

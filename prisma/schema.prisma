@@ -241,7 +241,7 @@ model CreditLedger {
   requestId        String?
   note             String?
   grantKindId      String?      @db.VarChar(64)
-  grantKind        GrantKind?   @relation(fields: [grantKindId], references: [id])
+  grantKind        GrantKind?   @relation(fields: [grantKindId], references: [id], onDelete: SetNull, onUpdate: Cascade)
   account          Account      @relation(fields: [accountId], references: [id])
   createdAt        DateTime     @default(now())
 
