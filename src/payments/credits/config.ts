@@ -19,12 +19,15 @@ const requireFloat = (key: string, raw: string | undefined): number => {
   return n;
 };
 
-const requireInt = (key: string, raw: string | undefined): number => {
-  const n = requireFloat(key, raw);
-  if (!Number.isInteger(n)) {
+const requireBigInt = (key: string, raw: string | undefined): bigint => {
+  if (raw === undefined || raw.trim() === "") {
+    throw new ValidationError(`${key} not configured`);
+  }
+  const trimmed = raw.trim();
+  if (!/^-?\d+$/.test(trimmed)) {
     throw new ValidationError(`${key} must be an integer: ${raw}`);
   }
-  return n;
+  return BigInt(trimmed);
 };
 
 // PAYMENTS_MARKUP_RATE
@@ -58,16 +61,16 @@ const loadMarkupRate = (): Pick<
 //   needed for display or reporting) uses current pricing, not historical.
 //   Integer, must be > 0.
 const loadCreditsPerUsd = (): bigint => {
-  const cpd = requireInt(
+  const cpd = requireBigInt(
     "PAYMENTS_CREDITS_PER_USD",
     process.env.PAYMENTS_CREDITS_PER_USD,
   );
-  if (cpd <= 0) {
+  if (cpd <= 0n) {
     throw new ValidationError(
       `PAYMENTS_CREDITS_PER_USD must be > 0, got: ${cpd}`,
     );
   }
-  return BigInt(cpd);
+  return cpd;
 };
 
 // PAYMENTS_RESERVED_MAX_TURN_CREDITS
@@ -76,16 +79,16 @@ const loadCreditsPerUsd = (): bigint => {
 //   worst-case turn. `1` is permissive (any positive balance allows a
 //   turn). Operator tunes upward for stricter gating. Integer, >= 0.
 const loadReservedMaxTurnCredits = (): bigint => {
-  const rmt = requireInt(
+  const rmt = requireBigInt(
     "PAYMENTS_RESERVED_MAX_TURN_CREDITS",
     process.env.PAYMENTS_RESERVED_MAX_TURN_CREDITS,
   );
-  if (rmt < 0) {
+  if (rmt < 0n) {
     throw new ValidationError(
       `PAYMENTS_RESERVED_MAX_TURN_CREDITS must be >= 0: ${rmt}`,
     );
   }
-  return BigInt(rmt);
+  return rmt;
 };
 
 // PAYMENTS_MIN_BALANCE_CREDITS
@@ -95,16 +98,16 @@ const loadReservedMaxTurnCredits = (): bigint => {
 //   from runaway agents while still permitting the documented
 //   "1-turn over-spend" behavior. Integer, must be <= 0.
 const loadMinBalanceCredits = (): bigint => {
-  const min = requireInt(
+  const min = requireBigInt(
     "PAYMENTS_MIN_BALANCE_CREDITS",
     process.env.PAYMENTS_MIN_BALANCE_CREDITS,
   );
-  if (min > 0) {
+  if (min > 0n) {
     throw new ValidationError(
       `PAYMENTS_MIN_BALANCE_CREDITS must be <= 0, got: ${min}`,
     );
   }
-  return BigInt(min);
+  return min;
 };
 
 export const loadConfig = (): PaymentsConfig => ({

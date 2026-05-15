@@ -66,7 +66,9 @@ export const validateReplayPayload = (
     [
       "markupRate",
       prior.markupRate?.toString() ?? null,
-      input.markupRate !== undefined ? input.markupRate.toString() : null,
+      input.markupRate !== undefined
+        ? new Prisma.Decimal(input.markupRate.toString()).toString()
+        : null,
     ],
     [
       "creditsPerDollar",

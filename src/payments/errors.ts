@@ -12,7 +12,7 @@ export class InsufficientBalanceError extends AppError {
   constructor(
     public readonly accountId: string,
     public readonly currentBalance: bigint,
-    public readonly attemptedDelta: number,
+    public readonly attemptedDelta: bigint,
     public readonly minBalance: bigint,
   ) {
     super(
@@ -21,7 +21,7 @@ export class InsufficientBalanceError extends AppError {
       {
         accountId,
         currentBalance: currentBalance.toString(),
-        attemptedDelta,
+        attemptedDelta: attemptedDelta.toString(),
         minBalance: minBalance.toString(),
       },
     );

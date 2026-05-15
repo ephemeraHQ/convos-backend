@@ -88,6 +88,30 @@ describe("payments/ledger/repository", () => {
     expect(rows).toHaveLength(2);
   });
 
+  test("applyDelta replay with markupRate decimal variant does not throw (2 vs 2.0)", async () => {
+    const accountId = await seedAccount();
+    cleanupAccounts.push(accountId);
+
+    // First write uses markupRate "2" (canonical form from Postgres Decimal).
+    await applyDelta({
+      accountId,
+      delta: 100n,
+      reason: LedgerReason.consume,
+      idempotencyKey: "markup-replay-1",
+      markupRate: "2",
+    });
+
+    // Replay with "2.0" — Decimal-normalized they are equal; must NOT throw.
+    const replay = await applyDelta({
+      accountId,
+      delta: 100n,
+      reason: LedgerReason.consume,
+      idempotencyKey: "markup-replay-1",
+      markupRate: "2.0",
+    });
+    expect(replay.replayed).toBe(true);
+  });
+
   test("applyDelta replay with different delta throws IdempotencyMismatchError", async () => {
     const accountId = await seedAccount();
     cleanupAccounts.push(accountId);

@@ -30,6 +30,12 @@ export {
 } from "./errors";
 export { creditsToUsd, usdToCredits } from "./credits";
 
+const requireSafeInteger = (value: number, field: string): void => {
+  if (!Number.isSafeInteger(value)) {
+    throw new ValidationError(`${field} must be a safe integer: ${value}`);
+  }
+};
+
 export const consume = async (args: {
   accountId: string;
   usdCostMicros: bigint;
@@ -57,7 +63,7 @@ export const consume = async (args: {
       throw new InsufficientBalanceError(
         args.accountId,
         err.currentBalance,
-        Number(err.attempted),
+        err.attempted,
         err.minBalance,
       );
     }
@@ -84,7 +90,12 @@ export const grant = async (args: {
   if (args.credits <= 0) {
     throw new ValidationError(`grant credits must be > 0: ${args.credits}`);
   }
-  const parsedKind = GrantKindIdSchema.parse(args.kind);
+  requireSafeInteger(args.credits, "grant credits");
+  const parsedKindResult = GrantKindIdSchema.safeParse(args.kind);
+  if (!parsedKindResult.success) {
+    throw new ValidationError(`invalid grant kind: ${args.kind}`);
+  }
+  const parsedKind = parsedKindResult.data;
 
   const ledgerInput = {
     accountId: args.accountId,
@@ -96,6 +107,19 @@ export const grant = async (args: {
     requestId: args.requestId,
   };
 
+  // 1. Check for prior idempotent grant FIRST — before the active-kind check.
+  //    If the kind was deactivated after the original grant, replaying the same
+  //    idempotency key must still return the prior result, not GrantKindNotFoundError.
+  const prior = await findLedgerByIdempotencyKey(
+    args.accountId,
+    args.idempotencyKey,
+  );
+  if (prior) {
+    validateReplayPayload(prior, ledgerInput);
+    return { granted: args.credits, replayed: true };
+  }
+
+  // 2. Active-kind check only applies on first grant, not on replay.
   try {
     await prisma.$transaction(async (tx) => {
       const kindRow = await tx.grantKind.findUnique({
@@ -113,12 +137,14 @@ export const grant = async (args: {
       err instanceof Prisma.PrismaClientKnownRequestError &&
       err.code === "P2002"
     ) {
-      const prior = await findLedgerByIdempotencyKey(
+      // Race: another concurrent grant inserted the same key between our
+      // pre-check and the transaction. Fall through to replay path.
+      const racePrior = await findLedgerByIdempotencyKey(
         args.accountId,
         args.idempotencyKey,
       );
-      if (prior) {
-        validateReplayPayload(prior, ledgerInput);
+      if (racePrior) {
+        validateReplayPayload(racePrior, ledgerInput);
         return { granted: args.credits, replayed: true };
       }
     }
@@ -144,6 +170,7 @@ export const adjust = async (args: {
   if (args.delta === 0) {
     throw new ValidationError("adjust delta must be non-zero");
   }
+  requireSafeInteger(args.delta, "adjust delta");
   const opts =
     args.delta < 0 ? { floorCheck: { minBalance: config.minBalance } } : {};
   try {
@@ -161,7 +188,7 @@ export const adjust = async (args: {
       throw new InsufficientBalanceError(
         args.accountId,
         err.currentBalance,
-        Number(err.attempted),
+        err.attempted,
         err.minBalance,
       );
     }
