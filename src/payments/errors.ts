@@ -10,15 +10,20 @@ export class GrantKindNotFoundError extends AppError {
 
 export class InsufficientBalanceError extends AppError {
   constructor(
-    public readonly inboxId: string,
+    public readonly accountId: string,
     public readonly currentBalance: bigint,
     public readonly attemptedDelta: number,
     public readonly minBalance: bigint,
   ) {
     super(
       402,
-      `Insufficient balance for inbox ${inboxId}: current=${currentBalance}, delta=${attemptedDelta}, floor=${minBalance}`,
-      { inboxId, currentBalance, attemptedDelta, minBalance },
+      `Insufficient balance for account ${accountId}: current=${currentBalance}, delta=${attemptedDelta}, floor=${minBalance}`,
+      {
+        accountId,
+        currentBalance: currentBalance.toString(),
+        attemptedDelta,
+        minBalance: minBalance.toString(),
+      },
     );
     this.name = "InsufficientBalanceError";
     Object.setPrototypeOf(this, InsufficientBalanceError.prototype);
