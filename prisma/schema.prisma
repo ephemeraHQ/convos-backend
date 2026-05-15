@@ -106,6 +106,8 @@ model Account {
   agentTemplates           AgentTemplate[]
   agentTemplateGenerations AgentTemplateGeneration[]
   devices                  DeviceRegistration[]
+  credits                  UserCredits?
+  creditLedger             CreditLedger[]
 }
 
 enum PublishStatus {
@@ -209,10 +211,11 @@ enum LedgerReason {
 }
 
 model UserCredits {
-  inboxId    String   @id
-  balance    BigInt
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
+  accountId String   @id @db.Uuid
+  balance   BigInt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  account   Account  @relation(fields: [accountId], references: [id])
 }
 
 model GrantKind {
@@ -227,7 +230,7 @@ model GrantKind {
 
 model CreditLedger {
   id               String       @id @default(uuid()) @db.Uuid
-  inboxId          String
+  accountId        String       @db.Uuid
   delta            BigInt
   reason           LedgerReason
   idempotencyKey   String
@@ -237,12 +240,13 @@ model CreditLedger {
   model            String?
   requestId        String?
   note             String?
-  grantKindId      String?
+  grantKindId      String?      @db.VarChar(64)
   grantKind        GrantKind?   @relation(fields: [grantKindId], references: [id])
+  account          Account      @relation(fields: [accountId], references: [id])
   createdAt        DateTime     @default(now())
 
-  @@unique([inboxId, idempotencyKey])
-  @@index([inboxId, createdAt])
+  @@unique([accountId, idempotencyKey])
+  @@index([accountId, createdAt])
   @@index([requestId])
   @@index([grantKindId])
 }
