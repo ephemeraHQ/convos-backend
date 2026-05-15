@@ -59,6 +59,33 @@ async function seedActiveSubscription(accountId: string): Promise<void> {
 
 const NOW = new Date(Date.UTC(2026, 4, 15, 12, 0, 0));
 
+// Helper: write a rate-limit anchor row directly with controlled createdAt.
+// CRITICAL: do NOT rely on runDailyRefill to write the first anchor — its
+// CreditLedger row uses server clock (`@default(now())`) which may not
+// match the injected `now`. The mismatch causes date-dependent flakes
+// when the suite runs near a UTC day boundary.
+async function seedRateLimitAnchor(
+  accountId: string,
+  createdAt: Date,
+): Promise<void> {
+  await prisma.creditLedger.create({
+    data: {
+      accountId,
+      delta: 100n,
+      reason: LedgerReason.grant,
+      idempotencyKey: `daily_refill:${accountId}:${ymdUtc(createdAt)}-seed`,
+      grantKindId: "daily_refill",
+      createdAt,
+    },
+  });
+  // Mirror in UserCredits so balance is consistent with the anchor
+  await prisma.userCredits.upsert({
+    where: { accountId },
+    update: { balance: { increment: 100n } },
+    create: { accountId, balance: 100n },
+  });
+}
+
 describe("runDailyRefill — empty DB", () => {
   test("no eligible accounts → empty summary", async () => {
     const summary = await runDailyRefill({
@@ -191,6 +218,44 @@ describe("runDailyRefill — top-up math", () => {
     expect(entry).toBeDefined();
     expect(entry!.creditsAdded).toBe(100);
     expect(await balanceOf(accountId)).toBe(60n); // -40 + 100 = 60
+  });
+});
+
+describe("runDailyRefill — rate limit", () => {
+  test("anchor row from today → service skips with already_ran_today", async () => {
+    const accountId = await seedAccount();
+    await seedRateLimitAnchor(accountId, NOW);
+
+    const result = await runDailyRefill({ now: NOW });
+    expect(result.skipped).toBe(true);
+    expect(result.reason).toBe("already_ran_today");
+    expect(result.refilled).toEqual([]);
+  });
+
+  test("anchor row from yesterday → service runs, refills today", async () => {
+    const accountId = await seedAccount();
+    const yesterday = new Date(NOW.getTime() - 24 * 60 * 60 * 1000);
+    await seedRateLimitAnchor(accountId, yesterday);
+    // Drain so today's refill has work to do
+    await prisma.userCredits.update({
+      where: { accountId },
+      data: { balance: 30n },
+    });
+
+    const result = await runDailyRefill({ now: NOW });
+    expect(result.skipped).toBe(false);
+    expect(result.refilled.map((r) => r.accountId)).toContain(accountId);
+    expect(await balanceOf(accountId)).toBe(100n);
+  });
+
+  test("anchor row from today 00:01 UTC, run at today 23:59 UTC → still skipped", async () => {
+    const accountId = await seedAccount();
+    const earlyToday = new Date(Date.UTC(2026, 4, 15, 0, 1, 0));
+    const lateToday = new Date(Date.UTC(2026, 4, 15, 23, 59, 0));
+    await seedRateLimitAnchor(accountId, earlyToday);
+
+    const result = await runDailyRefill({ now: lateToday });
+    expect(result.skipped).toBe(true);
   });
 });
 
