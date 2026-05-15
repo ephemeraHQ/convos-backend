@@ -52,7 +52,7 @@ app.use(rateLimitMiddleware);
 // add healthcheck routes
 app.use("/healthcheck", healthcheckRouter);
 
-// .well-known proxied from agent pool (RFC 8615 – must be at domain root)
+// .well-known proxied from assistant runtime service (RFC 8615 – must be at domain root)
 app.use("/.well-known", wellKnownRouter);
 
 // add api routes

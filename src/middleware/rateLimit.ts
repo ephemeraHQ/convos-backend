@@ -49,17 +49,6 @@ export const agentAssetPreAuthLimiter = rateLimit({
   message: { error: "Too many agent auth attempts, please try again later" },
 });
 
-// Rate limiting for service provision endpoints (10 requests per 5 minutes per IP)
-export const serviceProvisionLimiter = rateLimit({
-  windowMs: 5 * 60 * 1000, // 5 minutes
-  limit: 10,
-  legacyHeaders: false,
-  standardHeaders: "draft-8",
-  message: {
-    error: "Too many provision requests, please try again later",
-  },
-});
-
 // Rate limiting for invite code redemption (5 attempts per 15 minutes per IP)
 export const inviteCodeRedeemLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes

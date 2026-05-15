@@ -28,9 +28,12 @@ export const NODE_ENV = process.env.NODE_ENV || "development";
 export const IS_PRODUCTION = process.env.NODE_ENV === "production";
 export const IS_DEVELOPMENT = process.env.NODE_ENV === "development";
 
-// Agent pool (optional — endpoint returns 503 if not configured)
-export const AGENT_POOL_URL = process.env.AGENT_POOL_URL || "";
-export const AGENT_POOL_API_KEY = process.env.AGENT_POOL_API_KEY || "";
+// Assistant runtime service (convos-assistants). Backs
+// /api/v2/agents/join + /.well-known/agents.json.
+// ASSISTANT_API_KEY is optional — set if the deployed assistants service
+// requires a bearer token in front of POST /api/assistants.
+export const ASSISTANT_API_URL = process.env.ASSISTANT_API_URL || "";
+export const ASSISTANT_API_KEY = process.env.ASSISTANT_API_KEY || "";
 
 // Agent asset upload auth (optional — endpoint returns 503 if not configured)
 export const AGENT_ASSETS_API_KEY = process.env.AGENT_ASSETS_API_KEY || "";

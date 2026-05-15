@@ -8,19 +8,16 @@ import {
 } from "@/middleware/auth";
 import { devAuthMiddleware } from "@/middleware/devAuth";
 import { lifecycleTestAuthMiddleware } from "@/middleware/lifecycleTestAuth";
-import { poolApiKeyAuth } from "@/middleware/poolAuth";
 import {
   agentAssetLimiter,
   agentAssetPreAuthLimiter,
   agentJoinLimiter,
   assetRenewalLimiter,
   inviteCodeRedeemLimiter,
-  serviceProvisionLimiter,
 } from "@/middleware/rateLimit";
 import { agentTemplatesRouter } from "./agent-templates/agent-templates.router";
 import { agentsRouter } from "./agents/agents.router";
 import { agentAssetsRouter } from "./agents/assets/agent-assets.router";
-import { provisionRouter } from "./agents/provision/provision.router";
 import { assetsRouter } from "./assets/assets.router";
 import { lifecycleStatusHandler } from "./assets/handlers/lifecycle-status";
 import { migrateTimestampsHandler } from "./assets/handlers/migrate-timestamps";
@@ -90,13 +87,6 @@ v2Router.post(
 
 v2Router.use("/assets", authMiddleware, assetsRouter);
 
-// Must be mounted before /agents to avoid being caught by /agents auth middleware
-v2Router.use(
-  "/agents/provision",
-  serviceProvisionLimiter,
-  poolApiKeyAuth,
-  provisionRouter,
-);
 v2Router.use(
   "/agents/assets",
   agentAssetPreAuthLimiter,

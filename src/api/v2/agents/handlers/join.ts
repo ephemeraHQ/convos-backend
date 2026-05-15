@@ -1,10 +1,12 @@
 import type { Request, Response } from "express";
 import { z } from "zod";
-import { AGENT_POOL_API_KEY, AGENT_POOL_URL, XMTP_ENV } from "@/config";
+import { XMTP_ENV } from "@/config";
 
 const bodySchema = z.object({
   slug: z.string().min(1, "Slug is required").max(2048),
   instructions: z.string().max(4096, "Instructions too long").optional(),
+  // Retained for client compatibility; the new assistant API does not
+  // accept this knob, so it is ignored when forwarding.
   skipGreeting: z.boolean().optional(),
 });
 
@@ -24,7 +26,7 @@ const ERRORS = {
   AGENT_POOL_TIMEOUT: {
     status: 504,
     error: "AGENT_POOL_TIMEOUT",
-    message: "Agent pool request timed out",
+    message: "Agent provisioning request timed out",
   },
 } as const;
 
@@ -34,34 +36,37 @@ function buildInviteUrl(slug: string): string {
   return `https://${domain}/v2?i=${encodeURIComponent(slug)}`;
 }
 
+const assistantResponseSchema = z.object({
+  instanceId: z.string().min(1),
+});
+
 /**
  * Handler for POST /api/v2/agents/join
  *
- * Requests an AI agent to join a conversation by claiming an idle instance
- * from the agent pool and directing it to the conversation's invite URL.
+ * Requests an AI agent to join a conversation by dispatching the assistant
+ * runtime service (convos-assistants) `POST /api/assistants` workflow with
+ * the conversation's invite URL.
+ *
+ * The new assistant service is asynchronous: it returns `{ instanceId }`
+ * immediately and the per-assistant container is created in the background.
+ * Callers should poll `GET /api/v2/agents/join/:instanceId` to observe the
+ * `joinStatus` transitions (`starting → pending_acceptance → joined | failed`).
+ *
+ * `joined` is therefore always `false` in this response. It is preserved for
+ * client compatibility — older clients that read `joined` will see the same
+ * "not yet joined, try again" shape they already handled.
  *
  * ## Testing with forced errors
  *
- * Send the `X-Force-Error` header to simulate error responses without
- * hitting the real agent pool. The response is delayed by 5 seconds to
- * mimic real-world latency. Only available when `XMTP_ENV` is not `"production"`.
- * In production, the `X-Force-Error` header is silently ignored and normal
- * logic proceeds.
+ * Send the `X-Force-Error` header to simulate error responses without hitting
+ * the real assistant service. The response is delayed by 5 seconds to mimic
+ * real-world latency. Only available when `XMTP_ENV` is not `"production"`.
  *
- * | Header value       | Simulated response                  |
- * |--------------------|-------------------------------------|
- * | `X-Force-Error: 502` | 502 AGENT_PROVISION_FAILED        |
- * | `X-Force-Error: 503` | 503 NO_AGENTS_AVAILABLE           |
- * | `X-Force-Error: 504` | 504 AGENT_POOL_TIMEOUT            |
- *
- * Example:
- * ```
- * curl -X POST https://api.convos.org/api/v2/agents/join \
- *   -H "Authorization: Bearer <jwt>" \
- *   -H "Content-Type: application/json" \
- *   -H "X-Force-Error: 502" \
- *   -d '{"slug": "test-slug"}'
- * ```
+ * | Header value         | Simulated response             |
+ * |----------------------|--------------------------------|
+ * | `X-Force-Error: 502` | 502 AGENT_PROVISION_FAILED     |
+ * | `X-Force-Error: 503` | 503 NO_AGENTS_AVAILABLE        |
+ * | `X-Force-Error: 504` | 504 AGENT_POOL_TIMEOUT         |
  */
 export async function joinHandler(req: Request, res: Response) {
   // Force error responses for testing (non-production XMTP env only) — see JSDoc above for usage
@@ -80,12 +85,15 @@ export async function joinHandler(req: Request, res: Response) {
     return;
   }
 
-  if (!AGENT_POOL_URL || !AGENT_POOL_API_KEY) {
-    req.log.error("Agent pool not configured");
+  const assistantApiUrl = (process.env.ASSISTANT_API_URL ?? "").trim();
+  const assistantApiKey = (process.env.ASSISTANT_API_KEY ?? "").trim();
+
+  if (!assistantApiUrl) {
+    req.log.error("Assistant API not configured");
     res.status(503).json({
       success: false,
       error: "AGENT_POOL_UNAVAILABLE",
-      message: "Agent pool is not configured",
+      message: "Assistant API is not configured",
     });
     return;
   }
@@ -105,31 +113,34 @@ export async function joinHandler(req: Request, res: Response) {
 
   try {
     const joinUrl = buildInviteUrl(slug);
-    const agentPoolBaseUrl = AGENT_POOL_URL.replace(/\/+$/, "");
+    const assistantBaseUrl = assistantApiUrl.replace(/\/+$/, "");
 
-    const poolRes = await fetch(`${agentPoolBaseUrl}/api/pool/claim`, {
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+    };
+    if (assistantApiKey) {
+      headers.Authorization = `Bearer ${assistantApiKey}`;
+    }
+
+    const assistantRes = await fetch(`${assistantBaseUrl}/api/assistants`, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${AGENT_POOL_API_KEY}`,
-      },
+      headers,
       signal: AbortSignal.timeout(30_000),
       body: JSON.stringify({
-        agentName: "Assistant",
+        name: "Assistant",
         instructions: instructions || "You are a helpful assistant.",
         joinUrl,
-        ...(skipGreeting !== undefined && { skipGreeting }),
       }),
     });
 
-    if (!poolRes.ok) {
-      const text = await poolRes.text();
+    if (!assistantRes.ok) {
+      const text = await assistantRes.text();
       req.log.error(
-        { status: poolRes.status, body: text },
-        "Agent pool claim failed",
+        { status: assistantRes.status, body: text },
+        "Assistant dispatch failed",
       );
 
-      if (poolRes.status === 503 || poolRes.status === 404) {
+      if (assistantRes.status === 503 || assistantRes.status === 404) {
         const { status, ...body } = ERRORS.NO_AGENTS_AVAILABLE;
         res.status(status).json({ success: false, ...body });
         return;
@@ -140,16 +151,27 @@ export async function joinHandler(req: Request, res: Response) {
       return;
     }
 
-    const result = (await poolRes.json()) as { joined?: boolean };
+    const raw = await assistantRes.json();
+    const result = assistantResponseSchema.safeParse(raw);
+    if (!result.success) {
+      req.log.error(
+        { issues: result.error.issues },
+        "Invalid assistant dispatch response",
+      );
+      const { status, ...body } = ERRORS.AGENT_PROVISION_FAILED;
+      res.status(status).json({ success: false, ...body });
+      return;
+    }
 
     res.status(200).json({
       success: true,
-      joined: result.joined ?? false,
+      joined: false,
+      instanceId: result.data.instanceId,
     });
     return;
   } catch (error) {
     if (error instanceof DOMException && error.name === "TimeoutError") {
-      req.log.error("Agent pool request timed out");
+      req.log.error("Assistant dispatch request timed out");
       const { status, ...body } = ERRORS.AGENT_POOL_TIMEOUT;
       res.status(status).json({ success: false, ...body });
       return;
@@ -157,7 +179,7 @@ export async function joinHandler(req: Request, res: Response) {
 
     req.log.error(
       { error, stack: error instanceof Error ? error.stack : undefined },
-      "Agent pool request failed",
+      "Assistant dispatch request failed",
     );
     const { status, ...body } = ERRORS.AGENT_PROVISION_FAILED;
     res.status(status).json({ success: false, ...body });
