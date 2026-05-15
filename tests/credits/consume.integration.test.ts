@@ -75,7 +75,7 @@ describe("POST /api/v2/credits/consume", () => {
     expect(res.status).toBe(200);
     const body = (await res.json()) as Record<string, unknown>;
     expect(body.replayed).toBe(false);
-    expect(typeof body.spent).toBe("number");
+    expect(body.spent).toBe(1); // 100 micros × markup=2 × cpd=1000 / 10^10 = 0.2 → ceilDiv → 1 credit
     expect(typeof body.balance).toBe("string");
   });
 
@@ -99,6 +99,7 @@ describe("POST /api/v2/credits/consume", () => {
     expect(a.replayed).toBe(false);
     expect(b.replayed).toBe(true);
     expect(b.spent).toBe(a.spent);
+    expect(b.balance).toBe(a.balance); // confirms no double-debit on replay
   });
 
   test("insufficient balance → 402 + code:insufficient_balance + JSON serializes", async () => {
@@ -118,6 +119,7 @@ describe("POST /api/v2/credits/consume", () => {
     expect(body.details).toBeDefined();
     const details = body.details as Record<string, unknown>;
     expect(typeof details.currentBalance).toBe("string");
+    expect(body.code).toBe("insufficient_balance");
   });
 
   test("unknown account → 409 + code:account_not_found", async () => {

@@ -7,6 +7,34 @@ import {
 } from "@/payments/errors";
 import { consumeRequestSchema } from "../schemas";
 
+/**
+ * Returns true only when the Prisma FK-violation error is for the accountId
+ * foreign key. A future FK column on CreditLedger (e.g. agentId) would
+ * produce a different constraint name and must NOT be classified as
+ * account_not_found.
+ *
+ * P2003: typed query path — Prisma exposes meta.field_name (FK column name).
+ * P2010: $queryRaw path — Postgres SQLSTATE 23503 with constraint name in msg.
+ */
+const isAccountIdFkViolation = (
+  err: Prisma.PrismaClientKnownRequestError,
+): boolean => {
+  if (err.code === "P2003") {
+    const field = (err.meta as { field_name?: string } | undefined)?.field_name;
+    return typeof field === "string" && field.includes("accountId");
+  }
+  if (err.code === "P2010") {
+    const meta = err.meta as { code?: string; message?: string } | undefined;
+    if (meta?.code !== "23503") return false;
+    const msg = meta.message ?? "";
+    return (
+      msg.includes("UserCredits_accountId_fkey") ||
+      msg.includes("CreditLedger_accountId_fkey")
+    );
+  }
+  return false;
+};
+
 export async function consume(req: Request, res: Response): Promise<void> {
   const parsed = consumeRequestSchema.safeParse(req.body);
   if (!parsed.success) {
@@ -27,6 +55,9 @@ export async function consume(req: Request, res: Response): Promise<void> {
       requestId,
       model,
     });
+    // `balance` is advisory: read after the consume commit, so concurrent
+    // consumes on the same account may make this value reflect a later state.
+    // Hermes uses it only as a UI signal, not for accounting.
     const balance = await getBalance(accountId);
     res.status(200).json({
       spent: result.spent,
@@ -50,21 +81,16 @@ export async function consume(req: Request, res: Response): Promise<void> {
       });
       return;
     }
-    if (err instanceof Prisma.PrismaClientKnownRequestError) {
-      // P2003: FK violation on typed queries; P2010: FK violation on $queryRaw
-      // Both indicate the accountId does not exist in the Account table.
-      const meta = err.meta as { code?: string } | undefined;
-      const isFkViolation =
-        err.code === "P2003" ||
-        (err.code === "P2010" && meta?.code === "23503");
-      if (isFkViolation) {
-        req.log.warn({ accountId }, "credits.consume.account_not_found");
-        res.status(409).json({
-          error: "Account not found",
-          code: "account_not_found",
-        });
-        return;
-      }
+    if (
+      err instanceof Prisma.PrismaClientKnownRequestError &&
+      isAccountIdFkViolation(err)
+    ) {
+      req.log.warn({ accountId }, "credits.consume.account_not_found");
+      res.status(409).json({
+        error: "Account not found",
+        code: "account_not_found",
+      });
+      return;
     }
     throw err;
   }
