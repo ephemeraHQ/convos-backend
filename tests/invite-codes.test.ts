@@ -198,8 +198,7 @@ describe("Invite Codes API Tests", () => {
         where: { inviteCodeId: updated.id },
       });
       expect(redemptions).toHaveLength(1);
-      const firstRedemption = redemptions[0];
-      expect(firstRedemption.childCodeId).toBe(childCode.id);
+      expect(redemptions[0].childCodeId).toBe(childCode.id);
     });
 
     test("should return 409 for fully redeemed single-use code", async () => {

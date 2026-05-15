@@ -106,6 +106,8 @@ model Account {
   agentTemplates           AgentTemplate[]
   agentTemplateGenerations AgentTemplateGeneration[]
   devices                  DeviceRegistration[]
+  credits                  UserCredits?
+  creditLedger             CreditLedger[]
 }
 
 enum PublishStatus {
@@ -199,4 +201,52 @@ model AuthMethod {
 model AuthNonce {
   nonce     String   @id
   createdAt DateTime @default(now())
+}
+
+enum LedgerReason {
+  consume
+  grant
+  refill
+  adjust
+}
+
+model UserCredits {
+  accountId String   @id @db.Uuid
+  balance   BigInt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  account   Account  @relation(fields: [accountId], references: [id])
+}
+
+model GrantKind {
+  id            String         @id @db.VarChar(64)
+  name          String
+  description   String?
+  active        Boolean        @default(true)
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  ledgerEntries CreditLedger[]
+}
+
+model CreditLedger {
+  id               String       @id @default(uuid()) @db.Uuid
+  accountId        String       @db.Uuid
+  delta            BigInt
+  reason           LedgerReason
+  idempotencyKey   String
+  usdCostMicros    BigInt?
+  markupRate       Decimal?     @db.Decimal(8, 4)
+  creditsPerDollar BigInt?
+  model            String?
+  requestId        String?
+  note             String?
+  grantKindId      String?      @db.VarChar(64)
+  grantKind        GrantKind?   @relation(fields: [grantKindId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  account          Account      @relation(fields: [accountId], references: [id])
+  createdAt        DateTime     @default(now())
+
+  @@unique([accountId, idempotencyKey])
+  @@index([accountId, createdAt])
+  @@index([requestId])
+  @@index([grantKindId])
 }
