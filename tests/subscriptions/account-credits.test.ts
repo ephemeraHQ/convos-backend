@@ -2,7 +2,7 @@ import { LedgerReason } from "@prisma/client";
 import { afterEach, beforeAll, describe, expect, test } from "bun:test";
 import express from "express";
 import request from "supertest";
-import { creditsMeRouter } from "@/api/v2/credits/credits-me.router";
+import { accountsRouter } from "@/api/v2/accounts/accounts.router";
 import { authMiddleware } from "@/middleware/auth";
 import { pinoMiddleware } from "@/middleware/pino";
 import {
@@ -19,7 +19,7 @@ const makeApp = () => {
   const app = express();
   app.use(pinoMiddleware);
   app.use(express.json());
-  app.use("/v2/credits/me", authMiddleware, creditsMeRouter);
+  app.use("/v2/accounts", authMiddleware, accountsRouter);
   return app;
 };
 
@@ -113,11 +113,11 @@ type BalanceBody = {
   periodLabel: string;
 };
 
-describe("GET /v2/credits/me/balance", () => {
+describe("GET /v2/accounts/me/credits", () => {
   test("returns 403 when JWT carries no accountId", async () => {
     const token = await createJwtToken({ deviceId: "dev-no-account" });
     const res = await request(makeApp())
-      .get("/v2/credits/me/balance")
+      .get("/v2/accounts/me/credits")
       .set("X-Convos-AuthToken", token);
     expect(res.status).toBe(403);
   });
@@ -126,7 +126,7 @@ describe("GET /v2/credits/me/balance", () => {
     const accountId = await newAccount();
     const token = await tokenFor(accountId);
     const res = await request(makeApp())
-      .get("/v2/credits/me/balance")
+      .get("/v2/accounts/me/credits")
       .set("X-Convos-AuthToken", token);
     expect(res.status).toBe(200);
     const body = res.body as BalanceBody;
@@ -143,7 +143,7 @@ describe("GET /v2/credits/me/balance", () => {
     await seedBuilderMonthly(accountId);
     const token = await tokenFor(accountId);
     const res = await request(makeApp())
-      .get("/v2/credits/me/balance")
+      .get("/v2/accounts/me/credits")
       .set("X-Convos-AuthToken", token);
     expect(res.status).toBe(200);
     const body = res.body as BalanceBody;
@@ -171,7 +171,7 @@ describe("GET /v2/credits/me/balance", () => {
     );
     const token = await tokenFor(accountId);
     const res = await request(makeApp())
-      .get("/v2/credits/me/balance")
+      .get("/v2/accounts/me/credits")
       .set("X-Convos-AuthToken", token);
     const body = res.body as BalanceBody;
     expect(body.monthlyGrantUsed).toBe(500);
@@ -190,7 +190,7 @@ describe("GET /v2/credits/me/balance", () => {
     );
     const token = await tokenFor(accountId);
     const res = await request(makeApp())
-      .get("/v2/credits/me/balance")
+      .get("/v2/accounts/me/credits")
       .set("X-Convos-AuthToken", token);
     const body = res.body as BalanceBody;
     expect(body.monthlyGrantUsed).toBe(0);
@@ -208,7 +208,7 @@ describe("GET /v2/credits/me/balance", () => {
     );
     const token = await tokenFor(accountId);
     const res = await request(makeApp())
-      .get("/v2/credits/me/balance")
+      .get("/v2/accounts/me/credits")
       .set("X-Convos-AuthToken", token);
     const body = res.body as BalanceBody;
     expect(body.monthlyGrantUsed).toBe(2500);
@@ -236,7 +236,7 @@ describe("GET /v2/credits/me/balance", () => {
     });
     const token = await tokenFor(accountId);
     const res = await request(makeApp())
-      .get("/v2/credits/me/balance")
+      .get("/v2/accounts/me/credits")
       .set("X-Convos-AuthToken", token);
     const body = res.body as BalanceBody;
     expect(body.monthlyGrant).toBe(10000 * 12);

@@ -7,7 +7,7 @@ import { afterEach, beforeAll, describe, expect, test } from "bun:test";
 import express, { json } from "express";
 import jsonwebtoken from "jsonwebtoken";
 import request from "supertest";
-import { subscriptionsRouter } from "@/api/v2/subscriptions/subscriptions.router";
+import { accountsRouter } from "@/api/v2/accounts/accounts.router";
 import { authMiddleware } from "@/middleware/auth";
 import { pinoMiddleware } from "@/middleware/pino";
 import {
@@ -23,7 +23,7 @@ const makeApp = () => {
   const app = express();
   app.use(pinoMiddleware);
   app.use(json());
-  app.use("/v2/subscriptions", authMiddleware, subscriptionsRouter);
+  app.use("/v2/accounts", authMiddleware, accountsRouter);
   return app;
 };
 
@@ -109,12 +109,12 @@ const signTransaction = (overrides: Record<string, unknown>) => {
   return jsonwebtoken.sign(payload, signingPrivateKey, { algorithm: "ES256" });
 };
 
-describe("GET /v2/subscriptions/me", () => {
+describe("GET /v2/accounts/me/subscription", () => {
   test("returns 204 when caller has no subscription", async () => {
     const accountId = await newAccount();
     const token = await tokenFor(accountId);
     const res = await request(makeApp())
-      .get("/v2/subscriptions/me")
+      .get("/v2/accounts/me/subscription")
       .set("X-Convos-AuthToken", token);
     expect(res.status).toBe(204);
   });
@@ -122,7 +122,7 @@ describe("GET /v2/subscriptions/me", () => {
   test("returns 403 when JWT carries no accountId", async () => {
     const token = await createJwtToken({ deviceId: "dev-no-account" });
     const res = await request(makeApp())
-      .get("/v2/subscriptions/me")
+      .get("/v2/accounts/me/subscription")
       .set("X-Convos-AuthToken", token);
     expect(res.status).toBe(403);
   });
@@ -134,7 +134,7 @@ describe("GET /v2/subscriptions/me", () => {
     const appAccountToken = "11111111-2222-3333-4444-555555555555";
 
     await request(makeApp())
-      .post("/v2/subscriptions/me/verify")
+      .post("/v2/accounts/me/subscription/verify")
       .set("X-Convos-AuthToken", token)
       .send({
         jwsRepresentation: signTransaction({ appAccountToken }),
@@ -142,7 +142,7 @@ describe("GET /v2/subscriptions/me", () => {
       });
 
     const res = await request(makeApp())
-      .get("/v2/subscriptions/me")
+      .get("/v2/accounts/me/subscription")
       .set("X-Convos-AuthToken", token);
     expect(res.status).toBe(200);
     expect(res.body).toEqual({
@@ -157,12 +157,12 @@ describe("GET /v2/subscriptions/me", () => {
   });
 });
 
-describe("POST /v2/subscriptions/me/verify", () => {
+describe("POST /v2/accounts/me/subscription/verify", () => {
   test("returns 403 when JWT carries no accountId", async () => {
     installLocalTestingVerifier();
     const token = await createJwtToken({ deviceId: "dev-no-account" });
     const res = await request(makeApp())
-      .post("/v2/subscriptions/me/verify")
+      .post("/v2/accounts/me/subscription/verify")
       .set("X-Convos-AuthToken", token)
       .send({
         jwsRepresentation: signTransaction({}),
@@ -176,7 +176,7 @@ describe("POST /v2/subscriptions/me/verify", () => {
     const accountId = await newAccount();
     const token = await tokenFor(accountId);
     const res = await request(makeApp())
-      .post("/v2/subscriptions/me/verify")
+      .post("/v2/accounts/me/subscription/verify")
       .set("X-Convos-AuthToken", token)
       .send({ appAccountToken: "11111111-2222-3333-4444-555555555555" });
     expect(res.status).toBe(400);
@@ -187,7 +187,7 @@ describe("POST /v2/subscriptions/me/verify", () => {
     const accountId = await newAccount();
     const token = await tokenFor(accountId);
     const res = await request(makeApp())
-      .post("/v2/subscriptions/me/verify")
+      .post("/v2/accounts/me/subscription/verify")
       .set("X-Convos-AuthToken", token)
       .send({
         jwsRepresentation: signTransaction({}),
@@ -201,7 +201,7 @@ describe("POST /v2/subscriptions/me/verify", () => {
     const accountId = await newAccount();
     const token = await tokenFor(accountId);
     const res = await request(makeApp())
-      .post("/v2/subscriptions/me/verify")
+      .post("/v2/accounts/me/subscription/verify")
       .set("X-Convos-AuthToken", token)
       .send({
         jwsRepresentation: "garbage.not.jws",
@@ -216,7 +216,7 @@ describe("POST /v2/subscriptions/me/verify", () => {
     const accountId = await newAccount();
     const token = await tokenFor(accountId);
     const res = await request(makeApp())
-      .post("/v2/subscriptions/me/verify")
+      .post("/v2/accounts/me/subscription/verify")
       .set("X-Convos-AuthToken", token)
       .send({
         jwsRepresentation: signTransaction({ productId: "app.bogus.sku" }),
@@ -232,7 +232,7 @@ describe("POST /v2/subscriptions/me/verify", () => {
     const token = await tokenFor(accountId);
     const appAccountToken = "11111111-2222-3333-4444-555555555555";
     const res = await request(makeApp())
-      .post("/v2/subscriptions/me/verify")
+      .post("/v2/accounts/me/subscription/verify")
       .set("X-Convos-AuthToken", token)
       .send({
         jwsRepresentation: signTransaction({
@@ -266,7 +266,7 @@ describe("POST /v2/subscriptions/me/verify", () => {
     const token = await tokenFor(accountId);
     const appAccountToken = "11111111-2222-3333-4444-555555555555";
     const res = await request(makeApp())
-      .post("/v2/subscriptions/me/verify")
+      .post("/v2/accounts/me/subscription/verify")
       .set("X-Convos-AuthToken", token)
       .send({
         jwsRepresentation: signTransaction({
@@ -292,11 +292,11 @@ describe("POST /v2/subscriptions/me/verify", () => {
     };
 
     await request(makeApp())
-      .post("/v2/subscriptions/me/verify")
+      .post("/v2/accounts/me/subscription/verify")
       .set("X-Convos-AuthToken", token)
       .send(body);
     const res2 = await request(makeApp())
-      .post("/v2/subscriptions/me/verify")
+      .post("/v2/accounts/me/subscription/verify")
       .set("X-Convos-AuthToken", token)
       .send(body);
 
@@ -315,7 +315,7 @@ describe("POST /v2/subscriptions/me/verify", () => {
     const tokenB = await tokenFor(accountB);
 
     await request(makeApp())
-      .post("/v2/subscriptions/me/verify")
+      .post("/v2/accounts/me/subscription/verify")
       .set("X-Convos-AuthToken", tokenA)
       .send({
         jwsRepresentation: signTransaction({
@@ -325,7 +325,7 @@ describe("POST /v2/subscriptions/me/verify", () => {
       });
 
     const res = await request(makeApp())
-      .post("/v2/subscriptions/me/verify")
+      .post("/v2/accounts/me/subscription/verify")
       .set("X-Convos-AuthToken", tokenB)
       .send({
         // Same JWS (i.e. same Apple sub), different appAccountToken from

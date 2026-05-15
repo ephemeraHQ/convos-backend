@@ -4,7 +4,7 @@ import {
   serializeUserSubscription,
 } from "@/subscriptions/repository";
 
-export async function meGetHandler(req: Request, res: Response) {
+export async function subscriptionGetHandler(req: Request, res: Response) {
   const accountId = res.locals.accountId as string;
 
   try {

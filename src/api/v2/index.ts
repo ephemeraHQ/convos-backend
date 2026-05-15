@@ -14,6 +14,7 @@ import {
   assetRenewalLimiter,
   inviteCodeRedeemLimiter,
 } from "@/middleware/rateLimit";
+import { accountsRouter } from "./accounts/accounts.router";
 import { agentTemplatesRouter } from "./agent-templates/agent-templates.router";
 import { agentsRouter } from "./agents/agents.router";
 import { agentAssetsRouter } from "./agents/assets/agent-assets.router";
@@ -25,7 +26,6 @@ import { testLifecycleHandler } from "./assets/handlers/test-lifecycle";
 import { attachmentsRouter } from "./attachments/attachments.router";
 import { authRouter } from "./auth/auth.router";
 import { connectionsRouter } from "./connections/connections.router";
-import { creditsMeRouter } from "./credits/credits-me.router";
 import { creditsRouter } from "./credits/credits.router";
 import { devRouter } from "./dev/dev.router";
 import { deviceRouter } from "./device/device.router";
@@ -37,7 +37,6 @@ import invitesV2Router from "./invites/invites.router";
 import { notificationsRouter } from "./notifications/notifications.router";
 import { webhookRouter } from "./notifications/webhook.router";
 import { appleWebhookRouter } from "./subscriptions/apple-webhook.router";
-import { subscriptionsRouter } from "./subscriptions/subscriptions.router";
 
 const v2Router = Router();
 
@@ -58,9 +57,11 @@ v2Router.use(
   inviteCodesRouter,
 );
 v2Router.use("/auth", authRouter);
-// User-facing /credits/me/* — JWT-authed, mounted before /credits so the
-// /me prefix routes here instead of falling through to the agent router.
-v2Router.use("/credits/me", authMiddleware, creditsMeRouter);
+// User-facing /accounts/me/* (credits, subscription, subscription/verify) —
+// JWT-authed. Agents read/write credits via /credits/{check,consume,grant}
+// below with X-Agent-API-Key; the two surfaces are deliberately separate by
+// audience, not by resource.
+v2Router.use("/accounts", authMiddleware, accountsRouter);
 v2Router.use("/credits", creditsRouter);
 v2Router.use("/device", appCheckOnlyMiddleware, deviceRouter);
 
@@ -109,7 +110,6 @@ v2Router.use("/attachments", authMiddleware, attachmentsRouter);
 v2Router.use("/connections", authMiddleware, connectionsRouter);
 v2Router.use("/notifications/xmtp", webhookRouter);
 v2Router.use("/notifications", authMiddleware, notificationsRouter);
-v2Router.use("/subscriptions", authMiddleware, subscriptionsRouter);
 // No auth: Apple authenticates via JWS signature, verified inside the handler.
 v2Router.use("/webhooks/apple", appleWebhookRouter);
 

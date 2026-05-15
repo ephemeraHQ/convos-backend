@@ -33,7 +33,7 @@ const sumPeriodConsumes = async (
 };
 
 /**
- * GET /v2/credits/me/balance — returns the iOS `CreditBalance` shape:
+ * GET /v2/accounts/me/credits — returns the iOS `CreditBalance` shape:
  * `{ balance, monthlyGrant, monthlyGrantUsed, nextRefreshAt, periodLabel }`.
  *
  * Derivation:
@@ -50,7 +50,7 @@ const sumPeriodConsumes = async (
  * yet expose a separate "bonus credits" field. When that surface ships,
  * widen this handler to include them.
  */
-export async function meBalanceHandler(req: Request, res: Response) {
+export async function creditsGetHandler(req: Request, res: Response) {
   const accountId = res.locals.accountId as string;
 
   try {

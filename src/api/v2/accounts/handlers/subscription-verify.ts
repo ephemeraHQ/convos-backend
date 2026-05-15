@@ -93,7 +93,7 @@ const buildVerifyInput = (
   };
 };
 
-export async function meVerifyHandler(req: Request, res: Response) {
+export async function subscriptionVerifyHandler(req: Request, res: Response) {
   const accountId = res.locals.accountId as string;
 
   const parsed = bodySchema.safeParse(req.body);
@@ -159,7 +159,7 @@ export async function meVerifyHandler(req: Request, res: Response) {
     const { subscription } = await upsertFromVerify(input);
 
     // Subscription credit allotments are derived from the Subscription row
-    // + per-tier config at read time (see GET /v2/credits/me/balance); we
+    // + per-tier config at read time (see GET /v2/accounts/me/credits); we
     // intentionally do NOT write a grant() ledger row on verify. grant() is
     // reserved for additive credits — top-ups, NUX trial, manual ops, promo.
     res.status(200).json({

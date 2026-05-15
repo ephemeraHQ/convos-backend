@@ -134,7 +134,7 @@ export async function appleSsnHandler(req: Request, res: Response) {
 
     // No grant() write on DID_RENEW: subscription credit allotments are
     // derived from the Subscription row + per-tier config at read time (see
-    // GET /v2/credits/me/balance). Renewal updates currentPeriodStart, which
+    // GET /v2/accounts/me/credits). Renewal updates currentPeriodStart, which
     // resets monthlyGrantUsed on the next read. grant() is reserved for
     // additive credits (top-ups, NUX trial, manual ops, promo).
     res.status(200).json({ ok: true, applied: result.kind === "applied" });
