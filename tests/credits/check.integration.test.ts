@@ -8,14 +8,14 @@ import {
   expect,
   test,
 } from "bun:test";
+import { __setAgentAssetsApiKeyOverrideForTests } from "@/middleware/agentAuth";
 import {
   buildCreditsApp,
   cleanupAccounts,
   seedAccount,
   seedBalance,
   TEST_AGENT_API_KEY,
-} from "@/api/v2/credits/test-helpers";
-import { __setAgentAssetsApiKeyOverrideForTests } from "@/middleware/agentAuth";
+} from "./helpers";
 
 const BASE = "http://localhost:4071";
 let server: Server;

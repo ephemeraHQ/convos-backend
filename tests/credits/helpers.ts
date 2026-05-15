@@ -1,10 +1,12 @@
+import { randomUUID } from "node:crypto";
 import express from "express";
+import { creditsRouter } from "@/api/v2/credits/credits.router";
 import { errorHandlerMiddleware } from "@/middleware/errorHandler";
 import { jsonMiddleware } from "@/middleware/json";
 import { noRouteMiddleware } from "@/middleware/noRoute";
 import { pinoMiddleware } from "@/middleware/pino";
+import { grant } from "@/payments";
 import { prisma } from "@/utils/prisma";
-import { creditsRouter } from "./credits.router";
 
 export const TEST_AGENT_API_KEY =
   "test-agent-assets-api-key-that-is-at-least-32-characters";
@@ -26,10 +28,18 @@ export const seedAccount = async (): Promise<string> => {
 
 export const seedBalance = async (
   accountId: string,
-  balance: bigint,
+  credits: bigint,
 ): Promise<void> => {
-  await prisma.userCredits.create({
-    data: { accountId, balance },
+  if (credits <= 0n) {
+    throw new Error(
+      `seedBalance only supports positive credits; got ${credits}`,
+    );
+  }
+  await grant({
+    accountId,
+    credits: Number(credits),
+    kind: "manual",
+    idempotencyKey: `seed-${accountId}-${randomUUID()}`,
   });
 };
 
