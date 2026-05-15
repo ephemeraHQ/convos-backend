@@ -17,7 +17,7 @@ import {
   TEST_AGENT_API_KEY,
 } from "./helpers";
 
-const BASE = "http://localhost:4072";
+const BASE = "http://localhost:4079";
 let server: Server;
 const tracker: string[] = [];
 
@@ -25,7 +25,7 @@ beforeAll(async () => {
   __setAgentAssetsApiKeyOverrideForTests(TEST_AGENT_API_KEY);
   const app = buildCreditsApp();
   await new Promise<void>((resolve) => {
-    server = app.listen(4072, () => {
+    server = app.listen(4079, () => {
       resolve();
     });
   });
