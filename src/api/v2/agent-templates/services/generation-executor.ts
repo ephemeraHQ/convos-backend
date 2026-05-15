@@ -150,6 +150,20 @@ const deriveBaseSlug = (agentName: string): string =>
  *  still disambiguates each row. Must itself pass `validateSlug`. */
 const FALLBACK_SLUG = "agent";
 
+// Fail fast at module load if FALLBACK_SLUG ever stops being a valid slug —
+// e.g. "agent" gets added to RESERVED_SLUGS, or the slug rules tighten.
+// Without this guard, deriveTemplateSlug would silently fall back to an
+// invalid slug and persist unreachable rows. A startup crash is the loud,
+// debuggable failure mode instead.
+{
+  const fallbackCheck = validateSlug(FALLBACK_SLUG);
+  if (!fallbackCheck.valid) {
+    throw new Error(
+      `FALLBACK_SLUG "${FALLBACK_SLUG}" is not a valid slug: ${fallbackCheck.message}`,
+    );
+  }
+}
+
 /** Derive a persistable slug from the generated agentName.
  *
  *  `deriveBaseSlug` can yield an empty (emoji-only / non-Latin name),
