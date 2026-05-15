@@ -12,68 +12,69 @@ import {
 } from "@/payments/index";
 import { prisma } from "@/utils/prisma";
 
-const inbox = (suffix: string) =>
-  `inbox_pay_${suffix}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-
-const wipe = async (id: string) => {
-  await prisma.creditLedger.deleteMany({ where: { inboxId: id } });
-  await prisma.userCredits.deleteMany({ where: { inboxId: id } });
+const seedAccount = async (): Promise<string> => {
+  const acct = await prisma.account.create({ data: {} });
+  return acct.id;
 };
 
 describe("payments/index — composed service", () => {
-  const cleanup: string[] = [];
+  const cleanupAccounts: string[] = [];
 
   afterEach(async () => {
-    for (const id of cleanup) await wipe(id);
-    cleanup.length = 0;
+    for (const accountId of cleanupAccounts) {
+      await prisma.creditLedger.deleteMany({ where: { accountId } });
+      await prisma.userCredits.deleteMany({ where: { accountId } });
+      await prisma.account.deleteMany({ where: { id: accountId } });
+    }
+    cleanupAccounts.length = 0;
   });
 
   test("grant adds credits and records snapshot fields", async () => {
-    const id = inbox("grant");
-    cleanup.push(id);
+    const accountId = await seedAccount();
+    cleanupAccounts.push(accountId);
 
     const r = await grant({
-      inboxId: id,
+      accountId,
       credits: 100,
       idempotencyKey: "g1",
       kind: "signup_bonus",
     });
     expect(r.granted).toBe(100);
     expect(r.replayed).toBe(false);
-    expect(await getBalance(id)).toBe(100n);
+    expect(await getBalance(accountId)).toBe(100n);
 
-    const rows = await prisma.creditLedger.findMany({ where: { inboxId: id } });
+    const rows = await prisma.creditLedger.findMany({ where: { accountId } });
     expect(rows[0].grantKindId).toBe("signup_bonus");
     expect(rows[0].reason).toBe("grant");
   });
 
   test("grant rejects unknown kind", async () => {
-    const id = inbox("grantbad");
-    cleanup.push(id);
+    const accountId = await seedAccount();
+    cleanupAccounts.push(accountId);
     expect(
       grant({
-        inboxId: id,
+        accountId,
         credits: 10,
         idempotencyKey: "x",
         // @ts-expect-error testing runtime behavior with invalid kind
         kind: "not_a_kind",
       }),
     ).rejects.toThrow(); // ZodError from schema parse
-    expect(await getBalance(id)).toBe(0n);
+    expect(await getBalance(accountId)).toBe(0n);
   });
 
   test("consume converts USD to credits, deducts, snapshots pricing", async () => {
-    const id = inbox("consume");
-    cleanup.push(id);
+    const accountId = await seedAccount();
+    cleanupAccounts.push(accountId);
 
     await grant({
-      inboxId: id,
+      accountId,
       credits: 100,
       idempotencyKey: "seed",
       kind: "signup_bonus",
     });
     const r = await consume({
-      inboxId: id,
+      accountId,
       usdCostMicros: 2000n,
       idempotencyKey: "c1",
       requestId: "req-1",
@@ -82,10 +83,10 @@ describe("payments/index — composed service", () => {
 
     expect(r.spent).toBe(4);
     expect(r.replayed).toBe(false);
-    expect(await getBalance(id)).toBe(96n);
+    expect(await getBalance(accountId)).toBe(96n);
 
     const row = await prisma.creditLedger.findFirst({
-      where: { inboxId: id, idempotencyKey: "c1" },
+      where: { accountId, idempotencyKey: "c1" },
     });
     expect(row?.usdCostMicros).toBe(2000n);
     expect(row?.creditsPerDollar).toBe(1000n);
@@ -95,114 +96,118 @@ describe("payments/index — composed service", () => {
   });
 
   test("consume past MIN_BALANCE throws InsufficientBalanceError, writes nothing", async () => {
-    const id = inbox("floor");
-    cleanup.push(id);
+    const accountId = await seedAccount();
+    cleanupAccounts.push(accountId);
 
     await adjust({
-      inboxId: id,
+      accountId,
       delta: -996,
       idempotencyKey: "seed",
       note: "drop balance below safe",
     });
     expect(
       consume({
-        inboxId: id,
+        accountId,
         usdCostMicros: 5000n,
         idempotencyKey: "breach",
         requestId: "req-1",
       }),
     ).rejects.toBeInstanceOf(InsufficientBalanceError);
-    expect(await getBalance(id)).toBe(-996n);
+    expect(await getBalance(accountId)).toBe(-996n);
     const breachRow = await prisma.creditLedger.findFirst({
-      where: { inboxId: id, idempotencyKey: "breach" },
+      where: { accountId, idempotencyKey: "breach" },
     });
     expect(breachRow).toBeNull();
   });
 
   test("adjust applies signed delta and records note", async () => {
-    const id = inbox("adjust");
-    cleanup.push(id);
+    const accountId = await seedAccount();
+    cleanupAccounts.push(accountId);
 
     const r = await adjust({
-      inboxId: id,
+      accountId,
       delta: 10,
       idempotencyKey: "a1",
       note: "support refund — call failed",
     });
     expect(r.applied).toBe(true);
     expect(r.replayed).toBe(false);
-    expect(await getBalance(id)).toBe(10n);
+    expect(await getBalance(accountId)).toBe(10n);
     const row = await prisma.creditLedger.findFirst({
-      where: { inboxId: id, idempotencyKey: "a1" },
+      where: { accountId, idempotencyKey: "a1" },
     });
     expect(row?.note).toBe("support refund — call failed");
     expect(row?.reason).toBe("adjust");
   });
 
   test("adjust negative delta respects MIN_BALANCE", async () => {
-    const id = inbox("adjustfloor");
-    cleanup.push(id);
+    const accountId = await seedAccount();
+    cleanupAccounts.push(accountId);
 
     expect(
       adjust({
-        inboxId: id,
+        accountId,
         delta: -2000,
         idempotencyKey: "a1",
         note: "would breach floor",
       }),
     ).rejects.toBeInstanceOf(InsufficientBalanceError);
-    expect(await getBalance(id)).toBe(0n);
+    expect(await getBalance(accountId)).toBe(0n);
   });
 
   test("isAllowed reflects RESERVED_MAX_TURN_CREDITS", async () => {
-    const id = inbox("allowed");
-    cleanup.push(id);
+    const accountId = await seedAccount();
+    cleanupAccounts.push(accountId);
 
-    expect(await isAllowed(id)).toBe(false);
+    expect(await isAllowed(accountId)).toBe(false);
     await grant({
-      inboxId: id,
+      accountId,
       credits: 1,
       idempotencyKey: "seed",
       kind: "signup_bonus",
     });
-    expect(await isAllowed(id)).toBe(true);
+    expect(await isAllowed(accountId)).toBe(true);
   });
 });
 
 describe("payments/index — replay + concurrency", () => {
-  const cleanup: string[] = [];
+  const cleanupAccounts: string[] = [];
 
   afterEach(async () => {
-    for (const id of cleanup) await wipe(id);
-    cleanup.length = 0;
+    for (const accountId of cleanupAccounts) {
+      await prisma.creditLedger.deleteMany({ where: { accountId } });
+      await prisma.userCredits.deleteMany({ where: { accountId } });
+      await prisma.account.deleteMany({ where: { id: accountId } });
+    }
+    cleanupAccounts.length = 0;
   });
 
   test("consume replay is idempotent", async () => {
-    const id = inbox("replay");
-    cleanup.push(id);
+    const accountId = await seedAccount();
+    cleanupAccounts.push(accountId);
 
     await grant({
-      inboxId: id,
+      accountId,
       credits: 100,
       idempotencyKey: "seed",
       kind: "signup_bonus",
     });
     const first = await consume({
-      inboxId: id,
+      accountId,
       usdCostMicros: 2000n,
       idempotencyKey: "c1",
       requestId: "req-1",
     }); // balance 96
 
     await grant({
-      inboxId: id,
+      accountId,
       credits: 50,
       idempotencyKey: "g2",
       kind: "manual",
     }); // balance 146
 
     const replay = await consume({
-      inboxId: id,
+      accountId,
       usdCostMicros: 2000n,
       idempotencyKey: "c1",
       requestId: "req-1",
@@ -211,25 +216,25 @@ describe("payments/index — replay + concurrency", () => {
     expect(first.replayed).toBe(false);
     expect(replay.spent).toBe(first.spent);
     expect(replay.replayed).toBe(true);
-    expect(await getBalance(id)).toBe(146n); // unchanged by replay
+    expect(await getBalance(accountId)).toBe(146n); // unchanged by replay
 
     const rows = await prisma.creditLedger.findMany({
-      where: { inboxId: id, idempotencyKey: "c1" },
+      where: { accountId, idempotencyKey: "c1" },
     });
     expect(rows).toHaveLength(1);
   });
 
   test("consume replay with different model throws IdempotencyMismatchError", async () => {
-    const id = inbox("replay-model");
-    cleanup.push(id);
+    const accountId = await seedAccount();
+    cleanupAccounts.push(accountId);
     await grant({
-      inboxId: id,
+      accountId,
       credits: 100,
       idempotencyKey: "seed",
       kind: "signup_bonus",
     });
     await consume({
-      inboxId: id,
+      accountId,
       usdCostMicros: 2000n,
       idempotencyKey: "c1",
       requestId: "req-1",
@@ -237,34 +242,34 @@ describe("payments/index — replay + concurrency", () => {
     });
     expect(
       consume({
-        inboxId: id,
+        accountId,
         usdCostMicros: 2000n,
         idempotencyKey: "c1",
         requestId: "req-1",
         model: "claude-haiku-4-5",
       }),
     ).rejects.toBeInstanceOf(IdempotencyMismatchError);
-    expect(await getBalance(id)).toBe(96n);
+    expect(await getBalance(accountId)).toBe(96n);
   });
 
   test("consume replay with different requestId throws IdempotencyMismatchError", async () => {
-    const id = inbox("replay-req");
-    cleanup.push(id);
+    const accountId = await seedAccount();
+    cleanupAccounts.push(accountId);
     await grant({
-      inboxId: id,
+      accountId,
       credits: 100,
       idempotencyKey: "seed",
       kind: "signup_bonus",
     });
     await consume({
-      inboxId: id,
+      accountId,
       usdCostMicros: 2000n,
       idempotencyKey: "c1",
       requestId: "req-1",
     });
     expect(
       consume({
-        inboxId: id,
+        accountId,
         usdCostMicros: 2000n,
         idempotencyKey: "c1",
         requestId: "req-2",
@@ -273,17 +278,17 @@ describe("payments/index — replay + concurrency", () => {
   });
 
   test("grant replay with identical payload returns replayed:true, balance unchanged", async () => {
-    const id = inbox("replay-grant-ok");
-    cleanup.push(id);
+    const accountId = await seedAccount();
+    cleanupAccounts.push(accountId);
     const first = await grant({
-      inboxId: id,
+      accountId,
       credits: 50,
       idempotencyKey: "g1",
       kind: "manual",
       note: "same",
     });
     const replay = await grant({
-      inboxId: id,
+      accountId,
       credits: 50,
       idempotencyKey: "g1",
       kind: "manual",
@@ -292,24 +297,24 @@ describe("payments/index — replay + concurrency", () => {
     expect(first.replayed).toBe(false);
     expect(replay.replayed).toBe(true);
     expect(replay.granted).toBe(first.granted);
-    expect(await getBalance(id)).toBe(50n);
+    expect(await getBalance(accountId)).toBe(50n);
     const rows = await prisma.creditLedger.findMany({
-      where: { inboxId: id, idempotencyKey: "g1" },
+      where: { accountId, idempotencyKey: "g1" },
     });
     expect(rows).toHaveLength(1);
   });
 
   test("adjust replay with identical payload returns replayed:true, balance unchanged", async () => {
-    const id = inbox("replay-adjust-ok");
-    cleanup.push(id);
+    const accountId = await seedAccount();
+    cleanupAccounts.push(accountId);
     const first = await adjust({
-      inboxId: id,
+      accountId,
       delta: 25,
       idempotencyKey: "a1",
       note: "same note",
     });
     const replay = await adjust({
-      inboxId: id,
+      accountId,
       delta: 25,
       idempotencyKey: "a1",
       note: "same note",
@@ -317,18 +322,18 @@ describe("payments/index — replay + concurrency", () => {
     expect(first.replayed).toBe(false);
     expect(replay.replayed).toBe(true);
     expect(replay.applied).toBe(true);
-    expect(await getBalance(id)).toBe(25n);
+    expect(await getBalance(accountId)).toBe(25n);
     const rows = await prisma.creditLedger.findMany({
-      where: { inboxId: id, idempotencyKey: "a1" },
+      where: { accountId, idempotencyKey: "a1" },
     });
     expect(rows).toHaveLength(1);
   });
 
   test("grant replay with different note throws IdempotencyMismatchError", async () => {
-    const id = inbox("replay-grant-note");
-    cleanup.push(id);
+    const accountId = await seedAccount();
+    cleanupAccounts.push(accountId);
     await grant({
-      inboxId: id,
+      accountId,
       credits: 50,
       idempotencyKey: "g1",
       kind: "manual",
@@ -336,28 +341,28 @@ describe("payments/index — replay + concurrency", () => {
     });
     expect(
       grant({
-        inboxId: id,
+        accountId,
         credits: 50,
         idempotencyKey: "g1",
         kind: "manual",
         note: "different reason",
       }),
     ).rejects.toBeInstanceOf(IdempotencyMismatchError);
-    expect(await getBalance(id)).toBe(50n);
+    expect(await getBalance(accountId)).toBe(50n);
   });
 
   test("grant replay with different kind throws IdempotencyMismatchError", async () => {
-    const id = inbox("replay-grant-kind");
-    cleanup.push(id);
+    const accountId = await seedAccount();
+    cleanupAccounts.push(accountId);
     await grant({
-      inboxId: id,
+      accountId,
       credits: 50,
       idempotencyKey: "g1",
       kind: "manual",
     });
     expect(
       grant({
-        inboxId: id,
+        accountId,
         credits: 50,
         idempotencyKey: "g1",
         kind: "signup_bonus",
@@ -366,17 +371,17 @@ describe("payments/index — replay + concurrency", () => {
   });
 
   test("adjust replay with different note throws IdempotencyMismatchError", async () => {
-    const id = inbox("replay-adjust-note");
-    cleanup.push(id);
+    const accountId = await seedAccount();
+    cleanupAccounts.push(accountId);
     await adjust({
-      inboxId: id,
+      accountId,
       delta: 25,
       idempotencyKey: "a1",
       note: "original note",
     });
     expect(
       adjust({
-        inboxId: id,
+        accountId,
         delta: 25,
         idempotencyKey: "a1",
         note: "tampered note",
@@ -384,12 +389,12 @@ describe("payments/index — replay + concurrency", () => {
     ).rejects.toBeInstanceOf(IdempotencyMismatchError);
   });
 
-  test("concurrent consumes on same inbox serialize correctly (no lost updates)", async () => {
-    const id = inbox("race");
-    cleanup.push(id);
+  test("concurrent consumes on same account serialize correctly (no lost updates)", async () => {
+    const accountId = await seedAccount();
+    cleanupAccounts.push(accountId);
 
     await grant({
-      inboxId: id,
+      accountId,
       credits: 1000,
       idempotencyKey: "seed",
       kind: "signup_bonus",
@@ -397,7 +402,7 @@ describe("payments/index — replay + concurrency", () => {
 
     const calls = Array.from({ length: 10 }, (_, i) =>
       consume({
-        inboxId: id,
+        accountId,
         usdCostMicros: 2000n,
         idempotencyKey: `r${i}`,
         requestId: `req-${i}`,
@@ -408,10 +413,10 @@ describe("payments/index — replay + concurrency", () => {
     expect(results).toHaveLength(10);
     for (const r of results) expect(r.spent).toBe(4);
 
-    expect(await getBalance(id)).toBe(960n); // 1000 - 10×4
+    expect(await getBalance(accountId)).toBe(960n); // 1000 - 10×4
 
     const rows = await prisma.creditLedger.findMany({
-      where: { inboxId: id, reason: "consume" },
+      where: { accountId, reason: "consume" },
     });
     expect(rows).toHaveLength(10);
   });

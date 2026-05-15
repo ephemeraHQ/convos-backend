@@ -13,6 +13,7 @@ describe("InsufficientBalanceError", () => {
     const err = new InsufficientBalanceError("acct-123", 5n, -10, -1000n);
     // Round-trip through JSON without throwing on BigInt.
     expect(() => JSON.stringify(err.details)).not.toThrow();
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
     const parsed = JSON.parse(JSON.stringify(err.details));
     expect(parsed).toEqual({
       accountId: "acct-123",

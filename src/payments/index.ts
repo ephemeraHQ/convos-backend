@@ -31,7 +31,7 @@ export {
 export { creditsToUsd, usdToCredits } from "./credits";
 
 export const consume = async (args: {
-  inboxId: string;
+  accountId: string;
   usdCostMicros: bigint;
   idempotencyKey: string;
   requestId: string;
@@ -40,7 +40,7 @@ export const consume = async (args: {
   const credits = usdToCredits(args.usdCostMicros);
   try {
     const { replayed } = await applyDelta({
-      inboxId: args.inboxId,
+      accountId: args.accountId,
       delta: BigInt(-credits),
       reason: LedgerReason.consume,
       idempotencyKey: args.idempotencyKey,
@@ -55,7 +55,7 @@ export const consume = async (args: {
   } catch (err) {
     if (err instanceof LedgerFloorBreachError) {
       throw new InsufficientBalanceError(
-        args.inboxId,
+        args.accountId,
         err.currentBalance,
         Number(err.attempted),
         err.minBalance,
@@ -66,7 +66,7 @@ export const consume = async (args: {
 };
 
 /**
- * Grant credits to an inbox.
+ * Grant credits to an account.
  *
  * Pricing snapshot fields (markupRate, creditsPerDollar) are NOT recorded
  * on grant ledger entries. Credit-denominated operations don't need pricing
@@ -74,7 +74,7 @@ export const consume = async (args: {
  * Conversion back to USD (if needed for display) uses current pricing.
  */
 export const grant = async (args: {
-  inboxId: string;
+  accountId: string;
   credits: number;
   idempotencyKey: string;
   kind: GrantKindId;
@@ -87,7 +87,7 @@ export const grant = async (args: {
   const parsedKind = GrantKindIdSchema.parse(args.kind);
 
   const ledgerInput = {
-    inboxId: args.inboxId,
+    accountId: args.accountId,
     delta: BigInt(args.credits),
     reason: LedgerReason.grant,
     idempotencyKey: args.idempotencyKey,
@@ -114,7 +114,7 @@ export const grant = async (args: {
       err.code === "P2002"
     ) {
       const prior = await findLedgerByIdempotencyKey(
-        args.inboxId,
+        args.accountId,
         args.idempotencyKey,
       );
       if (prior) {
@@ -127,13 +127,13 @@ export const grant = async (args: {
 };
 
 /**
- * Manually adjust an inbox balance (positive or negative).
+ * Manually adjust an account balance (positive or negative).
  *
  * Credit-denominated — no pricing snapshot needed. The delta field itself
  * is the complete record of the adjustment value.
  */
 export const adjust = async (args: {
-  inboxId: string;
+  accountId: string;
   delta: number;
   idempotencyKey: string;
   note: string;
@@ -148,7 +148,7 @@ export const adjust = async (args: {
     args.delta < 0 ? { floorCheck: { minBalance: config.minBalance } } : {};
   try {
     const { replayed } = await applyDelta({
-      inboxId: args.inboxId,
+      accountId: args.accountId,
       delta: BigInt(args.delta),
       reason: LedgerReason.adjust,
       idempotencyKey: args.idempotencyKey,
@@ -159,7 +159,7 @@ export const adjust = async (args: {
   } catch (err) {
     if (err instanceof LedgerFloorBreachError) {
       throw new InsufficientBalanceError(
-        args.inboxId,
+        args.accountId,
         err.currentBalance,
         Number(err.attempted),
         err.minBalance,
@@ -169,18 +169,18 @@ export const adjust = async (args: {
   }
 };
 
-export const getBalance = async (inboxId: string): Promise<bigint> =>
-  ledgerGetBalance(inboxId);
+export const getBalance = async (accountId: string): Promise<bigint> =>
+  ledgerGetBalance(accountId);
 
 /**
  * Advisory balance check. NOT an authorization gate — only consume()
  * enforces the floor atomically. Use for UX hints (disable button).
  */
-export const isAllowed = async (inboxId: string): Promise<boolean> =>
-  isAllowedFromBalance(await ledgerGetBalance(inboxId));
+export const isAllowed = async (accountId: string): Promise<boolean> =>
+  isAllowedFromBalance(await ledgerGetBalance(accountId));
 
 export const getHistory = async (
-  inboxId: string,
+  accountId: string,
   limit?: number,
   cursor?: HistoryCursor,
-) => ledgerGetHistory(inboxId, limit, cursor);
+) => ledgerGetHistory(accountId, limit, cursor);
