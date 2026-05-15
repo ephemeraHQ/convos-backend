@@ -66,15 +66,15 @@ model RuntimeConfig {
 }
 
 model InviteCode {
-  id              String    @id @default(uuid()) @db.Uuid
-  code            String    @unique @db.VarChar(8)
-  name            String?   @db.VarChar(255)
-  maxRedemptions  Int       @default(1)
-  redemptionCount Int       @default(0)
-  createdAt       DateTime  @default(now())
+  id              String                 @id @default(uuid()) @db.Uuid
+  code            String                 @unique @db.VarChar(8)
+  name            String?                @db.VarChar(255)
+  maxRedemptions  Int                    @default(1)
+  redemptionCount Int                    @default(0)
+  createdAt       DateTime               @default(now())
   redeemedAt      DateTime? // kept for backwards compat — updated on each redemption
-  batchLabel      String?   @db.VarChar(255)
-  parentCodeId    String?   @db.Uuid
+  batchLabel      String?                @db.VarChar(255)
+  parentCodeId    String?                @db.Uuid
   parentCode      InviteCode?            @relation("CodeLineage", fields: [parentCodeId], references: [id])
   childCodes      InviteCode[]           @relation("CodeLineage")
   redemptions     InviteCodeRedemption[] @relation("CodeRedemptions")
@@ -108,6 +108,7 @@ model Account {
   devices                  DeviceRegistration[]
   credits                  UserCredits?
   creditLedger             CreditLedger[]
+  subscriptions            Subscription[]
 }
 
 enum PublishStatus {
@@ -171,7 +172,7 @@ model AgentTemplateGeneration {
   // in `handlers/generations-post.ts`; new pinnable fields are added there.
   // Stored on the row because the executor is fire-and-forget and re-reads
   // the row; this is the simplest handoff channel.
-  prefill Json?
+  prefill         Json?
   templateId      String?          @db.Uuid
   publishStatus   PublishStatus    @default(draft)
   reply           String?          @db.Text
@@ -201,7 +202,7 @@ model AuthMethod {
   externalKey String
   addedAt     DateTime @default(now())
 
-  account     Account  @relation(fields: [accountId], references: [id])
+  account Account @relation(fields: [accountId], references: [id])
 
   @@unique([type, externalKey])
   @@index([accountId])
@@ -258,4 +259,84 @@ model CreditLedger {
   @@index([accountId, createdAt])
   @@index([requestId])
   @@index([grantKindId])
+}
+
+enum SubscriptionTier {
+  builder
+  pro
+}
+
+enum SubscriptionPeriod {
+  monthly
+  annual
+}
+
+enum SubscriptionStatus {
+  trial
+  active
+  grace
+  billingRetry
+  expired
+  revoked
+}
+
+enum AppleEnv {
+  sandbox
+  production
+}
+
+model Subscription {
+  id                    String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  accountId             String             @db.Uuid
+  productId             String
+  tier                  SubscriptionTier
+  period                SubscriptionPeriod
+  status                SubscriptionStatus
+  // Apple's stable per-subscription-line identifier (constant across renewals
+  // and tier upgrades within a subscription group).
+  originalTransactionId String             @unique
+  // UUID our client generates per-purchase and passes to StoreKit; Apple
+  // echoes it back on every receipt/notification. Lets us bind an Apple
+  // subscription to the signed-in `accountId` without storing Apple IDs.
+  // Reassigned (not duplicated) when the same Apple sub is verified from a
+  // different device's accountId — see PRD §6.4.
+  appAccountToken       String             @unique @db.Uuid
+  startedAt             DateTime
+  currentPeriodStart    DateTime
+  currentPeriodEnd      DateTime
+  // Mirrors Apple's `autoRenewStatus` (1 → true, 0 → false). Updated by
+  // DID_CHANGE_RENEWAL_STATUS notifications.
+  willRenew             Boolean            @default(true)
+  // True while the active period is an introductory offer (free trial or
+  // pay-as-you-go). Derived at verify time from the JWS `offerType`.
+  isInTrial             Boolean            @default(false)
+  cancelledAt           DateTime?
+  gracePeriodEnd        DateTime?
+  environment           AppleEnv
+  createdAt             DateTime           @default(now())
+  updatedAt             DateTime           @updatedAt
+
+  account  Account        @relation(fields: [accountId], references: [id])
+  receipts AppleReceipt[]
+
+  @@index([accountId])
+  @@index([status, currentPeriodEnd])
+}
+
+model AppleReceipt {
+  id                  String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  subscriptionId      String   @db.Uuid
+  // Per-transaction identifier — unique across renewals (each renewal mints
+  // a new transactionId while keeping the same originalTransactionId).
+  transactionId       String   @unique
+  notificationType    String
+  notificationSubtype String?
+  // Raw JWS from Apple, kept for audit + replay against the verifier if we
+  // ever need to re-process a notification with updated business logic.
+  signedPayload       String   @db.Text
+  receivedAt          DateTime @default(now())
+
+  subscription Subscription @relation(fields: [subscriptionId], references: [id])
+
+  @@index([subscriptionId, receivedAt])
 }
