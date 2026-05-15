@@ -39,19 +39,20 @@ export const ASSISTANT_API_KEY = (process.env.ASSISTANT_API_KEY || "").trim();
 // otherwise ride the wire in cleartext. Allow http://localhost for local
 // dev so `wrangler dev` against convos-assistants on 127.0.0.1 still works.
 if (ASSISTANT_API_URL) {
-  let parsedAssistantUrl: URL;
-  try {
-    parsedAssistantUrl = new URL(ASSISTANT_API_URL);
-  } catch {
-    throw new Error(
-      `ASSISTANT_API_URL is not a valid URL: ${ASSISTANT_API_URL}`,
-    );
-  }
-  const isLocal =
+  const parsedAssistantUrl = (() => {
+    try {
+      return new URL(ASSISTANT_API_URL);
+    } catch {
+      throw new Error(
+        `ASSISTANT_API_URL is not a valid URL: ${ASSISTANT_API_URL}`,
+      );
+    }
+  })();
+  const isLocalHost =
     parsedAssistantUrl.hostname === "localhost" ||
     parsedAssistantUrl.hostname === "127.0.0.1" ||
     parsedAssistantUrl.hostname.endsWith(".test.local");
-  if (parsedAssistantUrl.protocol !== "https:" && !isLocal) {
+  if (parsedAssistantUrl.protocol !== "https:" && !isLocalHost) {
     throw new Error(
       `ASSISTANT_API_URL must use https:// (got ${parsedAssistantUrl.protocol}). ` +
         `Plaintext is only permitted for localhost / *.test.local hosts.`,
