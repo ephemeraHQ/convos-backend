@@ -29,6 +29,7 @@ import { testLifecycleHandler } from "./assets/handlers/test-lifecycle";
 import { attachmentsRouter } from "./attachments/attachments.router";
 import { authRouter } from "./auth/auth.router";
 import { connectionsRouter } from "./connections/connections.router";
+import { creditsRouter } from "./credits/credits.router";
 import { devRouter } from "./dev/dev.router";
 import { deviceRouter } from "./device/device.router";
 import {
@@ -58,6 +59,7 @@ v2Router.use(
   inviteCodesRouter,
 );
 v2Router.use("/auth", authRouter);
+v2Router.use("/credits", creditsRouter);
 v2Router.use("/device", appCheckOnlyMiddleware, deviceRouter);
 
 // Lifecycle test endpoints - protected by token auth, must be before authenticated /assets route
