@@ -12,6 +12,23 @@ const bodySchema = z.object({
 
 const FORCE_ERROR_DELAY_MS = 5_000;
 
+// Server-side wait budget. The upstream workflow spins up a fresh per-assistant
+// container (wallet gen → key issuance → container boot → join), which is
+// materially slower than the old pre-warmed pool. We block long enough that
+// the common path returns joined:true synchronously; if the workflow runs
+// over, we hand the caller an instanceId and let it poll via
+// GET /api/v2/agents/join/:instanceId.
+const DEFAULT_JOIN_WAIT_BUDGET_MS = 25_000;
+const DEFAULT_JOIN_POLL_INTERVAL_MS = 1_500;
+const DISPATCH_TIMEOUT_MS = 10_000;
+const POLL_TIMEOUT_MS = 5_000;
+
+function readPositiveInt(raw: string | undefined, fallback: number): number {
+  if (!raw) return fallback;
+  const n = Number.parseInt(raw, 10);
+  return Number.isFinite(n) && n > 0 ? n : fallback;
+}
+
 const ERRORS = {
   AGENT_PROVISION_FAILED: {
     status: 502,
@@ -36,25 +53,99 @@ function buildInviteUrl(slug: string): string {
   return `https://${domain}/v2?i=${encodeURIComponent(slug)}`;
 }
 
-const assistantResponseSchema = z.object({
+const assistantDispatchSchema = z.object({
   instanceId: z.string().min(1),
 });
+
+const assistantStatusSchema = z.object({
+  instanceId: z.string(),
+  joinStatus: z.enum(["starting", "pending_acceptance", "joined", "failed"]),
+  joinFailureReason: z.string().nullable().optional(),
+});
+
+type PollOutcome =
+  | { kind: "joined" }
+  | { kind: "failed"; reason: string | null }
+  | { kind: "pending" };
+
+async function pollUntilJoined(
+  assistantBaseUrl: string,
+  instanceId: string,
+  authHeader: string | undefined,
+  deadlineMs: number,
+  pollIntervalMs: number,
+  log: Request["log"],
+): Promise<PollOutcome> {
+  const headers: Record<string, string> = {};
+  if (authHeader) headers.Authorization = authHeader;
+
+  while (Date.now() < deadlineMs) {
+    try {
+      const upstream = await fetch(
+        `${assistantBaseUrl}/api/assistants/${encodeURIComponent(instanceId)}`,
+        {
+          method: "GET",
+          headers,
+          signal: AbortSignal.timeout(POLL_TIMEOUT_MS),
+        },
+      );
+
+      if (!upstream.ok) {
+        log.warn(
+          { status: upstream.status, instanceId },
+          "Assistant status poll returned non-200",
+        );
+      } else {
+        const raw = await upstream.json();
+        const parsed = assistantStatusSchema.safeParse(raw);
+        if (!parsed.success) {
+          log.warn(
+            { issues: parsed.error.issues, instanceId },
+            "Assistant status poll returned malformed body",
+          );
+        } else if (parsed.data.joinStatus === "joined") {
+          return { kind: "joined" };
+        } else if (parsed.data.joinStatus === "failed") {
+          return {
+            kind: "failed",
+            reason: parsed.data.joinFailureReason ?? null,
+          };
+        }
+      }
+    } catch (err) {
+      // Per-poll errors are non-fatal; keep trying until the deadline.
+      log.warn(
+        { err: err instanceof Error ? err.message : String(err), instanceId },
+        "Assistant status poll errored",
+      );
+    }
+
+    const remaining = deadlineMs - Date.now();
+    if (remaining <= 0) break;
+    await new Promise((resolve) =>
+      setTimeout(resolve, Math.min(pollIntervalMs, remaining)),
+    );
+  }
+
+  return { kind: "pending" };
+}
 
 /**
  * Handler for POST /api/v2/agents/join
  *
- * Requests an AI agent to join a conversation by dispatching the assistant
- * runtime service (convos-assistants) `POST /api/assistants` workflow with
- * the conversation's invite URL.
+ * Requests an AI agent to join a conversation. Internally dispatches the
+ * assistant runtime service (convos-assistants) `POST /api/assistants`
+ * workflow with the conversation's invite URL, then server-side polls
+ * the upstream status until the agent has joined, the workflow has failed,
+ * or the wait budget has elapsed.
  *
- * The new assistant service is asynchronous: it returns `{ instanceId }`
- * immediately and the per-assistant container is created in the background.
- * Callers should poll `GET /api/v2/agents/join/:instanceId` to observe the
- * `joinStatus` transitions (`starting → pending_acceptance → joined | failed`).
+ * Response shape preserves the legacy synchronous contract:
  *
- * `joined` is therefore always `false` in this response. It is preserved for
- * client compatibility — older clients that read `joined` will see the same
- * "not yet joined, try again" shape they already handled.
+ *   { success: true, joined: true  }                  — agent joined within window
+ *   { success: true, joined: false, instanceId: ... } — still provisioning;
+ *     caller may poll GET /api/v2/agents/join/:instanceId
+ *
+ * On upstream `failed`, returns 502 AGENT_PROVISION_FAILED.
  *
  * ## Testing with forced errors
  *
@@ -111,21 +202,21 @@ export async function joinHandler(req: Request, res: Response) {
   const { slug, instructions, skipGreeting } = parsed.data;
   req.log.info({ slug, skipGreeting }, "Agent join request received");
 
+  const assistantBaseUrl = assistantApiUrl.replace(/\/+$/, "");
+  const authHeader = assistantApiKey ? `Bearer ${assistantApiKey}` : undefined;
+
+  let instanceId: string;
   try {
     const joinUrl = buildInviteUrl(slug);
-    const assistantBaseUrl = assistantApiUrl.replace(/\/+$/, "");
-
-    const headers: Record<string, string> = {
+    const dispatchHeaders: Record<string, string> = {
       "Content-Type": "application/json",
     };
-    if (assistantApiKey) {
-      headers.Authorization = `Bearer ${assistantApiKey}`;
-    }
+    if (authHeader) dispatchHeaders.Authorization = authHeader;
 
-    const assistantRes = await fetch(`${assistantBaseUrl}/api/assistants`, {
+    const dispatchRes = await fetch(`${assistantBaseUrl}/api/assistants`, {
       method: "POST",
-      headers,
-      signal: AbortSignal.timeout(30_000),
+      headers: dispatchHeaders,
+      signal: AbortSignal.timeout(DISPATCH_TIMEOUT_MS),
       body: JSON.stringify({
         name: "Assistant",
         instructions: instructions || "You are a helpful assistant.",
@@ -133,14 +224,14 @@ export async function joinHandler(req: Request, res: Response) {
       }),
     });
 
-    if (!assistantRes.ok) {
-      const text = await assistantRes.text();
+    if (!dispatchRes.ok) {
+      const text = await dispatchRes.text();
       req.log.error(
-        { status: assistantRes.status, body: text },
+        { status: dispatchRes.status, body: text },
         "Assistant dispatch failed",
       );
 
-      if (assistantRes.status === 503 || assistantRes.status === 404) {
+      if (dispatchRes.status === 503 || dispatchRes.status === 404) {
         const { status, ...body } = ERRORS.NO_AGENTS_AVAILABLE;
         res.status(status).json({ success: false, ...body });
         return;
@@ -151,8 +242,8 @@ export async function joinHandler(req: Request, res: Response) {
       return;
     }
 
-    const raw = await assistantRes.json();
-    const result = assistantResponseSchema.safeParse(raw);
+    const raw = await dispatchRes.json();
+    const result = assistantDispatchSchema.safeParse(raw);
     if (!result.success) {
       req.log.error(
         { issues: result.error.issues },
@@ -162,13 +253,7 @@ export async function joinHandler(req: Request, res: Response) {
       res.status(status).json({ success: false, ...body });
       return;
     }
-
-    res.status(200).json({
-      success: true,
-      joined: false,
-      instanceId: result.data.instanceId,
-    });
-    return;
+    instanceId = result.data.instanceId;
   } catch (error) {
     if (error instanceof DOMException && error.name === "TimeoutError") {
       req.log.error("Assistant dispatch request timed out");
@@ -185,4 +270,48 @@ export async function joinHandler(req: Request, res: Response) {
     res.status(status).json({ success: false, ...body });
     return;
   }
+
+  // Dispatch succeeded — block while the workflow spins up. If we exceed the
+  // wait budget, fall back to the async contract and hand the caller an
+  // instanceId they can poll.
+  const waitBudgetMs = readPositiveInt(
+    process.env.ASSISTANT_JOIN_WAIT_BUDGET_MS,
+    DEFAULT_JOIN_WAIT_BUDGET_MS,
+  );
+  const pollIntervalMs = readPositiveInt(
+    process.env.ASSISTANT_JOIN_POLL_INTERVAL_MS,
+    DEFAULT_JOIN_POLL_INTERVAL_MS,
+  );
+  const deadlineMs = Date.now() + waitBudgetMs;
+  const outcome = await pollUntilJoined(
+    assistantBaseUrl,
+    instanceId,
+    authHeader,
+    deadlineMs,
+    pollIntervalMs,
+    req.log,
+  );
+
+  if (outcome.kind === "joined") {
+    res.status(200).json({ success: true, joined: true, instanceId });
+    return;
+  }
+
+  if (outcome.kind === "failed") {
+    req.log.error(
+      { instanceId, reason: outcome.reason },
+      "Assistant workflow reported failed",
+    );
+    const { status, ...body } = ERRORS.AGENT_PROVISION_FAILED;
+    res.status(status).json({ success: false, ...body });
+    return;
+  }
+
+  // Pending (or all polls errored): return 200 with joined:false + instanceId
+  // so the iOS client can keep polling.
+  req.log.info(
+    { instanceId },
+    "Assistant join still pending after server-side wait budget",
+  );
+  res.status(200).json({ success: true, joined: false, instanceId });
 }

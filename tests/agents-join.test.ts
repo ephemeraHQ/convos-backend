@@ -11,7 +11,10 @@ import express from "express";
 import { jsonMiddleware } from "@/middleware/json";
 import { pinoMiddleware } from "@/middleware/pino";
 
+type FetchCall = { url: string; init?: RequestInit };
+
 let mockFetchImpl: (url: string, init?: RequestInit) => Promise<Response>;
+let fetchCalls: FetchCall[] = [];
 
 const originalFetch = globalThis.fetch;
 
@@ -20,6 +23,8 @@ const ASSISTANT_KEY = "test-assistant-key";
 
 const originalAssistantUrl = process.env.ASSISTANT_API_URL;
 const originalAssistantKey = process.env.ASSISTANT_API_KEY;
+const originalWaitBudget = process.env.ASSISTANT_JOIN_WAIT_BUDGET_MS;
+const originalPollInterval = process.env.ASSISTANT_JOIN_POLL_INTERVAL_MS;
 
 const { joinHandler } = await import("@/api/v2/agents/handlers/join");
 const { joinStatusHandler } = await import(
@@ -39,6 +44,14 @@ function jsonResponse(status: number, body: unknown): Response {
   });
 }
 
+function restoreEnv(name: string, original: string | undefined) {
+  if (original !== undefined) {
+    process.env[name] = original;
+  } else {
+    delete process.env[name];
+  }
+}
+
 describe("agents join (assistant API)", () => {
   let server: Server;
   const baseURL = "http://localhost:4012";
@@ -54,16 +67,10 @@ describe("agents join (assistant API)", () => {
   afterAll(async () => {
     globalThis.fetch = originalFetch;
 
-    if (originalAssistantUrl !== undefined) {
-      process.env.ASSISTANT_API_URL = originalAssistantUrl;
-    } else {
-      delete process.env.ASSISTANT_API_URL;
-    }
-    if (originalAssistantKey !== undefined) {
-      process.env.ASSISTANT_API_KEY = originalAssistantKey;
-    } else {
-      delete process.env.ASSISTANT_API_KEY;
-    }
+    restoreEnv("ASSISTANT_API_URL", originalAssistantUrl);
+    restoreEnv("ASSISTANT_API_KEY", originalAssistantKey);
+    restoreEnv("ASSISTANT_JOIN_WAIT_BUDGET_MS", originalWaitBudget);
+    restoreEnv("ASSISTANT_JOIN_POLL_INTERVAL_MS", originalPollInterval);
 
     await new Promise<void>((resolve) => {
       server.close(() => {
@@ -75,10 +82,16 @@ describe("agents join (assistant API)", () => {
   beforeEach(() => {
     process.env.ASSISTANT_API_URL = ASSISTANT_URL;
     process.env.ASSISTANT_API_KEY = ASSISTANT_KEY;
+    // Shrink the server-side wait so tests don't burn 25s each.
+    process.env.ASSISTANT_JOIN_WAIT_BUDGET_MS = "200";
+    process.env.ASSISTANT_JOIN_POLL_INTERVAL_MS = "20";
 
+    fetchCalls = [];
     mockFetchImpl = () => Promise.reject(new Error("unmocked fetch"));
-    globalThis.fetch = ((url: string, init?: RequestInit) =>
-      mockFetchImpl(url, init)) as typeof fetch;
+    globalThis.fetch = ((url: string, init?: RequestInit) => {
+      fetchCalls.push({ url, init });
+      return mockFetchImpl(url, init);
+    }) as typeof fetch;
   });
 
   const post = (body: unknown) =>
@@ -115,26 +128,33 @@ describe("agents join (assistant API)", () => {
       expect(data.error).toBe("INVALID_REQUEST");
     });
 
-    test("dispatches POST /api/assistants and returns instanceId", async () => {
+    test("returns joined:true once upstream reports joined", async () => {
       mockFetchImpl = (url, init) => {
-        expect(url).toBe(`${ASSISTANT_URL}/api/assistants`);
-        expect(init?.method).toBe("POST");
+        if (init?.method === "POST") {
+          expect(url).toBe(`${ASSISTANT_URL}/api/assistants`);
+          const headers = init?.headers as Record<string, string>;
+          expect(headers.Authorization).toBe(`Bearer ${ASSISTANT_KEY}`);
 
-        const headers = init?.headers as Record<string, string>;
-        expect(headers["Content-Type"]).toBe("application/json");
-        expect(headers.Authorization).toBe(`Bearer ${ASSISTANT_KEY}`);
+          const body = JSON.parse(init?.body as string) as {
+            name: string;
+            instructions: string;
+            joinUrl: string;
+          };
+          expect(body.name).toBe("Assistant");
+          expect(body.instructions).toBe("You are a helpful assistant.");
+          expect(body.joinUrl).toContain("?i=test-slug");
 
-        const body = JSON.parse(init?.body as string) as {
-          name: string;
-          instructions: string;
-          joinUrl: string;
-        };
-        expect(body.name).toBe("Assistant");
-        expect(body.instructions).toBe("You are a helpful assistant.");
-        expect(body.joinUrl).toContain("?i=test-slug");
-
+          return Promise.resolve(
+            jsonResponse(200, { instanceId: "inst-xyz" }),
+          );
+        }
+        // GET poll
+        expect(url).toBe(`${ASSISTANT_URL}/api/assistants/inst-xyz`);
         return Promise.resolve(
-          jsonResponse(200, { instanceId: "inst-xyz" }),
+          jsonResponse(200, {
+            instanceId: "inst-xyz",
+            joinStatus: "joined",
+          }),
         );
       };
 
@@ -147,18 +167,108 @@ describe("agents join (assistant API)", () => {
         instanceId: string;
       };
       expect(data.success).toBe(true);
-      expect(data.joined).toBe(false);
+      expect(data.joined).toBe(true);
       expect(data.instanceId).toBe("inst-xyz");
+    });
+
+    test("polls past 'starting' states until joined", async () => {
+      let pollCount = 0;
+      mockFetchImpl = (_url, init) => {
+        if (init?.method === "POST") {
+          return Promise.resolve(
+            jsonResponse(200, { instanceId: "inst-1" }),
+          );
+        }
+        pollCount += 1;
+        if (pollCount < 3) {
+          return Promise.resolve(
+            jsonResponse(200, {
+              instanceId: "inst-1",
+              joinStatus: "starting",
+            }),
+          );
+        }
+        return Promise.resolve(
+          jsonResponse(200, {
+            instanceId: "inst-1",
+            joinStatus: "joined",
+          }),
+        );
+      };
+
+      const res = await post({ slug: "s" });
+      expect(res.status).toBe(200);
+      const data = (await res.json()) as { joined: boolean };
+      expect(data.joined).toBe(true);
+      expect(pollCount).toBeGreaterThanOrEqual(3);
+    });
+
+    test("returns joined:false + instanceId when wait budget elapses", async () => {
+      mockFetchImpl = (_url, init) => {
+        if (init?.method === "POST") {
+          return Promise.resolve(
+            jsonResponse(200, { instanceId: "inst-slow" }),
+          );
+        }
+        return Promise.resolve(
+          jsonResponse(200, {
+            instanceId: "inst-slow",
+            joinStatus: "starting",
+          }),
+        );
+      };
+
+      const res = await post({ slug: "slow" });
+      expect(res.status).toBe(200);
+      const data = (await res.json()) as {
+        success: boolean;
+        joined: boolean;
+        instanceId: string;
+      };
+      expect(data.success).toBe(true);
+      expect(data.joined).toBe(false);
+      expect(data.instanceId).toBe("inst-slow");
+    });
+
+    test("returns 502 when upstream reports failed", async () => {
+      mockFetchImpl = (_url, init) => {
+        if (init?.method === "POST") {
+          return Promise.resolve(
+            jsonResponse(200, { instanceId: "inst-bad" }),
+          );
+        }
+        return Promise.resolve(
+          jsonResponse(200, {
+            instanceId: "inst-bad",
+            joinStatus: "failed",
+            joinFailureReason: "container boot failure",
+          }),
+        );
+      };
+
+      const res = await post({ slug: "x" });
+      expect(res.status).toBe(502);
+      const data = (await res.json()) as { success: boolean; error: string };
+      expect(data.success).toBe(false);
+      expect(data.error).toBe("AGENT_PROVISION_FAILED");
     });
 
     test("forwards custom instructions to /api/assistants", async () => {
       mockFetchImpl = (_url, init) => {
-        const body = JSON.parse(init?.body as string) as {
-          instructions: string;
-        };
-        expect(body.instructions).toBe("Be terse.");
+        if (init?.method === "POST") {
+          const body = JSON.parse(init?.body as string) as {
+            instructions: string;
+          };
+          expect(body.instructions).toBe("Be terse.");
+          return Promise.resolve(
+            jsonResponse(200, { instanceId: "inst-i" }),
+          );
+        }
         return Promise.resolve(
-          jsonResponse(200, { instanceId: "inst-1" }),
+          jsonResponse(200, {
+            instanceId: "inst-i",
+            joinStatus: "joined",
+          }),
         );
       };
 
@@ -170,10 +280,18 @@ describe("agents join (assistant API)", () => {
       process.env.ASSISTANT_API_KEY = "";
 
       mockFetchImpl = (_url, init) => {
-        const headers = init?.headers as Record<string, string>;
+        const headers = (init?.headers as Record<string, string>) ?? {};
         expect(headers.Authorization).toBeUndefined();
+        if (init?.method === "POST") {
+          return Promise.resolve(
+            jsonResponse(200, { instanceId: "inst-na" }),
+          );
+        }
         return Promise.resolve(
-          jsonResponse(200, { instanceId: "inst-2" }),
+          jsonResponse(200, {
+            instanceId: "inst-na",
+            joinStatus: "joined",
+          }),
         );
       };
 
@@ -184,10 +302,19 @@ describe("agents join (assistant API)", () => {
     test("strips trailing slashes from ASSISTANT_API_URL", async () => {
       process.env.ASSISTANT_API_URL = `${ASSISTANT_URL}///`;
 
-      mockFetchImpl = (url) => {
-        expect(url).toBe(`${ASSISTANT_URL}/api/assistants`);
+      mockFetchImpl = (url, init) => {
+        if (init?.method === "POST") {
+          expect(url).toBe(`${ASSISTANT_URL}/api/assistants`);
+          return Promise.resolve(
+            jsonResponse(200, { instanceId: "inst-3" }),
+          );
+        }
+        expect(url).toBe(`${ASSISTANT_URL}/api/assistants/inst-3`);
         return Promise.resolve(
-          jsonResponse(200, { instanceId: "inst-3" }),
+          jsonResponse(200, {
+            instanceId: "inst-3",
+            joinStatus: "joined",
+          }),
         );
       };
 
@@ -195,7 +322,7 @@ describe("agents join (assistant API)", () => {
       expect(res.status).toBe(200);
     });
 
-    test("returns 503 NO_AGENTS_AVAILABLE when upstream 503s", async () => {
+    test("returns 503 NO_AGENTS_AVAILABLE when dispatch 503s", async () => {
       mockFetchImpl = () =>
         Promise.resolve(jsonResponse(503, { error: "no capacity" }));
 
@@ -205,7 +332,7 @@ describe("agents join (assistant API)", () => {
       expect(data.error).toBe("NO_AGENTS_AVAILABLE");
     });
 
-    test("returns 502 on upstream 500", async () => {
+    test("returns 502 on dispatch 500", async () => {
       mockFetchImpl = () =>
         Promise.resolve(jsonResponse(500, { error: "boom" }));
 
@@ -215,7 +342,7 @@ describe("agents join (assistant API)", () => {
       expect(data.error).toBe("AGENT_PROVISION_FAILED");
     });
 
-    test("returns 502 on malformed upstream response", async () => {
+    test("returns 502 on malformed dispatch response", async () => {
       mockFetchImpl = () =>
         Promise.resolve(jsonResponse(200, { wrong: "shape" }));
 
@@ -225,7 +352,7 @@ describe("agents join (assistant API)", () => {
       expect(data.error).toBe("AGENT_PROVISION_FAILED");
     });
 
-    test("returns 504 on upstream timeout", async () => {
+    test("returns 504 on dispatch timeout", async () => {
       mockFetchImpl = () =>
         Promise.reject(
           new DOMException("The operation was aborted", "TimeoutError"),
@@ -235,6 +362,26 @@ describe("agents join (assistant API)", () => {
       expect(res.status).toBe(504);
       const data = (await res.json()) as { success: boolean; error: string };
       expect(data.error).toBe("AGENT_POOL_TIMEOUT");
+    });
+
+    test("treats per-poll errors as non-fatal and falls back to pending", async () => {
+      mockFetchImpl = (_url, init) => {
+        if (init?.method === "POST") {
+          return Promise.resolve(
+            jsonResponse(200, { instanceId: "inst-err" }),
+          );
+        }
+        return Promise.reject(new Error("ECONNREFUSED"));
+      };
+
+      const res = await post({ slug: "err" });
+      expect(res.status).toBe(200);
+      const data = (await res.json()) as {
+        joined: boolean;
+        instanceId: string;
+      };
+      expect(data.joined).toBe(false);
+      expect(data.instanceId).toBe("inst-err");
     });
   });
 
