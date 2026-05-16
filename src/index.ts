@@ -90,20 +90,26 @@ validateJWTKeys()
       }
     });
 
-    process.on("SIGTERM", async () => {
-      logger.info("SIGTERM signal received: closing Convos API service");
-      // Stop the generation TTL sweep so its setInterval doesn't keep
-      // dispatching DB queries against a closing pool during the drain
-      // window. No-op if the sweep was never started (production gate).
-      stopGenerationTtlSweep();
-      // Flush buffered PostHog events before the process exits. The SDK
-      // buffers up to flushAt (default 20) or flushInterval (default 10s)
-      // — without an explicit shutdown, low-volume captures get dropped on
-      // every redeploy. Catches its own errors; never throws.
-      await shutdownPostHog();
-      server.close(() => {
-        logger.info("Convos API service closed");
-      });
+    // Wrap the async drain steps in a void-IIFE so the SIGTERM listener
+    // itself returns void (Node ignores the listener's return value, and
+    // an `async` listener would trip @typescript-eslint/no-misused-promises).
+    // `shutdownPostHog()` catches its own errors, so the IIFE never rejects.
+    process.on("SIGTERM", () => {
+      void (async () => {
+        logger.info("SIGTERM signal received: closing Convos API service");
+        // Stop the generation TTL sweep so its setInterval doesn't keep
+        // dispatching DB queries against a closing pool during the drain
+        // window. No-op if the sweep was never started (production gate).
+        stopGenerationTtlSweep();
+        // Flush buffered PostHog events before the process exits. The SDK
+        // buffers up to flushAt (default 20) or flushInterval (default 10s)
+        // — without an explicit shutdown, low-volume captures get dropped
+        // on every redeploy. Catches its own errors; never throws.
+        await shutdownPostHog();
+        server.close(() => {
+          logger.info("Convos API service closed");
+        });
+      })();
     });
   })
   .catch((error: unknown) => {
