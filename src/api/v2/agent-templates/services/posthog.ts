@@ -41,14 +41,59 @@ export interface PostHogCaptureProperties extends GenerationMetrics {
   /** Source field from the AgentTemplateGeneration row — free-form
    *  client telemetry tag (e.g. "ios-app", "web", "twitter-bot"). */
   source?: string;
-  /** Account ID of the generation owner. */
+  /** Account ID of the generation owner. Present whether or not the row
+   *  was anonymous — anonymous rows are owned by the admin sentinel. Use
+   *  `isAnonymous` to disambiguate. */
   ownerAccountId?: string;
+  /** True when the row is owned by the admin sentinel (no real account).
+   *  When true, `ownerAccountId` is NOT used for actor attribution. */
+  isAnonymous?: boolean;
+  /** Twitter user identifier (handle, lowercased, '@' stripped) when the
+   *  generation was triggered via the twitter bot. Used as a fallback
+   *  actor identifier when there's no `ownerAccountId`. */
+  twitterUserId?: string;
+  /** Stable device identifier supplied by the client (e.g. posthog-js's
+   *  `$device_id` cookie). Used as a fallback actor identifier when the
+   *  user hasn't authenticated. */
+  clientDeviceId?: string;
   /** Input type used for generation: "text", "pdfBase64", or "imageBase64". */
   inputType?: string;
   /** Terminal outcome: "done" or "failed". */
   outcome?: "done" | "failed";
   /** How the request was authenticated. Optional — present only when known. */
   authMode?: "jwt" | "agentKey";
+}
+
+// ---------------------------------------------------------------------------
+// Actor attribution — the distinctId precedence ladder
+// ---------------------------------------------------------------------------
+
+/**
+ * Resolve the distinctId to send with the event from the available signals.
+ * Precedence:
+ *
+ *   1. `ownerAccountId` (real account)        — most stable; survives logout/re-auth.
+ *   2. `device:<clientDeviceId>`              — anonymous web/iOS, stable per browser/install.
+ *   3. `twitter:<twitterUserId>`              — anonymous twitter-bot path.
+ *   4. `generation:<requestId>`               — one-off attribution; preserves event volume
+ *                                               but loses per-actor uniqueness.
+ *
+ * The ladder is namespaced (`device:`, `twitter:`, `generation:`) so an
+ * anonymous identifier never collides with a real account UUID, and so the
+ * PostHog "person" view can distinguish identifier families on inspection.
+ *
+ * Reasoning: anonymous web/twitter submissions still populate `ownerAccountId`
+ * — the route uses `ADMIN_ACCOUNT_ID` as the system-identity fallback so the
+ * row has a valid owner FK. Using that sentinel directly as distinctId would
+ * collapse every anonymous submission onto a single PostHog person and defeat
+ * the point of analytics. The executor sets `isAnonymous: true` when the
+ * owner is the sentinel so this function skips to the next rung.
+ */
+export function resolveDistinctId(p: PostHogCaptureProperties): string {
+  if (p.ownerAccountId && !p.isAnonymous) return p.ownerAccountId;
+  if (p.clientDeviceId) return `device:${p.clientDeviceId}`;
+  if (p.twitterUserId) return `twitter:${p.twitterUserId}`;
+  return `generation:${p.requestId}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -135,7 +180,7 @@ export function capturePostHog(properties: PostHogCaptureProperties): void {
     if (!client) return; // silent no-op when env not set
 
     client.capture({
-      distinctId: "builder",
+      distinctId: resolveDistinctId(properties),
       event: BUILDER_GENERATION_COMPLETED_EVENT,
       properties,
     });

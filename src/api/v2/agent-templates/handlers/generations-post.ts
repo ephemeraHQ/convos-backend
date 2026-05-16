@@ -162,6 +162,14 @@ const bodySchema = z
     source: z.string().min(1, "source is required"),
     inputs: inputsSchema,
     twitterContext: twitterContextSchema.optional(),
+    /** Stable per-client identifier used as the PostHog distinctId fallback
+     *  when the request isn't authenticated (anonymous web/iOS, or the
+     *  twitter-bot path before we wire Twitter user IDs). Web should pass
+     *  posthog-js's `$device_id`. Capped at 128 chars to bound storage and
+     *  prevent abuse — posthog-js generates a UUIDv7 (~36 chars). Excluded
+     *  from the idempotency dedupe body comparison (`dedupeBodiesMatch`)
+     *  so a retry with a rotated device ID still matches the original row. */
+    clientDeviceId: z.string().min(1).max(128).optional(),
     publishStatus: z
       .enum(["draft", "unlisted", "published"])
       .optional()
@@ -714,6 +722,7 @@ export async function generationsPostHandler(req: Request, res: Response) {
         twitterContext: body.twitterContext
           ? (body.twitterContext as Prisma.InputJsonValue)
           : Prisma.JsonNull,
+        clientDeviceId: body.clientDeviceId ?? null,
         publishStatus: body.publishStatus,
         status: "pending",
       },
