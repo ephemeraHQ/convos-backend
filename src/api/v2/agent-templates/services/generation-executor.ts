@@ -138,11 +138,11 @@ interface PostHogActorSource {
  * owner FK, but the value is a system identity, not a real user.
  * `resolveActor` in posthog.ts skips ownerAccountId when this is set.
  */
-function postHogBase(
-  generation: PostHogActorSource,
-  requestId: string,
-  inputType: "text" | "pdfBase64" | "imageBase64",
-): Pick<
+function postHogBase(args: {
+  generation: PostHogActorSource;
+  requestId: string;
+  inputType: "text" | "pdfBase64" | "imageBase64";
+}): Pick<
   PostHogCaptureProperties,
   | "requestId"
   | "inputType"
@@ -152,6 +152,7 @@ function postHogBase(
   | "clientDeviceId"
   | "twitterUserId"
 > {
+  const { generation, requestId, inputType } = args;
   const twitterCtx = generation.twitterContext as TwitterContext | null;
   return {
     requestId,
@@ -457,7 +458,7 @@ async function _runPipeline(
       promptTokens: 0,
       completionTokens: 0,
       latencyMs: Math.round(performance.now() - startTime),
-      ...postHogBase(generation, generationId, inputType),
+      ...postHogBase({ generation, requestId: generationId, inputType }),
       outcome: "failed",
     });
     throw new Error(
@@ -487,7 +488,7 @@ async function _runPipeline(
   } catch (err) {
     capturePostHog({
       ...templateResult.metrics,
-      ...postHogBase(generation, generationId, inputType),
+      ...postHogBase({ generation, requestId: generationId, inputType }),
       outcome: "failed",
     });
     throw new Error(
@@ -557,7 +558,7 @@ async function _runPipeline(
     }
     capturePostHog({
       ...templateResult.metrics,
-      ...postHogBase(generation, generationId, inputType),
+      ...postHogBase({ generation, requestId: generationId, inputType }),
       outcome: "failed",
     });
     return;
@@ -565,7 +566,7 @@ async function _runPipeline(
 
   capturePostHog({
     ...templateResult.metrics,
-    ...postHogBase(generation, generationId, inputType),
+    ...postHogBase({ generation, requestId: generationId, inputType }),
     outcome: "done",
   });
   logger.info(
