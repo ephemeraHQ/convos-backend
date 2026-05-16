@@ -15,6 +15,7 @@
 /* eslint-disable @typescript-eslint/no-require-imports, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-explicit-any */
 
 import { POSTHOG_HOST, POSTHOG_PROJECT_TOKEN } from "@/config";
+import logger from "@/utils/logger";
 import type { GenerationMetrics } from "./templateGen";
 
 // ---------------------------------------------------------------------------
@@ -73,6 +74,16 @@ function getPostHogClient(): any {
     PostHog: new (apiKey: string, opts: { host: string }) => any;
   };
   _posthogClient = new PostHog(POSTHOG_PROJECT_TOKEN, { host: POSTHOG_HOST });
+  // Surface async capture failures (auth 401s on a wrong token, wrong host,
+  // network errors). capture() is fire-and-forget so these are otherwise
+  // invisible — the request that triggered it has already returned. Subscribe
+  // once at client creation; client is cached for the lifetime of the process.
+  _posthogClient.on("error", (err: unknown) => {
+    logger.error(
+      { err: err instanceof Error ? err.message : err },
+      "[posthog] async capture error",
+    );
+  });
   return _posthogClient;
 }
 
@@ -129,9 +140,36 @@ export function capturePostHog(properties: PostHogCaptureProperties): void {
       properties,
     });
   } catch (err) {
-    console.error(
-      "[posthog] capture failed:",
-      err instanceof Error ? err.message : err,
+    logger.error(
+      { err: err instanceof Error ? err.message : err },
+      "[posthog] capture failed",
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Graceful shutdown
+// ---------------------------------------------------------------------------
+
+/**
+ * Flush any buffered events and tear down the PostHog client. Call once
+ * during SIGTERM so events captured in the last `flushInterval` window
+ * (default 10s in posthog-node v5) aren't lost when the process exits.
+ *
+ * No-op when the client was never created (env vars unset, or test
+ * override installed). Errors are caught and logged — never propagate
+ * to the caller so shutdown can continue.
+ */
+export async function shutdownPostHog(timeoutMs = 5000): Promise<void> {
+  const client = _posthogClient;
+  if (!client) return;
+  _posthogClient = null;
+  try {
+    await client.shutdown(timeoutMs);
+  } catch (err) {
+    logger.error(
+      { err: err instanceof Error ? err.message : err },
+      "[posthog] shutdown failed",
     );
   }
 }
