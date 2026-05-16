@@ -169,7 +169,7 @@ const bodySchema = z
      *  prevent abuse — posthog-js generates a UUIDv7 (~36 chars). Excluded
      *  from the idempotency dedupe body comparison (`dedupeBodiesMatch`)
      *  so a retry with a rotated device ID still matches the original row. */
-    clientDeviceId: z.string().min(1).max(128).optional(),
+    clientDeviceId: z.string().trim().min(1).max(128).optional(),
     publishStatus: z
       .enum(["draft", "unlisted", "published"])
       .optional()
