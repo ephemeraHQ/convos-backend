@@ -15,8 +15,8 @@
 
 import { describe, expect, test } from "bun:test";
 import {
-  type PostHogCaptureProperties,
   resolveActor,
+  type PostHogCaptureProperties,
 } from "@/api/v2/agent-templates/services/posthog";
 
 describe("resolveActor — precedence ladder", () => {
