@@ -136,7 +136,7 @@ interface PostHogActorSource {
  * `isAnonymous` is derived from the admin-account sentinel: anonymous
  * submissions are owned by `ADMIN_ACCOUNT_ID` so the row has a valid
  * owner FK, but the value is a system identity, not a real user.
- * `resolveDistinctId` in posthog.ts skips ownerAccountId when this is set.
+ * `resolveActor` in posthog.ts skips ownerAccountId when this is set.
  */
 function postHogBase(
   generation: PostHogActorSource,

@@ -391,7 +391,7 @@ describe("generation-executor", () => {
       expect(event.source).toBe(TEST_SOURCE);
       expect(event.ownerAccountId).toBe(ADMIN_ACCOUNT_ID);
       // Rows owned by ADMIN_ACCOUNT_ID are flagged anonymous so
-      // resolveDistinctId in posthog.ts skips the sentinel and falls
+      // resolveActor in posthog.ts skips the sentinel and falls
       // through to the next rung of the actor-attribution ladder.
       expect(event.isAnonymous).toBe(true);
       expect(event.inputType).toBe("text");

@@ -69,18 +69,32 @@ export interface PostHogCaptureProperties extends GenerationMetrics {
 // ---------------------------------------------------------------------------
 
 /**
- * Resolve the distinctId to send with the event from the available signals.
- * Precedence:
+ * Kind of identifier used as `distinctId` on the event. Sent as a top-level
+ * `actorKind` property so downstream queries can segment by attribution type
+ * without parsing the distinctId string. Survives prefix-convention changes;
+ * makes post-merge analytics on aliased persons trivial.
+ */
+export type ActorKind = "account" | "device" | "twitter" | "unattributed";
+
+export interface ResolvedActor {
+  distinctId: string;
+  kind: ActorKind;
+}
+
+/**
+ * Resolve the distinctId + kind to send with the event from the available
+ * signals. Precedence:
  *
- *   1. `ownerAccountId` (real account)        — most stable; survives logout/re-auth.
- *   2. `device:<clientDeviceId>`              — anonymous web/iOS, stable per browser/install.
- *   3. `twitter:<twitterUserId>`              — anonymous twitter-bot path.
- *   4. `generation:<requestId>`               — one-off attribution; preserves event volume
- *                                               but loses per-actor uniqueness.
+ *   1. `<ownerAccountId>` (real account)      — kind: `account`        — most stable.
+ *   2. `device:<clientDeviceId>`              — kind: `device`         — anonymous web/iOS.
+ *   3. `twitter:<twitterUserId>`              — kind: `twitter`        — anonymous twitter-bot.
+ *   4. `request:<requestId>`                  — kind: `unattributed`   — one-off fallback.
  *
- * The ladder is namespaced (`device:`, `twitter:`, `generation:`) so an
- * anonymous identifier never collides with a real account UUID, and so the
- * PostHog "person" view can distinguish identifier families on inspection.
+ * Each non-account rung is namespaced (`device:`, `twitter:`, `request:`) so an
+ * anonymous identifier never collides with a real account UUID — which is the
+ * load-bearing property for safe `posthog.alias()` merges later: when an
+ * anonymous user authenticates, the frontend can alias `device:<X>` into the
+ * account UUID without risking a cross-person merge.
  *
  * Reasoning: anonymous web/twitter submissions still populate `ownerAccountId`
  * — the route uses `ADMIN_ACCOUNT_ID` as the system-identity fallback so the
@@ -88,12 +102,23 @@ export interface PostHogCaptureProperties extends GenerationMetrics {
  * collapse every anonymous submission onto a single PostHog person and defeat
  * the point of analytics. The executor sets `isAnonymous: true` when the
  * owner is the sentinel so this function skips to the next rung.
+ *
+ * `kind: "unattributed"` is the honest name for rung 4 — every event in this
+ * file is a generation, so calling rung 4 "generation" would conflate event
+ * type with actor identity. `unattributed` says what's actually true: we
+ * have no stable actor signal and each event gets a one-off person.
  */
-export function resolveDistinctId(p: PostHogCaptureProperties): string {
-  if (p.ownerAccountId && !p.isAnonymous) return p.ownerAccountId;
-  if (p.clientDeviceId) return `device:${p.clientDeviceId}`;
-  if (p.twitterUserId) return `twitter:${p.twitterUserId}`;
-  return `generation:${p.requestId}`;
+export function resolveActor(p: PostHogCaptureProperties): ResolvedActor {
+  if (p.ownerAccountId && !p.isAnonymous) {
+    return { distinctId: p.ownerAccountId, kind: "account" };
+  }
+  if (p.clientDeviceId) {
+    return { distinctId: `device:${p.clientDeviceId}`, kind: "device" };
+  }
+  if (p.twitterUserId) {
+    return { distinctId: `twitter:${p.twitterUserId}`, kind: "twitter" };
+  }
+  return { distinctId: `request:${p.requestId}`, kind: "unattributed" };
 }
 
 // ---------------------------------------------------------------------------
@@ -179,10 +204,13 @@ export function capturePostHog(properties: PostHogCaptureProperties): void {
     const client = getPostHogClient();
     if (!client) return; // silent no-op when env not set
 
+    const actor = resolveActor(properties);
     client.capture({
-      distinctId: resolveDistinctId(properties),
+      distinctId: actor.distinctId,
       event: BUILDER_GENERATION_COMPLETED_EVENT,
-      properties,
+      // Carry the rung as a property so dashboards can segment by
+      // attribution type without parsing prefixes off `distinct_id`.
+      properties: { ...properties, actorKind: actor.kind },
     });
   } catch (err) {
     logger.error(
