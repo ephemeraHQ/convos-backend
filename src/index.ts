@@ -3,6 +3,7 @@ import cookieParser from "cookie-parser";
 import cors from "cors";
 import express from "express";
 import helmet from "helmet";
+import { shutdownPostHog } from "@/api/v2/agent-templates/services/posthog";
 import {
   startTtlSweep as startGenerationTtlSweep,
   stopTtlSweep as stopGenerationTtlSweep,
@@ -89,12 +90,17 @@ validateJWTKeys()
       }
     });
 
-    process.on("SIGTERM", () => {
+    process.on("SIGTERM", async () => {
       logger.info("SIGTERM signal received: closing Convos API service");
       // Stop the generation TTL sweep so its setInterval doesn't keep
       // dispatching DB queries against a closing pool during the drain
       // window. No-op if the sweep was never started (production gate).
       stopGenerationTtlSweep();
+      // Flush buffered PostHog events before the process exits. The SDK
+      // buffers up to flushAt (default 20) or flushInterval (default 10s)
+      // — without an explicit shutdown, low-volume captures get dropped on
+      // every redeploy. Catches its own errors; never throws.
+      await shutdownPostHog();
       server.close(() => {
         logger.info("Convos API service closed");
       });
