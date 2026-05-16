@@ -28,13 +28,17 @@ import {
   buildDeterministicFallback,
   composeReply,
 } from "@/api/v2/agent-templates/services/compose-reply";
-import { capturePostHog } from "@/api/v2/agent-templates/services/posthog";
+import {
+  capturePostHog,
+  type PostHogCaptureProperties,
+} from "@/api/v2/agent-templates/services/posthog";
 import {
   callGenerateTemplate,
   getModel,
   type GenerateTemplateInput,
 } from "@/api/v2/agent-templates/services/templateGen";
 import { GENERATION_EXECUTOR_TIMEOUT_MS, GENERATION_TTL_HOURS } from "@/config";
+import { ADMIN_ACCOUNT_ID } from "@/utils/constants";
 import logger from "@/utils/logger";
 import { prisma } from "@/utils/prisma";
 import { validateSlug } from "@/utils/reserved-slugs";
@@ -107,6 +111,65 @@ interface TwitterContext {
   twitterHandle: string;
   tweetId: string;
   idea?: string;
+}
+
+// ---------------------------------------------------------------------------
+// PostHog actor-attribution fields — shared across every capture site
+// ---------------------------------------------------------------------------
+
+/** Generation row shape consumed by `postHogBase` — the actor-attribution
+ *  inputs only. Declared as a structural subset of the Prisma row so this
+ *  helper is decoupled from the full schema. */
+interface PostHogActorSource {
+  ownerAccountId: string;
+  source: string;
+  twitterContext: unknown;
+  clientDeviceId: string | null;
+}
+
+/**
+ * Build the actor-attribution + always-on fields shared across every
+ * PostHog capture site in this pipeline. Centralised so the four sites
+ * (generate-fail, persist-fail, timeout-race-fail, success) stay in sync —
+ * adding a new actor signal only needs one edit here.
+ *
+ * `isAnonymous` is derived from the admin-account sentinel: anonymous
+ * submissions are owned by `ADMIN_ACCOUNT_ID` so the row has a valid
+ * owner FK, but the value is a system identity, not a real user.
+ * `resolveActor` in posthog.ts skips ownerAccountId when this is set.
+ */
+function postHogBase(args: {
+  generation: PostHogActorSource;
+  requestId: string;
+  inputType: "text" | "pdfBase64" | "imageBase64";
+}): Pick<
+  PostHogCaptureProperties,
+  | "requestId"
+  | "inputType"
+  | "source"
+  | "ownerAccountId"
+  | "isAnonymous"
+  | "clientDeviceId"
+  | "twitterUserId"
+> {
+  const { generation, requestId, inputType } = args;
+  const twitterCtx = generation.twitterContext as TwitterContext | null;
+  return {
+    requestId,
+    inputType,
+    source: generation.source,
+    ownerAccountId: generation.ownerAccountId,
+    isAnonymous: generation.ownerAccountId === ADMIN_ACCOUNT_ID,
+    clientDeviceId: generation.clientDeviceId ?? undefined,
+    // Lowercase + strip optional leading `@` so handle casing/format drift
+    // on the Twitter side doesn't fragment a single user across multiple
+    // PostHog persons. We don't currently have a stable numeric user ID
+    // from the twitter bot — once it's threaded through, replace this with
+    // `twitter:<numericUserId>` for true rename-resilient attribution.
+    twitterUserId: twitterCtx?.twitterHandle
+      ? twitterCtx.twitterHandle.toLowerCase().replace(/^@/, "")
+      : undefined,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -395,10 +458,7 @@ async function _runPipeline(
       promptTokens: 0,
       completionTokens: 0,
       latencyMs: Math.round(performance.now() - startTime),
-      requestId: generationId,
-      source: generation.source,
-      ownerAccountId: generation.ownerAccountId,
-      inputType,
+      ...postHogBase({ generation, requestId: generationId, inputType }),
       outcome: "failed",
     });
     throw new Error(
@@ -428,10 +488,7 @@ async function _runPipeline(
   } catch (err) {
     capturePostHog({
       ...templateResult.metrics,
-      requestId: generationId,
-      source: generation.source,
-      ownerAccountId: generation.ownerAccountId,
-      inputType,
+      ...postHogBase({ generation, requestId: generationId, inputType }),
       outcome: "failed",
     });
     throw new Error(
@@ -501,10 +558,7 @@ async function _runPipeline(
     }
     capturePostHog({
       ...templateResult.metrics,
-      requestId: generationId,
-      source: generation.source,
-      ownerAccountId: generation.ownerAccountId,
-      inputType,
+      ...postHogBase({ generation, requestId: generationId, inputType }),
       outcome: "failed",
     });
     return;
@@ -512,10 +566,7 @@ async function _runPipeline(
 
   capturePostHog({
     ...templateResult.metrics,
-    requestId: generationId,
-    source: generation.source,
-    ownerAccountId: generation.ownerAccountId,
-    inputType,
+    ...postHogBase({ generation, requestId: generationId, inputType }),
     outcome: "done",
   });
   logger.info(
