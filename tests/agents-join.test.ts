@@ -123,13 +123,13 @@ describe("agents join (assistant API)", () => {
             name: string;
             instructions: string;
             joinUrl: string;
-            metadata?: Record<string, unknown>;
+            options?: Record<string, unknown>;
           };
           expect(body.name).toBe("Assistant");
           expect(body.instructions).toBe("You are a helpful assistant.");
           expect(body.joinUrl).toContain("?i=test-slug");
-          // No options passed → no metadata in the upstream payload.
-          expect(body.metadata).toBeUndefined();
+          // No options passed → no `options` field in the upstream payload.
+          expect(body.options).toBeUndefined();
 
           return Promise.resolve(jsonResponse(200, { instanceId: "inst-xyz" }));
         }
@@ -255,13 +255,13 @@ describe("agents join (assistant API)", () => {
       expect(res.status).toBe(200);
     });
 
-    test("forwards options.skipGreeting via metadata when provided", async () => {
+    test("forwards options.skipGreeting upstream when provided", async () => {
       mockFetchImpl = (_url, init) => {
         if (init?.method === "POST") {
           const body = JSON.parse(init.body as string) as {
-            metadata?: Record<string, unknown>;
+            options?: Record<string, unknown>;
           };
-          expect(body.metadata).toEqual({ skipGreeting: true });
+          expect(body.options).toEqual({ skipGreeting: true });
           return Promise.resolve(jsonResponse(200, { instanceId: "inst-sg" }));
         }
         return Promise.resolve(
@@ -279,13 +279,13 @@ describe("agents join (assistant API)", () => {
       expect(res.status).toBe(200);
     });
 
-    test("forwards options.onboarding via metadata when provided", async () => {
+    test("forwards options.onboarding upstream when provided", async () => {
       mockFetchImpl = (_url, init) => {
         if (init?.method === "POST") {
           const body = JSON.parse(init.body as string) as {
-            metadata?: Record<string, unknown>;
+            options?: Record<string, unknown>;
           };
-          expect(body.metadata).toEqual({ onboarding: "assistant-builder" });
+          expect(body.options).toEqual({ onboarding: "assistant-builder" });
           return Promise.resolve(jsonResponse(200, { instanceId: "inst-ob" }));
         }
         return Promise.resolve(
@@ -307,9 +307,9 @@ describe("agents join (assistant API)", () => {
       mockFetchImpl = (_url, init) => {
         if (init?.method === "POST") {
           const body = JSON.parse(init.body as string) as {
-            metadata?: Record<string, unknown>;
+            options?: Record<string, unknown>;
           };
-          expect(body.metadata).toEqual({
+          expect(body.options).toEqual({
             skipGreeting: false,
             onboarding: "assistant-builder",
           });

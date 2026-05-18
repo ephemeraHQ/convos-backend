@@ -219,15 +219,16 @@ export async function joinHandler(req: Request, res: Response) {
     };
     if (authHeader) dispatchHeaders.Authorization = authHeader;
 
-    // Only forward fields the caller explicitly passed — no defaults at
-    // this layer. Omitting `metadata` entirely when neither option is
-    // set keeps the upstream call shape clean.
-    const metadata: Record<string, unknown> = {};
+    // Forward each option only when the caller explicitly passed it —
+    // no defaults at this layer. `options` is omitted entirely from the
+    // upstream payload when neither field is set, so the dispatch body
+    // stays minimal in the common path.
+    const upstreamOptions: Record<string, unknown> = {};
     if (options?.skipGreeting !== undefined) {
-      metadata.skipGreeting = options.skipGreeting;
+      upstreamOptions.skipGreeting = options.skipGreeting;
     }
     if (options?.onboarding !== undefined) {
-      metadata.onboarding = options.onboarding;
+      upstreamOptions.onboarding = options.onboarding;
     }
 
     const dispatchBody: Record<string, unknown> = {
@@ -235,8 +236,8 @@ export async function joinHandler(req: Request, res: Response) {
       instructions: instructions || "You are a helpful assistant.",
       joinUrl,
     };
-    if (Object.keys(metadata).length > 0) {
-      dispatchBody.metadata = metadata;
+    if (Object.keys(upstreamOptions).length > 0) {
+      dispatchBody.options = upstreamOptions;
     }
 
     const dispatchRes = await fetch(`${assistantBaseUrl}/api/assistants`, {
