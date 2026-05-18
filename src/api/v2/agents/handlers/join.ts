@@ -12,10 +12,19 @@ import {
 const bodySchema = z.object({
   slug: z.string().min(1, "Slug is required").max(2048),
   instructions: z.string().max(4096, "Instructions too long").optional(),
-  // Retained for client compatibility; the new assistant API does not
-  // accept this knob, so it is ignored when forwarding.
+  // Forwarded to convos-assistants via `metadata.skipGreeting` so the
+  // assistant container can read it. The upstream workflow currently
+  // hardcodes `callRuntimeInit({ skipGreeting: false })`, but the value
+  // is preserved in metadata for the assistant to act on.
   skipGreeting: z.boolean().optional(),
+  // Onboarding profile the assistant should adopt on first interaction.
+  // Forwarded via `metadata.onboarding`. Defaults to "assistant-builder"
+  // for the initial rollout — callers can override to introduce other
+  // onboarding flavors as we add them upstream.
+  onboarding: z.string().min(1).max(64).optional(),
 });
+
+const DEFAULT_ONBOARDING = "assistant-builder";
 
 const FORCE_ERROR_DELAY_MS = 5_000;
 
@@ -196,8 +205,12 @@ export async function joinHandler(req: Request, res: Response) {
     return;
   }
 
-  const { slug, instructions, skipGreeting } = parsed.data;
-  req.log.info({ slug, skipGreeting }, "Agent join request received");
+  const { slug, instructions, skipGreeting, onboarding } = parsed.data;
+  const effectiveOnboarding = onboarding ?? DEFAULT_ONBOARDING;
+  req.log.info(
+    { slug, skipGreeting, onboarding: effectiveOnboarding },
+    "Agent join request received",
+  );
 
   const assistantBaseUrl = assistantApiUrl.replace(/\/+$/, "");
   const authHeader = assistantApiKey ? `Bearer ${assistantApiKey}` : undefined;
@@ -210,6 +223,13 @@ export async function joinHandler(req: Request, res: Response) {
     };
     if (authHeader) dispatchHeaders.Authorization = authHeader;
 
+    const metadata: Record<string, unknown> = {
+      onboarding: effectiveOnboarding,
+    };
+    if (skipGreeting !== undefined) {
+      metadata.skipGreeting = skipGreeting;
+    }
+
     const dispatchRes = await fetch(`${assistantBaseUrl}/api/assistants`, {
       method: "POST",
       headers: dispatchHeaders,
@@ -218,6 +238,7 @@ export async function joinHandler(req: Request, res: Response) {
         name: "Assistant",
         instructions: instructions || "You are a helpful assistant.",
         joinUrl,
+        metadata,
       }),
     });
 
