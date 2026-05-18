@@ -1,12 +1,11 @@
-import { describe, expect, test, afterEach } from "bun:test";
-import type { Request, Response, NextFunction } from "express";
+import { afterEach, describe, expect, test } from "bun:test";
+import type { NextFunction, Request, Response } from "express";
 import {
-  requireCronApiKey,
   __setCronApiKeyOverrideForTests,
+  requireCronApiKey,
 } from "@/api/v2/credits/middleware/cron-api-key";
 
-const TEST_KEY =
-  "test-cron-api-key-that-is-at-least-32-characters-long";
+const TEST_KEY = "test-cron-api-key-that-is-at-least-32-characters-long";
 
 function mockRes() {
   const headers: Record<string, unknown> = {};

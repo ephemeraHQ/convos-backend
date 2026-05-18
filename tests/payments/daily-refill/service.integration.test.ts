@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { afterEach, describe, expect, test } from "bun:test";
 import { LedgerReason } from "@prisma/client";
+import { afterEach, describe, expect, test } from "bun:test";
 import { getBalance } from "@/payments";
 import { runDailyRefill } from "@/payments/daily-refill/service";
 import { ymdUtc } from "@/payments/daily-refill/utc";
@@ -20,7 +20,9 @@ afterEach(async () => {
   tracker.length = 0;
 });
 
-async function seedAccount(opts?: { withAuthMethod?: boolean }): Promise<string> {
+async function seedAccount(opts?: {
+  withAuthMethod?: boolean;
+}): Promise<string> {
   const acct = await prisma.account.create({ data: {} });
   tracker.push(acct.id);
   if (opts?.withAuthMethod ?? true) {
@@ -318,7 +320,9 @@ describe("runDailyRefill — idempotency", () => {
     expect(summarySecond.skipped).toBe(false);
 
     // Account must NOT appear in refilled — the error path fires instead.
-    expect(summarySecond.refilled.map((r) => r.accountId)).not.toContain(accountId);
+    expect(summarySecond.refilled.map((r) => r.accountId)).not.toContain(
+      accountId,
+    );
     // Balance must remain at 40n — no double-credit.
     expect(await balanceOf(accountId)).toBe(40n);
   });
@@ -359,7 +363,9 @@ describe("runDailyRefill — failure isolation", () => {
     const summary = await runDailyRefill({ now: NOW });
 
     expect(summary.refilled.map((r) => r.accountId)).toContain(goodAccountId);
-    expect(summary.errors.map((e) => e.accountId)).toContain(collidingAccountId);
+    expect(summary.errors.map((e) => e.accountId)).toContain(
+      collidingAccountId,
+    );
     const collidingError = summary.errors.find(
       (e) => e.accountId === collidingAccountId,
     );

@@ -9,11 +9,7 @@ import {
 } from "bun:test";
 import { __setCronApiKeyOverrideForTests } from "@/api/v2/credits/middleware/cron-api-key";
 import { prisma } from "@/utils/prisma";
-import {
-  buildCreditsApp,
-  cleanupAccounts,
-  seedAccount,
-} from "./helpers";
+import { buildCreditsApp, cleanupAccounts, seedAccount } from "./helpers";
 
 const TEST_CRON_KEY = "test-cron-api-key-that-is-at-least-32-characters-long";
 
