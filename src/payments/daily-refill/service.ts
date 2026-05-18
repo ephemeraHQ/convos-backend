@@ -59,7 +59,9 @@ export async function runDailyRefill(opts?: {
     SELECT a.id AS account_id
     FROM "Account" a
     WHERE EXISTS (
-      SELECT 1 FROM "AuthMethod" am WHERE am."accountId" = a.id
+      SELECT 1 FROM "AuthMethod" am
+      WHERE am."accountId" = a.id
+        AND am.type = 'SIWE'
     )
     AND NOT EXISTS (
       SELECT 1 FROM "Subscription" s
