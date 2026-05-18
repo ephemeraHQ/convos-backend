@@ -1,7 +1,5 @@
 export const startOfTodayUtc = (now: Date): Date =>
-  new Date(
-    Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()),
-  );
+  new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
 
 export const startOfNextUtcDay = (now: Date): Date =>
   new Date(

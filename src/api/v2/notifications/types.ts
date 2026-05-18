@@ -35,9 +35,9 @@ export type InviteJoinRequestNotificationData = {
 
 export type CreditsRefilledNotificationData = {
   creditsAdded: number;
-  newBalance: string;       // bigint serialized
-  refilledAt: string;       // ISO UTC
-  nextRefreshAt: string;    // ISO UTC, start of next UTC day
+  newBalance: string; // bigint serialized
+  refilledAt: string; // ISO UTC
+  nextRefreshAt: string; // ISO UTC, start of next UTC day
 };
 
 // Mapping from NotificationType to its payload shape
@@ -81,7 +81,7 @@ export type V2NotificationPayload = {
 // Backend-originated push — no user JWT, no inboxId. Added so push services
 // (APNS/FCM) can accept payloads that don't carry an apiJWT.
 export type CreditsRefilledPayload = {
-  clientId: string;                            // deviceId, for v2-shaped routing
+  clientId: string; // deviceId, for v2-shaped routing
   notificationType: "CreditsRefilled";
   notificationData: CreditsRefilledNotificationData;
 };

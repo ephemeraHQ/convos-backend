@@ -1,10 +1,10 @@
 import { Router } from "express";
 import { agentApiKeyAuth } from "@/middleware/agentAuth";
-import { requireCronApiKey } from "./middleware/cron-api-key";
 import { check } from "./handlers/check";
 import { consume } from "./handlers/consume";
 import { dailyRefill } from "./handlers/daily-refill";
 import { grant } from "./handlers/grant";
+import { requireCronApiKey } from "./middleware/cron-api-key";
 
 const creditsRouter = Router();
 
