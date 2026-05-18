@@ -38,6 +38,8 @@ CREATE TABLE "Subscription" (
 CREATE TABLE "AppleReceipt" (
     "id" UUID NOT NULL DEFAULT gen_random_uuid(),
     "subscriptionId" UUID NOT NULL,
+    "idempotencyKey" TEXT NOT NULL,
+    "notificationUUID" TEXT,
     "transactionId" TEXT NOT NULL,
     "notificationType" TEXT NOT NULL,
     "notificationSubtype" TEXT,
@@ -60,7 +62,13 @@ CREATE INDEX "Subscription_accountId_idx" ON "Subscription"("accountId");
 CREATE INDEX "Subscription_status_currentPeriodEnd_idx" ON "Subscription"("status", "currentPeriodEnd");
 
 -- CreateIndex
-CREATE UNIQUE INDEX "AppleReceipt_transactionId_key" ON "AppleReceipt"("transactionId");
+CREATE UNIQUE INDEX "AppleReceipt_idempotencyKey_key" ON "AppleReceipt"("idempotencyKey");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "AppleReceipt_notificationUUID_key" ON "AppleReceipt"("notificationUUID");
+
+-- CreateIndex
+CREATE INDEX "AppleReceipt_transactionId_idx" ON "AppleReceipt"("transactionId");
 
 -- CreateIndex
 CREATE INDEX "AppleReceipt_subscriptionId_receivedAt_idx" ON "AppleReceipt"("subscriptionId", "receivedAt");

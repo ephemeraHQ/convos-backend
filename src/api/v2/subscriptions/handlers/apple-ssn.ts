@@ -23,10 +23,10 @@ const bodySchema = z
  *
  * Response semantics: 200 acknowledges the notification (Apple stops
  * retrying). We return 200 on every outcome except an invalid signature
- * (400) or an unexpected runtime error (500). Replay (duplicate transactionId)
- * and unknown_subscription both ack 200 — Apple has no need to retry; either
- * the dupe was harmless or our verify endpoint will eventually create the
- * Subscription row.
+ * (400), malformed payload (400), or an unexpected runtime error (500). Replay
+ * (duplicate Apple notificationUUID) and unknown_subscription both ack 200 —
+ * Apple has no need to retry; either the dupe was harmless or our verify
+ * endpoint will eventually create the Subscription row.
  */
 export async function appleSsnHandler(req: Request, res: Response) {
   const parsed = bodySchema.safeParse(req.body);
@@ -46,6 +46,16 @@ export async function appleSsnHandler(req: Request, res: Response) {
       "Apple S2S notification JWS verification failed",
     );
     res.status(400).json({ error: "Invalid signed notification" });
+    return;
+  }
+
+  const notificationUUID = notification.notificationUUID;
+  if (!notificationUUID) {
+    req.log.warn(
+      { notificationType: notification.notificationType },
+      "Apple S2S notification missing notificationUUID",
+    );
+    res.status(400).json({ error: "Malformed notification payload" });
     return;
   }
 
@@ -112,6 +122,7 @@ export async function appleSsnHandler(req: Request, res: Response) {
     const result = await applyNotification({
       originalTransactionId,
       transactionId,
+      notificationUUID,
       notificationType: notification.notificationType ?? "UNKNOWN",
       notificationSubtype: notification.subtype ?? null,
       signedPayload,

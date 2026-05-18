@@ -287,6 +287,26 @@ describe("POST /v2/accounts/me/subscription/verify", () => {
     expect(body.subscription.isInTrial).toBe(true);
   });
 
+  test("expired transaction JWS persists as expired, not active/trial", async () => {
+    installLocalTestingVerifier();
+    const accountId = await newAccount();
+    const token = await tokenFor(accountId);
+    const res = await request(makeApp())
+      .post("/v2/accounts/me/subscription/verify")
+      .set("X-Convos-AuthToken", token)
+      .send({
+        jwsRepresentation: signTransaction({
+          appAccountToken: "11111111-2222-3333-4444-555555555555",
+          expiresDate: Date.now() - 60_000,
+          offerType: 1, // INTRODUCTORY_OFFER would be trial if not expired
+        }),
+      });
+    expect(res.status).toBe(200);
+    const body = res.body as VerifyBody;
+    expect(body.subscription.status).toBe("expired");
+    expect(body.subscription.isInTrial).toBe(false);
+  });
+
   test("replay of same transactionId is idempotent (single AppleReceipt)", async () => {
     installLocalTestingVerifier();
     const accountId = await newAccount();

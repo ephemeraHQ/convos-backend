@@ -154,6 +154,67 @@ describe("GET /v2/accounts/me/credits", () => {
     expect(body.periodLabel).toBe("May 2026");
   });
 
+  test("expired subscription status returns zero-state credits", async () => {
+    const accountId = await newAccount();
+    await upsertFromVerify({
+      accountId,
+      appAccountToken: "99999999-2222-3333-4444-555555555555",
+      productId: "app.convos.subs.builder.monthly",
+      tier: SubscriptionTier.builder,
+      period: SubscriptionPeriod.monthly,
+      status: SubscriptionStatus.expired,
+      originalTransactionId: `otid-expired-${accountId}`,
+      transactionId: `tx-expired-${accountId}`,
+      startedAt: new Date("2026-05-01T00:00:00.000Z"),
+      currentPeriodStart: new Date("2026-05-01T00:00:00.000Z"),
+      currentPeriodEnd: new Date("2026-06-01T00:00:00.000Z"),
+      willRenew: false,
+      isInTrial: false,
+      environment: AppleEnv.sandbox,
+      signedPayload: "stub.jws",
+    });
+    const token = await tokenFor(accountId);
+    const res = await request(makeApp())
+      .get("/v2/accounts/me/credits")
+      .set("X-Convos-AuthToken", token);
+    const body = res.body as BalanceBody;
+    expect(body.monthlyGrant).toBe(0);
+    expect(body.monthlyGrantUsed).toBe(0);
+    expect(body.balance).toBe(0);
+  });
+
+  test("past-ended active subscription returns zero-state credits", async () => {
+    const accountId = await newAccount();
+    const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000);
+    await upsertFromVerify({
+      accountId,
+      appAccountToken: "88888888-2222-3333-4444-555555555555",
+      productId: "app.convos.subs.builder.monthly",
+      tier: SubscriptionTier.builder,
+      period: SubscriptionPeriod.monthly,
+      status: SubscriptionStatus.active,
+      originalTransactionId: `otid-past-active-${accountId}`,
+      transactionId: `tx-past-active-${accountId}`,
+      startedAt: new Date(yesterday.getTime() - 30 * 24 * 60 * 60 * 1000),
+      currentPeriodStart: new Date(
+        yesterday.getTime() - 30 * 24 * 60 * 60 * 1000,
+      ),
+      currentPeriodEnd: yesterday,
+      willRenew: true,
+      isInTrial: false,
+      environment: AppleEnv.sandbox,
+      signedPayload: "stub.jws",
+    });
+    const token = await tokenFor(accountId);
+    const res = await request(makeApp())
+      .get("/v2/accounts/me/credits")
+      .set("X-Convos-AuthToken", token);
+    const body = res.body as BalanceBody;
+    expect(body.monthlyGrant).toBe(0);
+    expect(body.monthlyGrantUsed).toBe(0);
+    expect(body.balance).toBe(0);
+  });
+
   test("consumes within current period count against monthlyGrantUsed", async () => {
     const accountId = await newAccount();
     await seedBuilderMonthly(accountId);

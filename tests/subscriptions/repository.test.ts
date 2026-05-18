@@ -111,6 +111,47 @@ describe("upsertFromVerify", () => {
     expect(receipts).toHaveLength(1);
   });
 
+  test("verify replay does not roll newer subscription state backwards", async () => {
+    const accountId = await newAccount();
+    const otid = "otid-stale-verify";
+
+    const newer = await upsertFromVerify(
+      verifyInput({
+        accountId,
+        originalTransactionId: otid,
+        transactionId: "tx-newer",
+        currentPeriodStart: new Date("2026-06-01T00:00:00.000Z"),
+        currentPeriodEnd: new Date("2026-07-01T00:00:00.000Z"),
+      }),
+    );
+
+    const stale = await upsertFromVerify(
+      verifyInput({
+        accountId,
+        originalTransactionId: otid,
+        transactionId: "tx-stale",
+        status: SubscriptionStatus.expired,
+        currentPeriodStart: new Date("2026-05-01T00:00:00.000Z"),
+        currentPeriodEnd: new Date("2026-06-01T00:00:00.000Z"),
+      }),
+    );
+
+    expect(stale.receiptCreated).toBe(true);
+    expect(stale.subscription.id).toBe(newer.subscription.id);
+    expect(stale.subscription.status).toBe(SubscriptionStatus.active);
+    expect(stale.subscription.currentPeriodEnd.toISOString()).toBe(
+      "2026-07-01T00:00:00.000Z",
+    );
+
+    const receipts = await prisma.appleReceipt.findMany({
+      where: { subscriptionId: newer.subscription.id },
+    });
+    expect(receipts.map((r) => r.transactionId).sort()).toEqual([
+      "tx-newer",
+      "tx-stale",
+    ]);
+  });
+
   test("renewal (new transactionId, same originalTransactionId) updates state + records second receipt", async () => {
     const accountId = await newAccount();
     const otid = "otid-3";
@@ -140,7 +181,7 @@ describe("upsertFromVerify", () => {
 
     const receipts = await prisma.appleReceipt.findMany({
       where: { subscriptionId: first.subscription.id },
-      orderBy: { receivedAt: "asc" },
+      orderBy: [{ receivedAt: "asc" }, { transactionId: "asc" }],
     });
     expect(receipts).toHaveLength(2);
     expect(receipts.map((r) => r.transactionId)).toEqual(["tx-3a", "tx-3b"]);
@@ -216,14 +257,27 @@ describe("findCurrentByAccountId", () => {
     await upsertFromVerify(
       verifyInput({
         accountId,
+        appAccountToken: "11111111-1111-1111-1111-111111111111",
         originalTransactionId: "otid-revoked",
         transactionId: "tx-revoked",
         status: SubscriptionStatus.revoked,
+        currentPeriodEnd: new Date("2026-06-01T00:00:00.000Z"),
+      }),
+    );
+    await upsertFromVerify(
+      verifyInput({
+        accountId,
+        appAccountToken: "22222222-2222-2222-2222-222222222222",
+        originalTransactionId: "otid-expired-later",
+        transactionId: "tx-expired-later",
+        status: SubscriptionStatus.expired,
+        currentPeriodEnd: new Date("2026-07-01T00:00:00.000Z"),
       }),
     );
     const current = await findCurrentByAccountId(accountId);
     expect(current).not.toBeNull();
-    expect(current?.status).toBe(SubscriptionStatus.revoked);
+    expect(current?.status).toBe(SubscriptionStatus.expired);
+    expect(current?.originalTransactionId).toBe("otid-expired-later");
   });
 });
 
@@ -232,6 +286,7 @@ describe("applyNotification", () => {
     const result = await applyNotification({
       originalTransactionId: "otid-missing",
       transactionId: "tx-missing",
+      notificationUUID: "notif-missing",
       notificationType: "DID_RENEW",
       signedPayload: "stub",
       update: { status: SubscriptionStatus.active },
@@ -252,6 +307,7 @@ describe("applyNotification", () => {
     const result = await applyNotification({
       originalTransactionId: "otid-apply",
       transactionId: "tx-apply-2",
+      notificationUUID: "notif-apply-2",
       notificationType: "DID_FAIL_TO_RENEW",
       notificationSubtype: "GRACE_PERIOD",
       signedPayload: "stub-grace",
@@ -274,7 +330,7 @@ describe("applyNotification", () => {
     expect(receipt?.notificationSubtype).toBe("GRACE_PERIOD");
   });
 
-  test("returns replayed when transactionId was already recorded — no double state apply", async () => {
+  test("returns replayed when notificationUUID was already recorded — no double state apply", async () => {
     const accountId = await newAccount();
     await upsertFromVerify(
       verifyInput({
@@ -287,17 +343,19 @@ describe("applyNotification", () => {
     const first = await applyNotification({
       originalTransactionId: "otid-replay",
       transactionId: "tx-replay-1",
+      notificationUUID: "notif-replay-1",
       notificationType: "DID_RENEW",
       signedPayload: "stub",
       update: { status: SubscriptionStatus.active },
     });
     expect(first.kind).toBe("applied");
 
-    // Same transactionId → replayed. The state update would have been a no-op
+    // Same notificationUUID → replayed. The state update would have been a no-op
     // anyway, but the point is no second AppleReceipt row.
     const second = await applyNotification({
       originalTransactionId: "otid-replay",
       transactionId: "tx-replay-1",
+      notificationUUID: "notif-replay-1",
       notificationType: "DID_RENEW",
       signedPayload: "stub",
       update: { status: SubscriptionStatus.expired },
@@ -312,6 +370,46 @@ describe("applyNotification", () => {
       where: { transactionId: "tx-replay-1" },
     });
     expect(receipts).toHaveLength(1);
+  });
+
+  test("same transactionId with a new notificationUUID is a distinct Apple event", async () => {
+    const accountId = await newAccount();
+    await upsertFromVerify(
+      verifyInput({
+        accountId,
+        originalTransactionId: "otid-same-tx-different-uuid",
+        transactionId: "tx-same-uuid-initial",
+      }),
+    );
+
+    const first = await applyNotification({
+      originalTransactionId: "otid-same-tx-different-uuid",
+      transactionId: "tx-shared",
+      notificationUUID: "notif-shared-a",
+      notificationType: "DID_CHANGE_RENEWAL_STATUS",
+      signedPayload: "stub-a",
+      update: { willRenew: false },
+    });
+    expect(first.kind).toBe("applied");
+
+    const second = await applyNotification({
+      originalTransactionId: "otid-same-tx-different-uuid",
+      transactionId: "tx-shared",
+      notificationUUID: "notif-shared-b",
+      notificationType: "DID_CHANGE_RENEWAL_STATUS",
+      signedPayload: "stub-b",
+      update: { willRenew: true },
+    });
+    expect(second.kind).toBe("applied");
+
+    const receipts = await prisma.appleReceipt.findMany({
+      where: { transactionId: "tx-shared" },
+      orderBy: { notificationUUID: "asc" },
+    });
+    expect(receipts.map((r) => r.notificationUUID)).toEqual([
+      "notif-shared-a",
+      "notif-shared-b",
+    ]);
   });
 });
 

@@ -326,9 +326,17 @@ model Subscription {
 model AppleReceipt {
   id                  String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   subscriptionId      String   @db.Uuid
-  // Per-transaction identifier — unique across renewals (each renewal mints
-  // a new transactionId while keeping the same originalTransactionId).
-  transactionId       String   @unique
+  // Explicit dedupe key. VERIFY rows use the transactionId; S2S rows use
+  // Apple's notificationUUID so distinct events sharing a transactionId are
+  // not collapsed.
+  idempotencyKey      String   @unique
+  // Apple's stable retry identifier for App Store Server Notifications v2.
+  // Null for direct verify receipts, which are not Apple notifications.
+  notificationUUID    String?  @unique
+  // Per-transaction identifier (each renewal mints a new transactionId while
+  // keeping the same originalTransactionId). Not unique: multiple Apple
+  // notificationUUIDs can reference the same transaction.
+  transactionId       String
   notificationType    String
   notificationSubtype String?
   // Raw JWS from Apple, kept for audit + replay against the verifier if we
@@ -338,5 +346,6 @@ model AppleReceipt {
 
   subscription Subscription @relation(fields: [subscriptionId], references: [id])
 
+  @@index([transactionId])
   @@index([subscriptionId, receivedAt])
 }

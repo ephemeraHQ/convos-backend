@@ -1,6 +1,5 @@
 import {
   Environment,
-  OfferType,
   type JWSTransactionDecodedPayload,
 } from "@apple/app-store-server-library";
 import type { Request, Response } from "express";
@@ -15,6 +14,7 @@ import {
   upsertFromVerify,
   type VerifyInput,
 } from "@/subscriptions/repository";
+import { deriveSubscriptionStatusFromTransaction } from "@/subscriptions/status";
 import { AppError } from "@/utils/errors";
 
 const uuidPattern =
@@ -49,16 +49,6 @@ const mapEnvironment = (raw: string | Environment | undefined): AppleEnv => {
   return AppleEnv.sandbox;
 };
 
-const deriveStatus = (
-  payload: JWSTransactionDecodedPayload,
-): SubscriptionStatus => {
-  if (payload.revocationDate) return SubscriptionStatus.revoked;
-  if (payload.offerType === OfferType.INTRODUCTORY_OFFER) {
-    return SubscriptionStatus.trial;
-  }
-  return SubscriptionStatus.active;
-};
-
 const buildVerifyInput = (
   accountId: string,
   appAccountToken: string,
@@ -67,6 +57,7 @@ const buildVerifyInput = (
 ): VerifyInput => {
   const productId = requireField(payload.productId, "productId");
   const { tier, period } = productMapping(productId);
+  const status = deriveSubscriptionStatusFromTransaction(payload);
 
   return {
     accountId,
@@ -74,7 +65,7 @@ const buildVerifyInput = (
     productId,
     tier,
     period,
-    status: deriveStatus(payload),
+    status,
     originalTransactionId: requireField(
       payload.originalTransactionId,
       "originalTransactionId",
@@ -93,7 +84,7 @@ const buildVerifyInput = (
     // to true (paying customer is presumed to want to renew); webhook updates
     // (DID_CHANGE_RENEWAL_STATUS) will correct this.
     willRenew: true,
-    isInTrial: payload.offerType === OfferType.INTRODUCTORY_OFFER,
+    isInTrial: status === SubscriptionStatus.trial,
     environment: mapEnvironment(payload.environment),
     signedPayload,
   };

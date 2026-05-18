@@ -29,13 +29,19 @@ const loadAppleRootCerts = () => [
 
 const resolveEnvironment = () => {
   const raw = process.env.APPLE_ENV?.trim();
+  const isProd = isProductionEnv();
   if (raw === "production") return Environment.PRODUCTION;
-  if (raw === "sandbox") return Environment.SANDBOX;
+  if (raw === "sandbox") {
+    if (isProd) {
+      throw new AppError(500, "APPLE_ENV=sandbox is forbidden in production");
+    }
+    return Environment.SANDBOX;
+  }
   if (raw === "local-testing") {
     // LOCAL_TESTING skips JWS signature + chain verification entirely. A
     // misconfigured prod env with APPLE_ENV=local-testing would silently
     // accept forged transactions. Fail loudly instead.
-    if (isProductionEnv()) {
+    if (isProd) {
       throw new AppError(
         500,
         "APPLE_ENV=local-testing is forbidden in production",
@@ -43,7 +49,7 @@ const resolveEnvironment = () => {
     }
     return Environment.LOCAL_TESTING;
   }
-  return isProductionEnv() ? Environment.PRODUCTION : Environment.SANDBOX;
+  return isProd ? Environment.PRODUCTION : Environment.SANDBOX;
 };
 
 const resolveBundleId = () => {

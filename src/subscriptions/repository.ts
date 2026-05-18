@@ -7,6 +7,10 @@ import {
   type SubscriptionPeriod,
   type SubscriptionTier,
 } from "@prisma/client";
+import {
+  effectiveSubscriptionStatus,
+  ENTITLED_SUBSCRIPTION_STATUSES,
+} from "@/subscriptions/status";
 import { prisma } from "@/utils/prisma";
 
 export type { Subscription, AppleReceipt };
@@ -16,13 +20,6 @@ export {
   SubscriptionStatus,
   SubscriptionTier,
 } from "@prisma/client";
-
-const ACTIVE_STATUSES: SubscriptionStatus[] = [
-  SubscriptionStatus.trial,
-  SubscriptionStatus.active,
-  SubscriptionStatus.grace,
-  SubscriptionStatus.billingRetry,
-];
 
 /**
  * Find the subscription a caller would see as "current" — preferring an
@@ -35,13 +32,13 @@ export const findCurrentByAccountId = async (
   accountId: string,
 ): Promise<Subscription | null> => {
   const active = await prisma.subscription.findFirst({
-    where: { accountId, status: { in: ACTIVE_STATUSES } },
-    orderBy: { updatedAt: "desc" },
+    where: { accountId, status: { in: ENTITLED_SUBSCRIPTION_STATUSES } },
+    orderBy: [{ currentPeriodEnd: "desc" }, { updatedAt: "desc" }],
   });
   if (active) return active;
   return prisma.subscription.findFirst({
     where: { accountId },
-    orderBy: { updatedAt: "desc" },
+    orderBy: [{ currentPeriodEnd: "desc" }, { updatedAt: "desc" }],
   });
 };
 
@@ -53,7 +50,10 @@ export const findByOriginalTransactionId = async (
 export const findReceiptByTransactionId = async (
   transactionId: string,
 ): Promise<AppleReceipt | null> =>
-  prisma.appleReceipt.findUnique({ where: { transactionId } });
+  prisma.appleReceipt.findFirst({
+    where: { transactionId },
+    orderBy: { receivedAt: "asc" },
+  });
 
 export type VerifyInput = {
   accountId: string;
@@ -79,41 +79,67 @@ export type VerifyResult = {
   receiptCreated: boolean;
 };
 
+const verifyIdempotencyKey = (transactionId: string) =>
+  `apple-verify:${transactionId}`;
+
+const notificationIdempotencyKey = (notificationUUID: string) =>
+  `apple-ssn:${notificationUUID}`;
+
 /**
  * Idempotent verify upsert. Single tx that:
- *   1. Creates the Subscription if originalTransactionId is new, or updates
+ *   1. Short-circuits exact VERIFY replays before mutating Subscription state.
+ *   2. Creates the Subscription if originalTransactionId is new, or updates
  *      its mutable fields if it already exists (tier upgrades, state
  *      transitions, and `accountId` re-assignment for cross-device transfer
  *      per PRD §6.4).
- *   2. Records the AppleReceipt audit row keyed on transactionId. If we've
- *      already processed this exact transaction, the row is left untouched
- *      and `receiptCreated` is false — the caller can short-circuit.
+ *   3. Records the AppleReceipt audit row keyed by an explicit idempotencyKey.
  */
 export const upsertFromVerify = async (
   input: VerifyInput,
 ): Promise<VerifyResult> => {
   return prisma.$transaction(async (tx) => {
+    const idempotencyKey = verifyIdempotencyKey(input.transactionId);
+    const existingReceipt = await tx.appleReceipt.findUnique({
+      where: { idempotencyKey },
+      include: { subscription: true },
+    });
+
+    if (existingReceipt) {
+      return {
+        subscription: existingReceipt.subscription,
+        receiptCreated: false,
+      };
+    }
+
     const existing = await tx.subscription.findUnique({
       where: { originalTransactionId: input.originalTransactionId },
     });
 
+    // A valid but old transaction JWS can arrive after a later renewal/webhook.
+    // Keep the audit row, but do not roll the subscription's entitlement window
+    // or status backwards.
+    const isStaleVerify =
+      existing !== null && input.currentPeriodEnd < existing.currentPeriodEnd;
+
     const subscription = existing
-      ? await tx.subscription.update({
-          where: { id: existing.id },
-          data: {
-            accountId: input.accountId,
-            appAccountToken: input.appAccountToken,
-            productId: input.productId,
-            tier: input.tier,
-            period: input.period,
-            status: input.status,
-            currentPeriodStart: input.currentPeriodStart,
-            currentPeriodEnd: input.currentPeriodEnd,
-            willRenew: input.willRenew,
-            isInTrial: input.isInTrial,
-            environment: input.environment,
-          },
-        })
+      ? isStaleVerify
+        ? existing
+        : await tx.subscription.update({
+            where: { id: existing.id },
+            data: {
+              accountId: input.accountId,
+              appAccountToken: input.appAccountToken,
+              productId: input.productId,
+              tier: input.tier,
+              period: input.period,
+              status: input.status,
+              currentPeriodStart: input.currentPeriodStart,
+              currentPeriodEnd: input.currentPeriodEnd,
+              willRenew: input.willRenew,
+              isInTrial: input.isInTrial,
+              environment: input.environment,
+            },
+          })
       : await tx.subscription.create({
           data: {
             accountId: input.accountId,
@@ -132,17 +158,10 @@ export const upsertFromVerify = async (
           },
         });
 
-    const existingReceipt = await tx.appleReceipt.findUnique({
-      where: { transactionId: input.transactionId },
-    });
-
-    if (existingReceipt) {
-      return { subscription, receiptCreated: false };
-    }
-
     await tx.appleReceipt.create({
       data: {
         subscriptionId: subscription.id,
+        idempotencyKey,
         transactionId: input.transactionId,
         notificationType: "VERIFY",
         signedPayload: input.signedPayload,
@@ -168,6 +187,7 @@ export type NotificationStateUpdate = {
 export type ApplyNotificationInput = {
   originalTransactionId: string;
   transactionId: string;
+  notificationUUID: string;
   notificationType: string;
   notificationSubtype?: string | null;
   signedPayload: string;
@@ -184,10 +204,9 @@ export type ApplyNotificationResult =
  *   1. Look up the subscription by originalTransactionId. If unknown, return
  *      "unknown_subscription" — the caller decides how to recover (typically
  *      fetching from the App Store Server API and bootstrapping a row).
- *   2. Insert the AppleReceipt row keyed on transactionId. A P2002 unique
- *      violation means we've already processed this exact notification — we
- *      return "replayed" with the current sub state and do not re-apply any
- *      state changes.
+ *   2. Insert the AppleReceipt row keyed on Apple's notificationUUID. A P2002
+ *      unique violation means Apple retried the same notification — we return
+ *      "replayed" with the current sub state and do not re-apply changes.
  *   3. Apply the state update to the Subscription row.
  */
 export const applyNotification = async (
@@ -205,6 +224,8 @@ export const applyNotification = async (
       await tx.appleReceipt.create({
         data: {
           subscriptionId: subscription.id,
+          idempotencyKey: notificationIdempotencyKey(input.notificationUUID),
+          notificationUUID: input.notificationUUID,
           transactionId: input.transactionId,
           notificationType: input.notificationType,
           notificationSubtype: input.notificationSubtype ?? null,
@@ -247,12 +268,15 @@ export type UserSubscriptionDto = {
 
 export const serializeUserSubscription = (
   subscription: Subscription,
-): UserSubscriptionDto => ({
-  tier: subscription.tier,
-  period: subscription.period,
-  status: subscription.status,
-  productId: subscription.productId,
-  currentPeriodEnd: subscription.currentPeriodEnd.toISOString(),
-  willRenew: subscription.willRenew,
-  isInTrial: subscription.isInTrial,
-});
+): UserSubscriptionDto => {
+  const status = effectiveSubscriptionStatus(subscription);
+  return {
+    tier: subscription.tier,
+    period: subscription.period,
+    status,
+    productId: subscription.productId,
+    currentPeriodEnd: subscription.currentPeriodEnd.toISOString(),
+    willRenew: subscription.willRenew,
+    isInTrial: status === SubscriptionStatus.trial,
+  };
+};

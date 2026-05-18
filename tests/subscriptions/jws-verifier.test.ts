@@ -155,6 +155,23 @@ describe("buildVerifierConfig", () => {
     }
   });
 
+  test("APPLE_ENV=sandbox throws 500 in production (prod must verify production JWS only)", () => {
+    const priorNodeEnv = process.env.NODE_ENV;
+    process.env.NODE_ENV = "production";
+    process.env.APPLE_ENV = "sandbox";
+    try {
+      expect(() => buildVerifierConfig()).toThrow(
+        /sandbox is forbidden in production/,
+      );
+    } finally {
+      if (priorNodeEnv === undefined) {
+        delete process.env.NODE_ENV;
+      } else {
+        process.env.NODE_ENV = priorNodeEnv;
+      }
+    }
+  });
+
   test("missing APPLE_BUNDLE_ID throws 500", () => {
     delete process.env.APPLE_BUNDLE_ID;
     expect(() => buildVerifierConfig()).toThrow(/APPLE_BUNDLE_ID/);

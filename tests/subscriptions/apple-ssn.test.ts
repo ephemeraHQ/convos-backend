@@ -218,7 +218,7 @@ describe("POST /v2/webhooks/apple/ssn", () => {
 
     const receipts = await prisma.appleReceipt.findMany({
       where: { subscriptionId: subscription.id },
-      orderBy: { receivedAt: "asc" },
+      orderBy: [{ receivedAt: "asc" }, { transactionId: "asc" }],
     });
     expect(receipts).toHaveLength(2); // seed + DID_RENEW
     expect(receipts[1].notificationType).toBe("DID_RENEW");
@@ -244,6 +244,7 @@ describe("POST /v2/webhooks/apple/ssn", () => {
       .post("/v2/webhooks/apple/ssn")
       .send({ signedPayload });
     expect(res.status).toBe(200);
+    expect((res.body as AckBody).applied).toBe(true);
 
     const updated = await prisma.subscription.findUnique({
       where: { id: subscription.id },
@@ -268,9 +269,11 @@ describe("POST /v2/webhooks/apple/ssn", () => {
       }),
     });
 
-    await request(makeApp())
+    const res = await request(makeApp())
       .post("/v2/webhooks/apple/ssn")
       .send({ signedPayload });
+    expect(res.status).toBe(200);
+    expect((res.body as AckBody).applied).toBe(true);
 
     const updated = await prisma.subscription.findUnique({
       where: { id: subscription.id },
@@ -291,9 +294,11 @@ describe("POST /v2/webhooks/apple/ssn", () => {
       }),
     });
 
-    await request(makeApp())
+    const res = await request(makeApp())
       .post("/v2/webhooks/apple/ssn")
       .send({ signedPayload });
+    expect(res.status).toBe(200);
+    expect((res.body as AckBody).applied).toBe(true);
 
     const updated = await prisma.subscription.findUnique({
       where: { id: subscription.id },
@@ -315,9 +320,11 @@ describe("POST /v2/webhooks/apple/ssn", () => {
       }),
     });
 
-    await request(makeApp())
+    const res = await request(makeApp())
       .post("/v2/webhooks/apple/ssn")
       .send({ signedPayload });
+    expect(res.status).toBe(200);
+    expect((res.body as AckBody).applied).toBe(true);
 
     const updated = await prisma.subscription.findUnique({
       where: { id: subscription.id },
@@ -341,9 +348,11 @@ describe("POST /v2/webhooks/apple/ssn", () => {
       }),
     });
 
-    await request(makeApp())
+    const res = await request(makeApp())
       .post("/v2/webhooks/apple/ssn")
       .send({ signedPayload });
+    expect(res.status).toBe(200);
+    expect((res.body as AckBody).applied).toBe(true);
 
     const updated = await prisma.subscription.findUnique({
       where: { id: subscription.id },
@@ -367,9 +376,11 @@ describe("POST /v2/webhooks/apple/ssn", () => {
       }),
     });
 
-    await request(makeApp())
+    const res = await request(makeApp())
       .post("/v2/webhooks/apple/ssn")
       .send({ signedPayload });
+    expect(res.status).toBe(200);
+    expect((res.body as AckBody).applied).toBe(true);
 
     const updated = await prisma.subscription.findUnique({
       where: { id: subscription.id },
@@ -400,7 +411,7 @@ describe("POST /v2/webhooks/apple/ssn", () => {
     expect(rows).toHaveLength(0);
   });
 
-  test("replay (same transactionId) does not re-apply state — second flip is ignored", async () => {
+  test("replay (same notificationUUID) does not re-apply state — second flip is ignored", async () => {
     installLocalTestingVerifier();
     const otid = "1000000000000090";
     const { subscription } = await seedSubscription(otid);

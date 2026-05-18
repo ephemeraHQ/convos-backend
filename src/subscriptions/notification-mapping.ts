@@ -1,6 +1,5 @@
 import {
   NotificationTypeV2,
-  OfferType,
   Subtype,
   type JWSTransactionDecodedPayload,
 } from "@apple/app-store-server-library";
@@ -9,6 +8,7 @@ import {
   SubscriptionStatus,
   type NotificationStateUpdate,
 } from "@/subscriptions/repository";
+import { deriveSubscriptionStatusFromTransaction } from "@/subscriptions/status";
 
 type Input = {
   notificationType: string | undefined;
@@ -45,19 +45,18 @@ export const mapNotificationToUpdate = (
 
   switch (input.notificationType) {
     case NotificationTypeV2.SUBSCRIBED:
-    case NotificationTypeV2.DID_RENEW:
+    case NotificationTypeV2.DID_RENEW: {
+      const status = deriveSubscriptionStatusFromTransaction(transaction);
       return {
         ...tierAndPeriod,
         ...periodWindow,
-        status:
-          transaction.offerType === OfferType.INTRODUCTORY_OFFER
-            ? SubscriptionStatus.trial
-            : SubscriptionStatus.active,
-        isInTrial: transaction.offerType === OfferType.INTRODUCTORY_OFFER,
+        status,
+        isInTrial: status === SubscriptionStatus.trial,
         willRenew: true,
         cancelledAt: null,
         gracePeriodEnd: null,
       };
+    }
 
     case NotificationTypeV2.DID_FAIL_TO_RENEW:
       if (input.subtype === Subtype.GRACE_PERIOD) {

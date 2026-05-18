@@ -1,12 +1,14 @@
 import { LedgerReason } from "@prisma/client";
 import type { Request, Response } from "express";
 import { findCurrentByAccountId } from "@/subscriptions/repository";
+import { isEntitledSubscription } from "@/subscriptions/status";
 import { tierGrant } from "@/subscriptions/tier-config";
 import { prisma } from "@/utils/prisma";
 
 const MONTH_LABEL_FORMATTER = new Intl.DateTimeFormat("en-US", {
   month: "long",
   year: "numeric",
+  timeZone: "UTC",
 });
 
 const startOfNextMonth = (now: Date): Date =>
@@ -56,7 +58,7 @@ export async function creditsGetHandler(req: Request, res: Response) {
   try {
     const subscription = await findCurrentByAccountId(accountId);
 
-    if (!subscription) {
+    if (!subscription || !isEntitledSubscription(subscription)) {
       const now = new Date();
       res.status(200).json({
         balance: 0,
