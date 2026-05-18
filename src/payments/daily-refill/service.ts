@@ -126,7 +126,7 @@ export async function runDailyRefill(opts?: {
 
   // Fire-and-forget — never block the response on push delivery.
   if (summary.refilled.length > 0) {
-    void fanOutCreditsRefilled(summary.refilled, now).catch((err) => {
+    void fanOutCreditsRefilled(summary.refilled, now).catch((err: unknown) => {
       logger.error(
         { err, op: "daily_refill_notify" },
         "daily_refill.notify.fanout_failed",

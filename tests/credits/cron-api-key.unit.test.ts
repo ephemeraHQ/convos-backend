@@ -36,7 +36,9 @@ function mockReq(headerVal?: string) {
   } as unknown as Request;
 }
 
-afterEach(() => __setCronApiKeyOverrideForTests(undefined));
+afterEach(() => {
+  __setCronApiKeyOverrideForTests(undefined);
+});
 
 describe("requireCronApiKey", () => {
   test("missing header → 401", () => {
