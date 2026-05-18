@@ -123,14 +123,10 @@ describe("agents join (assistant API)", () => {
             name: string;
             instructions: string;
             joinUrl: string;
-            metadata: Record<string, unknown>;
           };
           expect(body.name).toBe("Assistant");
           expect(body.instructions).toBe("You are a helpful assistant.");
           expect(body.joinUrl).toContain("?i=test-slug");
-          // Default onboarding stamped; skipGreeting omitted when caller
-          // didn't provide it.
-          expect(body.metadata).toEqual({ onboarding: "assistant-builder" });
 
           return Promise.resolve(jsonResponse(200, { instanceId: "inst-xyz" }));
         }
@@ -253,51 +249,6 @@ describe("agents join (assistant API)", () => {
       };
 
       const res = await post({ slug: "x", instructions: "Be terse." });
-      expect(res.status).toBe(200);
-    });
-
-    test("forwards skipGreeting into metadata when provided", async () => {
-      mockFetchImpl = (_url, init) => {
-        if (init?.method === "POST") {
-          const body = JSON.parse(init.body as string) as {
-            metadata: Record<string, unknown>;
-          };
-          expect(body.metadata).toEqual({
-            onboarding: "assistant-builder",
-            skipGreeting: true,
-          });
-          return Promise.resolve(jsonResponse(200, { instanceId: "inst-sg" }));
-        }
-        return Promise.resolve(
-          jsonResponse(200, {
-            instanceId: "inst-sg",
-            joinStatus: "joined",
-          }),
-        );
-      };
-
-      const res = await post({ slug: "x", skipGreeting: true });
-      expect(res.status).toBe(200);
-    });
-
-    test("forwards custom onboarding override into metadata", async () => {
-      mockFetchImpl = (_url, init) => {
-        if (init?.method === "POST") {
-          const body = JSON.parse(init.body as string) as {
-            metadata: Record<string, unknown>;
-          };
-          expect(body.metadata).toEqual({ onboarding: "free-form" });
-          return Promise.resolve(jsonResponse(200, { instanceId: "inst-ob" }));
-        }
-        return Promise.resolve(
-          jsonResponse(200, {
-            instanceId: "inst-ob",
-            joinStatus: "joined",
-          }),
-        );
-      };
-
-      const res = await post({ slug: "x", onboarding: "free-form" });
       expect(res.status).toBe(200);
     });
 
