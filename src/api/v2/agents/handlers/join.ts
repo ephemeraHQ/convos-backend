@@ -9,12 +9,21 @@ import {
   getJoinWaitBudgetMs,
 } from "./assistant-config";
 
+// Per-join assistant-shaping knobs, forwarded onto convos-assistants'
+// free-form `metadata: Record<string, unknown>` bag. Each field is only
+// stamped onto metadata when the caller explicitly passes it — we do
+// not synthesize defaults at this layer.
+const optionsSchema = z
+  .object({
+    skipGreeting: z.boolean().optional(),
+    onboarding: z.string().min(1).max(64).optional(),
+  })
+  .strict();
+
 const bodySchema = z.object({
   slug: z.string().min(1, "Slug is required").max(2048),
   instructions: z.string().max(4096, "Instructions too long").optional(),
-  // Retained for client compatibility; the new assistant API does not
-  // accept this knob, so it is ignored when forwarding.
-  skipGreeting: z.boolean().optional(),
+  options: optionsSchema.optional(),
 });
 
 const FORCE_ERROR_DELAY_MS = 5_000;
@@ -196,8 +205,8 @@ export async function joinHandler(req: Request, res: Response) {
     return;
   }
 
-  const { slug, instructions, skipGreeting } = parsed.data;
-  req.log.info({ slug, skipGreeting }, "Agent join request received");
+  const { slug, instructions, options } = parsed.data;
+  req.log.info({ slug, options }, "Agent join request received");
 
   const assistantBaseUrl = assistantApiUrl.replace(/\/+$/, "");
   const authHeader = assistantApiKey ? `Bearer ${assistantApiKey}` : undefined;
@@ -210,15 +219,31 @@ export async function joinHandler(req: Request, res: Response) {
     };
     if (authHeader) dispatchHeaders.Authorization = authHeader;
 
+    // Only forward fields the caller explicitly passed — no defaults at
+    // this layer. Omitting `metadata` entirely when neither option is
+    // set keeps the upstream call shape clean.
+    const metadata: Record<string, unknown> = {};
+    if (options?.skipGreeting !== undefined) {
+      metadata.skipGreeting = options.skipGreeting;
+    }
+    if (options?.onboarding !== undefined) {
+      metadata.onboarding = options.onboarding;
+    }
+
+    const dispatchBody: Record<string, unknown> = {
+      name: "Assistant",
+      instructions: instructions || "You are a helpful assistant.",
+      joinUrl,
+    };
+    if (Object.keys(metadata).length > 0) {
+      dispatchBody.metadata = metadata;
+    }
+
     const dispatchRes = await fetch(`${assistantBaseUrl}/api/assistants`, {
       method: "POST",
       headers: dispatchHeaders,
       signal: AbortSignal.timeout(DISPATCH_TIMEOUT_MS),
-      body: JSON.stringify({
-        name: "Assistant",
-        instructions: instructions || "You are a helpful assistant.",
-        joinUrl,
-      }),
+      body: JSON.stringify(dispatchBody),
     });
 
     if (!dispatchRes.ok) {

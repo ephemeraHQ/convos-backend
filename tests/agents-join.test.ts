@@ -123,10 +123,13 @@ describe("agents join (assistant API)", () => {
             name: string;
             instructions: string;
             joinUrl: string;
+            metadata?: Record<string, unknown>;
           };
           expect(body.name).toBe("Assistant");
           expect(body.instructions).toBe("You are a helpful assistant.");
           expect(body.joinUrl).toContain("?i=test-slug");
+          // No options passed → no metadata in the upstream payload.
+          expect(body.metadata).toBeUndefined();
 
           return Promise.resolve(jsonResponse(200, { instanceId: "inst-xyz" }));
         }
@@ -250,6 +253,91 @@ describe("agents join (assistant API)", () => {
 
       const res = await post({ slug: "x", instructions: "Be terse." });
       expect(res.status).toBe(200);
+    });
+
+    test("forwards options.skipGreeting via metadata when provided", async () => {
+      mockFetchImpl = (_url, init) => {
+        if (init?.method === "POST") {
+          const body = JSON.parse(init.body as string) as {
+            metadata?: Record<string, unknown>;
+          };
+          expect(body.metadata).toEqual({ skipGreeting: true });
+          return Promise.resolve(jsonResponse(200, { instanceId: "inst-sg" }));
+        }
+        return Promise.resolve(
+          jsonResponse(200, {
+            instanceId: "inst-sg",
+            joinStatus: "joined",
+          }),
+        );
+      };
+
+      const res = await post({
+        slug: "x",
+        options: { skipGreeting: true },
+      });
+      expect(res.status).toBe(200);
+    });
+
+    test("forwards options.onboarding via metadata when provided", async () => {
+      mockFetchImpl = (_url, init) => {
+        if (init?.method === "POST") {
+          const body = JSON.parse(init.body as string) as {
+            metadata?: Record<string, unknown>;
+          };
+          expect(body.metadata).toEqual({ onboarding: "assistant-builder" });
+          return Promise.resolve(jsonResponse(200, { instanceId: "inst-ob" }));
+        }
+        return Promise.resolve(
+          jsonResponse(200, {
+            instanceId: "inst-ob",
+            joinStatus: "joined",
+          }),
+        );
+      };
+
+      const res = await post({
+        slug: "x",
+        options: { onboarding: "assistant-builder" },
+      });
+      expect(res.status).toBe(200);
+    });
+
+    test("forwards both options together when both provided", async () => {
+      mockFetchImpl = (_url, init) => {
+        if (init?.method === "POST") {
+          const body = JSON.parse(init.body as string) as {
+            metadata?: Record<string, unknown>;
+          };
+          expect(body.metadata).toEqual({
+            skipGreeting: false,
+            onboarding: "assistant-builder",
+          });
+          return Promise.resolve(jsonResponse(200, { instanceId: "inst-bo" }));
+        }
+        return Promise.resolve(
+          jsonResponse(200, {
+            instanceId: "inst-bo",
+            joinStatus: "joined",
+          }),
+        );
+      };
+
+      const res = await post({
+        slug: "x",
+        options: { skipGreeting: false, onboarding: "assistant-builder" },
+      });
+      expect(res.status).toBe(200);
+    });
+
+    test("rejects unknown keys inside options", async () => {
+      const res = await post({
+        slug: "x",
+        options: { skipGreeting: true, mystery: "value" },
+      });
+      expect(res.status).toBe(400);
+      const data = (await res.json()) as { success: boolean; error: string };
+      expect(data.error).toBe("INVALID_REQUEST");
     });
 
     test("omits Authorization header when ASSISTANT_API_KEY is empty", async () => {
