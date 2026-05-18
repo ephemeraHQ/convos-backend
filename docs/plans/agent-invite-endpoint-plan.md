@@ -63,20 +63,18 @@ POST /api/v2/agents/join
 Request validation (zod):
 
 ```typescript
-{
+const requestBody = z.object({
   slug: z.string().min(1).max(2048),
   instructions: z.string().optional(),
-}
+});
 ```
 
 Response shape:
 
 ```typescript
-// Success
-{ success: true, joined: boolean }
-
-// Error
-{ success: false, error: string, message: string }
+type Response =
+  | { success: true; joined: boolean }
+  | { success: false; error: string; message: string };
 ```
 
 Invite URL construction based on `XMTP_ENV`:
