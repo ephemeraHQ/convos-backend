@@ -185,12 +185,15 @@ async function pollUntilJoined(args: {
 export async function joinHandler(req: Request, res: Response) {
   // Cancel in-flight upstream work when the client disconnects before we've
   // responded. Saves backend + upstream load on abandoned joins (force-quit
-  // mid-provision, network blip mid-poll, etc.). The guard against firing
-  // post-response is `res.writableEnded` — `req.on('close')` also fires on
-  // natural connection close after we send the response, and we don't want
-  // to abort then.
+  // mid-provision, network blip mid-poll, etc.). Listen on `res` rather
+  // than `req`: `req.on('close')` can fire on body-stream end in some
+  // HTTP runtimes (Bun in particular) and would falsely abort before the
+  // handler has even reached the poll loop. `res.on('close')` fires when
+  // the underlying connection terminates, and the `!res.writableEnded`
+  // guard distinguishes "client disconnected before response" from
+  // "response completed normally."
   const clientDisconnect = new AbortController();
-  req.on("close", () => {
+  res.on("close", () => {
     if (!res.writableEnded) {
       clientDisconnect.abort();
     }
@@ -318,10 +321,11 @@ export async function joinHandler(req: Request, res: Response) {
       // 404 on POST /api/assistants is never a capacity issue — it's
       // almost always wrong ASSISTANT_API_URL or a deploy mismatch.
       // Log distinctly so operators can grep for misconfig vs other
-      // upstream failures without re-checking response statuses.
+      // upstream failures without re-checking response statuses. Don't
+      // log `slug` here — it's the join token (see sanitized log above).
       if (dispatchRes.status === 404) {
         req.log.error(
-          { assistantBaseUrl, instanceIdSlug: slug },
+          { assistantBaseUrl },
           "Assistant dispatch returned 404 — likely ASSISTANT_API_URL misconfiguration or upstream deploy mismatch",
         );
       }
@@ -348,6 +352,18 @@ export async function joinHandler(req: Request, res: Response) {
       req.log.error("Assistant dispatch request timed out");
       const { status, ...body } = ERRORS.AGENT_POOL_TIMEOUT;
       res.status(status).json({ success: false, ...body });
+      return;
+    }
+
+    // Client disconnected mid-dispatch — `clientDisconnect.signal` aborted
+    // the fetch (AbortSignal.any composed it with the timeout signal).
+    // There's no live response to send to, so just return silently
+    // instead of falling through to the generic 502 handler and writing
+    // to a closed connection.
+    if (error instanceof DOMException && error.name === "AbortError") {
+      req.log.info(
+        "Client disconnected during dispatch — aborting silently",
+      );
       return;
     }
 
