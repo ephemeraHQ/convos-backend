@@ -26,8 +26,9 @@ export const assistantStatusSchema = z.object({
   inboxId: z.string().nullable().optional(),
   conversationId: z.string().nullable().optional(),
   joinFailureReason: z.string().nullable().optional(),
-  createdAt: z.string().optional(),
-  destroyedAt: z.string().nullable().optional(),
+  // Unix epoch ms from a D1 INTEGER column — JSON numbers, not strings.
+  createdAt: z.number().optional(),
+  destroyedAt: z.number().nullable().optional(),
 });
 
 export type AssistantStatus = z.infer<typeof assistantStatusSchema>;

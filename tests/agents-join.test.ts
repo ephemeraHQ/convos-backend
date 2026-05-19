@@ -133,12 +133,19 @@ describe("agents join (assistant API)", () => {
 
           return Promise.resolve(jsonResponse(200, { instanceId: "inst-xyz" }));
         }
-        // GET poll
+        // GET poll — mirror real upstream shape (numeric epoch-ms
+        // timestamps) so schema drift on `createdAt`/`destroyedAt` surfaces
+        // in the inline poller too.
         expect(url).toBe(`${ASSISTANT_URL}/api/assistants/inst-xyz`);
         return Promise.resolve(
           jsonResponse(200, {
             instanceId: "inst-xyz",
             joinStatus: "joined",
+            inboxId: "inbox-1",
+            conversationId: "conv-1",
+            joinFailureReason: null,
+            createdAt: 1715000000000,
+            destroyedAt: null,
           }),
         );
       };
@@ -485,6 +492,8 @@ describe("agents join (assistant API)", () => {
         const headers = init?.headers as Record<string, string>;
         expect(headers.Authorization).toBe(`Bearer ${ASSISTANT_KEY}`);
 
+        // Mirror the real upstream shape (numeric epoch-ms timestamps) so
+        // schema drift on `createdAt` / `destroyedAt` would surface here.
         return Promise.resolve(
           jsonResponse(200, {
             instanceId: "inst-99",
@@ -492,6 +501,8 @@ describe("agents join (assistant API)", () => {
             inboxId: "inbox-1",
             conversationId: "conv-1",
             joinFailureReason: null,
+            createdAt: 1715000000000,
+            destroyedAt: null,
           }),
         );
       };
