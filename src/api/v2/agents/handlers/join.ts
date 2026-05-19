@@ -72,6 +72,7 @@ async function pollUntilJoined(args: {
   deadlineMs: number;
   pollIntervalMs: number;
   log: Request["log"];
+  abortSignal?: AbortSignal;
 }): Promise<PollOutcome> {
   const {
     assistantBaseUrl,
@@ -80,19 +81,35 @@ async function pollUntilJoined(args: {
     deadlineMs,
     pollIntervalMs,
     log,
+    abortSignal,
   } = args;
 
   const headers: Record<string, string> = {};
   if (authHeader) headers.Authorization = authHeader;
 
   while (Date.now() < deadlineMs) {
+    // Client disconnected before the deadline — stop polling. Any
+    // in-flight fetch below also receives the same signal and aborts.
+    if (abortSignal?.aborted) {
+      log.info(
+        { instanceId },
+        "Client disconnected during poll — aborting wait",
+      );
+      return { kind: "pending" };
+    }
+
     try {
       const upstream = await fetch(
         `${assistantBaseUrl}/api/assistants/${encodeURIComponent(instanceId)}`,
         {
           method: "GET",
           headers,
-          signal: AbortSignal.timeout(POLL_TIMEOUT_MS),
+          signal: abortSignal
+            ? AbortSignal.any([
+                AbortSignal.timeout(POLL_TIMEOUT_MS),
+                abortSignal,
+              ])
+            : AbortSignal.timeout(POLL_TIMEOUT_MS),
         },
       );
 
@@ -166,6 +183,19 @@ async function pollUntilJoined(args: {
  * | `X-Force-Error: 504` | 504 AGENT_POOL_TIMEOUT         |
  */
 export async function joinHandler(req: Request, res: Response) {
+  // Cancel in-flight upstream work when the client disconnects before we've
+  // responded. Saves backend + upstream load on abandoned joins (force-quit
+  // mid-provision, network blip mid-poll, etc.). The guard against firing
+  // post-response is `res.writableEnded` — `req.on('close')` also fires on
+  // natural connection close after we send the response, and we don't want
+  // to abort then.
+  const clientDisconnect = new AbortController();
+  req.on("close", () => {
+    if (!res.writableEnded) {
+      clientDisconnect.abort();
+    }
+  });
+
   // Force error responses for testing (non-production XMTP env only) — see JSDoc above for usage
   const forceError =
     XMTP_ENV !== "production" ? req.headers["x-force-error"] : undefined;
@@ -243,7 +273,10 @@ export async function joinHandler(req: Request, res: Response) {
     const dispatchRes = await fetch(`${assistantBaseUrl}/api/assistants`, {
       method: "POST",
       headers: dispatchHeaders,
-      signal: AbortSignal.timeout(DISPATCH_TIMEOUT_MS),
+      signal: AbortSignal.any([
+        AbortSignal.timeout(DISPATCH_TIMEOUT_MS),
+        clientDisconnect.signal,
+      ]),
       body: JSON.stringify(dispatchBody),
     });
 
@@ -266,6 +299,17 @@ export async function joinHandler(req: Request, res: Response) {
         const { status, ...body } = ERRORS.NO_AGENTS_AVAILABLE;
         res.status(status).json({ success: false, ...body });
         return;
+      }
+
+      // 404 on POST /api/assistants is never a capacity issue — it's
+      // almost always wrong ASSISTANT_API_URL or a deploy mismatch.
+      // Log distinctly so operators can grep for misconfig vs other
+      // upstream failures without re-checking response statuses.
+      if (dispatchRes.status === 404) {
+        req.log.error(
+          { assistantBaseUrl, instanceIdSlug: slug },
+          "Assistant dispatch returned 404 — likely ASSISTANT_API_URL misconfiguration or upstream deploy mismatch",
+        );
       }
 
       const { status, ...body } = ERRORS.AGENT_PROVISION_FAILED;
@@ -313,6 +357,7 @@ export async function joinHandler(req: Request, res: Response) {
     deadlineMs,
     pollIntervalMs: getJoinPollIntervalMs(),
     log: req.log,
+    abortSignal: clientDisconnect.signal,
   });
 
   if (outcome.kind === "joined") {
