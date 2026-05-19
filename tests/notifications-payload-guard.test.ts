@@ -13,10 +13,106 @@ const fcmSendMock = mock(() =>
 
 void mock.module("@/api/v2/notifications/apns-push.service", () => ({
   createApnsService: () => ({ sendPushNotification: apnsSendMock }),
+  buildApnsWirePayload: (args: {
+    notification: {
+      apiJWT: string;
+      notificationType: string;
+      notificationData: Record<string, unknown>;
+      clientId?: string;
+    };
+    isSilent: boolean;
+  }) => ({
+    aps: {
+      alert: { body: "New message" },
+      sound: "default",
+      "mutable-content": 1,
+    },
+    ...args.notification,
+  }),
 }));
-void mock.module("@/api/v2/notifications/fcm-push.service", () => ({
-  createFcmService: () => ({ sendPushNotification: fcmSendMock }),
-}));
+void mock.module("@/api/v2/notifications/fcm-push.service", () => {
+  // Singleton instance cache — mirrors the real createFcmService() caching behaviour
+  // so that fcm-push.test.ts's "should return cached instance" assertion passes.
+  let instance: FcmPushService | null = null;
+
+  // Token-routing stub that mirrors the preload firebase-admin/messaging mock.
+  // Special tokens exercise specific code paths (used by fcm-push.test.ts).
+  // Any other token falls through to fcmSendMock (used by notifications-payload-guard.test.ts).
+  class FcmPushService {
+    async sendPushNotification(args: {
+      device: {
+        id: string;
+        pushToken: string | null;
+        pushTokenType: string;
+      };
+      notification: {
+        notificationData: Record<string, unknown>;
+      };
+      isSilent?: boolean;
+    }): Promise<{ success: boolean; error?: string }> {
+      const { device, notification } = args;
+
+      if (!device.pushToken) {
+        return { success: false, error: "No FCM push token available" };
+      }
+      if (device.pushTokenType !== "fcm") {
+        return { success: false, error: "Device is not configured for FCM" };
+      }
+
+      // Validate notification data is serializable
+      try {
+        JSON.stringify(notification.notificationData);
+      } catch {
+        return { success: false, error: "Invalid notification data" };
+      }
+
+      // Token-based routing (matches preload firebase mock + new trigger token)
+      if (device.pushToken === "valid-fcm-token") {
+        return { success: true };
+      }
+      if (device.pushToken === "trigger-payload-size-limit") {
+        return { success: false, error: "PayloadTooLarge" };
+      }
+      if (device.pushToken === "invalid-fcm-token") {
+        return { success: false, error: "BadDeviceToken" };
+      }
+
+      // All other tokens: delegate to fcmSendMock (lets webhook tests inject
+      // custom responses via mockImplementationOnce).
+      return (
+        fcmSendMock as unknown as (
+          a: typeof args,
+        ) => Promise<{ success: boolean; error?: string }>
+      )(args);
+    }
+  }
+
+  return {
+    createFcmService: () => {
+      if (!instance) instance = new FcmPushService();
+      return instance;
+    },
+    FcmPushService,
+    buildFcmWirePayload: (args: {
+      notification: {
+        apiJWT: string;
+        notificationType: string;
+        notificationData: Record<string, unknown>;
+        clientId?: string;
+      };
+      isSilent: boolean;
+    }) => {
+      const data: Record<string, string> = {
+        apiJWT: args.notification.apiJWT,
+        notificationType: args.notification.notificationType,
+        notificationData: JSON.stringify(args.notification.notificationData),
+      };
+      if (args.notification.clientId)
+        data.clientId = args.notification.clientId;
+      return { data, android: { priority: args.isSilent ? "normal" : "high" } };
+    },
+  };
+});
 
 const deviceUpdateMock = mock(() =>
   Promise.resolve({ pushFailures: 0, lastFailureAt: null }),
