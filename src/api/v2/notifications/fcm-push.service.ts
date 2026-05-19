@@ -197,6 +197,10 @@ export class FcmPushService {
         return { success: false, error: "BadDeviceToken" };
       }
 
+      if (fcmError.code === "messaging/payload-size-limit-exceeded") {
+        return { success: false, error: "PayloadTooLarge" };
+      }
+
       return { success: false, error: fcmError.message || "Unknown FCM error" };
     }
   }
