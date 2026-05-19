@@ -8,14 +8,14 @@ import { composeAssistantPayload } from "@/api/v2/agents/lib/compose-assistant-p
 // Shared snapshot fixture — mirror of the one PR 1 in convos-assistants
 // checks in at
 //   runtime/convos-platform/skills/assistant-builder/scripts/handlers/__fixtures__/template-snapshot.json
-// The fixture is the *on-disk* `TEMPLATE.json` shape (includes `prompt`).
-// The composer's `metadata.template` is the *wire* shape — same fields
-// minus `prompt`, which rides separately as `instructions`. The worker
-// recombines them at the `/convos/init` boundary so the on-disk view is
-// what the runtime reads regardless of which writer (this composer or the
-// in-repo skill writer in convos-assistants) produced it. The recombined
-// view is what this test asserts against the fixture — that's the drift
-// contract between the two repos.
+//
+// Drift contract: the composer's `template` field is the on-disk
+// `TEMPLATE.json` shape verbatim. Both this composer (backend) and the
+// in-repo skill writer (convos-assistants PR 1 / PR 3) must produce
+// identical JSON for the same logical template, so the on-disk file
+// matches what the runtime reads regardless of which path wrote it.
+// The two fixture files are kept in sync manually — drift trips here
+// on either side.
 const fixturePath = path.join(
   path.dirname(fileURLToPath(import.meta.url)),
   "__fixtures__",
@@ -27,14 +27,13 @@ const snapshot = JSON.parse(fs.readFileSync(fixturePath, "utf8")) as Record<
 >;
 
 // Reconstruct the AgentTemplate Prisma row that — when run through the
-// composer — should produce metadata.template equal to the fixture.
+// composer — should produce `template` equal to the fixture.
 const rowFromSnapshot = (
   overrides: Partial<AgentTemplate> = {},
 ): AgentTemplate => ({
   id: snapshot.id as string,
   slug: snapshot.slug as string,
   // Not on the fixture (intentionally stripped from on-disk shape).
-  // Tests can override via the second arg.
   ownerAccountId: "00000000-0000-0000-0000-0000000000aa",
   forkedFromId: snapshot.forkedFromId as string | null,
   agentName: snapshot.agentName as string,
@@ -58,39 +57,24 @@ const rowFromSnapshot = (
 });
 
 describe("composeAssistantPayload", () => {
-  test("recombined wire payload reproduces the shared cross-repo on-disk snapshot", () => {
+  test("composed.template matches the shared cross-repo on-disk snapshot", () => {
     const composed = composeAssistantPayload({
       template: rowFromSnapshot(),
       joiningUserAccountId: "user-123",
     });
 
-    // Mirror the worker-side recompose at `init-runtime` in PR 2b:
-    //   const template = params.metadata?.template
-    //     ? { ...params.metadata.template, prompt: params.instructions }
-    //     : null;
-    // The resulting object is what lands on disk as `TEMPLATE.json` and
-    // is what the runtime reads. It must match the fixture byte-for-byte.
-    const onDiskShape: Record<string, unknown> = {
-      ...(composed.metadata.template as Record<string, unknown>),
-      prompt: composed.instructions,
-    };
-    expect(onDiskShape).toEqual(snapshot);
+    // The composer's `template` field IS the on-disk shape — full
+    // AgentTemplate JSON minus `ownerAccountId`. Must match byte-for-byte.
+    expect(composed.template as Record<string, unknown>).toEqual(snapshot);
   });
 
-  test("instructions carries template.prompt verbatim", () => {
+  test("template includes prompt verbatim (no longer split out)", () => {
     const composed = composeAssistantPayload({
       template: rowFromSnapshot(),
       joiningUserAccountId: "user-123",
     });
-    expect(composed.instructions).toBe(snapshot.prompt as string);
-  });
-
-  test("top-level name defaults to template.agentName", () => {
-    const composed = composeAssistantPayload({
-      template: rowFromSnapshot(),
-      joiningUserAccountId: "user-123",
-    });
-    expect(composed.name).toBe(snapshot.agentName as string);
+    const t = composed.template as Record<string, unknown>;
+    expect(t.prompt).toBe(snapshot.prompt as string);
   });
 
   test("top-level ownerAccountId is the joining user (not the template's owner)", () => {
@@ -101,42 +85,34 @@ describe("composeAssistantPayload", () => {
     expect(composed.ownerAccountId).toBe("user-123");
   });
 
-  test("metadata.template strips template.ownerAccountId entirely", () => {
+  test("template strips the template's own ownerAccountId entirely", () => {
     const composed = composeAssistantPayload({
       template: rowFromSnapshot({ ownerAccountId: "template-owner-99" }),
       joiningUserAccountId: "user-123",
     });
-    const m = composed.metadata.template as Record<string, unknown>;
-    expect("ownerAccountId" in m).toBe(false);
+    const t = composed.template as Record<string, unknown>;
+    expect("ownerAccountId" in t).toBe(false);
   });
 
-  test("metadata.template strips template.prompt entirely (rides on instructions)", () => {
+  test("publishedUrl is null for drafts (matches the fixture)", () => {
     const composed = composeAssistantPayload({
       template: rowFromSnapshot(),
       joiningUserAccountId: "user-123",
     });
-    const m = composed.metadata.template as Record<string, unknown>;
-    expect("prompt" in m).toBe(false);
+    const t = composed.template as Record<string, unknown>;
+    expect(t.publishedUrl).toBeNull();
   });
 
-  test("caller name override wins over template.agentName (on both top-level and metadata)", () => {
+  test("publishedUrl is populated for non-draft templates", () => {
     const composed = composeAssistantPayload({
-      template: rowFromSnapshot(),
-      overrides: { name: "Custom Name" },
+      template: rowFromSnapshot({
+        status: "published",
+        firstPublishedAt: new Date("2026-05-18T12:00:00.000Z"),
+      }),
       joiningUserAccountId: "user-123",
     });
-    expect(composed.name).toBe("Custom Name");
-    const m = composed.metadata.template as Record<string, unknown>;
-    expect(m.agentName).toBe("Custom Name");
-  });
-
-  test("caller profileImage override wins over template.avatarUrl in metadata", () => {
-    const composed = composeAssistantPayload({
-      template: rowFromSnapshot(),
-      overrides: { profileImage: "https://cdn.example.com/custom.png" },
-      joiningUserAccountId: "user-123",
-    });
-    const m = composed.metadata.template as Record<string, unknown>;
-    expect(m.avatarUrl).toBe("https://cdn.example.com/custom.png");
+    const t = composed.template as Record<string, unknown>;
+    expect(typeof t.publishedUrl).toBe("string");
+    expect((t.publishedUrl as string).length).toBeGreaterThan(0);
   });
 });

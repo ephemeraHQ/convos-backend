@@ -175,19 +175,16 @@ describe("agents join (assistant API)", () => {
           expect(headers.Authorization).toBe(`Bearer ${ASSISTANT_KEY}`);
 
           const body = JSON.parse(init.body as string) as {
-            name: string;
-            instructions: string;
             joinUrl: string;
-            metadata?: Record<string, unknown>;
+            template: unknown;
             ownerAccountId?: string;
             options?: Record<string, unknown>;
           };
-          // Bare join (no templateId) → upstream gets the default agent
-          // name, an empty `instructions` string, and no `metadata.template`.
-          expect(body.name).toBe("Assistant");
-          expect(body.instructions).toBe("");
+          // Bare join (no templateId) → `template: null` on the wire.
+          // No `name`/`instructions`/`metadata` fields — the upstream
+          // worker reads agent identity off `template` when present.
           expect(body.joinUrl).toContain("?i=test-slug");
-          expect(body.metadata).toBeUndefined();
+          expect(body.template).toBeNull();
           // No options passed → no `options` field in the upstream payload.
           expect(body.options).toBeUndefined();
 
@@ -540,25 +537,27 @@ describe("agents join (assistant API)", () => {
       expect(res.status).toBe(200);
     });
 
-    test("templateId path composes template metadata + prompt onto wire", async () => {
+    test("templateId path rides the AgentTemplate as a top-level `template` field", async () => {
       const template = baseTemplate({ agentName: "Brewski" });
       __setTemplateFinderForTests(() => Promise.resolve(template));
 
       mockFetchImpl = (_url, init) => {
         if (init?.method === "POST") {
           const body = JSON.parse(init.body as string) as {
-            name: string;
-            instructions: string;
-            metadata?: { template?: Record<string, unknown> };
+            joinUrl: string;
+            template: Record<string, unknown>;
             ownerAccountId?: string;
           };
-          expect(body.name).toBe("Brewski");
-          expect(body.instructions).toBe(template.prompt);
           expect(body.ownerAccountId).toBe("user-1");
-          expect(body.metadata?.template).toBeDefined();
-          expect(body.metadata?.template?.id).toBe(template.id);
-          expect(body.metadata?.template?.prompt).toBeUndefined();
-          expect(body.metadata?.template?.ownerAccountId).toBeUndefined();
+          // Full AgentTemplate JSON (including prompt) rides as a single
+          // top-level field. No `name`/`instructions`/`metadata` split.
+          expect(body.template).toBeDefined();
+          expect(body.template.id).toBe(template.id);
+          expect(body.template.agentName).toBe("Brewski");
+          expect(body.template.prompt).toBe(template.prompt);
+          // Template's own ownerAccountId is stripped — runtime doesn't
+          // need it. Joining user's account rides as the top-level field.
+          expect(body.template.ownerAccountId).toBeUndefined();
           return Promise.resolve(jsonResponse(200, { instanceId: "inst-t" }));
         }
         return Promise.resolve(
@@ -573,7 +572,7 @@ describe("agents join (assistant API)", () => {
       expect(res.status).toBe(200);
     });
 
-    test("caller-supplied name + profileImage override template defaults", async () => {
+    test("caller-supplied name + profileImage overlay agentName/avatarUrl inside template", async () => {
       const template = baseTemplate({
         agentName: "Brewski",
         avatarUrl: "https://cdn.example.com/brewski.png",
@@ -583,12 +582,10 @@ describe("agents join (assistant API)", () => {
       mockFetchImpl = (_url, init) => {
         if (init?.method === "POST") {
           const body = JSON.parse(init.body as string) as {
-            name: string;
-            metadata?: { template?: Record<string, unknown> };
+            template: Record<string, unknown>;
           };
-          expect(body.name).toBe("Custom Name");
-          expect(body.metadata?.template?.agentName).toBe("Custom Name");
-          expect(body.metadata?.template?.avatarUrl).toBe(
+          expect(body.template.agentName).toBe("Custom Name");
+          expect(body.template.avatarUrl).toBe(
             "https://cdn.example.com/custom.png",
           );
           return Promise.resolve(jsonResponse(200, { instanceId: "inst-o" }));
@@ -697,10 +694,10 @@ describe("agents join (assistant API)", () => {
         if (init?.method === "POST") {
           const body = JSON.parse(init.body as string) as {
             options?: { onboarding?: string };
-            metadata?: { template?: unknown };
+            template?: unknown;
           };
           expect(body.options?.onboarding).toBe("first-impression");
-          expect(body.metadata?.template).toBeDefined();
+          expect(body.template).toBeDefined();
           return Promise.resolve(jsonResponse(200, { instanceId: "inst-fi" }));
         }
         return Promise.resolve(

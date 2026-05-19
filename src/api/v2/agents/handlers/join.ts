@@ -13,8 +13,6 @@ import {
 
 const ASSISTANT_BUILDER_ONBOARDING = "assistant-builder";
 
-const DEFAULT_AGENT_NAME = "Assistant";
-
 type TemplateRow = Awaited<ReturnType<typeof prisma.agentTemplate.findUnique>>;
 type TemplateFinder = (id: string) => Promise<TemplateRow>;
 
@@ -392,34 +390,35 @@ export async function joinHandler(req: Request, res: Response) {
       upstreamOptions.onboarding = options.onboarding;
     }
 
-    // Compose the wire body. With `templateId`: composer fills `name`,
-    // `instructions` (= `template.prompt`), and `metadata.template` (the
-    // AgentTemplate JSON minus prompt/ownerAccountId), and a top-level
-    // `ownerAccountId` carrying the joining user's account. Bare join:
-    // `instructions` is empty, `metadata.template` is absent — the
-    // runtime falls back to no on-disk template (PR 2b semantics).
-    const composed = resolvedTemplate
+    // Compose the wire body. The full AgentTemplate JSON (minus the
+    // template's own `ownerAccountId`) rides as a single top-level
+    // `template` field — no `instructions`/`metadata.template` split.
+    // Bare join: `template` is null, the runtime falls back to no
+    // on-disk template (PR 2b semantics).
+    //
+    // Caller-supplied `name`/`profileImage` are applied here, before
+    // composing, by spreading onto the row. Keeps the composer a pure
+    // one-liner over the AgentTemplate row.
+    const templateWithOverrides: TemplateRow = resolvedTemplate
+      ? {
+          ...resolvedTemplate,
+          ...(name !== undefined ? { agentName: name } : {}),
+          ...(profileImage !== undefined ? { avatarUrl: profileImage } : {}),
+        }
+      : null;
+
+    const composed = templateWithOverrides
       ? composeAssistantPayload({
-          template: resolvedTemplate,
-          overrides: { name, profileImage },
+          template: templateWithOverrides,
           joiningUserAccountId,
         })
       : null;
 
-    const dispatchBody: Record<string, unknown> = composed
-      ? {
-          name: composed.name,
-          instructions: composed.instructions,
-          joinUrl,
-          metadata: composed.metadata,
-          ownerAccountId: composed.ownerAccountId,
-        }
-      : {
-          name: name ?? DEFAULT_AGENT_NAME,
-          instructions: "",
-          joinUrl,
-          ownerAccountId: joiningUserAccountId,
-        };
+    const dispatchBody: Record<string, unknown> = {
+      joinUrl,
+      template: composed?.template ?? null,
+      ownerAccountId: joiningUserAccountId,
+    };
     if (Object.keys(upstreamOptions).length > 0) {
       dispatchBody.options = upstreamOptions;
     }
