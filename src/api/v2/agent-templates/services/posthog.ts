@@ -4,8 +4,9 @@
  * Fires a single `builder.generation.completed` event per generation
  * pipeline invocation that reaches the LLM call (both success and error
  * paths). Capture is fire-and-forget — no blocking await on `capture()` or
- * `flush()`. Missing `POSTHOG_PROJECT_TOKEN`/`POSTHOG_HOST` env vars are
- * a silent no-op (the SDK never initialises, no outbound requests).
+ * `flush()`. A missing `POSTHOG_PROJECT_TOKEN` is a silent no-op (the SDK
+ * never initialises, no outbound requests). `POSTHOG_HOST` defaults to
+ * PostHog Cloud US in `config.ts`, so setting only the token Just Works.
  *
  * Test seam: `__resetPostHogForTests(override)` mirrors the
  * `__resetComposioServiceForTests` / `__resetGenerateTemplateForTests`
@@ -184,7 +185,7 @@ export function __resetPostHogForTests(
  * Fire a `builder.template.generated` PostHog event.
  *
  * - When a test override is installed, delegates to the override.
- * - When `POSTHOG_PROJECT_TOKEN`/`POSTHOG_HOST` are unset, returns immediately (no-op).
+ * - When `POSTHOG_PROJECT_TOKEN` is unset, returns immediately (no-op).
  * - Otherwise, calls `posthog.capture()` which is buffered/async internally —
  *   we do NOT await it, keeping the route response fast.
  */

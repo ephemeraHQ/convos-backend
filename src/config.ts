@@ -112,10 +112,12 @@ export const TWITTER_REPLY_MODEL =
 export const BUILDER_SITE_URL =
   process.env.BUILDER_SITE_URL?.trim() || "https://convos.org/assistants";
 
-// PostHog metering (optional — capture is no-op if either is unset).
+// PostHog metering (optional — capture is no-op if the token is unset).
+// Host defaults to PostHog Cloud US so setting only the token Just Works.
 export const POSTHOG_PROJECT_TOKEN =
   process.env.POSTHOG_PROJECT_TOKEN?.trim() || "";
-export const POSTHOG_HOST = process.env.POSTHOG_HOST?.trim() || "";
+export const POSTHOG_HOST =
+  process.env.POSTHOG_HOST?.trim() || "https://us.i.posthog.com";
 
 // Generation pipeline timing knobs (override via env in tests / staging).
 const parsePositiveInt = (
