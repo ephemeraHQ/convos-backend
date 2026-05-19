@@ -200,7 +200,13 @@ const bodySchema = z
       .default("draft"),
     // Caller-pinned subset of the AgentTemplate fields — see
     // `TemplatePrefillSchema` above for semantics and the allowlist.
-    prefill: TemplatePrefillSchema.optional(),
+    // An empty `{}` is normalized to `undefined`: it overlays nothing,
+    // so treating it differently from an omitted prefill would let two
+    // logically identical requests collide on an Idempotency-Key (one
+    // sending `{}`, one omitting) and store meaningless empty objects.
+    prefill: TemplatePrefillSchema.optional().transform((v) =>
+      v && Object.keys(v).length > 0 ? v : undefined,
+    ),
     // Asserted owner — honoured only when the caller is agent-key-auth'd;
     // ignored for JWT (JWT account always wins) and anonymous (falls
     // back to ADMIN). See the owner-resolution block below.
@@ -830,6 +836,21 @@ export async function generationsPostHandler(req: Request, res: Response) {
         ownerAccountId,
         row: racedRow,
         isClosed,
+      });
+      return;
+    }
+    // Race: the asserted owner account was deleted between our
+    // pre-check (`account.findUnique` in the owner-resolution block)
+    // and this insert, so the FK constraint fires. Map back to the
+    // documented 400 so the caller sees a consistent error code
+    // regardless of race timing — the only FK on this row that can
+    // miss in practice is `ownerAccountId → Account.id`.
+    if (
+      err instanceof Prisma.PrismaClientKnownRequestError &&
+      err.code === "P2003"
+    ) {
+      res.status(400).json({
+        error: "Asserted ownerAccountId does not exist",
       });
       return;
     }

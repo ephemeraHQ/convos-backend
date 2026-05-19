@@ -504,6 +504,32 @@ describe("POST /generations — prefill", () => {
     expect(row?.prefill).toBeNull();
   });
 
+  test("empty {} prefill is treated as omitted (no spurious 409, persists null)", async () => {
+    // `{}` overlays nothing, so it's semantically identical to an
+    // omitted prefill. The handler normalises it at parse time so the
+    // dedupe contract treats them as the same body, and the row stores
+    // null (not `{}`) for the empty case.
+    __resetGenerationExecutorForTests(() => Promise.resolve());
+
+    const a = await post(sampleBody, { headers: withKey("idem-empty-1") });
+    const b = await post(
+      { ...sampleBody, prefill: {} },
+      { headers: withKey("idem-empty-1") },
+    );
+
+    expect(a.status).toBe(202);
+    expect(b.status).toBe(202);
+    const aBody = (await a.json()) as { generationId: string };
+    const bBody = (await b.json()) as { generationId: string };
+    // Same logical body → dedupe replay, not 409.
+    expect(bBody.generationId).toBe(aBody.generationId);
+
+    const row = await prisma.agentTemplateGeneration.findUnique({
+      where: { id: aBody.generationId },
+    });
+    expect(row?.prefill).toBeNull();
+  });
+
   test("rejects keys outside the prefill allowlist → 400", async () => {
     // `TemplatePrefillSchema` is `.strict()` so a caller can't pin
     // server-managed fields (slug, id, status, ownerAccountId, …) by
