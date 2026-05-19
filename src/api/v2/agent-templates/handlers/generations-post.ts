@@ -674,6 +674,12 @@ export async function generationsPostHandler(req: Request, res: Response) {
   let ownerAccountId: string;
   if (isApiKeyListener && body.ownerAccountId !== undefined) {
     const assertedAccountId = body.ownerAccountId;
+    // Best-effort early validation — fail fast before the moderation
+    // calls below spend API budget on a request we're going to reject.
+    // The DB's FK constraint on `ownerAccountId → Account.id` is the
+    // canonical source of truth; a P2003 from the insert (handled in
+    // the catch block below) maps to the same 400 and covers the race
+    // where the account is deleted between this check and the insert.
     const exists = await prisma.account.findUnique({
       where: { id: assertedAccountId },
       select: { id: true },

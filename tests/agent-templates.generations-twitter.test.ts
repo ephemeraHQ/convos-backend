@@ -322,6 +322,27 @@ describe("POST /generations — twitter happy path", () => {
     expect(body.reply?.text).toBe(llmReply);
   });
 
+  test("prefilled agentName flows into composeReply", async () => {
+    // The executor applies the prefill before persisting AND before
+    // calling composeReply, so the Twitter reply reflects the pinned
+    // identity instead of the LLM's chosen name.
+    let capturedAgentName: string | undefined;
+    __resetComposeReplyForTests((input) => {
+      capturedAgentName = input.agentName;
+      return Promise.resolve({ replyText: "@some_user noop https://x.y/z" });
+    });
+
+    const res = await post(
+      twitterBody({ prefill: { agentName: "Pinned Name" } }),
+      {
+        headers: withKey("tw-prefill-name"),
+        query: "?wait_ms=10000",
+      },
+    );
+    expect(res.status).toBe(200);
+    expect(capturedAgentName).toBe("Pinned Name");
+  });
+
   test("composeReply throwing is caught and yields deterministic fallback", async () => {
     __resetComposeReplyForTests(() => Promise.reject(new Error("boom")));
 

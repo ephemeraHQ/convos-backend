@@ -578,6 +578,12 @@ describe("POST /generations — owner assertion", () => {
   });
 
   test("agent-key auth + body.ownerAccountId referring to a missing account → 400", async () => {
+    // Covers the common case (account never existed → pre-check fails
+    // → 400). The TOCTOU variant (account deleted between pre-check
+    // and insert → FK violation → 400) is harder to exercise without
+    // mocking `prisma.create` to throw P2003 on demand, but the catch
+    // block in the handler maps the same error to the same 400 via the
+    // FK constraint, so consistency holds across race timings.
     const res = await post(
       { ...sampleBody, ownerAccountId: NONEXISTENT_ACCOUNT_ID },
       { headers: withKey("owner-asserted-invalid") },
