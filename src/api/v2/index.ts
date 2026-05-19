@@ -11,7 +11,6 @@ import { lifecycleTestAuthMiddleware } from "@/middleware/lifecycleTestAuth";
 import {
   agentAssetLimiter,
   agentAssetPreAuthLimiter,
-  agentJoinLimiter,
   assetRenewalLimiter,
   inviteCodeRedeemLimiter,
 } from "@/middleware/rateLimit";
@@ -94,7 +93,10 @@ v2Router.use(
   agentAssetLimiter,
   agentAssetsRouter,
 );
-v2Router.use("/agents", agentJoinLimiter, authMiddleware, agentsRouter);
+// Per-route rate limiters live in agents.router.ts so the polling endpoint
+// (cheap) and the provisioning endpoint (expensive) get separately tuned
+// limits. authMiddleware applies to the whole subtree.
+v2Router.use("/agents", authMiddleware, agentsRouter);
 v2Router.use("/attachments", authMiddleware, attachmentsRouter);
 v2Router.use("/connections", authMiddleware, connectionsRouter);
 v2Router.use("/notifications/xmtp", webhookRouter);

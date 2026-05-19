@@ -17,13 +17,27 @@ export const authRateLimitMiddleware = rateLimit({
   message: "Too many authentication requests, please try again later",
 });
 
-// Rate limiting for agent join endpoint (10 requests per 5 minutes per IP)
+// Rate limiting for the agent-provisioning endpoint (POST /api/v2/agents/join).
+// Each request kicks off a container-boot workflow upstream — expensive,
+// hence the tight 10/5min cap.
 export const agentJoinLimiter = rateLimit({
   windowMs: 5 * 60 * 1000, // 5 minutes
   limit: 10,
   legacyHeaders: false,
   standardHeaders: "draft-8",
   message: { error: "Too many agent join requests, please try again later" },
+});
+
+// Rate limiting for the agent-status polling endpoint (GET /api/v2/agents/join/:instanceId).
+// Cheap upstream call (status read, no workflow side-effects); clients polling
+// every ~5s during the fallback async path need headroom above the tight
+// provisioning limit, so this is significantly more generous.
+export const agentJoinStatusLimiter = rateLimit({
+  windowMs: 5 * 60 * 1000, // 5 minutes
+  limit: 60, // ~1 poll every 5s for 5 minutes
+  legacyHeaders: false,
+  standardHeaders: "draft-8",
+  message: { error: "Too many status polls, please try again later" },
 });
 
 // Rate limiting for asset renewal endpoint (10 batch requests per hour per device)
