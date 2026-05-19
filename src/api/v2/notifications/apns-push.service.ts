@@ -197,7 +197,7 @@ export class ApnsPushService {
           notificationType: notification.notificationType,
           contentTopic,
           bundleId: this.config.bundleId,
-          payloadSize: JSON.stringify(payload).length,
+          payloadSize: Buffer.byteLength(JSON.stringify(payload), "utf8"),
           verbose: true,
         },
         "[APNS] Sending HTTP/2 push request",

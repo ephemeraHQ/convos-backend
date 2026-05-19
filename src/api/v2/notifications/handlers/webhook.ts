@@ -235,7 +235,7 @@ export async function handleV2Notification(args: {
       contentTopic: notification.message.content_topic,
       messageType: notification.message_context.message_type,
       isWelcome,
-      payloadSize: JSON.stringify(v2Notification.notificationData).length,
+      payloadSize: fullSize,
     },
     `${tag} Routing push notification to ${pushType} service`,
   );

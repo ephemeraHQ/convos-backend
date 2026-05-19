@@ -95,24 +95,8 @@ export class FcmPushService {
       return { success: false, error: "Device is not configured for FCM" };
     }
 
-    // FCM data messages - all values must be strings.
-    // Data-only messages are always delivered to onMessageReceived() on Android
-    // even when the app is in background, allowing proper handling.
-    const wirePayload = buildFcmWirePayload({
-      notification,
-      isSilent: !!isSilent,
-    });
-    const { data } = wirePayload;
-
-    // Derive identifierType for logging
-    const identifierType =
-      "clientId" in data
-        ? "clientId"
-        : "inboxId" in data
-          ? "inboxId"
-          : undefined;
-
     // Extract content topic for logging (if Protocol notification)
+    // Safe: notificationData is a JSON-deserialized object from the webhook (already zod-validated).
     const contentTopic =
       "contentTopic" in notification.notificationData
         ? (notification.notificationData as { contentTopic?: string })
@@ -120,6 +104,25 @@ export class FcmPushService {
         : undefined;
 
     try {
+      // FCM data messages - all values must be strings.
+      // Data-only messages are always delivered to onMessageReceived() on Android
+      // even when the app is in background, allowing proper handling.
+      // Placed inside try so JSON.stringify errors (BigInt, circular refs) are caught
+      // and returned as { success: false } rather than propagating as uncaught throws.
+      const wirePayload = buildFcmWirePayload({
+        notification,
+        isSilent: !!isSilent,
+      });
+      const { data } = wirePayload;
+
+      // Derive identifierType for logging
+      const identifierType =
+        "clientId" in data
+          ? "clientId"
+          : "inboxId" in data
+            ? "inboxId"
+            : undefined;
+
       logger.info(
         {
           deviceId: device.id,
@@ -129,7 +132,7 @@ export class FcmPushService {
           identifierType,
           contentTopic,
           firebaseProject: this.projectId,
-          payloadSize: data.notificationData.length,
+          payloadSize: Buffer.byteLength(JSON.stringify(wirePayload), "utf8"),
         },
         "[FCM] Sending push notification",
       );
