@@ -10,7 +10,12 @@ import {
 } from "@/notifications/client";
 import { createJwtToken } from "@/utils/jwt";
 import { prisma } from "@/utils/prisma";
-import { MAX_PUSH_FAILURES } from "../constants";
+import {
+  APNS_MAX_PAYLOAD_BYTES,
+  FCM_MAX_PAYLOAD_BYTES,
+  MAX_PUSH_FAILURES,
+  PUSH_PAYLOAD_STRIP_MARGIN_BYTES,
+} from "../constants";
 
 const notificationClient = createNotificationClient();
 
@@ -175,6 +180,36 @@ export async function handleV2Notification(args: {
       timestamp: notification.message.timestamp_ns,
     },
   };
+
+  // Proactive payload size guard.
+  // Reuses existing JSON.stringify measurement already used in service-level logs.
+  const maxBytes =
+    pushType === "fcm" ? FCM_MAX_PAYLOAD_BYTES : APNS_MAX_PAYLOAD_BYTES;
+  const stripThreshold = maxBytes - PUSH_PAYLOAD_STRIP_MARGIN_BYTES;
+  const fullSize = JSON.stringify(v2Notification).length;
+
+  let payloadStripped = false;
+  if (fullSize > stripThreshold && !isWelcome) {
+    v2Notification.notificationData = {
+      contentTopic: notification.message.content_topic,
+      messageType: notification.message_context.message_type,
+      timestamp: notification.message.timestamp_ns,
+      // encryptedMessage omitted
+    };
+    payloadStripped = true;
+    req.log.warn(
+      {
+        deviceId: client.deviceId,
+        pushTokenType: pushType,
+        contentTopic: notification.message.content_topic,
+        messageType: notification.message_context.message_type,
+        fullSize,
+        stripThreshold,
+        maxBytes,
+      },
+      `${tag} Payload exceeds strip threshold – omitting encryptedMessage`,
+    );
+  }
 
   // Route to appropriate push service based on token type
   let result: { success: boolean; error?: string };
