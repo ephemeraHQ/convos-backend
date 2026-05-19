@@ -120,6 +120,14 @@ export async function subscriptionVerifyHandler(req: Request, res: Response) {
   // client or a non-subscription product).
   const appAccountToken = decoded.appAccountToken;
   if (!appAccountToken || !uuidPattern.test(appAccountToken)) {
+    req.log.warn(
+      {
+        accountId,
+        hasAppAccountToken: appAccountToken !== undefined,
+        transactionId: decoded.transactionId,
+      },
+      "subscription.verify.invalid_app_account_token",
+    );
     res
       .status(400)
       .json({ error: "Apple transaction has no valid appAccountToken" });

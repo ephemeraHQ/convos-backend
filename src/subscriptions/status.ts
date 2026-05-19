@@ -73,6 +73,15 @@ export const effectiveSubscriptionStatus = (
     }
   }
 
+  // TODO(v1.1): billingRetry has no TTL here — Apple's billing retry window
+  // is up to 60 days, after which they send EXPIRED. If that final webhook
+  // is dropped (network, mis-config, Apple delay), this status persists and
+  // the user stays entitled indefinitely. The Phase 7 reconciliation
+  // worker is the intended safety net, but adding a billingRetryEndsAt
+  // column + a `nowMs > billingRetryEndsAt` check here would be a
+  // self-contained backstop. Not pre-merge-blocking: real billing retries
+  // resolve within hours/days for the vast majority of customers.
+
   return subscription.status;
 };
 

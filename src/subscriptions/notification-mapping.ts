@@ -7,6 +7,8 @@ import { productMapping } from "@/subscriptions/product-mapping";
 import {
   SubscriptionStatus,
   type NotificationStateUpdate,
+  type SubscriptionPeriod,
+  type SubscriptionTier,
 } from "@/subscriptions/repository";
 import { deriveSubscriptionStatusFromTransaction } from "@/subscriptions/status";
 
@@ -37,10 +39,25 @@ export const mapNotificationToUpdate = (
     };
   })();
 
-  const tierAndPeriod = (() => {
-    if (!transaction.productId) return {};
-    const { tier, period } = productMapping(transaction.productId);
-    return { tier, period, productId: transaction.productId };
+  // Unknown SKU (deprecated product, drift between App Store Connect and the
+  // backend, or a notification type that doesn't carry an actionable
+  // product) must not crash the webhook — Apple would retry indefinitely.
+  // Return null and let the per-case switch decide whether to skip the
+  // update (DID_CHANGE_RENEWAL_PREF) or apply the rest of the diff without
+  // tier fields (SUBSCRIBED/DID_RENEW). The receipt is still recorded for
+  // audit either way.
+  const tierAndPeriod: {
+    tier: SubscriptionTier;
+    period: SubscriptionPeriod;
+    productId: string;
+  } | null = (() => {
+    if (!transaction.productId) return null;
+    try {
+      const { tier, period } = productMapping(transaction.productId);
+      return { tier, period, productId: transaction.productId };
+    } catch {
+      return null;
+    }
   })();
 
   switch (input.notificationType) {
@@ -48,7 +65,7 @@ export const mapNotificationToUpdate = (
     case NotificationTypeV2.DID_RENEW: {
       const status = deriveSubscriptionStatusFromTransaction(transaction);
       return {
-        ...tierAndPeriod,
+        ...(tierAndPeriod ?? {}),
         ...periodWindow,
         status,
         isInTrial: status === SubscriptionStatus.trial,
@@ -94,10 +111,11 @@ export const mapNotificationToUpdate = (
 
     case NotificationTypeV2.DID_CHANGE_RENEWAL_PREF:
       // Tier upgrade/downgrade — productId carries the new tier. Without
-      // it there is no state change to apply; return null so the caller
-      // skips the Subscription update entirely (still acks the receipt for
-      // audit) instead of writing an empty update that just bumps updatedAt.
-      if (!transaction.productId) return null;
+      // a recognized productId there is no state change to apply; return
+      // null so the caller skips the Subscription update entirely (still
+      // acks the receipt for audit) instead of writing an empty update
+      // that just bumps updatedAt.
+      if (!tierAndPeriod) return null;
       return tierAndPeriod;
 
     case NotificationTypeV2.PRICE_INCREASE:

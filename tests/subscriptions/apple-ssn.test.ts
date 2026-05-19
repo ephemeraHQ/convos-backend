@@ -389,6 +389,40 @@ describe("POST /v2/webhooks/apple/ssn", () => {
     expect(updated?.productId).toBe("app.convos.subs.pro.monthly");
   });
 
+  test("unrecognized productId on DID_RENEW: acks 200, no crash, status still updates", async () => {
+    installLocalTestingVerifier();
+    const otid = "1000000000000075";
+    const { subscription: original } = await seedSubscription(otid);
+
+    const signedPayload = signNotification({
+      notificationType: "DID_RENEW",
+      signedTransactionInfo: signTransaction({
+        originalTransactionId: otid,
+        transactionId: "3000000000000075",
+        productId: "app.convos.subs.unknown.future",
+        expiresDate: new Date("2026-08-01T00:00:00.000Z").getTime(),
+      }),
+    });
+
+    const res = await request(makeApp())
+      .post("/v2/webhooks/apple/ssn")
+      .send({ signedPayload });
+    // Critical: must NOT 500 on unknown SKU — Apple would retry indefinitely.
+    expect(res.status).toBe(200);
+    expect((res.body as AckBody).applied).toBe(true);
+
+    const after = await prisma.subscription.findUnique({
+      where: { id: original.id },
+    });
+    // Tier/productId unchanged (unknown SKU not mapped),
+    // but status + period window did update.
+    expect(after?.tier).toBe(original.tier);
+    expect(after?.productId).toBe(original.productId);
+    expect(after?.currentPeriodEnd.toISOString()).toBe(
+      "2026-08-01T00:00:00.000Z",
+    );
+  });
+
   test("DID_CHANGE_RENEWAL_PREF without productId: acks 200, no Subscription update", async () => {
     installLocalTestingVerifier();
     const otid = "1000000000000071";
