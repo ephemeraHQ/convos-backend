@@ -236,7 +236,16 @@ export async function joinHandler(req: Request, res: Response) {
   }
 
   const { slug, instructions, options } = parsed.data;
-  req.log.info({ slug, options }, "Agent join request received");
+  // Avoid logging the raw slug (it's a join-token granting conversation
+  // access) and the raw `options` (caller-controlled input). Log presence
+  // flags + option keys instead so volumes/cardinality stay bounded.
+  req.log.info(
+    {
+      hasInstructions: instructions !== undefined,
+      optionKeys: options ? Object.keys(options) : [],
+    },
+    "Agent join request received",
+  );
 
   const assistantBaseUrl = assistantApiUrl.replace(/\/+$/, "");
   const authHeader = assistantApiKey ? `Bearer ${assistantApiKey}` : undefined;
@@ -263,7 +272,12 @@ export async function joinHandler(req: Request, res: Response) {
 
     const dispatchBody: Record<string, unknown> = {
       name: "Assistant",
-      instructions: instructions || "You are a helpful assistant.",
+      // `??` (not `||`) so an explicit empty string from the caller is
+      // forwarded as-is, not silently replaced with the default. The
+      // schema accepts `""` today; tightening to `.min(1)` would be the
+      // alternative, but the upstream is the place to validate prompt
+      // emptiness now that PR 2a is dropping this field entirely.
+      instructions: instructions ?? "You are a helpful assistant.",
       joinUrl,
     };
     if (Object.keys(upstreamOptions).length > 0) {
