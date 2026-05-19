@@ -94,6 +94,18 @@ describe("buildJoinPayload", () => {
     expect("ownerAccountId" in t).toBe(false);
   });
 
+  test("template strips `owner` too — guard against serializer regression", () => {
+    // If a future maintainer ever flips `serializeAgentTemplate` to
+    // expand `owner` by default, this builder must not silently leak
+    // the relation onto the wire — runtime doesn't expect it.
+    const payload = buildJoinPayload({
+      template: rowFromSnapshot(),
+      joiningUserAccountId: "user-123",
+    });
+    const t = payload.template as Record<string, unknown>;
+    expect("owner" in t).toBe(false);
+  });
+
   test("publishedUrl is null for drafts (matches the fixture)", () => {
     const payload = buildJoinPayload({
       template: rowFromSnapshot(),

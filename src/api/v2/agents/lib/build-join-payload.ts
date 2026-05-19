@@ -36,14 +36,23 @@ export function buildJoinPayload(args: {
   joiningUserAccountId: string;
 }): JoinPayload {
   // `serializeAgentTemplate` returns either `{ ownerAccountId }` or
-  // `{ owner }` depending on whether the caller asked it to expand the
-  // owner relation — TS sees the return as a discriminated union. We
-  // never pass `options.owner`, so the runtime always lands on the
-  // `ownerAccountId` branch; widen the type so we can destructure it.
+  // `{ owner }` depending on whether `options.owner` was passed — TS
+  // sees the return as a discriminated union. We don't pass
+  // `options.owner` here, but widening with `?: never`-style optionals
+  // (rather than asserting one branch) means we strip *both* keys
+  // unconditionally, so if a future maintainer changes the serializer's
+  // default to emit `owner` we don't silently leak it onto the wire.
   const serialized = serializeAgentTemplate(args.template) as ReturnType<
     typeof serializeAgentTemplate
-  > & { ownerAccountId: string };
-  const { ownerAccountId: _templateOwnerAccountId, ...template } = serialized;
+  > & {
+    ownerAccountId?: string;
+    owner?: unknown;
+  };
+  const {
+    ownerAccountId: _templateOwnerAccountId,
+    owner: _templateOwner,
+    ...template
+  } = serialized;
 
   return {
     template,
