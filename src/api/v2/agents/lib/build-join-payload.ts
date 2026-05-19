@@ -1,10 +1,11 @@
 import type { AgentTemplate } from "@prisma/client";
 import { serializeAgentTemplate } from "@/api/v2/agent-templates/lib/serialize-agent-template";
 
-// The on-disk `TEMPLATE.json` shape (see convos-assistants PR 1672) —
-// the full AgentTemplate JSON minus `ownerAccountId`. The runtime
-// doesn't need to know who owns its template; the catalog row still
-// has it server-side for authorization checks.
+// Wire shape for the `template` field on `/api/assistants` — the full
+// AgentTemplate JSON minus `ownerAccountId`. The runtime persists this
+// verbatim as its on-disk `TEMPLATE.json` and doesn't need to know who
+// owns its template; the catalog row keeps `ownerAccountId` server-side
+// for authorization checks.
 export type TemplateForWire = Omit<
   ReturnType<typeof serializeAgentTemplate>,
   "ownerAccountId" | "owner"
@@ -23,8 +24,8 @@ export type JoinPayload = {
  *  - Strip the template's own `ownerAccountId` (runtime never needs to
  *    know who owns its template).
  *  - Pair the stripped template with the **joining user's** accountId,
- *    which the runtime uses later to authenticate `/generations` calls
- *    in PR 3.
+ *    which the runtime later asserts back to the backend when creating
+ *    templates the user owns mid-conversation.
  *
  * Caller-supplied agent-identity overrides (`name`/`profileImage`) are
  * applied at the handler layer by spreading them onto the row before

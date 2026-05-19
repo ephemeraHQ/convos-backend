@@ -5,17 +5,15 @@ import type { AgentTemplate, PublishStatus } from "@prisma/client";
 import { describe, expect, test } from "bun:test";
 import { buildJoinPayload } from "@/api/v2/agents/lib/build-join-payload";
 
-// Shared snapshot fixture — mirror of the one PR 1 in convos-assistants
-// checks in at
-//   runtime/convos-platform/skills/assistant-builder/scripts/handlers/__fixtures__/template-snapshot.json
+// Cross-repo drift contract for the on-disk `TEMPLATE.json` shape.
 //
-// Drift contract: the payload's `template` field is the on-disk
-// `TEMPLATE.json` shape verbatim. Both this builder (backend) and the
-// in-repo skill writer (convos-assistants PR 1 / PR 3) must produce
-// identical JSON for the same logical template, so the on-disk file
-// matches what the runtime reads regardless of which path wrote it.
-// The two fixture files are kept in sync manually — drift trips here
-// on either side.
+// The payload's `template` field is the same JSON the assistant runtime
+// (convos-assistants) writes to its on-disk `TEMPLATE.json`, and both
+// writers must produce identical output for the same logical template
+// so the runtime reads consistent state regardless of which side wrote
+// it. The mirror fixture lives in convos-assistants at
+//   runtime/convos-platform/skills/assistant-builder/scripts/handlers/__fixtures__/template-snapshot.json
+// and is kept in sync manually — drift trips this test on either side.
 const fixturePath = path.join(
   path.dirname(fileURLToPath(import.meta.url)),
   "__fixtures__",

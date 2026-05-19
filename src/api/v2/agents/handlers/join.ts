@@ -287,8 +287,10 @@ export async function joinHandler(req: Request, res: Response) {
   // here is defense-in-depth — if the route ever gets remounted without
   // auth, or the middleware order regresses, we fail closed rather than
   // dispatching an assistant with `ownerAccountId: undefined` and
-  // silently breaking downstream authorization (PR 3 will check this
-  // value to authenticate user-owned template creations).
+  // silently breaking downstream authorization (the runtime asserts
+  // this value back to the backend when creating user-owned templates
+  // mid-conversation, and a phantom owner there would corrupt the
+  // ownership chain).
   const joiningUserAccountId = res.locals.accountId;
   if (
     typeof joiningUserAccountId !== "string" ||
@@ -407,9 +409,8 @@ export async function joinHandler(req: Request, res: Response) {
 
     // Build the wire body. The full AgentTemplate JSON (minus the
     // template's own `ownerAccountId`) rides as a single top-level
-    // `template` field — no `instructions`/`metadata.template` split.
-    // Bare join: `template` is null, the runtime falls back to no
-    // on-disk template (PR 2b semantics).
+    // `template` field. Bare join: `template` is null and the runtime
+    // provisions an agent with no template on disk.
     //
     // Caller-supplied `name`/`profileImage` are applied here by
     // spreading onto the row before `buildJoinPayload`, which keeps the
