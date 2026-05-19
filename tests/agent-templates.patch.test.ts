@@ -110,6 +110,7 @@ const expectTemplateShape = (body: TemplateBody) => {
     "object",
     "ownerAccountId",
     "prompt",
+    "publishedUrl",
     "slug",
     "status",
     "tools",

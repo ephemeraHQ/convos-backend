@@ -1,10 +1,22 @@
 import type { Account, AgentTemplate } from "@prisma/client";
+import { BUILDER_SITE_URL } from "@/config";
+import { buildSlug } from "@/utils/slug-hash";
 
 export const serializeAccount = (account: Account) => ({
   object: "account",
   id: account.id,
   createdAt: account.createdAt.toISOString(),
 });
+
+// `template.slug` is the BASE slug ("brewski"); public URLs use the HASHED
+// form ("brewski.x4f9k") that the resolver in
+// `lib/resolve-id-or-hashed-slug.ts` matches against. Single server-side
+// source for URL format — clients (iOS, runtime, web) read this field
+// rather than rebuilding the URL from `slug`. `null` for drafts.
+const publishedUrlFor = (template: AgentTemplate): string | null => {
+  if (template.status === "draft") return null;
+  return `${BUILDER_SITE_URL}/${buildSlug(template.slug, template.id)}`;
+};
 
 /**
  * Pure formatter — must NOT perform I/O. Pass related rows through
@@ -38,6 +50,7 @@ export const serializeAgentTemplate = (
   connections: template.connections,
   version: template.version,
   firstPublishedAt: template.firstPublishedAt?.toISOString() ?? null,
+  publishedUrl: publishedUrlFor(template),
   status: template.status,
   featured: template.featured,
   createdAt: template.createdAt.toISOString(),
