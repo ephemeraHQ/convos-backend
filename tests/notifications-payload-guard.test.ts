@@ -1,16 +1,6 @@
-import {
-  afterEach,
-  beforeEach,
-  describe,
-  expect,
-  mock,
-  test,
-} from "bun:test";
+import type { ClientIdentifier, DeviceRegistration } from "@prisma/client";
+import { beforeEach, describe, expect, mock, test } from "bun:test";
 import type { Request } from "express";
-import type {
-  ClientIdentifier,
-  DeviceRegistration,
-} from "@prisma/client";
 
 // ---- Mocks (must be installed BEFORE importing the SUT) ----
 
@@ -21,15 +11,19 @@ const fcmSendMock = mock(() =>
   Promise.resolve({ success: true } as { success: boolean; error?: string }),
 );
 
-mock.module("@/api/v2/notifications/apns-push.service", () => ({
+void mock.module("@/api/v2/notifications/apns-push.service", () => ({
   createApnsService: () => ({ sendPushNotification: apnsSendMock }),
 }));
-mock.module("@/api/v2/notifications/fcm-push.service", () => ({
+void mock.module("@/api/v2/notifications/fcm-push.service", () => ({
   createFcmService: () => ({ sendPushNotification: fcmSendMock }),
 }));
 
-const deviceUpdateMock = mock(() => Promise.resolve({ pushFailures: 0, lastFailureAt: null }));
-const deviceTxMock = mock(() => Promise.resolve({ pushFailures: 1, lastFailureAt: new Date() }));
+const deviceUpdateMock = mock(() =>
+  Promise.resolve({ pushFailures: 0, lastFailureAt: null }),
+);
+const deviceTxMock = mock(() =>
+  Promise.resolve({ pushFailures: 1, lastFailureAt: new Date() }),
+);
 const clientDeleteMock = mock(() => Promise.resolve());
 const txMock = mock(async (fn: (tx: unknown) => Promise<unknown>) =>
   fn({
@@ -40,7 +34,7 @@ const txMock = mock(async (fn: (tx: unknown) => Promise<unknown>) =>
   }),
 );
 
-mock.module("@/utils/prisma", () => ({
+void mock.module("@/utils/prisma", () => ({
   prisma: {
     deviceRegistration: { update: deviceUpdateMock },
     clientIdentifier: { delete: clientDeleteMock },
@@ -48,15 +42,18 @@ mock.module("@/utils/prisma", () => ({
   },
 }));
 
-mock.module("@/notifications/client", () => ({
+void mock.module("@/notifications/client", () => ({
   createNotificationClient: () => ({
     deleteInstallation: mock(() => Promise.resolve()),
   }),
-  webhookNotificationBodySchema: { safeParse: () => ({ success: true, data: {} }) },
+  webhookNotificationBodySchema: {
+    safeParse: () => ({ success: true, data: {} }),
+  },
 }));
 
-mock.module("@/utils/jwt", () => ({
-  createJwtToken: () => Promise.resolve("test-jwt-700-bytes-" + "x".repeat(680)),
+void mock.module("@/utils/jwt", () => ({
+  createJwtToken: () =>
+    Promise.resolve("test-jwt-700-bytes-" + "x".repeat(680)),
 }));
 
 const { handleV2Notification } = await import(
@@ -66,6 +63,9 @@ const { handleV2Notification } = await import(
 // ---- Test helpers ----
 
 type LogLine = { level: string; obj: Record<string, unknown>; msg: string };
+type SendCall = {
+  notification: { notificationData: { encryptedMessage?: string } };
+};
 
 function makeReq(): Request & { capturedLogs: LogLine[] } {
   const capturedLogs: LogLine[] = [];
@@ -77,7 +77,9 @@ function makeReq(): Request & { capturedLogs: LogLine[] } {
     error: (obj: Record<string, unknown>, msg: string) =>
       capturedLogs.push({ level: "error", obj, msg }),
   };
-  return { log, capturedLogs } as unknown as Request & { capturedLogs: LogLine[] };
+  return { log, capturedLogs } as unknown as Request & {
+    capturedLogs: LogLine[];
+  };
 }
 
 function makeClient(pushType: "apns" | "fcm"): ClientIdentifier & {
@@ -152,9 +154,8 @@ describe("handleV2Notification – proactive size guard", () => {
 
     expect(apnsSendMock).toHaveBeenCalledTimes(1);
     const apnsCalls = apnsSendMock.mock.calls as unknown[][];
-    const dispatched = (apnsCalls[0]![0] as {
-      notification: { notificationData: { encryptedMessage?: string } };
-    }).notification;
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion
+    const dispatched = (apnsCalls[0]![0] as SendCall).notification;
     expect(dispatched.notificationData.encryptedMessage).toBeUndefined();
 
     const stripLog = req.capturedLogs.find((l) =>
@@ -173,9 +174,8 @@ describe("handleV2Notification – proactive size guard", () => {
 
     expect(fcmSendMock).toHaveBeenCalledTimes(1);
     const fcmCalls = fcmSendMock.mock.calls as unknown[][];
-    const dispatched = (fcmCalls[0]![0] as {
-      notification: { notificationData: { encryptedMessage?: string } };
-    }).notification;
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion
+    const dispatched = (fcmCalls[0]![0] as SendCall).notification;
     expect(dispatched.notificationData.encryptedMessage).toBeUndefined();
   });
 
@@ -188,9 +188,8 @@ describe("handleV2Notification – proactive size guard", () => {
 
     expect(apnsSendMock).toHaveBeenCalledTimes(1);
     const apnsCallsUnder = apnsSendMock.mock.calls as unknown[][];
-    const dispatched = (apnsCallsUnder[0]![0] as {
-      notification: { notificationData: { encryptedMessage?: string } };
-    }).notification;
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion
+    const dispatched = (apnsCallsUnder[0]![0] as SendCall).notification;
     expect(dispatched.notificationData.encryptedMessage).toBeDefined();
 
     const stripLog = req.capturedLogs.find((l) =>
@@ -212,9 +211,8 @@ describe("handleV2Notification – proactive size guard", () => {
 
     expect(apnsSendMock).toHaveBeenCalledTimes(1);
     const apnsCallsWelcome = apnsSendMock.mock.calls as unknown[][];
-    const dispatched = (apnsCallsWelcome[0]![0] as {
-      notification: { notificationData: { encryptedMessage?: string } };
-    }).notification;
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion
+    const dispatched = (apnsCallsWelcome[0]![0] as SendCall).notification;
     expect(dispatched.notificationData.encryptedMessage).toBeUndefined();
 
     // Welcome path logs its own info line; size-guard warn should NOT also fire
@@ -245,22 +243,22 @@ describe("handleV2Notification – reactive PayloadTooLarge retry", () => {
     const reactiveCalls = apnsSendMock.mock.calls as unknown[][];
 
     // First call: encryptedMessage present
-    const first = (reactiveCalls[0]![0] as {
-      notification: { notificationData: { encryptedMessage?: string } };
-    }).notification;
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion
+    const first = (reactiveCalls[0]![0] as SendCall).notification;
     expect(first.notificationData.encryptedMessage).toBeDefined();
 
     // Second call: encryptedMessage stripped
-    const second = (reactiveCalls[1]![0] as {
-      notification: { notificationData: { encryptedMessage?: string } };
-    }).notification;
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion
+    const second = (reactiveCalls[1]![0] as SendCall).notification;
     expect(second.notificationData.encryptedMessage).toBeUndefined();
 
     // pushFailures NOT bumped (retry succeeded; also PayloadTooLarge wouldn't bump anyway)
     expect(deviceTxMock).not.toHaveBeenCalled();
 
     const retryLog = req.capturedLogs.find((l) =>
-      l.msg.includes("PayloadTooLarge after proactive guard – retrying stripped"),
+      l.msg.includes(
+        "PayloadTooLarge after proactive guard – retrying stripped",
+      ),
     );
     expect(retryLog).toBeDefined();
     expect(retryLog?.level).toBe("warn");

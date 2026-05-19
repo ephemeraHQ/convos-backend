@@ -2,14 +2,16 @@ import { describe, expect, mock, test } from "bun:test";
 
 const sendMock = mock(() => Promise.resolve("ignored"));
 
-mock.module("firebase-admin/messaging", () => ({
+void mock.module("firebase-admin/messaging", () => ({
   getMessaging: () => ({ send: sendMock }),
 }));
-mock.module("@/utils/firebase", () => ({
+void mock.module("@/utils/firebase", () => ({
   getFirebaseApp: () => ({}),
 }));
 
-const { FcmPushService } = await import("@/api/v2/notifications/fcm-push.service");
+const { FcmPushService } = await import(
+  "@/api/v2/notifications/fcm-push.service"
+);
 
 describe("FcmPushService – PayloadTooLarge classification", () => {
   const service = new FcmPushService();

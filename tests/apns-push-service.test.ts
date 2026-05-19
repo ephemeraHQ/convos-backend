@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { describe, expect, mock, test } from "bun:test";
 import type { ApnsDevice } from "@/api/v2/notifications/apns-push.service";
 
 type EventListener = (...args: unknown[]) => void;
@@ -33,10 +33,14 @@ class FakeRequest {
     // Simulate APNS response asynchronously
     queueMicrotask(() => {
       this.emit("response", {
-        ":status": (globalThis as { __apnsTestStatus?: number }).__apnsTestStatus ?? 413,
+        ":status":
+          (globalThis as { __apnsTestStatus?: number }).__apnsTestStatus ?? 413,
         "apns-id": "test-apns-id",
       });
-      this.emit("data", Buffer.from(JSON.stringify({ reason: "PayloadTooLarge" })));
+      this.emit(
+        "data",
+        Buffer.from(JSON.stringify({ reason: "PayloadTooLarge" })),
+      );
       this.emit("end");
     });
   }
@@ -44,7 +48,7 @@ class FakeRequest {
 
 let fakeClient: FakeClient;
 
-mock.module("node:http2", () => ({
+void mock.module("node:http2", () => ({
   default: {
     connect: () => {
       fakeClient = new FakeClient();
@@ -58,7 +62,9 @@ mock.module("node:http2", () => ({
 }));
 
 // Import AFTER mock.module so service picks up stubbed http2
-const { ApnsPushService } = await import("@/api/v2/notifications/apns-push.service");
+const { ApnsPushService } = await import(
+  "@/api/v2/notifications/apns-push.service"
+);
 
 const ES256_TEST_KEY = `-----BEGIN PRIVATE KEY-----
 MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgevZzL1gdAFr88hb2

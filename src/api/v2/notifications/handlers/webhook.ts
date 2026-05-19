@@ -243,7 +243,10 @@ export async function handleV2Notification(args: {
         pushToken: client.device.pushToken,
         pushTokenType: client.device.pushTokenType,
       },
-      notification: { ...v2Notification, notificationData: { ...v2Notification.notificationData } },
+      notification: {
+        ...v2Notification,
+        notificationData: { ...v2Notification.notificationData },
+      },
     });
   } else {
     // iOS/APNS push notification
@@ -263,7 +266,10 @@ export async function handleV2Notification(args: {
         pushTokenType: client.device.pushTokenType,
         apnsEnv: client.device.apnsEnv,
       },
-      notification: { ...v2Notification, notificationData: { ...v2Notification.notificationData } },
+      notification: {
+        ...v2Notification,
+        notificationData: { ...v2Notification.notificationData },
+      },
     });
   }
 
@@ -434,6 +440,7 @@ export async function handleV2Notification(args: {
 
         // Then attempt notification server cleanup
         try {
+          // eslint-disable-next-line @typescript-eslint/no-unsafe-call
           await notificationClient.deleteInstallation({
             installationId: client.id,
           });
