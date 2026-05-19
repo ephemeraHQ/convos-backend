@@ -102,7 +102,7 @@ export async function handleXmtpNotification(req: Request, res: Response) {
   }
 }
 
-async function handleV2Notification(args: {
+export async function handleV2Notification(args: {
   notification: WebhookNotificationBody;
   client: ClientIdentifier & { device: DeviceRegistration };
   req: Request;
