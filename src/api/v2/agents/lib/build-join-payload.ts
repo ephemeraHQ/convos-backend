@@ -10,31 +10,31 @@ export type TemplateForWire = Omit<
   "ownerAccountId" | "owner"
 >;
 
-export type ComposedAssistantPayload = {
+export type JoinPayload = {
   template: TemplateForWire;
   ownerAccountId: string;
 };
 
 /**
- * Compose the template-bearing portion of the `/api/assistants` request
+ * Build the template-bearing portion of the `/api/assistants` request
  * body from a resolved AgentTemplate.
  *
- * Pure function — no overrides, no merging, no derivation beyond
- * stripping `ownerAccountId` (the template's owner). Caller-supplied
- * agent-identity overrides (`name`/`profileImage`) are applied at the
- * handler layer by spreading them onto the row before composing, so
- * this stays a one-line transform.
+ * Two transforms — that's the whole job:
+ *  - Strip the template's own `ownerAccountId` (runtime never needs to
+ *    know who owns its template).
+ *  - Pair the stripped template with the **joining user's** accountId,
+ *    which the runtime uses later to authenticate `/generations` calls
+ *    in PR 3.
  *
- * `ownerAccountId` on the return is the **joining user's** account —
- * distinct from the template's `ownerAccountId` (the template's owner).
- * The joining user becomes the owner of any templates they build mid-
- * conversation, so the runtime needs this value to authenticate
- * `/generations` calls in PR 3.
+ * Caller-supplied agent-identity overrides (`name`/`profileImage`) are
+ * applied at the handler layer by spreading them onto the row before
+ * calling here, so this stays a one-shot transform with a stable
+ * snapshot-test surface.
  */
-export function composeAssistantPayload(args: {
+export function buildJoinPayload(args: {
   template: AgentTemplate;
   joiningUserAccountId: string;
-}): ComposedAssistantPayload {
+}): JoinPayload {
   // `serializeAgentTemplate` returns either `{ ownerAccountId }` or
   // `{ owner }` depending on whether the caller asked it to expand the
   // owner relation — TS sees the return as a discriminated union. We

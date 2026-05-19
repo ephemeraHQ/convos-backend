@@ -3,14 +3,14 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { AgentTemplate, PublishStatus } from "@prisma/client";
 import { describe, expect, test } from "bun:test";
-import { composeAssistantPayload } from "@/api/v2/agents/lib/compose-assistant-payload";
+import { buildJoinPayload } from "@/api/v2/agents/lib/build-join-payload";
 
 // Shared snapshot fixture — mirror of the one PR 1 in convos-assistants
 // checks in at
 //   runtime/convos-platform/skills/assistant-builder/scripts/handlers/__fixtures__/template-snapshot.json
 //
-// Drift contract: the composer's `template` field is the on-disk
-// `TEMPLATE.json` shape verbatim. Both this composer (backend) and the
+// Drift contract: the payload's `template` field is the on-disk
+// `TEMPLATE.json` shape verbatim. Both this builder (backend) and the
 // in-repo skill writer (convos-assistants PR 1 / PR 3) must produce
 // identical JSON for the same logical template, so the on-disk file
 // matches what the runtime reads regardless of which path wrote it.
@@ -26,8 +26,8 @@ const snapshot = JSON.parse(fs.readFileSync(fixturePath, "utf8")) as Record<
   unknown
 >;
 
-// Reconstruct the AgentTemplate Prisma row that — when run through the
-// composer — should produce `template` equal to the fixture.
+// Reconstruct the AgentTemplate Prisma row that — when run through
+// `buildJoinPayload` — should produce `template` equal to the fixture.
 const rowFromSnapshot = (
   overrides: Partial<AgentTemplate> = {},
 ): AgentTemplate => ({
@@ -56,62 +56,62 @@ const rowFromSnapshot = (
   ...overrides,
 });
 
-describe("composeAssistantPayload", () => {
-  test("composed.template matches the shared cross-repo on-disk snapshot", () => {
-    const composed = composeAssistantPayload({
+describe("buildJoinPayload", () => {
+  test("payload.template matches the shared cross-repo on-disk snapshot", () => {
+    const payload = buildJoinPayload({
       template: rowFromSnapshot(),
       joiningUserAccountId: "user-123",
     });
 
-    // The composer's `template` field IS the on-disk shape — full
-    // AgentTemplate JSON minus `ownerAccountId`. Must match byte-for-byte.
-    expect(composed.template as Record<string, unknown>).toEqual(snapshot);
+    // The `template` field IS the on-disk shape — full AgentTemplate
+    // JSON minus `ownerAccountId`. Must match byte-for-byte.
+    expect(payload.template as Record<string, unknown>).toEqual(snapshot);
   });
 
   test("template includes prompt verbatim (no longer split out)", () => {
-    const composed = composeAssistantPayload({
+    const payload = buildJoinPayload({
       template: rowFromSnapshot(),
       joiningUserAccountId: "user-123",
     });
-    const t = composed.template as Record<string, unknown>;
+    const t = payload.template as Record<string, unknown>;
     expect(t.prompt).toBe(snapshot.prompt as string);
   });
 
   test("top-level ownerAccountId is the joining user (not the template's owner)", () => {
-    const composed = composeAssistantPayload({
+    const payload = buildJoinPayload({
       template: rowFromSnapshot({ ownerAccountId: "template-owner-99" }),
       joiningUserAccountId: "user-123",
     });
-    expect(composed.ownerAccountId).toBe("user-123");
+    expect(payload.ownerAccountId).toBe("user-123");
   });
 
   test("template strips the template's own ownerAccountId entirely", () => {
-    const composed = composeAssistantPayload({
+    const payload = buildJoinPayload({
       template: rowFromSnapshot({ ownerAccountId: "template-owner-99" }),
       joiningUserAccountId: "user-123",
     });
-    const t = composed.template as Record<string, unknown>;
+    const t = payload.template as Record<string, unknown>;
     expect("ownerAccountId" in t).toBe(false);
   });
 
   test("publishedUrl is null for drafts (matches the fixture)", () => {
-    const composed = composeAssistantPayload({
+    const payload = buildJoinPayload({
       template: rowFromSnapshot(),
       joiningUserAccountId: "user-123",
     });
-    const t = composed.template as Record<string, unknown>;
+    const t = payload.template as Record<string, unknown>;
     expect(t.publishedUrl).toBeNull();
   });
 
   test("publishedUrl is populated for non-draft templates", () => {
-    const composed = composeAssistantPayload({
+    const payload = buildJoinPayload({
       template: rowFromSnapshot({
         status: "published",
         firstPublishedAt: new Date("2026-05-18T12:00:00.000Z"),
       }),
       joiningUserAccountId: "user-123",
     });
-    const t = composed.template as Record<string, unknown>;
+    const t = payload.template as Record<string, unknown>;
     expect(typeof t.publishedUrl).toBe("string");
     expect((t.publishedUrl as string).length).toBeGreaterThan(0);
   });

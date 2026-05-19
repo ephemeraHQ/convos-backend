@@ -1,6 +1,6 @@
 import type { Request, Response } from "express";
 import { z } from "zod";
-import { composeAssistantPayload } from "@/api/v2/agents/lib/compose-assistant-payload";
+import { buildJoinPayload } from "@/api/v2/agents/lib/build-join-payload";
 import { XMTP_ENV } from "@/config";
 import { prisma } from "@/utils/prisma";
 import {
@@ -390,15 +390,15 @@ export async function joinHandler(req: Request, res: Response) {
       upstreamOptions.onboarding = options.onboarding;
     }
 
-    // Compose the wire body. The full AgentTemplate JSON (minus the
+    // Build the wire body. The full AgentTemplate JSON (minus the
     // template's own `ownerAccountId`) rides as a single top-level
     // `template` field — no `instructions`/`metadata.template` split.
     // Bare join: `template` is null, the runtime falls back to no
     // on-disk template (PR 2b semantics).
     //
-    // Caller-supplied `name`/`profileImage` are applied here, before
-    // composing, by spreading onto the row. Keeps the composer a pure
-    // one-liner over the AgentTemplate row.
+    // Caller-supplied `name`/`profileImage` are applied here by
+    // spreading onto the row before `buildJoinPayload`, which keeps the
+    // builder a one-shot transform over an AgentTemplate.
     const templateWithOverrides: TemplateRow = resolvedTemplate
       ? {
           ...resolvedTemplate,
@@ -407,8 +407,8 @@ export async function joinHandler(req: Request, res: Response) {
         }
       : null;
 
-    const composed = templateWithOverrides
-      ? composeAssistantPayload({
+    const joinPayload = templateWithOverrides
+      ? buildJoinPayload({
           template: templateWithOverrides,
           joiningUserAccountId,
         })
@@ -416,7 +416,7 @@ export async function joinHandler(req: Request, res: Response) {
 
     const dispatchBody: Record<string, unknown> = {
       joinUrl,
-      template: composed?.template ?? null,
+      template: joinPayload?.template ?? null,
       ownerAccountId: joiningUserAccountId,
     };
     if (Object.keys(upstreamOptions).length > 0) {
