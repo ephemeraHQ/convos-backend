@@ -93,7 +93,11 @@ export const mapNotificationToUpdate = (
       };
 
     case NotificationTypeV2.DID_CHANGE_RENEWAL_PREF:
-      // Tier upgrade/downgrade — productId carries the new tier.
+      // Tier upgrade/downgrade — productId carries the new tier. Without
+      // it there is no state change to apply; return null so the caller
+      // skips the Subscription update entirely (still acks the receipt for
+      // audit) instead of writing an empty update that just bumps updatedAt.
+      if (!transaction.productId) return null;
       return tierAndPeriod;
 
     case NotificationTypeV2.PRICE_INCREASE:

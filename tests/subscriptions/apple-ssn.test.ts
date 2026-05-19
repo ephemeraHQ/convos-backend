@@ -389,6 +389,37 @@ describe("POST /v2/webhooks/apple/ssn", () => {
     expect(updated?.productId).toBe("app.convos.subs.pro.monthly");
   });
 
+  test("DID_CHANGE_RENEWAL_PREF without productId: acks 200, no Subscription update", async () => {
+    installLocalTestingVerifier();
+    const otid = "1000000000000071";
+    const { subscription: original } = await seedSubscription(otid);
+
+    const signedPayload = signNotification({
+      notificationType: "DID_CHANGE_RENEWAL_PREF",
+      subtype: "UPGRADE",
+      signedTransactionInfo: signTransaction({
+        originalTransactionId: otid,
+        transactionId: "3000000000000071",
+        productId: undefined,
+      }),
+    });
+
+    const res = await request(makeApp())
+      .post("/v2/webhooks/apple/ssn")
+      .send({ signedPayload });
+    expect(res.status).toBe(200);
+    expect((res.body as AckBody).applied).toBe(false);
+
+    const after = await prisma.subscription.findUnique({
+      where: { id: original.id },
+    });
+    expect(after?.tier).toBe(original.tier);
+    expect(after?.productId).toBe(original.productId);
+    expect(after?.updatedAt.toISOString()).toBe(
+      original.updatedAt.toISOString(),
+    );
+  });
+
   test("unknown subscription: acks 200, no row created", async () => {
     installLocalTestingVerifier();
     const signedPayload = signNotification({
