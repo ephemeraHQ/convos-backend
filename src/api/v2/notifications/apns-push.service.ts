@@ -41,6 +41,35 @@ function maskToken(token: string): string {
   return `${token.slice(0, 8)}...${token.slice(-4)} (len=${token.length})`;
 }
 
+/**
+ * Build the APNS wire payload (the JSON body sent in the POST request).
+ * This is the exact object measured against the 4096-byte APNS payload limit.
+ * Exported so the handler can size-check before dispatch using identical shape.
+ */
+export function buildApnsWirePayload(args: {
+  notification: AnyNotificationPayloadWithJWT;
+  isSilent: boolean;
+}): ApnsNotificationPayload {
+  const { notification, isSilent } = args;
+  return isSilent
+    ? {
+        aps: {
+          "content-available": 1,
+        },
+        ...notification,
+      }
+    : {
+        aps: {
+          alert: {
+            body: "New message",
+          },
+          sound: "default",
+          "mutable-content": 1,
+        },
+        ...notification,
+      };
+}
+
 export class ApnsPushService {
   private config: ApnsConfig;
   private jwtToken?: string;
@@ -113,23 +142,10 @@ export class ApnsPushService {
     // Narrowed after the null guard above
     const pushToken = device.pushToken;
 
-    const payload: ApnsNotificationPayload = isSilent
-      ? {
-          aps: {
-            "content-available": 1,
-          },
-          ...notification,
-        }
-      : {
-          aps: {
-            alert: {
-              body: "New message",
-            },
-            sound: "default",
-            "mutable-content": 1,
-          },
-          ...notification,
-        };
+    const payload = buildApnsWirePayload({
+      notification,
+      isSilent: !!isSilent,
+    });
 
     const token = this.getJwtToken();
 

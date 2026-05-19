@@ -4,13 +4,16 @@
  */
 export const MAX_PUSH_FAILURES = 50;
 
-// APNS standard alert payload limit (Apple spec).
+// APNS standard alert payload limit (Apple spec — measured as JSON body bytes,
+// HTTP/2 headers separate). Authorization JWT is in headers, NOT counted.
 export const APNS_MAX_PAYLOAD_BYTES = 4096;
 
-// FCM HTTP v1 total message size limit (Google spec).
+// FCM HTTP v1 message size limit (Google spec — measured as the message envelope
+// including data, android, and the apiJWT field which IS in the body).
 export const FCM_MAX_PAYLOAD_BYTES = 4096;
 
-// Safety margin for HTTP/2 headers, JSON encoding overhead, JWT growth.
-// 296 = ~JWT baseline (~700 B) growth headroom + field add headroom + JSON quote/escape.
-// Strip threshold = limit - margin = 3800 B. Conservative so reactive retry ~never fires.
+// Safety margin absorbed by the strip threshold.
+// Covers: JSON encoding deltas, future field additions, JWT claim growth (the
+// in-body apiJWT is ~363 B today; bound for ~600 B). Strip threshold = limit - margin.
+// Conservative so reactive retry ~never fires.
 export const PUSH_PAYLOAD_STRIP_MARGIN_BYTES = 296;

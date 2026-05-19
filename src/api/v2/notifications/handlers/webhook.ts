@@ -1,7 +1,13 @@
 import type { ClientIdentifier, DeviceRegistration } from "@prisma/client";
 import type { Request, Response } from "express";
-import { createApnsService } from "@/api/v2/notifications/apns-push.service";
-import { createFcmService } from "@/api/v2/notifications/fcm-push.service";
+import {
+  buildApnsWirePayload,
+  createApnsService,
+} from "@/api/v2/notifications/apns-push.service";
+import {
+  buildFcmWirePayload,
+  createFcmService,
+} from "@/api/v2/notifications/fcm-push.service";
 import type { V2NotificationPayload } from "@/api/v2/notifications/types";
 import {
   createNotificationClient,
@@ -157,7 +163,12 @@ export async function handleV2Notification(args: {
     messageType: notification.message_context.message_type,
   });
 
+  // Declared early so both the welcome path and the proactive guard can set it,
+  // preventing the reactive retry from firing when the payload is already stripped.
+  let payloadStripped = false;
+
   if (isWelcome) {
+    payloadStripped = true; // welcome path already strips encryptedMessage; reactive shouldn't retry
     req.log.info(
       {
         contentTopic: notification.message.content_topic,
@@ -182,22 +193,25 @@ export async function handleV2Notification(args: {
   };
 
   // Proactive payload size guard.
-  // Reuses existing JSON.stringify measurement already used in service-level logs.
+  // Measures BYTES of the actual provider wire payload (not the intermediate v2Notification),
+  // so size check matches what APNS/FCM count against their 4096-byte limit.
+  const wirePayload =
+    pushType === "fcm"
+      ? buildFcmWirePayload({ notification: v2Notification, isSilent: false })
+      : buildApnsWirePayload({ notification: v2Notification, isSilent: false });
   const maxBytes =
     pushType === "fcm" ? FCM_MAX_PAYLOAD_BYTES : APNS_MAX_PAYLOAD_BYTES;
   const stripThreshold = maxBytes - PUSH_PAYLOAD_STRIP_MARGIN_BYTES;
-  const fullSize = JSON.stringify(v2Notification).length;
+  const fullSize = Buffer.byteLength(JSON.stringify(wirePayload), "utf8");
 
-  let payloadStripped = false;
   if (fullSize > stripThreshold && !isWelcome) {
     v2Notification.notificationData = {
       contentTopic: notification.message.content_topic,
       messageType: notification.message_context.message_type,
       timestamp: notification.message.timestamp_ns,
-      // encryptedMessage omitted
     };
     payloadStripped = true;
-    req.log.warn(
+    req.log.info(
       {
         deviceId: client.deviceId,
         pushTokenType: pushType,
