@@ -50,6 +50,13 @@ process.env.PAYMENTS_CREDITS_PER_USD = "1000";
 process.env.PAYMENTS_RESERVED_MAX_TURN_CREDITS = "1";
 process.env.PAYMENTS_MIN_BALANCE_CREDITS = "-1000";
 
+// Subscription tier credit allotments — placeholder values for tests.
+// Final numbers are set by ops via env in each deploy environment.
+process.env.PAYMENTS_GRANT_BUILDER_MONTHLY =
+  process.env.PAYMENTS_GRANT_BUILDER_MONTHLY || "2500";
+process.env.PAYMENTS_GRANT_PRO_MONTHLY =
+  process.env.PAYMENTS_GRANT_PRO_MONTHLY || "10000";
+
 // mock Firebase functions
 
 void mock.module("firebase-admin/app-check", () => ({
