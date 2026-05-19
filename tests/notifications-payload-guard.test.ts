@@ -53,7 +53,11 @@ void mock.module("@/notifications/client", () => ({
 
 void mock.module("@/utils/jwt", () => ({
   createJwtToken: () =>
-    Promise.resolve("test-jwt-700-bytes-" + "x".repeat(680)),
+    Promise.resolve(
+      "eyJhbGciOiJFUzI1NiIsImtpZCI6InRlc3Qta2lkLTAxIiwidHlwIjoiSldUIn0." +
+        "x".repeat(280) +
+        ".sig-placeholder",
+    ),
 }));
 
 const { handleV2Notification } = await import(
@@ -162,7 +166,7 @@ describe("handleV2Notification – proactive size guard", () => {
       l.msg.includes("Payload exceeds strip threshold"),
     );
     expect(stripLog).toBeDefined();
-    expect(stripLog?.level).toBe("warn");
+    expect(stripLog?.level).toBe("info");
   });
 
   test("FCM: oversize encryptedMessage is stripped before dispatch", async () => {
@@ -196,6 +200,60 @@ describe("handleV2Notification – proactive size guard", () => {
       l.msg.includes("Payload exceeds strip threshold"),
     );
     expect(stripLog).toBeUndefined();
+  });
+
+  test("Boundary: payload at threshold-1 NOT stripped; at threshold+1 IS stripped", async () => {
+    // Binary-search the encryptedMessage length that lands at the strip boundary.
+    let underLen = 100;
+    let overLen = 5000;
+    while (overLen - underLen > 2) {
+      apnsSendMock.mockClear();
+      const mid = Math.floor((underLen + overLen) / 2);
+      const webhook = makeWebhook({ encryptedMessageLen: mid });
+      const client = makeClient("apns");
+      const req = makeReq();
+      await handleV2Notification({ notification: webhook, client, req });
+      const apnsCallsBisect = apnsSendMock.mock.calls as unknown[][];
+      // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion
+      const dispatched = (apnsCallsBisect[0]![0] as SendCall).notification;
+      if (dispatched.notificationData.encryptedMessage === undefined) {
+        overLen = mid;
+      } else {
+        underLen = mid;
+      }
+    }
+
+    // Sanity: boundary found within ±2 chars
+    expect(overLen).toBeGreaterThan(underLen);
+    expect(overLen - underLen).toBeLessThanOrEqual(2);
+
+    // Confirm: underLen side passes through unstripped
+    apnsSendMock.mockClear();
+    const justUnderWebhook = makeWebhook({ encryptedMessageLen: underLen });
+    const reqUnder = makeReq();
+    await handleV2Notification({
+      notification: justUnderWebhook,
+      client: makeClient("apns"),
+      req: reqUnder,
+    });
+    const underCalls = apnsSendMock.mock.calls as unknown[][];
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion
+    const underDispatched = (underCalls[0]![0] as SendCall).notification;
+    expect(underDispatched.notificationData.encryptedMessage).toBeDefined();
+
+    // Confirm: overLen side is stripped
+    apnsSendMock.mockClear();
+    const justOverWebhook = makeWebhook({ encryptedMessageLen: overLen });
+    const reqOver = makeReq();
+    await handleV2Notification({
+      notification: justOverWebhook,
+      client: makeClient("apns"),
+      req: reqOver,
+    });
+    const overCalls = apnsSendMock.mock.calls as unknown[][];
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion
+    const overDispatched = (overCalls[0]![0] as SendCall).notification;
+    expect(overDispatched.notificationData.encryptedMessage).toBeUndefined();
   });
 
   test("Welcome message short-circuit: size-guard does NOT double-strip", async () => {
@@ -284,6 +342,31 @@ describe("handleV2Notification – reactive PayloadTooLarge retry", () => {
     );
     expect(errorLog).toBeDefined();
     expect(errorLog?.level).toBe("error");
+  });
+
+  test("Welcome + provider PayloadTooLarge: no retry (welcome already stripped)", async () => {
+    apnsSendMock.mockImplementationOnce(() =>
+      Promise.resolve({ success: false, error: "PayloadTooLarge" }),
+    );
+
+    const webhook = makeWebhook({
+      contentTopic: "/xmtp/mls/1/w-welcome-topic/proto",
+      messageType: "v3-welcome",
+      encryptedMessageLen: 100,
+    });
+    const client = makeClient("apns");
+    const req = makeReq();
+
+    await handleV2Notification({ notification: webhook, client, req });
+
+    // Welcome path already stripped, so PayloadTooLarge → no retry
+    expect(apnsSendMock).toHaveBeenCalledTimes(1);
+    expect(deviceTxMock).not.toHaveBeenCalled();
+
+    const errorLog = req.capturedLogs.find((l) =>
+      l.msg.includes("PayloadTooLarge on already-stripped payload"),
+    );
+    expect(errorLog).toBeDefined();
   });
 
   test("PayloadTooLarge twice: no pushFailures bump", async () => {
