@@ -1,4 +1,5 @@
 import type { Server } from "node:http";
+import type { AgentTemplate } from "@prisma/client";
 import {
   afterAll,
   afterEach,
@@ -8,9 +9,16 @@ import {
   expect,
   test,
 } from "bun:test";
-import express from "express";
+import express, {
+  type Response as ExpressResponse,
+  type NextFunction,
+  type Request,
+} from "express";
 import { __setAssistantConfigOverridesForTests } from "@/api/v2/agents/handlers/assistant-config";
-import { joinHandler } from "@/api/v2/agents/handlers/join";
+import {
+  __setTemplateFinderForTests,
+  joinHandler,
+} from "@/api/v2/agents/handlers/join";
 import { joinStatusHandler } from "@/api/v2/agents/handlers/join-status";
 import { jsonMiddleware } from "@/middleware/json";
 import { pinoMiddleware } from "@/middleware/pino";
@@ -21,12 +29,53 @@ const originalFetch = globalThis.fetch;
 
 const ASSISTANT_URL = "https://assistants.test.local";
 const ASSISTANT_KEY = "test-assistant-key";
+const TEST_ACCOUNT_HEADER = "x-test-account-id";
+
+// `/api/v2/agents` is mounted behind `authMiddleware` in production, which
+// populates `res.locals.accountId` from the JWT. The handler reads it
+// directly. Standing up real JWT auth in this fetch-mocked test would be
+// noise; instead, read a header and forward it to `res.locals` so each
+// test can pick its caller identity.
+function testAccountMiddleware(
+  req: Request,
+  res: ExpressResponse,
+  next: NextFunction,
+) {
+  const accountId = req.header(TEST_ACCOUNT_HEADER);
+  if (accountId) res.locals.accountId = accountId;
+  next();
+}
 
 const app = express();
 app.use(pinoMiddleware);
 app.use(jsonMiddleware);
+app.use(testAccountMiddleware);
 app.post("/api/v2/agents/join", joinHandler);
 app.get("/api/v2/agents/join/:instanceId", joinStatusHandler);
+
+const baseTemplate = (
+  overrides: Partial<AgentTemplate> = {},
+): AgentTemplate => ({
+  id: "22222222-2222-4222-8222-222222222222",
+  slug: "brewski",
+  ownerAccountId: "owner-account-1",
+  forkedFromId: null,
+  agentName: "Brewski",
+  description: "A friendly barista.",
+  prompt: "You are Brewski.",
+  category: null,
+  emoji: "☕",
+  avatarUrl: "https://cdn.example.com/brewski.png",
+  tools: [],
+  connections: [],
+  version: 1,
+  firstPublishedAt: new Date("2026-01-01T00:00:00.000Z"),
+  status: "published",
+  featured: false,
+  createdAt: new Date("2026-01-01T00:00:00.000Z"),
+  updatedAt: new Date("2026-01-01T00:00:00.000Z"),
+  ...overrides,
+});
 
 function jsonResponse(status: number, body: unknown): Response {
   return new Response(JSON.stringify(body), {
@@ -73,14 +122,20 @@ describe("agents join (assistant API)", () => {
 
   afterEach(() => {
     __setAssistantConfigOverridesForTests({});
+    __setTemplateFinderForTests(null);
   });
 
-  const post = (body: unknown) =>
-    originalFetch(`${baseURL}/api/v2/agents/join`, {
+  const post = (body: unknown, opts: { accountId?: string } = {}) => {
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+    };
+    if (opts.accountId) headers[TEST_ACCOUNT_HEADER] = opts.accountId;
+    return originalFetch(`${baseURL}/api/v2/agents/join`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers,
       body: JSON.stringify(body),
     });
+  };
 
   const getStatus = (instanceId: string) =>
     originalFetch(
@@ -123,11 +178,16 @@ describe("agents join (assistant API)", () => {
             name: string;
             instructions: string;
             joinUrl: string;
+            metadata?: Record<string, unknown>;
+            ownerAccountId?: string;
             options?: Record<string, unknown>;
           };
+          // Bare join (no templateId) → upstream gets the default agent
+          // name, an empty `instructions` string, and no `metadata.template`.
           expect(body.name).toBe("Assistant");
-          expect(body.instructions).toBe("You are a helpful assistant.");
+          expect(body.instructions).toBe("");
           expect(body.joinUrl).toContain("?i=test-slug");
+          expect(body.metadata).toBeUndefined();
           // No options passed → no `options` field in the upstream payload.
           expect(body.options).toBeUndefined();
 
@@ -241,25 +301,14 @@ describe("agents join (assistant API)", () => {
       expect(data.error).toBe("AGENT_PROVISION_FAILED");
     });
 
-    test("forwards custom instructions to /api/assistants", async () => {
-      mockFetchImpl = (_url, init) => {
-        if (init?.method === "POST") {
-          const body = JSON.parse(init.body as string) as {
-            instructions: string;
-          };
-          expect(body.instructions).toBe("Be terse.");
-          return Promise.resolve(jsonResponse(200, { instanceId: "inst-i" }));
-        }
-        return Promise.resolve(
-          jsonResponse(200, {
-            instanceId: "inst-i",
-            joinStatus: "joined",
-          }),
-        );
-      };
-
+    test("rejects `instructions` field — templates are the unit now", async () => {
+      // Closes the silent-drop footgun from when `templateId` + `instructions`
+      // would discard the caller's prompt without feedback. Strict body
+      // schema now rejects any unknown key, including `instructions`.
       const res = await post({ slug: "x", instructions: "Be terse." });
-      expect(res.status).toBe(200);
+      expect(res.status).toBe(400);
+      const data = (await res.json()) as { success: boolean; error: string };
+      expect(data.error).toBe("INVALID_REQUEST");
     });
 
     test("forwards options.skipGreeting upstream when provided", async () => {
@@ -467,6 +516,207 @@ describe("agents join (assistant API)", () => {
       };
       expect(data.joined).toBe(false);
       expect(data.instanceId).toBe("inst-err");
+    });
+
+    // ----- templateId resolution -----
+
+    test("forwards joining user's accountId as top-level ownerAccountId on bare join", async () => {
+      mockFetchImpl = (_url, init) => {
+        if (init?.method === "POST") {
+          const body = JSON.parse(init.body as string) as {
+            ownerAccountId?: string;
+          };
+          expect(body.ownerAccountId).toBe("user-bare");
+          return Promise.resolve(
+            jsonResponse(200, { instanceId: "inst-bare" }),
+          );
+        }
+        return Promise.resolve(
+          jsonResponse(200, { instanceId: "inst-bare", joinStatus: "joined" }),
+        );
+      };
+
+      const res = await post({ slug: "x" }, { accountId: "user-bare" });
+      expect(res.status).toBe(200);
+    });
+
+    test("templateId path composes template metadata + prompt onto wire", async () => {
+      const template = baseTemplate({ agentName: "Brewski" });
+      __setTemplateFinderForTests(() => Promise.resolve(template));
+
+      mockFetchImpl = (_url, init) => {
+        if (init?.method === "POST") {
+          const body = JSON.parse(init.body as string) as {
+            name: string;
+            instructions: string;
+            metadata?: { template?: Record<string, unknown> };
+            ownerAccountId?: string;
+          };
+          expect(body.name).toBe("Brewski");
+          expect(body.instructions).toBe(template.prompt);
+          expect(body.ownerAccountId).toBe("user-1");
+          expect(body.metadata?.template).toBeDefined();
+          expect(body.metadata?.template?.id).toBe(template.id);
+          expect(body.metadata?.template?.prompt).toBeUndefined();
+          expect(body.metadata?.template?.ownerAccountId).toBeUndefined();
+          return Promise.resolve(jsonResponse(200, { instanceId: "inst-t" }));
+        }
+        return Promise.resolve(
+          jsonResponse(200, { instanceId: "inst-t", joinStatus: "joined" }),
+        );
+      };
+
+      const res = await post(
+        { slug: "x", templateId: template.id },
+        { accountId: "user-1" },
+      );
+      expect(res.status).toBe(200);
+    });
+
+    test("caller-supplied name + profileImage override template defaults", async () => {
+      const template = baseTemplate({
+        agentName: "Brewski",
+        avatarUrl: "https://cdn.example.com/brewski.png",
+      });
+      __setTemplateFinderForTests(() => Promise.resolve(template));
+
+      mockFetchImpl = (_url, init) => {
+        if (init?.method === "POST") {
+          const body = JSON.parse(init.body as string) as {
+            name: string;
+            metadata?: { template?: Record<string, unknown> };
+          };
+          expect(body.name).toBe("Custom Name");
+          expect(body.metadata?.template?.agentName).toBe("Custom Name");
+          expect(body.metadata?.template?.avatarUrl).toBe(
+            "https://cdn.example.com/custom.png",
+          );
+          return Promise.resolve(jsonResponse(200, { instanceId: "inst-o" }));
+        }
+        return Promise.resolve(
+          jsonResponse(200, { instanceId: "inst-o", joinStatus: "joined" }),
+        );
+      };
+
+      const res = await post(
+        {
+          slug: "x",
+          templateId: template.id,
+          name: "Custom Name",
+          profileImage: "https://cdn.example.com/custom.png",
+        },
+        { accountId: "user-1" },
+      );
+      expect(res.status).toBe(200);
+    });
+
+    test("returns 404 when templateId does not resolve", async () => {
+      __setTemplateFinderForTests(() => Promise.resolve(null));
+
+      const res = await post(
+        { slug: "x", templateId: "33333333-3333-4333-8333-333333333333" },
+        { accountId: "user-1" },
+      );
+      expect(res.status).toBe(404);
+      const data = (await res.json()) as { error: string };
+      expect(data.error).toBe("TEMPLATE_NOT_FOUND");
+    });
+
+    test("returns 410 when template is archived", async () => {
+      __setTemplateFinderForTests(() =>
+        Promise.resolve(baseTemplate({ status: "archived" })),
+      );
+
+      const res = await post(
+        { slug: "x", templateId: "33333333-3333-4333-8333-333333333333" },
+        { accountId: "user-1" },
+      );
+      expect(res.status).toBe(410);
+      const data = (await res.json()) as { error: string };
+      expect(data.error).toBe("TEMPLATE_ARCHIVED");
+    });
+
+    test("draft template: owner can use it", async () => {
+      __setTemplateFinderForTests(() =>
+        Promise.resolve(
+          baseTemplate({ status: "draft", ownerAccountId: "user-1" }),
+        ),
+      );
+
+      mockFetchImpl = (_url, init) => {
+        if (init?.method === "POST") {
+          return Promise.resolve(jsonResponse(200, { instanceId: "inst-d" }));
+        }
+        return Promise.resolve(
+          jsonResponse(200, { instanceId: "inst-d", joinStatus: "joined" }),
+        );
+      };
+
+      const res = await post(
+        { slug: "x", templateId: "33333333-3333-4333-8333-333333333333" },
+        { accountId: "user-1" },
+      );
+      expect(res.status).toBe(200);
+    });
+
+    test("draft template: non-owner gets 403", async () => {
+      __setTemplateFinderForTests(() =>
+        Promise.resolve(
+          baseTemplate({ status: "draft", ownerAccountId: "someone-else" }),
+        ),
+      );
+
+      const res = await post(
+        { slug: "x", templateId: "33333333-3333-4333-8333-333333333333" },
+        { accountId: "user-1" },
+      );
+      expect(res.status).toBe(403);
+      const data = (await res.json()) as { error: string };
+      expect(data.error).toBe("TEMPLATE_FORBIDDEN");
+    });
+
+    test("rejects templateId + onboarding=assistant-builder (mutually exclusive)", async () => {
+      // Validation happens before the template lookup, so no finder needed.
+      const res = await post(
+        {
+          slug: "x",
+          templateId: "33333333-3333-4333-8333-333333333333",
+          options: { onboarding: "assistant-builder" },
+        },
+        { accountId: "user-1" },
+      );
+      expect(res.status).toBe(400);
+      const data = (await res.json()) as { error: string };
+      expect(data.error).toBe("INVALID_REQUEST");
+    });
+
+    test("templateId + onboarding=first-impression composes fine", async () => {
+      __setTemplateFinderForTests(() => Promise.resolve(baseTemplate()));
+
+      mockFetchImpl = (_url, init) => {
+        if (init?.method === "POST") {
+          const body = JSON.parse(init.body as string) as {
+            options?: { onboarding?: string };
+            metadata?: { template?: unknown };
+          };
+          expect(body.options?.onboarding).toBe("first-impression");
+          expect(body.metadata?.template).toBeDefined();
+          return Promise.resolve(jsonResponse(200, { instanceId: "inst-fi" }));
+        }
+        return Promise.resolve(
+          jsonResponse(200, { instanceId: "inst-fi", joinStatus: "joined" }),
+        );
+      };
+
+      const res = await post(
+        {
+          slug: "x",
+          templateId: "33333333-3333-4333-8333-333333333333",
+          options: { onboarding: "first-impression" },
+        },
+        { accountId: "user-1" },
+      );
+      expect(res.status).toBe(200);
     });
   });
 

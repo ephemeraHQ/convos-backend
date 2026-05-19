@@ -1,6 +1,8 @@
 import type { Request, Response } from "express";
 import { z } from "zod";
+import { composeAssistantPayload } from "@/api/v2/agents/lib/compose-assistant-payload";
 import { XMTP_ENV } from "@/config";
+import { prisma } from "@/utils/prisma";
 import {
   assistantStatusSchema,
   getAssistantApiKey,
@@ -8,6 +10,27 @@ import {
   getJoinPollIntervalMs,
   getJoinWaitBudgetMs,
 } from "./assistant-config";
+
+const ASSISTANT_BUILDER_ONBOARDING = "assistant-builder";
+
+const DEFAULT_AGENT_NAME = "Assistant";
+
+type TemplateRow = Awaited<ReturnType<typeof prisma.agentTemplate.findUnique>>;
+type TemplateFinder = (id: string) => Promise<TemplateRow>;
+
+const defaultTemplateFinder: TemplateFinder = (id) =>
+  prisma.agentTemplate.findUnique({ where: { id } });
+
+let _templateFinder: TemplateFinder = defaultTemplateFinder;
+
+// Test seam — substitute the per-id prisma lookup. Mirrors the
+// `__setAssistantConfigOverridesForTests` pattern in `./assistant-config.ts`.
+// Pass `null` to restore the default. Not used in production.
+export function __setTemplateFinderForTests(
+  finder: TemplateFinder | null,
+): void {
+  _templateFinder = finder ?? defaultTemplateFinder;
+}
 
 // Per-join assistant-shaping knobs, forwarded onto convos-assistants'
 // free-form `metadata: Record<string, unknown>` bag. Each field is only
@@ -20,11 +43,20 @@ const optionsSchema = z
   })
   .strict();
 
-const bodySchema = z.object({
-  slug: z.string().min(1, "Slug is required").max(2048),
-  instructions: z.string().max(4096, "Instructions too long").optional(),
-  options: optionsSchema.optional(),
-});
+// `.strict()` rejects unknown keys — closes the silent-drop footgun from
+// when `instructions` and `templateId` could be combined and the former
+// would be discarded. The caller-facing contract is now: send `templateId`
+// to apply a template; send neither for a bare agent. There is no escape
+// hatch for inline `instructions` — templates are the unit.
+const bodySchema = z
+  .object({
+    slug: z.string().min(1, "Slug is required").max(2048),
+    templateId: z.string().uuid().optional(),
+    name: z.string().min(1).max(256).optional(),
+    profileImage: z.string().min(1).max(2048).optional(),
+    options: optionsSchema.optional(),
+  })
+  .strict();
 
 const FORCE_ERROR_DELAY_MS = 5_000;
 
@@ -238,17 +270,104 @@ export async function joinHandler(req: Request, res: Response) {
     return;
   }
 
-  const { slug, instructions, options } = parsed.data;
+  const { slug, templateId, name, profileImage, options } = parsed.data;
   // Avoid logging the raw slug (it's a join-token granting conversation
-  // access) and the raw `options` (caller-controlled input). Log presence
-  // flags + option keys instead so volumes/cardinality stay bounded.
+  // access) and the raw `options` (caller-controlled input). Log only the
+  // public `templateId` reference + option keys so volumes/cardinality
+  // stay bounded.
   req.log.info(
     {
-      hasInstructions: instructions !== undefined,
+      templateId,
       optionKeys: options ? Object.keys(options) : [],
     },
     "Agent join request received",
   );
+
+  // `/api/v2/agents` is mounted behind `authMiddleware`, so `accountId`
+  // is always populated by the time we reach the handler. Captured here
+  // so it can flow through to `/api/assistants` as the joining user's
+  // account — the runtime uses it later to authenticate user-owned
+  // template creations via `POST /api/v2/agent-templates/generations`.
+  const joiningUserAccountId = res.locals.accountId as string;
+
+  // Mutually-exclusive intents: adopting an existing template versus
+  // building a new one in-conversation. Other `onboarding` values
+  // (e.g. `"first-impression"`) compose fine with `templateId`.
+  if (
+    templateId !== undefined &&
+    options?.onboarding === ASSISTANT_BUILDER_ONBOARDING
+  ) {
+    res.status(400).json({
+      success: false,
+      error: "INVALID_REQUEST",
+      message:
+        "templateId cannot be combined with options.onboarding=assistant-builder",
+    });
+    return;
+  }
+
+  // Resolve templateId → AgentTemplate row. The handler enforces the
+  // publishStatus visibility policy here rather than relying on the
+  // catalog resolver, because draft templates are joinable by their
+  // owner (the catalog read path is anonymous-first and never surfaces
+  // drafts at all).
+  let resolvedTemplate: TemplateRow = null;
+  if (templateId !== undefined) {
+    try {
+      resolvedTemplate = await _templateFinder(templateId);
+    } catch (err) {
+      req.log.error(
+        { err, templateId },
+        "Failed to load agent template for join",
+      );
+      res.status(500).json({
+        success: false,
+        error: "TEMPLATE_LOOKUP_FAILED",
+        message: "Failed to load agent template",
+      });
+      return;
+    }
+
+    if (resolvedTemplate === null) {
+      res.status(404).json({
+        success: false,
+        error: "TEMPLATE_NOT_FOUND",
+        message: "Agent template not found",
+      });
+      return;
+    }
+
+    switch (resolvedTemplate.status) {
+      case "published":
+      case "unlisted":
+        break;
+      case "draft":
+        if (resolvedTemplate.ownerAccountId !== joiningUserAccountId) {
+          req.log.warn(
+            {
+              templateId,
+              ownerAccountId: resolvedTemplate.ownerAccountId,
+              callerAccountId: joiningUserAccountId,
+            },
+            "Caller is not the owner of a draft template",
+          );
+          res.status(403).json({
+            success: false,
+            error: "TEMPLATE_FORBIDDEN",
+            message: "Not authorized to use this template",
+          });
+          return;
+        }
+        break;
+      case "archived":
+        res.status(410).json({
+          success: false,
+          error: "TEMPLATE_ARCHIVED",
+          message: "Agent template has been archived",
+        });
+        return;
+    }
+  }
 
   const assistantBaseUrl = assistantApiUrl.replace(/\/+$/, "");
   const authHeader = assistantApiKey ? `Bearer ${assistantApiKey}` : undefined;
@@ -273,16 +392,34 @@ export async function joinHandler(req: Request, res: Response) {
       upstreamOptions.onboarding = options.onboarding;
     }
 
-    const dispatchBody: Record<string, unknown> = {
-      name: "Assistant",
-      // `??` (not `||`) so an explicit empty string from the caller is
-      // forwarded as-is, not silently replaced with the default. The
-      // schema accepts `""` today; tightening to `.min(1)` would be the
-      // alternative, but the upstream is the place to validate prompt
-      // emptiness now that PR 2a is dropping this field entirely.
-      instructions: instructions ?? "You are a helpful assistant.",
-      joinUrl,
-    };
+    // Compose the wire body. With `templateId`: composer fills `name`,
+    // `instructions` (= `template.prompt`), and `metadata.template` (the
+    // AgentTemplate JSON minus prompt/ownerAccountId), and a top-level
+    // `ownerAccountId` carrying the joining user's account. Bare join:
+    // `instructions` is empty, `metadata.template` is absent — the
+    // runtime falls back to no on-disk template (PR 2b semantics).
+    const composed = resolvedTemplate
+      ? composeAssistantPayload({
+          template: resolvedTemplate,
+          overrides: { name, profileImage },
+          joiningUserAccountId,
+        })
+      : null;
+
+    const dispatchBody: Record<string, unknown> = composed
+      ? {
+          name: composed.name,
+          instructions: composed.instructions,
+          joinUrl,
+          metadata: composed.metadata,
+          ownerAccountId: composed.ownerAccountId,
+        }
+      : {
+          name: name ?? DEFAULT_AGENT_NAME,
+          instructions: "",
+          joinUrl,
+          ownerAccountId: joiningUserAccountId,
+        };
     if (Object.keys(upstreamOptions).length > 0) {
       dispatchBody.options = upstreamOptions;
     }
