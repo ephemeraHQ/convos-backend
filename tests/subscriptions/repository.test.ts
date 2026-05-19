@@ -5,6 +5,7 @@ import {
   findCurrentByAccountId,
   findReceiptByTransactionId,
   serializeUserSubscription,
+  SubscriptionAccountMismatchError,
   SubscriptionPeriod,
   SubscriptionStatus,
   SubscriptionTier,
@@ -187,38 +188,114 @@ describe("upsertFromVerify", () => {
     expect(receipts.map((r) => r.transactionId)).toEqual(["tx-3a", "tx-3b"]);
   });
 
-  test("cross-device transfer: same originalTransactionId, new accountId + appAccountToken reassigns", async () => {
+  test("cross-account verify is rejected: same originalTransactionId, different accountId throws account-mismatch", async () => {
     const accountA = await newAccount();
     const accountB = await newAccount();
-    const otid = "otid-transfer";
+    const otid = "otid-mismatch";
 
-    await upsertFromVerify(
+    const first = await upsertFromVerify(
       verifyInput({
         accountId: accountA,
         appAccountToken: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
         originalTransactionId: otid,
-        transactionId: "tx-transfer-a",
+        transactionId: "tx-mismatch-a",
       }),
     );
 
-    const transferred = await upsertFromVerify(
-      verifyInput({
-        accountId: accountB,
-        appAccountToken: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
-        originalTransactionId: otid,
-        transactionId: "tx-transfer-b",
-      }),
+    let caught: unknown;
+    try {
+      await upsertFromVerify(
+        verifyInput({
+          accountId: accountB,
+          appAccountToken: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+          originalTransactionId: otid,
+          transactionId: "tx-mismatch-b",
+        }),
+      );
+    } catch (err) {
+      caught = err;
+    }
+
+    expect(caught).toBeInstanceOf(SubscriptionAccountMismatchError);
+    const mismatch = caught as SubscriptionAccountMismatchError;
+    expect(mismatch.existingAccountId).toBe(accountA);
+    expect(mismatch.attemptedAccountId).toBe(accountB);
+    expect(mismatch.originalTransactionId).toBe(otid);
+
+    // Account A keeps ownership of the row; account B persisted nothing.
+    const forA = await findCurrentByAccountId(accountA);
+    expect(forA?.id).toBe(first.subscription.id);
+    expect(forA?.accountId).toBe(accountA);
+    expect(await findCurrentByAccountId(accountB)).toBeNull();
+
+    // No AppleReceipt was created for account B's losing verify.
+    const receiptB = await findReceiptByTransactionId("tx-mismatch-b");
+    expect(receiptB).toBeNull();
+  });
+
+  test("concurrent verifies, same accountId: exactly one creates the receipt, both return the same subscription", async () => {
+    const accountId = await newAccount();
+    const input = verifyInput({
+      accountId,
+      originalTransactionId: "otid-concurrent-same",
+      transactionId: "tx-concurrent-same",
+    });
+
+    const [a, b] = await Promise.all([
+      upsertFromVerify(input),
+      upsertFromVerify(input),
+    ]);
+
+    expect([a.receiptCreated, b.receiptCreated].sort()).toEqual([false, true]);
+    expect(a.subscription.id).toBe(b.subscription.id);
+    expect(a.subscription.accountId).toBe(accountId);
+
+    const receipts = await prisma.appleReceipt.findMany({
+      where: { transactionId: "tx-concurrent-same" },
+    });
+    expect(receipts).toHaveLength(1);
+  });
+
+  test("concurrent verifies, different accountId: exactly one wins, the other rejects with account-mismatch", async () => {
+    const accountA = await newAccount();
+    const accountB = await newAccount();
+    const otid = "otid-concurrent-race";
+
+    const results = await Promise.allSettled([
+      upsertFromVerify(
+        verifyInput({
+          accountId: accountA,
+          appAccountToken: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+          originalTransactionId: otid,
+          transactionId: "tx-race-a",
+        }),
+      ),
+      upsertFromVerify(
+        verifyInput({
+          accountId: accountB,
+          appAccountToken: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+          originalTransactionId: otid,
+          transactionId: "tx-race-b",
+        }),
+      ),
+    ]);
+
+    const fulfilled = results.flatMap((r) =>
+      r.status === "fulfilled" ? [r.value] : [],
+    );
+    const rejected = results.flatMap((r) =>
+      r.status === "rejected" ? [r.reason as unknown] : [],
     );
 
-    expect(transferred.subscription.accountId).toBe(accountB);
-    expect(transferred.subscription.appAccountToken).toBe(
-      "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
-    );
+    expect(fulfilled).toHaveLength(1);
+    expect(rejected).toHaveLength(1);
+    expect(rejected[0]).toBeInstanceOf(SubscriptionAccountMismatchError);
 
-    // Account A no longer "owns" the sub.
-    expect(await findCurrentByAccountId(accountA)).toBeNull();
-    const forB = await findCurrentByAccountId(accountB);
-    expect(forB?.id).toBe(transferred.subscription.id);
+    const winner = fulfilled[0].subscription.accountId;
+    expect([accountA, accountB]).toContain(winner);
+
+    const persisted = await findByOriginalTransactionId(otid);
+    expect(persisted?.accountId).toBe(winner);
   });
 });
 

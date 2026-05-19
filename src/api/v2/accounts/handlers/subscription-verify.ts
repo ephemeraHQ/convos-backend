@@ -8,8 +8,8 @@ import { verifyAndDecodeTransaction } from "@/subscriptions/jws-verifier";
 import { productMapping } from "@/subscriptions/product-mapping";
 import {
   AppleEnv,
-  findByOriginalTransactionId,
   serializeUserSubscription,
+  SubscriptionAccountMismatchError,
   SubscriptionStatus,
   upsertFromVerify,
   type VerifyInput,
@@ -142,32 +142,14 @@ export async function subscriptionVerifyHandler(req: Request, res: Response) {
     throw err;
   }
 
-  // Strict ownership check: an existing Subscription with this
-  // originalTransactionId belongs to exactly one accountId for life. A
-  // re-verify from a different signed-in account is rejected. This blocks a
+  // Strict ownership is enforced inside upsertFromVerify's transaction
+  // (atomic with the upsert, so two concurrent verifies for the same
+  // originalTransactionId from different accounts cannot both succeed). A
+  // re-verify from a different signed-in account is rejected here to block a
   // class of session-stealing attacks where a leaked JWS could be replayed
-  // under a different caller's account. Cross-account transfer (rare:
-  // user signs up fresh on a new Convos account using the same Apple ID)
-  // becomes a support operation, not a code path.
-  const existing = await findByOriginalTransactionId(
-    input.originalTransactionId,
-  );
-  if (existing && existing.accountId !== accountId) {
-    req.log.warn(
-      {
-        accountId,
-        existingAccountId: existing.accountId,
-        originalTransactionId: input.originalTransactionId,
-      },
-      "subscription.verify.account_mismatch",
-    );
-    res.status(409).json({
-      error: "Subscription belongs to a different account. Contact support.",
-      code: "subscription_account_mismatch",
-    });
-    return;
-  }
-
+  // under a different caller's account. Cross-account transfer (rare: user
+  // signs up fresh on a new Convos account using the same Apple ID) becomes
+  // a support operation, not a code path.
   try {
     const { subscription } = await upsertFromVerify(input);
 
@@ -180,6 +162,21 @@ export async function subscriptionVerifyHandler(req: Request, res: Response) {
     });
     return;
   } catch (error) {
+    if (error instanceof SubscriptionAccountMismatchError) {
+      req.log.warn(
+        {
+          accountId,
+          existingAccountId: error.existingAccountId,
+          originalTransactionId: input.originalTransactionId,
+        },
+        "subscription.verify.account_mismatch",
+      );
+      res.status(409).json({
+        error: "Subscription belongs to a different account. Contact support.",
+        code: "subscription_account_mismatch",
+      });
+      return;
+    }
     req.log.error(
       {
         error,
