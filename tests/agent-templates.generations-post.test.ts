@@ -336,6 +336,49 @@ describe("POST /generations — idempotency", () => {
     expect(body.error.toLowerCase()).toContain("idempotency-key");
   });
 
+  test("same key + different identity constraints → 409 (must not cross-link)", async () => {
+    // Identity constraints influence the generator's output, so two
+    // callers sharing an Idempotency-Key but asking for different
+    // identities must not be deduplicated — the second caller would
+    // otherwise receive an AgentTemplate built with the first caller's
+    // name / emoji / description, which is the wrong result.
+    __resetGenerationExecutorForTests(() => Promise.resolve());
+
+    const first = await post(
+      { ...sampleBody, agentName: "Alice" },
+      { headers: withKey("idem-identity") },
+    );
+    expect(first.status).toBe(202);
+
+    const second = await post(
+      { ...sampleBody, agentName: "Bob" },
+      { headers: withKey("idem-identity") },
+    );
+    expect(second.status).toBe(409);
+  });
+
+  test("same key + same identity constraints → dedupes (replay)", async () => {
+    // Sanity check: when the constraints DO match, the replay path
+    // works as before — same generationId returned, no 409.
+    __resetGenerationExecutorForTests(() => Promise.resolve());
+
+    const constrained = { ...sampleBody, agentName: "Alice", emoji: "🦊" };
+
+    const first = await post(constrained, {
+      headers: withKey("idem-identity-match"),
+    });
+    expect(first.status).toBe(202);
+    const firstBody = (await first.json()) as { generationId: string };
+
+    const second = await post(constrained, {
+      headers: withKey("idem-identity-match"),
+    });
+    expect(second.status).toBe(202);
+    const secondBody = (await second.json()) as { generationId: string };
+
+    expect(secondBody.generationId).toBe(firstBody.generationId);
+  });
+
   test("terminal generation re-fetch returns 200, not 202", async () => {
     const first = await post(sampleBody, {
       headers: withKey("idem-3"),

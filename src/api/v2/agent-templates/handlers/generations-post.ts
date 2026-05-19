@@ -464,14 +464,17 @@ async function streamUntilTerminal(args: {
 // Handler
 // ---------------------------------------------------------------------------
 
-/** Internal type for the idempotency dedupe lookup. Includes `source` and
- *  `twitterContext` so the body comparison can detect cross-source or
- *  cross-tweet key reuse (e.g. same Idempotency-Key with source="twitter-bot"
- *  vs source="ios-app", or same key with different tweetIds). */
+/** Internal type for the idempotency dedupe lookup. Carries every field
+ *  that influences the generator's output so the body comparison can
+ *  detect cross-source / cross-tweet / cross-identity key reuse (e.g.
+ *  same Idempotency-Key with source="twitter-bot" vs source="ios-app",
+ *  same key with different tweetIds, or same key with different
+ *  identity pre-locks). */
 interface DedupeRow extends GenerationRow {
   source: string;
   inputs: unknown;
   twitterContext: unknown;
+  identityConstraints: unknown;
 }
 
 const dedupeSelect = {
@@ -479,6 +482,7 @@ const dedupeSelect = {
   source: true,
   inputs: true,
   twitterContext: true,
+  identityConstraints: true,
   status: true,
   templateId: true,
   reply: true,
@@ -487,21 +491,24 @@ const dedupeSelect = {
   updatedAt: true,
 } as const;
 
-/** Compare the full idempotent contract (source + inputs + twitterContext),
- *  not just inputs. Matches the docstring's "409 on body mismatch" promise
- *  and prevents two different tweets that happen to share idea text from
- *  cross-linking under the same Idempotency-Key. */
+/** Compare the full idempotent contract — every field that influences
+ *  the generator's output or the persisted template's identity. A
+ *  mismatch on any of them means the second caller wants a different
+ *  result than the first, so we must 409 rather than silently hand back
+ *  the first caller's row. */
 function dedupeBodiesMatch(existing: DedupeRow, body: Body): boolean {
   return bodiesMatch(
     {
       source: existing.source,
       inputs: existing.inputs,
       twitterContext: existing.twitterContext,
+      identityConstraints: existing.identityConstraints,
     },
     {
       source: body.source,
       inputs: body.inputs,
       twitterContext: body.twitterContext ?? null,
+      identityConstraints: pickIdentityConstraints(body),
     },
   );
 }
