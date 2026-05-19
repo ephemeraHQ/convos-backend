@@ -158,17 +158,22 @@ const twitterContextSchema = z
   .strict();
 
 /**
- * Identity pre-locks. Callers that already know what name / emoji /
- * description the agent should have (e.g. a client that ran an identity
- * pre-pass before submitting) ship those values here so the generator's
- * output for these fields is overridden with the locked-in values. All
+ * Partial AgentTemplate the caller pins ahead of generation. The
+ * generator respects these fields and fills in the rest — so callers
+ * that already know what they want for any allowlisted slot can commit
+ * it without depending on the model to echo the same value back. All
  * fields are optional; the executor only overlays the ones present.
+ *
+ * The allowlist is intentional — only fields the server lets a caller
+ * pin appear here, and `.strict()` rejects anything else. New pinnable
+ * fields (e.g. category, tools, forkedFromId for fork flows) get added
+ * to this schema; the endpoint's wire signature stays stable.
  *
  * Length caps mirror the underlying `AgentTemplate` column expectations
  * but are otherwise lightly constrained — `agentName` is shown verbatim
  * in clients, but XSS sanitization is an output-time concern there.
  */
-const identityConstraintsSchema = z
+const TemplatePrefillSchema = z
   .object({
     agentName: z.string().trim().min(1).max(256).optional(),
     emoji: z.string().trim().min(1).max(64).optional(),
@@ -193,11 +198,9 @@ const bodySchema = z
       .enum(["draft", "unlisted", "published"])
       .optional()
       .default("draft"),
-    // Identity constraints (flat, not nested) — see
-    // `identityConstraintsSchema` above for semantics.
-    agentName: identityConstraintsSchema.shape.agentName,
-    emoji: identityConstraintsSchema.shape.emoji,
-    description: identityConstraintsSchema.shape.description,
+    // Caller-pinned subset of the AgentTemplate fields — see
+    // `TemplatePrefillSchema` above for semantics and the allowlist.
+    prefill: TemplatePrefillSchema.optional(),
     // Asserted owner — honoured only when the caller is agent-key-auth'd;
     // ignored for JWT (JWT account always wins) and anonymous (falls
     // back to ADMIN). See the owner-resolution block below.
@@ -207,16 +210,7 @@ const bodySchema = z
 
 type Body = z.infer<typeof bodySchema>;
 type Inputs = z.infer<typeof inputsSchema>;
-type IdentityConstraints = z.infer<typeof identityConstraintsSchema>;
-
-const pickIdentityConstraints = (body: Body): IdentityConstraints | null => {
-  const constraints: IdentityConstraints = {};
-  if (body.agentName !== undefined) constraints.agentName = body.agentName;
-  if (body.emoji !== undefined) constraints.emoji = body.emoji;
-  if (body.description !== undefined)
-    constraints.description = body.description;
-  return Object.keys(constraints).length > 0 ? constraints : null;
-};
+export type TemplatePrefill = z.infer<typeof TemplatePrefillSchema>;
 
 // ---------------------------------------------------------------------------
 // Coalescing — for length validation; also used in executor at runtime
@@ -466,15 +460,15 @@ async function streamUntilTerminal(args: {
 
 /** Internal type for the idempotency dedupe lookup. Carries every field
  *  that influences the generator's output so the body comparison can
- *  detect cross-source / cross-tweet / cross-identity key reuse (e.g.
+ *  detect cross-source / cross-tweet / cross-prefill key reuse (e.g.
  *  same Idempotency-Key with source="twitter-bot" vs source="ios-app",
- *  same key with different tweetIds, or same key with different
- *  identity pre-locks). */
+ *  same key with different tweetIds, or same key with different caller-
+ *  pinned prefills). */
 interface DedupeRow extends GenerationRow {
   source: string;
   inputs: unknown;
   twitterContext: unknown;
-  identityConstraints: unknown;
+  prefill: unknown;
 }
 
 const dedupeSelect = {
@@ -482,7 +476,7 @@ const dedupeSelect = {
   source: true,
   inputs: true,
   twitterContext: true,
-  identityConstraints: true,
+  prefill: true,
   status: true,
   templateId: true,
   reply: true,
@@ -502,13 +496,13 @@ function dedupeBodiesMatch(existing: DedupeRow, body: Body): boolean {
       source: existing.source,
       inputs: existing.inputs,
       twitterContext: existing.twitterContext,
-      identityConstraints: existing.identityConstraints,
+      prefill: existing.prefill,
     },
     {
       source: body.source,
       inputs: body.inputs,
       twitterContext: body.twitterContext ?? null,
-      identityConstraints: pickIdentityConstraints(body),
+      prefill: body.prefill ?? null,
     },
   );
 }
@@ -786,7 +780,6 @@ export async function generationsPostHandler(req: Request, res: Response) {
   }
 
   // 10. Persist + fire executor
-  const identityConstraints = pickIdentityConstraints(body);
   let created: GenerationRow;
   try {
     created = await prisma.agentTemplateGeneration.create({
@@ -799,8 +792,8 @@ export async function generationsPostHandler(req: Request, res: Response) {
           ? (body.twitterContext as Prisma.InputJsonValue)
           : Prisma.JsonNull,
         clientDeviceId: body.clientDeviceId ?? null,
-        identityConstraints: identityConstraints
-          ? (identityConstraints as Prisma.InputJsonValue)
+        prefill: body.prefill
+          ? (body.prefill as Prisma.InputJsonValue)
           : Prisma.JsonNull,
         publishStatus: body.publishStatus,
         status: "pending",

@@ -113,28 +113,28 @@ interface TwitterContext {
   idea?: string;
 }
 
-// Identity pre-locks set by the caller on POST /generations — see the
-// schema definition in `handlers/generations-post.ts`. Stored on the
-// generation row's `identityConstraints` JSON column; applied here at
-// the persist stage so the AgentTemplate uses the caller's values.
-interface IdentityConstraints {
+// Caller-pinned partial AgentTemplate — see `TemplatePrefillSchema` in
+// `handlers/generations-post.ts` for the wire shape and allowlist.
+// Stored on the generation row's `prefill` JSON column; applied here at
+// the persist stage so the AgentTemplate uses the caller's pinned values.
+interface TemplatePrefill {
   agentName?: string;
   emoji?: string;
   description?: string;
 }
 
-function applyIdentityConstraints<
+function applyPrefill<
   T extends { agentName: string; emoji: string; description: string },
->(template: T, constraints: IdentityConstraints | null): T {
-  if (constraints === null) return template;
+>(template: T, prefill: TemplatePrefill | null): T {
+  if (prefill === null) return template;
   return {
     ...template,
-    ...(constraints.agentName !== undefined
-      ? { agentName: constraints.agentName }
+    ...(prefill.agentName !== undefined
+      ? { agentName: prefill.agentName }
       : {}),
-    ...(constraints.emoji !== undefined ? { emoji: constraints.emoji } : {}),
-    ...(constraints.description !== undefined
-      ? { description: constraints.description }
+    ...(prefill.emoji !== undefined ? { emoji: prefill.emoji } : {}),
+    ...(prefill.description !== undefined
+      ? { description: prefill.description }
       : {}),
   };
 }
@@ -504,18 +504,14 @@ async function _runPipeline(
       `Invalid initial publishStatus: "archived" — must be draft, unlisted, or published`,
     );
   }
-  // Identity pre-locks: when the caller supplied `agentName` / `emoji` /
-  // `description` on the /generations request, overlay them onto the LLM
-  // output so the persisted template uses the caller-provided identity
-  // verbatim. Lets callers that have already chosen an identity (e.g.
-  // via an in-chat identity pre-pass) commit it without depending on the
-  // generator to echo the same values back.
-  const identityConstraints =
-    (generation.identityConstraints as IdentityConstraints | null) ?? null;
-  const templateToPersist = applyIdentityConstraints(
-    templateResult.template,
-    identityConstraints,
-  );
+  // Caller-pinned prefill: when the caller pinned any allowlisted
+  // AgentTemplate field at submit time, overlay it onto the LLM output
+  // so the persisted template uses the caller's value verbatim. Lets
+  // callers that have already chosen part of the template (e.g. via an
+  // in-chat identity pre-pass) commit those values without depending on
+  // the generator to echo them back.
+  const prefill = (generation.prefill as TemplatePrefill | null) ?? null;
+  const templateToPersist = applyPrefill(templateResult.template, prefill);
   let persisted: { id: string; slug: string };
   try {
     persisted = await persistTemplate(

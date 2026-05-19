@@ -1,3 +1,3 @@
 -- AlterTable
 ALTER TABLE "AgentTemplateGeneration"
-  ADD COLUMN "identityConstraints" JSONB;
+  ADD COLUMN "prefill" JSONB;

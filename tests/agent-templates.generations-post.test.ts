@@ -336,42 +336,45 @@ describe("POST /generations — idempotency", () => {
     expect(body.error.toLowerCase()).toContain("idempotency-key");
   });
 
-  test("same key + different identity constraints → 409 (must not cross-link)", async () => {
-    // Identity constraints influence the generator's output, so two
-    // callers sharing an Idempotency-Key but asking for different
-    // identities must not be deduplicated — the second caller would
-    // otherwise receive an AgentTemplate built with the first caller's
-    // name / emoji / description, which is the wrong result.
+  test("same key + different prefill → 409 (must not cross-link)", async () => {
+    // The prefill influences the generator's output, so two callers
+    // sharing an Idempotency-Key but pinning different values must not
+    // be deduplicated — the second caller would otherwise receive an
+    // AgentTemplate built with the first caller's pinned values, which
+    // is the wrong result.
     __resetGenerationExecutorForTests(() => Promise.resolve());
 
     const first = await post(
-      { ...sampleBody, agentName: "Alice" },
-      { headers: withKey("idem-identity") },
+      { ...sampleBody, prefill: { agentName: "Alice" } },
+      { headers: withKey("idem-prefill-diff") },
     );
     expect(first.status).toBe(202);
 
     const second = await post(
-      { ...sampleBody, agentName: "Bob" },
-      { headers: withKey("idem-identity") },
+      { ...sampleBody, prefill: { agentName: "Bob" } },
+      { headers: withKey("idem-prefill-diff") },
     );
     expect(second.status).toBe(409);
   });
 
-  test("same key + same identity constraints → dedupes (replay)", async () => {
-    // Sanity check: when the constraints DO match, the replay path
-    // works as before — same generationId returned, no 409.
+  test("same key + same prefill → dedupes (replay)", async () => {
+    // Sanity check: when the prefill DOES match, the replay path works
+    // as before — same generationId returned, no 409.
     __resetGenerationExecutorForTests(() => Promise.resolve());
 
-    const constrained = { ...sampleBody, agentName: "Alice", emoji: "🦊" };
+    const pinned = {
+      ...sampleBody,
+      prefill: { agentName: "Alice", emoji: "🦊" },
+    };
 
-    const first = await post(constrained, {
-      headers: withKey("idem-identity-match"),
+    const first = await post(pinned, {
+      headers: withKey("idem-prefill-match"),
     });
     expect(first.status).toBe(202);
     const firstBody = (await first.json()) as { generationId: string };
 
-    const second = await post(constrained, {
-      headers: withKey("idem-identity-match"),
+    const second = await post(pinned, {
+      headers: withKey("idem-prefill-match"),
     });
     expect(second.status).toBe(202);
     const secondBody = (await second.json()) as { generationId: string };
@@ -416,19 +419,21 @@ describe("POST /generations — SSE mode", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Identity constraints + owner assertion
+// Caller-pinned prefill + owner assertion
 // ---------------------------------------------------------------------------
 
-describe("POST /generations — identity constraints", () => {
+describe("POST /generations — prefill", () => {
   test("agentName / emoji / description overlay the generator's output", async () => {
     const res = await post(
       {
         ...sampleBody,
-        agentName: "Renamed Agent",
-        emoji: "🦊",
-        description: "An asserted description.",
+        prefill: {
+          agentName: "Renamed Agent",
+          emoji: "🦊",
+          description: "A pinned description.",
+        },
       },
-      { headers: withKey("constraints-overlay"), query: "?wait_ms=10000" },
+      { headers: withKey("prefill-overlay"), query: "?wait_ms=10000" },
     );
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
@@ -441,17 +446,17 @@ describe("POST /generations — identity constraints", () => {
       where: { id: body.templateId },
     });
     expect(template).not.toBeNull();
-    // Caller-supplied identity wins over whatever the mocked generator
+    // Caller-pinned values win over whatever the mocked generator
     // emitted (`makeFakeTemplate({ agentName: "Post Test Agent", ... })`).
     expect(template?.agentName).toBe("Renamed Agent");
     expect(template?.emoji).toBe("🦊");
-    expect(template?.description).toBe("An asserted description.");
+    expect(template?.description).toBe("A pinned description.");
   });
 
-  test("partial constraints — only set fields overlay; others keep generator output", async () => {
+  test("partial prefill — only set fields overlay; others keep generator output", async () => {
     const res = await post(
-      { ...sampleBody, emoji: "🌶️" },
-      { headers: withKey("constraints-partial"), query: "?wait_ms=10000" },
+      { ...sampleBody, prefill: { emoji: "🌶️" } },
+      { headers: withKey("prefill-partial"), query: "?wait_ms=10000" },
     );
     expect(res.status).toBe(200);
     const body = (await res.json()) as { templateId?: string };
@@ -465,12 +470,12 @@ describe("POST /generations — identity constraints", () => {
     expect(template?.description).toBe(fakeTemplate.description);
   });
 
-  test("constraints persist on the generation row's identityConstraints column", async () => {
+  test("prefill persists on the generation row's prefill column", async () => {
     __resetGenerationExecutorForTests(() => Promise.resolve());
 
     const res = await post(
-      { ...sampleBody, agentName: "Renamed Agent", emoji: "🦊" },
-      { headers: withKey("constraints-persist") },
+      { ...sampleBody, prefill: { agentName: "Renamed Agent", emoji: "🦊" } },
+      { headers: withKey("prefill-persist") },
     );
     expect(res.status).toBe(202);
     const body = (await res.json()) as { generationId: string };
@@ -478,17 +483,17 @@ describe("POST /generations — identity constraints", () => {
     const row = await prisma.agentTemplateGeneration.findUnique({
       where: { id: body.generationId },
     });
-    expect(row?.identityConstraints).toEqual({
+    expect(row?.prefill).toEqual({
       agentName: "Renamed Agent",
       emoji: "🦊",
     });
   });
 
-  test("no constraints → identityConstraints column is null", async () => {
+  test("no prefill → prefill column is null", async () => {
     __resetGenerationExecutorForTests(() => Promise.resolve());
 
     const res = await post(sampleBody, {
-      headers: withKey("constraints-absent"),
+      headers: withKey("prefill-absent"),
     });
     expect(res.status).toBe(202);
     const body = (await res.json()) as { generationId: string };
@@ -496,7 +501,23 @@ describe("POST /generations — identity constraints", () => {
     const row = await prisma.agentTemplateGeneration.findUnique({
       where: { id: body.generationId },
     });
-    expect(row?.identityConstraints).toBeNull();
+    expect(row?.prefill).toBeNull();
+  });
+
+  test("rejects keys outside the prefill allowlist → 400", async () => {
+    // `TemplatePrefillSchema` is `.strict()` so a caller can't pin
+    // server-managed fields (slug, id, status, ownerAccountId, …) by
+    // sneaking them in alongside the allowed ones. New pinnable fields
+    // go through `TemplatePrefillSchema` explicitly; the wire surface
+    // stays a stable allowlist.
+    const res = await post(
+      {
+        ...sampleBody,
+        prefill: { agentName: "Allowed", slug: "not-allowed" },
+      },
+      { headers: withKey("prefill-strict") },
+    );
+    expect(res.status).toBe(400);
   });
 });
 
