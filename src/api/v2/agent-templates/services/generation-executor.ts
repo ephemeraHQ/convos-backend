@@ -113,6 +113,32 @@ interface TwitterContext {
   idea?: string;
 }
 
+// Identity pre-locks set by the caller on POST /generations — see the
+// schema definition in `handlers/generations-post.ts`. Stored on the
+// generation row's `identityConstraints` JSON column; applied here at
+// the persist stage so the AgentTemplate uses the caller's values.
+interface IdentityConstraints {
+  agentName?: string;
+  emoji?: string;
+  description?: string;
+}
+
+function applyIdentityConstraints<
+  T extends { agentName: string; emoji: string; description: string },
+>(template: T, constraints: IdentityConstraints | null): T {
+  if (constraints === null) return template;
+  return {
+    ...template,
+    ...(constraints.agentName !== undefined
+      ? { agentName: constraints.agentName }
+      : {}),
+    ...(constraints.emoji !== undefined ? { emoji: constraints.emoji } : {}),
+    ...(constraints.description !== undefined
+      ? { description: constraints.description }
+      : {}),
+  };
+}
+
 // ---------------------------------------------------------------------------
 // PostHog actor-attribution fields — shared across every capture site
 // ---------------------------------------------------------------------------
@@ -478,10 +504,21 @@ async function _runPipeline(
       `Invalid initial publishStatus: "archived" — must be draft, unlisted, or published`,
     );
   }
+  // Identity pre-locks: when the caller supplied `agentName` / `emoji` /
+  // `description` on the /generations request, overlay them onto the LLM
+  // output so the persisted template uses the caller-provided identity
+  // verbatim. Used by the in-chat builder (convos-assistants PR 5b) which
+  // runs an identity pre-pass before calling here.
+  const identityConstraints =
+    (generation.identityConstraints as IdentityConstraints | null) ?? null;
+  const templateToPersist = applyIdentityConstraints(
+    templateResult.template,
+    identityConstraints,
+  );
   let persisted: { id: string; slug: string };
   try {
     persisted = await persistTemplate(
-      templateResult.template,
+      templateToPersist,
       generation.ownerAccountId,
       generation.publishStatus,
     );
@@ -503,7 +540,7 @@ async function _runPipeline(
   const twitterContext = generation.twitterContext as TwitterContext | null;
   if (twitterContext) {
     const firstSentence = firstSentenceOf(
-      templateResult.template.description || templateResult.template.prompt,
+      templateToPersist.description || templateToPersist.prompt,
     );
     // composeReply expects the canonical/hashed slug (e.g. "brewski.x4f9k")
     // — that's the form the resolver in resolve-id-or-hashed-slug.ts matches
@@ -511,9 +548,13 @@ async function _runPipeline(
     // store-base-not-hashed convention from PR #199. Construct the public
     // hashed slug here via buildSlug so the URL the reply contains
     // (`${BUILDER_SITE_URL}/<hashed>`) actually resolves.
+    //
+    // Use `templateToPersist` (which has identity constraints applied)
+    // rather than `templateResult.template` so the reply mirrors what
+    // the user will actually see on the published template.
     const replyInput = {
       handle: twitterContext.twitterHandle,
-      agentName: templateResult.template.agentName,
+      agentName: templateToPersist.agentName,
       firstSentence,
       slug: buildSlug(persisted.slug, persisted.id),
     };

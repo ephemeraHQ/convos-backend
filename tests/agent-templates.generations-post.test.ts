@@ -34,6 +34,7 @@ import {
 } from "@/api/v2/agent-templates/services/templateGen";
 import { __setAgentAssetsApiKeyOverrideForTests } from "@/middleware/agentAuth";
 import { ADMIN_ACCOUNT_ID } from "@/utils/constants";
+import { createJwtToken } from "@/utils/jwt";
 import { prisma } from "@/utils/prisma";
 import {
   stableUuid,
@@ -41,6 +42,12 @@ import {
   validAgentAssetsApiKey,
 } from "./agent-templates.cross.helpers";
 import { makeFakeTemplate } from "./agent-templates.generation.helpers";
+
+// Dedicated user account for owner-assertion tests. Created in beforeAll
+// so the agent-key-auth path can assert it via `body.ownerAccountId`, and
+// the JWT path can authenticate as it. UUID is stable across runs.
+const ASSERTED_ACCOUNT_ID = "00000000-0000-4000-8000-cccccccc0001";
+const NONEXISTENT_ACCOUNT_ID = "00000000-0000-4000-8000-deaddead0001";
 
 const TEST_PORT = 4075;
 const TEST_SOURCE = "generations-post-test";
@@ -72,12 +79,15 @@ const sampleBody = {
 
 async function cleanup() {
   await prisma.agentTemplateGeneration.deleteMany({
-    where: { ownerAccountId: ADMIN_ACCOUNT_ID, source: TEST_SOURCE },
+    where: {
+      ownerAccountId: { in: [ADMIN_ACCOUNT_ID, ASSERTED_ACCOUNT_ID] },
+      source: TEST_SOURCE,
+    },
   });
   await prisma.agentTemplate.deleteMany({
     where: {
-      ownerAccountId: ADMIN_ACCOUNT_ID,
-      agentName: fakeTemplate.agentName,
+      ownerAccountId: { in: [ADMIN_ACCOUNT_ID, ASSERTED_ACCOUNT_ID] },
+      agentName: { in: [fakeTemplate.agentName, "Renamed Agent"] },
     },
   });
 }
@@ -96,6 +106,13 @@ beforeAll(async () => {
     }),
   );
 
+  // Owner-assertion tests need a real account row to assert against.
+  await prisma.account.upsert({
+    where: { id: ASSERTED_ACCOUNT_ID },
+    update: {},
+    create: { id: ASSERTED_ACCOUNT_ID },
+  });
+
   const server = await startAgentTemplatesServer(TEST_PORT);
   baseURL = server.baseURL;
   closeServer = server.close;
@@ -112,6 +129,11 @@ afterAll(async () => {
   __resetGenerateTemplateForTests(null);
   __resetPostHogForTests(null);
   __resetModerationForTests(null);
+  await prisma.account
+    .delete({ where: { id: ASSERTED_ACCOUNT_ID } })
+    .catch(() => {
+      /* idempotent */
+    });
   await closeServer();
 });
 
@@ -347,5 +369,189 @@ describe("POST /generations — SSE mode", () => {
     expect(text).toContain("event: result");
     expect(text).toContain('"status":"done"');
     expect(text).toContain('"templateId":');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// PR 5c — identity constraints + owner assertion
+// ---------------------------------------------------------------------------
+
+describe("POST /generations — identity constraints", () => {
+  test("agentName / emoji / description overlay the generator's output", async () => {
+    const res = await post(
+      {
+        ...sampleBody,
+        agentName: "Renamed Agent",
+        emoji: "🦊",
+        description: "An asserted description.",
+      },
+      { headers: withKey("constraints-overlay"), query: "?wait_ms=10000" },
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      status: string;
+      templateId?: string;
+    };
+    expect(body.status).toBe("done");
+
+    const template = await prisma.agentTemplate.findUnique({
+      where: { id: body.templateId },
+    });
+    expect(template).not.toBeNull();
+    // Caller-supplied identity wins over whatever the mocked generator
+    // emitted (`makeFakeTemplate({ agentName: "Post Test Agent", ... })`).
+    expect(template?.agentName).toBe("Renamed Agent");
+    expect(template?.emoji).toBe("🦊");
+    expect(template?.description).toBe("An asserted description.");
+  });
+
+  test("partial constraints — only set fields overlay; others keep generator output", async () => {
+    const res = await post(
+      { ...sampleBody, emoji: "🌶️" },
+      { headers: withKey("constraints-partial"), query: "?wait_ms=10000" },
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { templateId?: string };
+
+    const template = await prisma.agentTemplate.findUnique({
+      where: { id: body.templateId },
+    });
+    expect(template?.emoji).toBe("🌶️");
+    // agentName + description fall through to the mocked generator
+    expect(template?.agentName).toBe(fakeTemplate.agentName);
+    expect(template?.description).toBe(fakeTemplate.description);
+  });
+
+  test("constraints persist on the generation row's identityConstraints column", async () => {
+    __resetGenerationExecutorForTests(() => Promise.resolve());
+
+    const res = await post(
+      { ...sampleBody, agentName: "Renamed Agent", emoji: "🦊" },
+      { headers: withKey("constraints-persist") },
+    );
+    expect(res.status).toBe(202);
+    const body = (await res.json()) as { generationId: string };
+
+    const row = await prisma.agentTemplateGeneration.findUnique({
+      where: { id: body.generationId },
+    });
+    expect(row?.identityConstraints).toEqual({
+      agentName: "Renamed Agent",
+      emoji: "🦊",
+    });
+  });
+
+  test("no constraints → identityConstraints column is null", async () => {
+    __resetGenerationExecutorForTests(() => Promise.resolve());
+
+    const res = await post(sampleBody, {
+      headers: withKey("constraints-absent"),
+    });
+    expect(res.status).toBe(202);
+    const body = (await res.json()) as { generationId: string };
+
+    const row = await prisma.agentTemplateGeneration.findUnique({
+      where: { id: body.generationId },
+    });
+    expect(row?.identityConstraints).toBeNull();
+  });
+});
+
+describe("POST /generations — owner assertion", () => {
+  test("agent-key auth + body.ownerAccountId → row owner is the asserted account", async () => {
+    __resetGenerationExecutorForTests(() => Promise.resolve());
+
+    const res = await post(
+      { ...sampleBody, ownerAccountId: ASSERTED_ACCOUNT_ID },
+      { headers: withKey("owner-asserted") },
+    );
+    expect(res.status).toBe(202);
+    const body = (await res.json()) as { generationId: string };
+
+    const row = await prisma.agentTemplateGeneration.findUnique({
+      where: { id: body.generationId },
+    });
+    expect(row?.ownerAccountId).toBe(ASSERTED_ACCOUNT_ID);
+  });
+
+  test("agent-key auth without assertion → row owner falls back to ADMIN", async () => {
+    __resetGenerationExecutorForTests(() => Promise.resolve());
+
+    const res = await post(sampleBody, { headers: withKey("owner-default") });
+    expect(res.status).toBe(202);
+    const body = (await res.json()) as { generationId: string };
+
+    const row = await prisma.agentTemplateGeneration.findUnique({
+      where: { id: body.generationId },
+    });
+    expect(row?.ownerAccountId).toBe(ADMIN_ACCOUNT_ID);
+  });
+
+  test("agent-key auth + body.ownerAccountId referring to a missing account → 400", async () => {
+    const res = await post(
+      { ...sampleBody, ownerAccountId: NONEXISTENT_ACCOUNT_ID },
+      { headers: withKey("owner-asserted-invalid") },
+    );
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string };
+    expect(body.error.toLowerCase()).toContain("ownerAccountId".toLowerCase());
+
+    // No row created
+    const rows = await prisma.agentTemplateGeneration.findMany({
+      where: { source: TEST_SOURCE },
+    });
+    expect(rows).toHaveLength(0);
+  });
+
+  test("JWT auth + body.ownerAccountId → JWT account wins, body field ignored", async () => {
+    __resetGenerationExecutorForTests(() => Promise.resolve());
+
+    const jwt = await createJwtToken({
+      deviceId: "owner-assertion-jwt",
+      accountId: ASSERTED_ACCOUNT_ID,
+    });
+    // Body asserts ADMIN — must be ignored because JWT auth wins.
+    const res = await fetch(`${baseURL}/api/v2/agent-templates/generations`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Convos-AuthToken": jwt,
+        "Idempotency-Key": stableUuid("owner-jwt-ignores-body"),
+      },
+      body: JSON.stringify({
+        ...sampleBody,
+        ownerAccountId: ADMIN_ACCOUNT_ID,
+      }),
+    });
+    expect(res.status).toBe(202);
+    const body = (await res.json()) as { generationId: string };
+
+    const row = await prisma.agentTemplateGeneration.findUnique({
+      where: { id: body.generationId },
+    });
+    expect(row?.ownerAccountId).toBe(ASSERTED_ACCOUNT_ID);
+  });
+
+  test("anonymous + body.ownerAccountId → ADMIN, body field ignored", async () => {
+    __resetGenerationExecutorForTests(() => Promise.resolve());
+
+    const res = await fetch(`${baseURL}/api/v2/agent-templates/generations`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Idempotency-Key": stableUuid("owner-anon-ignores-body"),
+      },
+      body: JSON.stringify({
+        ...sampleBody,
+        ownerAccountId: ASSERTED_ACCOUNT_ID,
+      }),
+    });
+    expect(res.status).toBe(202);
+    const body = (await res.json()) as { generationId: string };
+
+    const row = await prisma.agentTemplateGeneration.findUnique({
+      where: { id: body.generationId },
+    });
+    expect(row?.ownerAccountId).toBe(ADMIN_ACCOUNT_ID);
   });
 });

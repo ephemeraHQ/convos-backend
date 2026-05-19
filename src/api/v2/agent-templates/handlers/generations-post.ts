@@ -157,6 +157,25 @@ const twitterContextSchema = z
   })
   .strict();
 
+/**
+ * Identity pre-locks. When the in-chat builder runs an identity pre-pass
+ * before calling /generations (convos-assistants PR 5b), it sends the
+ * resulting `{agentName, emoji, description}` here so the generator's
+ * output for these fields is overridden with the locked-in values. All
+ * fields are optional; the executor only overlays the ones present.
+ *
+ * Length caps mirror the underlying `AgentTemplate` column expectations
+ * but are otherwise lightly constrained — `agentName` is shown verbatim
+ * in clients, but XSS sanitization is an output-time concern there.
+ */
+const identityConstraintsSchema = z
+  .object({
+    agentName: z.string().trim().min(1).max(256).optional(),
+    emoji: z.string().trim().min(1).max(64).optional(),
+    description: z.string().trim().min(1).max(1024).optional(),
+  })
+  .strict();
+
 const bodySchema = z
   .object({
     source: z.string().min(1, "source is required"),
@@ -174,11 +193,31 @@ const bodySchema = z
       .enum(["draft", "unlisted", "published"])
       .optional()
       .default("draft"),
+    // Identity constraints — see `identityConstraintsSchema` above.
+    // Flat on the body (rather than nested under `identity`) to match
+    // the plan in xmtplabs/convos-assistants#1661 PR 5c.
+    agentName: identityConstraintsSchema.shape.agentName,
+    emoji: identityConstraintsSchema.shape.emoji,
+    description: identityConstraintsSchema.shape.description,
+    // Asserted owner — see `resolveOwnerAccountId` below. Honoured only
+    // when the caller is agent-key-auth'd; ignored for JWT (JWT account
+    // always wins) and anonymous (falls back to ADMIN).
+    ownerAccountId: z.string().uuid().optional(),
   })
   .strict();
 
 type Body = z.infer<typeof bodySchema>;
 type Inputs = z.infer<typeof inputsSchema>;
+type IdentityConstraints = z.infer<typeof identityConstraintsSchema>;
+
+const pickIdentityConstraints = (body: Body): IdentityConstraints | null => {
+  const constraints: IdentityConstraints = {};
+  if (body.agentName !== undefined) constraints.agentName = body.agentName;
+  if (body.emoji !== undefined) constraints.emoji = body.emoji;
+  if (body.description !== undefined)
+    constraints.description = body.description;
+  return Object.keys(constraints).length > 0 ? constraints : null;
+};
 
 // ---------------------------------------------------------------------------
 // Coalescing — for length validation; also used in executor at runtime
@@ -214,7 +253,7 @@ function coalesceInputs(inputs: Inputs): CoalescedInput | null {
 function canonicalize(value: unknown): unknown {
   if (value === null || typeof value !== "object") return value;
   if (Array.isArray(value)) return value.map(canonicalize);
-  const sortedKeys = Object.keys(value as Record<string, unknown>).sort();
+  const sortedKeys = Object.keys(value).sort();
   const out: Record<string, unknown> = {};
   for (const key of sortedKeys) {
     out[key] = canonicalize((value as Record<string, unknown>)[key]);
@@ -613,11 +652,42 @@ export async function generationsPostHandler(req: Request, res: Response) {
     return;
   }
 
-  // 5. Owner account. The route now uses optional auth so anonymous
-  //    submissions are allowed; those rows are owned by the admin seed
-  //    account (the closest thing we have to a system identity).
-  const ownerAccountId = getEffectiveOwnerId(res) ?? ADMIN_ACCOUNT_ID;
+  // 5. Owner account. Three branches:
+  //
+  //    - **Agent API key auth** (e.g. the in-chat builder in
+  //      convos-assistants PR 5b): caller is the runtime, asserting which
+  //      user account to attribute the work to. Body `ownerAccountId` is
+  //      the assertion; absent it, fall back to ADMIN. The assertion is
+  //      validated against the Account table — invalid accountIds 400
+  //      rather than silently landing on a phantom owner. Trust model
+  //      mirrors `credits.consume` (referenced in the plan).
+  //    - **JWT auth** (web `/create` flow, web dashboard): JWT account
+  //      always wins; any `ownerAccountId` in the body is ignored.
+  //    - **Anonymous** (web `/create` without auth): ADMIN seed account,
+  //      same as before. Body `ownerAccountId` ignored.
   const isApiKeyListener = res.locals.isApiKeyListener ?? false;
+  let ownerAccountId: string;
+  if (isApiKeyListener && body.ownerAccountId !== undefined) {
+    const assertedAccountId = body.ownerAccountId;
+    const exists = await prisma.account.findUnique({
+      where: { id: assertedAccountId },
+      select: { id: true },
+    });
+    if (!exists) {
+      res.status(400).json({
+        error: "Asserted ownerAccountId does not exist",
+      });
+      return;
+    }
+    ownerAccountId = assertedAccountId;
+  } else if (isApiKeyListener) {
+    // Agent-key auth without an explicit assertion → keep the existing
+    // default (the agent-key path historically resolves to ADMIN via
+    // `authOrAgentApiKeyAuth`).
+    ownerAccountId = ADMIN_ACCOUNT_ID;
+  } else {
+    ownerAccountId = getEffectiveOwnerId(res) ?? ADMIN_ACCOUNT_ID;
+  }
 
   // 5b. twitterContext is privileged — it ends up attributed to a real
   //     twitter handle. Only the bot (agent API key) is in a position to
@@ -711,6 +781,7 @@ export async function generationsPostHandler(req: Request, res: Response) {
   }
 
   // 10. Persist + fire executor
+  const identityConstraints = pickIdentityConstraints(body);
   let created: GenerationRow;
   try {
     created = await prisma.agentTemplateGeneration.create({
@@ -718,11 +789,14 @@ export async function generationsPostHandler(req: Request, res: Response) {
         ownerAccountId,
         source: body.source,
         idempotencyKey,
-        inputs: body.inputs as object,
+        inputs: body.inputs,
         twitterContext: body.twitterContext
           ? (body.twitterContext as Prisma.InputJsonValue)
           : Prisma.JsonNull,
         clientDeviceId: body.clientDeviceId ?? null,
+        identityConstraints: identityConstraints
+          ? (identityConstraints as Prisma.InputJsonValue)
+          : Prisma.JsonNull,
         publishStatus: body.publishStatus,
         status: "pending",
       },
