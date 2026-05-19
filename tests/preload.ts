@@ -12,6 +12,18 @@ process.env.NOTIFICATION_SERVER_URL = "http://localhost:8080";
 process.env.XMTP_NOTIFICATION_SECRET =
   process.env.XMTP_NOTIFICATION_SECRET || "test-notification-secret";
 
+// Assistant runtime defaults — tests can override per-case via
+// __setAssistantConfigOverridesForTests in assistant-config.ts.
+process.env.ASSISTANT_API_URL =
+  process.env.ASSISTANT_API_URL || "https://assistants.test.local";
+process.env.ASSISTANT_API_KEY =
+  process.env.ASSISTANT_API_KEY || "test-assistant-key";
+// Shrink the server-side join wait so tests don't burn 25s each.
+process.env.ASSISTANT_JOIN_WAIT_BUDGET_MS =
+  process.env.ASSISTANT_JOIN_WAIT_BUDGET_MS || "200";
+process.env.ASSISTANT_JOIN_POLL_INTERVAL_MS =
+  process.env.ASSISTANT_JOIN_POLL_INTERVAL_MS || "20";
+
 process.env.SIWE_DOMAIN = process.env.SIWE_DOMAIN || "convos.app";
 process.env.SIWE_URI = process.env.SIWE_URI || "https://convos.app";
 process.env.SIWE_ALLOWED_CHAIN_IDS = process.env.SIWE_ALLOWED_CHAIN_IDS || "1";

@@ -28,9 +28,43 @@ export const NODE_ENV = process.env.NODE_ENV || "development";
 export const IS_PRODUCTION = process.env.NODE_ENV === "production";
 export const IS_DEVELOPMENT = process.env.NODE_ENV === "development";
 
-// Agent pool (optional — endpoint returns 503 if not configured)
-export const AGENT_POOL_URL = process.env.AGENT_POOL_URL || "";
-export const AGENT_POOL_API_KEY = process.env.AGENT_POOL_API_KEY || "";
+// Assistant runtime service (convos-assistants). Backs
+// /api/v2/agents/join + /.well-known/agents.json.
+// ASSISTANT_API_KEY is optional — set if the deployed assistants service
+// requires a bearer token in front of POST /api/assistants.
+export const ASSISTANT_API_URL = (process.env.ASSISTANT_API_URL || "").trim();
+export const ASSISTANT_API_KEY = (process.env.ASSISTANT_API_KEY || "").trim();
+
+// Fail-fast at startup when ASSISTANT_API_URL is missing — matches the
+// throw-on-missing pattern for other required envs in this file
+// (SIWE_DOMAIN, SIWE_URI, NONCE_HMAC_SECRET). Surfaces misconfig at deploy
+// time instead of as 503s on the first user join attempt.
+if (!ASSISTANT_API_URL) {
+  throw new Error("ASSISTANT_API_URL is not configured");
+}
+
+// Reject plaintext ASSISTANT_API_URL deployments — the bearer key would
+// otherwise ride the wire in cleartext. Allow http://localhost for local
+// dev so `wrangler dev` against convos-assistants on 127.0.0.1 still works.
+const parsedAssistantUrl = (() => {
+  try {
+    return new URL(ASSISTANT_API_URL);
+  } catch {
+    throw new Error(
+      `ASSISTANT_API_URL is not a valid URL: ${ASSISTANT_API_URL}`,
+    );
+  }
+})();
+const isLocalHost =
+  parsedAssistantUrl.hostname === "localhost" ||
+  parsedAssistantUrl.hostname === "127.0.0.1" ||
+  parsedAssistantUrl.hostname.endsWith(".test.local");
+if (parsedAssistantUrl.protocol !== "https:" && !isLocalHost) {
+  throw new Error(
+    `ASSISTANT_API_URL must use https:// (got ${parsedAssistantUrl.protocol}). ` +
+      `Plaintext is only permitted for localhost / *.test.local hosts.`,
+  );
+}
 
 // Agent asset upload auth (optional — endpoint returns 503 if not configured)
 export const AGENT_ASSETS_API_KEY = process.env.AGENT_ASSETS_API_KEY || "";
@@ -140,6 +174,18 @@ export const GENERATION_STUCK_SWEEP_THRESHOLD_MS = parsePositiveInt(
 export const GENERATION_EXECUTOR_TIMEOUT_MS = parsePositiveInt(
   process.env.GENERATION_EXECUTOR_TIMEOUT_MS,
   5 * 60 * 1000,
+);
+
+// Server-side wait knobs for POST /api/v2/agents/join — the handler blocks
+// while the upstream assistant workflow boots a fresh container. Override
+// via env in tests / staging to shrink the wait.
+export const ASSISTANT_JOIN_WAIT_BUDGET_MS = parsePositiveInt(
+  process.env.ASSISTANT_JOIN_WAIT_BUDGET_MS,
+  25_000,
+);
+export const ASSISTANT_JOIN_POLL_INTERVAL_MS = parsePositiveInt(
+  process.env.ASSISTANT_JOIN_POLL_INTERVAL_MS,
+  1_500,
 );
 
 // Operational invariant: the stuck-row sweep must allow the in-process

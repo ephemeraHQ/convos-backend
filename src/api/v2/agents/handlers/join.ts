@@ -1,14 +1,36 @@
 import type { Request, Response } from "express";
 import { z } from "zod";
-import { AGENT_POOL_API_KEY, AGENT_POOL_URL, XMTP_ENV } from "@/config";
+import { XMTP_ENV } from "@/config";
+import {
+  assistantStatusSchema,
+  getAssistantApiKey,
+  getAssistantApiUrl,
+  getJoinPollIntervalMs,
+  getJoinWaitBudgetMs,
+} from "./assistant-config";
+
+// Per-join assistant-shaping knobs, forwarded onto convos-assistants'
+// free-form `metadata: Record<string, unknown>` bag. Each field is only
+// stamped onto metadata when the caller explicitly passes it — we do
+// not synthesize defaults at this layer.
+const optionsSchema = z
+  .object({
+    skipGreeting: z.boolean().optional(),
+    onboarding: z.string().min(1).max(64).optional(),
+  })
+  .strict();
 
 const bodySchema = z.object({
   slug: z.string().min(1, "Slug is required").max(2048),
   instructions: z.string().max(4096, "Instructions too long").optional(),
-  skipGreeting: z.boolean().optional(),
+  options: optionsSchema.optional(),
 });
 
 const FORCE_ERROR_DELAY_MS = 5_000;
+
+const DISPATCH_TIMEOUT_MS = 10_000;
+const POLL_TIMEOUT_MS = 5_000;
+const ERROR_BODY_LOG_LIMIT = 200;
 
 const ERRORS = {
   AGENT_PROVISION_FAILED: {
@@ -24,7 +46,7 @@ const ERRORS = {
   AGENT_POOL_TIMEOUT: {
     status: 504,
     error: "AGENT_POOL_TIMEOUT",
-    message: "Agent pool request timed out",
+    message: "Agent provisioning request timed out",
   },
 } as const;
 
@@ -34,36 +56,149 @@ function buildInviteUrl(slug: string): string {
   return `https://${domain}/v2?i=${encodeURIComponent(slug)}`;
 }
 
+const assistantDispatchSchema = z.object({
+  instanceId: z.string().min(1),
+});
+
+type PollOutcome =
+  | { kind: "joined" }
+  | { kind: "failed"; reason: string | null }
+  | { kind: "pending" };
+
+async function pollUntilJoined(args: {
+  assistantBaseUrl: string;
+  instanceId: string;
+  authHeader: string | undefined;
+  deadlineMs: number;
+  pollIntervalMs: number;
+  log: Request["log"];
+  abortSignal?: AbortSignal;
+}): Promise<PollOutcome> {
+  const {
+    assistantBaseUrl,
+    instanceId,
+    authHeader,
+    deadlineMs,
+    pollIntervalMs,
+    log,
+    abortSignal,
+  } = args;
+
+  const headers: Record<string, string> = {};
+  if (authHeader) headers.Authorization = authHeader;
+
+  while (Date.now() < deadlineMs) {
+    // Client disconnected before the deadline — stop polling. Any
+    // in-flight fetch below also receives the same signal and aborts.
+    if (abortSignal?.aborted) {
+      log.info(
+        { instanceId },
+        "Client disconnected during poll — aborting wait",
+      );
+      return { kind: "pending" };
+    }
+
+    try {
+      const upstream = await fetch(
+        `${assistantBaseUrl}/api/assistants/${encodeURIComponent(instanceId)}`,
+        {
+          method: "GET",
+          headers,
+          signal: abortSignal
+            ? AbortSignal.any([
+                AbortSignal.timeout(POLL_TIMEOUT_MS),
+                abortSignal,
+              ])
+            : AbortSignal.timeout(POLL_TIMEOUT_MS),
+        },
+      );
+
+      if (!upstream.ok) {
+        log.warn(
+          { status: upstream.status, instanceId },
+          "Assistant status poll returned non-200",
+        );
+      } else {
+        const raw = await upstream.json();
+        const parsed = assistantStatusSchema.safeParse(raw);
+        if (!parsed.success) {
+          log.warn(
+            { issues: parsed.error.issues, instanceId },
+            "Assistant status poll returned malformed body",
+          );
+        } else if (parsed.data.joinStatus === "joined") {
+          return { kind: "joined" };
+        } else if (parsed.data.joinStatus === "failed") {
+          return {
+            kind: "failed",
+            reason: parsed.data.joinFailureReason ?? null,
+          };
+        }
+      }
+    } catch (err) {
+      // Per-poll errors are non-fatal; keep trying until the deadline.
+      log.warn(
+        { err: err instanceof Error ? err.message : String(err), instanceId },
+        "Assistant status poll errored",
+      );
+    }
+
+    const remaining = deadlineMs - Date.now();
+    if (remaining <= 0) break;
+    await new Promise((resolve) =>
+      setTimeout(resolve, Math.min(pollIntervalMs, remaining)),
+    );
+  }
+
+  return { kind: "pending" };
+}
+
 /**
  * Handler for POST /api/v2/agents/join
  *
- * Requests an AI agent to join a conversation by claiming an idle instance
- * from the agent pool and directing it to the conversation's invite URL.
+ * Requests an AI agent to join a conversation. Internally dispatches the
+ * assistant runtime service (convos-assistants) `POST /api/assistants`
+ * workflow with the conversation's invite URL, then server-side polls
+ * the upstream status until the agent has joined, the workflow has failed,
+ * or the wait budget has elapsed.
+ *
+ * Response shape preserves the legacy synchronous contract:
+ *
+ *   { success: true, joined: true  }                  — agent joined within window
+ *   { success: true, joined: false, instanceId: ... } — still provisioning;
+ *     caller may poll GET /api/v2/agents/join/:instanceId
+ *
+ * On upstream `failed`, returns 502 AGENT_PROVISION_FAILED.
  *
  * ## Testing with forced errors
  *
- * Send the `X-Force-Error` header to simulate error responses without
- * hitting the real agent pool. The response is delayed by 5 seconds to
- * mimic real-world latency. Only available when `XMTP_ENV` is not `"production"`.
- * In production, the `X-Force-Error` header is silently ignored and normal
- * logic proceeds.
+ * Send the `X-Force-Error` header to simulate error responses without hitting
+ * the real assistant service. The response is delayed by 5 seconds to mimic
+ * real-world latency. Only available when `XMTP_ENV` is not `"production"`.
  *
- * | Header value       | Simulated response                  |
- * |--------------------|-------------------------------------|
- * | `X-Force-Error: 502` | 502 AGENT_PROVISION_FAILED        |
- * | `X-Force-Error: 503` | 503 NO_AGENTS_AVAILABLE           |
- * | `X-Force-Error: 504` | 504 AGENT_POOL_TIMEOUT            |
- *
- * Example:
- * ```
- * curl -X POST https://api.convos.org/api/v2/agents/join \
- *   -H "Authorization: Bearer <jwt>" \
- *   -H "Content-Type: application/json" \
- *   -H "X-Force-Error: 502" \
- *   -d '{"slug": "test-slug"}'
- * ```
+ * | Header value         | Simulated response             |
+ * |----------------------|--------------------------------|
+ * | `X-Force-Error: 502` | 502 AGENT_PROVISION_FAILED     |
+ * | `X-Force-Error: 503` | 503 NO_AGENTS_AVAILABLE        |
+ * | `X-Force-Error: 504` | 504 AGENT_POOL_TIMEOUT         |
  */
 export async function joinHandler(req: Request, res: Response) {
+  // Cancel in-flight upstream work when the client disconnects before we've
+  // responded. Saves backend + upstream load on abandoned joins (force-quit
+  // mid-provision, network blip mid-poll, etc.). Listen on `res` rather
+  // than `req`: `req.on('close')` can fire on body-stream end in some
+  // HTTP runtimes (Bun in particular) and would falsely abort before the
+  // handler has even reached the poll loop. `res.on('close')` fires when
+  // the underlying connection terminates, and the `!res.writableEnded`
+  // guard distinguishes "client disconnected before response" from
+  // "response completed normally."
+  const clientDisconnect = new AbortController();
+  res.on("close", () => {
+    if (!res.writableEnded) {
+      clientDisconnect.abort();
+    }
+  });
+
   // Force error responses for testing (non-production XMTP env only) — see JSDoc above for usage
   const forceError =
     XMTP_ENV !== "production" ? req.headers["x-force-error"] : undefined;
@@ -80,12 +215,15 @@ export async function joinHandler(req: Request, res: Response) {
     return;
   }
 
-  if (!AGENT_POOL_URL || !AGENT_POOL_API_KEY) {
-    req.log.error("Agent pool not configured");
+  const assistantApiUrl = getAssistantApiUrl();
+  const assistantApiKey = getAssistantApiKey();
+
+  if (!assistantApiUrl) {
+    req.log.error("Assistant API not configured");
     res.status(503).json({
       success: false,
       error: "AGENT_POOL_UNAVAILABLE",
-      message: "Agent pool is not configured",
+      message: "Assistant API is not configured",
     });
     return;
   }
@@ -100,39 +238,96 @@ export async function joinHandler(req: Request, res: Response) {
     return;
   }
 
-  const { slug, instructions, skipGreeting } = parsed.data;
-  req.log.info({ slug, skipGreeting }, "Agent join request received");
+  const { slug, instructions, options } = parsed.data;
+  // Avoid logging the raw slug (it's a join-token granting conversation
+  // access) and the raw `options` (caller-controlled input). Log presence
+  // flags + option keys instead so volumes/cardinality stay bounded.
+  req.log.info(
+    {
+      hasInstructions: instructions !== undefined,
+      optionKeys: options ? Object.keys(options) : [],
+    },
+    "Agent join request received",
+  );
 
+  const assistantBaseUrl = assistantApiUrl.replace(/\/+$/, "");
+  const authHeader = assistantApiKey ? `Bearer ${assistantApiKey}` : undefined;
+
+  let instanceId: string;
   try {
     const joinUrl = buildInviteUrl(slug);
-    const agentPoolBaseUrl = AGENT_POOL_URL.replace(/\/+$/, "");
+    const dispatchHeaders: Record<string, string> = {
+      "Content-Type": "application/json",
+    };
+    if (authHeader) dispatchHeaders.Authorization = authHeader;
 
-    const poolRes = await fetch(`${agentPoolBaseUrl}/api/pool/claim`, {
+    // Forward each option only when the caller explicitly passed it —
+    // no defaults at this layer. `options` is omitted entirely from the
+    // upstream payload when neither field is set, so the dispatch body
+    // stays minimal in the common path.
+    const upstreamOptions: Record<string, unknown> = {};
+    if (options?.skipGreeting !== undefined) {
+      upstreamOptions.skipGreeting = options.skipGreeting;
+    }
+    if (options?.onboarding !== undefined) {
+      upstreamOptions.onboarding = options.onboarding;
+    }
+
+    const dispatchBody: Record<string, unknown> = {
+      name: "Assistant",
+      // `??` (not `||`) so an explicit empty string from the caller is
+      // forwarded as-is, not silently replaced with the default. The
+      // schema accepts `""` today; tightening to `.min(1)` would be the
+      // alternative, but the upstream is the place to validate prompt
+      // emptiness now that PR 2a is dropping this field entirely.
+      instructions: instructions ?? "You are a helpful assistant.",
+      joinUrl,
+    };
+    if (Object.keys(upstreamOptions).length > 0) {
+      dispatchBody.options = upstreamOptions;
+    }
+
+    const dispatchRes = await fetch(`${assistantBaseUrl}/api/assistants`, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${AGENT_POOL_API_KEY}`,
-      },
-      signal: AbortSignal.timeout(30_000),
-      body: JSON.stringify({
-        agentName: "Assistant",
-        instructions: instructions || "You are a helpful assistant.",
-        joinUrl,
-        ...(skipGreeting !== undefined && { skipGreeting }),
-      }),
+      headers: dispatchHeaders,
+      signal: AbortSignal.any([
+        AbortSignal.timeout(DISPATCH_TIMEOUT_MS),
+        clientDisconnect.signal,
+      ]),
+      body: JSON.stringify(dispatchBody),
     });
 
-    if (!poolRes.ok) {
-      const text = await poolRes.text();
+    if (!dispatchRes.ok) {
+      const text = await dispatchRes.text();
       req.log.error(
-        { status: poolRes.status, body: text },
-        "Agent pool claim failed",
+        {
+          status: dispatchRes.status,
+          bodyPreview: text.substring(0, ERROR_BODY_LOG_LIMIT),
+          bodyLength: text.length,
+        },
+        "Assistant dispatch failed",
       );
 
-      if (poolRes.status === 503 || poolRes.status === 404) {
+      // 503 = capacity / availability. 404 on the POST collection
+      // endpoint is a misconfiguration (wrong URL / deploy mismatch),
+      // not a transient capacity issue — fail loud rather than mask it
+      // as NO_AGENTS_AVAILABLE.
+      if (dispatchRes.status === 503) {
         const { status, ...body } = ERRORS.NO_AGENTS_AVAILABLE;
         res.status(status).json({ success: false, ...body });
         return;
+      }
+
+      // 404 on POST /api/assistants is never a capacity issue — it's
+      // almost always wrong ASSISTANT_API_URL or a deploy mismatch.
+      // Log distinctly so operators can grep for misconfig vs other
+      // upstream failures without re-checking response statuses. Don't
+      // log `slug` here — it's the join token (see sanitized log above).
+      if (dispatchRes.status === 404) {
+        req.log.error(
+          { assistantBaseUrl },
+          "Assistant dispatch returned 404 — likely ASSISTANT_API_URL misconfiguration or upstream deploy mismatch",
+        );
       }
 
       const { status, ...body } = ERRORS.AGENT_PROVISION_FAILED;
@@ -140,27 +335,79 @@ export async function joinHandler(req: Request, res: Response) {
       return;
     }
 
-    const result = (await poolRes.json()) as { joined?: boolean };
-
-    res.status(200).json({
-      success: true,
-      joined: result.joined ?? false,
-    });
-    return;
+    const raw = await dispatchRes.json();
+    const result = assistantDispatchSchema.safeParse(raw);
+    if (!result.success) {
+      req.log.error(
+        { issues: result.error.issues },
+        "Invalid assistant dispatch response",
+      );
+      const { status, ...body } = ERRORS.AGENT_PROVISION_FAILED;
+      res.status(status).json({ success: false, ...body });
+      return;
+    }
+    instanceId = result.data.instanceId;
   } catch (error) {
     if (error instanceof DOMException && error.name === "TimeoutError") {
-      req.log.error("Agent pool request timed out");
+      req.log.error("Assistant dispatch request timed out");
       const { status, ...body } = ERRORS.AGENT_POOL_TIMEOUT;
       res.status(status).json({ success: false, ...body });
       return;
     }
 
+    // Client disconnected mid-dispatch — `clientDisconnect.signal` aborted
+    // the fetch (AbortSignal.any composed it with the timeout signal).
+    // There's no live response to send to, so just return silently
+    // instead of falling through to the generic 502 handler and writing
+    // to a closed connection.
+    if (error instanceof DOMException && error.name === "AbortError") {
+      req.log.info("Client disconnected during dispatch — aborting silently");
+      return;
+    }
+
     req.log.error(
       { error, stack: error instanceof Error ? error.stack : undefined },
-      "Agent pool request failed",
+      "Assistant dispatch request failed",
     );
     const { status, ...body } = ERRORS.AGENT_PROVISION_FAILED;
     res.status(status).json({ success: false, ...body });
     return;
   }
+
+  // Dispatch succeeded — block while the workflow spins up. If we exceed the
+  // wait budget, fall back to the async contract and hand the caller an
+  // instanceId they can poll.
+  const deadlineMs = Date.now() + getJoinWaitBudgetMs();
+  const outcome = await pollUntilJoined({
+    assistantBaseUrl,
+    instanceId,
+    authHeader,
+    deadlineMs,
+    pollIntervalMs: getJoinPollIntervalMs(),
+    log: req.log,
+    abortSignal: clientDisconnect.signal,
+  });
+
+  if (outcome.kind === "joined") {
+    res.status(200).json({ success: true, joined: true, instanceId });
+    return;
+  }
+
+  if (outcome.kind === "failed") {
+    req.log.error(
+      { instanceId, reason: outcome.reason },
+      "Assistant workflow reported failed",
+    );
+    const { status, ...body } = ERRORS.AGENT_PROVISION_FAILED;
+    res.status(status).json({ success: false, ...body });
+    return;
+  }
+
+  // Pending (or all polls errored): return 200 with joined:false + instanceId
+  // so the iOS client can keep polling.
+  req.log.info(
+    { instanceId },
+    "Assistant join still pending after server-side wait budget",
+  );
+  res.status(200).json({ success: true, joined: false, instanceId });
 }
