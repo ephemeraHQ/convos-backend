@@ -635,6 +635,24 @@ describe("agents join (assistant API)", () => {
       expect(data.error).toBe("TEMPLATE_ARCHIVED");
     });
 
+    test("returns 500 when template lookup throws", async () => {
+      // `findUnique` itself returns `null` for missing records, not a
+      // throw — so the throwing branch only fires on connection / driver
+      // errors. The guard exists so transient DB failures surface as a
+      // clean error code instead of an unhandled promise rejection.
+      __setTemplateFinderForTests(() =>
+        Promise.reject(new Error("ECONNREFUSED")),
+      );
+
+      const res = await post(
+        { slug: "x", templateId: "33333333-3333-4333-8333-333333333333" },
+        { accountId: "user-1" },
+      );
+      expect(res.status).toBe(500);
+      const data = (await res.json()) as { error: string };
+      expect(data.error).toBe("TEMPLATE_LOOKUP_FAILED");
+    });
+
     test("draft template: owner can use it", async () => {
       __setTemplateFinderForTests(() =>
         Promise.resolve(
