@@ -131,7 +131,13 @@ describe("agents join (assistant API)", () => {
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
     };
-    if (opts.accountId) headers[TEST_ACCOUNT_HEADER] = opts.accountId;
+    // Send the header whenever `accountId` is explicitly provided —
+    // including the empty string, which exercises the handler's "no
+    // identity in context" 401 path. When omitted, the test middleware
+    // defaults to `DEFAULT_TEST_ACCOUNT_ID` so the common happy path
+    // mirrors production's authenticated-only contract.
+    if (opts.accountId !== undefined)
+      headers[TEST_ACCOUNT_HEADER] = opts.accountId;
     return originalFetch(`${baseURL}/api/v2/agents/join`, {
       method: "POST",
       headers,
@@ -308,6 +314,18 @@ describe("agents join (assistant API)", () => {
       expect(res.status).toBe(400);
       const data = (await res.json()) as { success: boolean; error: string };
       expect(data.error).toBe("INVALID_REQUEST");
+    });
+
+    test("returns 401 when accountId is missing from request context", async () => {
+      // Defense-in-depth: the route sits behind `authMiddleware` in
+      // production, which 401s missing JWTs — so the handler's guard
+      // is unreachable through normal routing. The test exercises it
+      // anyway by sending an explicit empty `x-test-account-id` header,
+      // simulating a hypothetical middleware-order regression.
+      const res = await post({ slug: "x" }, { accountId: "" });
+      expect(res.status).toBe(401);
+      const data = (await res.json()) as { error: string };
+      expect(data.error).toBe("UNAUTHORIZED");
     });
 
     test("forwards options.skipGreeting upstream when provided", async () => {

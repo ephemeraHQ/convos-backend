@@ -381,6 +381,27 @@ export async function joinHandler(req: Request, res: Response) {
           message: "Agent template has been archived",
         });
         return;
+      default: {
+        // Forcing function: if a future maintainer adds a value to
+        // `PublishStatus` without updating this switch, the assignment
+        // below is a compile error — `status` would narrow to the new
+        // value instead of `never`. The runtime arm is the matching
+        // safety net for DB drift (e.g. a row written by a system that
+        // doesn't share our enum view): fail closed rather than
+        // silently falling through to dispatch.
+        const _exhaustive: never = resolvedTemplate.status;
+        void _exhaustive;
+        req.log.error(
+          { templateId, status: resolvedTemplate.status },
+          "Unexpected template status",
+        );
+        res.status(500).json({
+          success: false,
+          error: "TEMPLATE_STATUS_INVALID",
+          message: "Template has an invalid status",
+        });
+        return;
+      }
     }
   }
 
