@@ -267,6 +267,11 @@ export class ApnsPushService {
           return;
         }
 
+        if (statusCode === 413 || errorData.reason === "PayloadTooLarge") {
+          resolve({ success: false, error: "PayloadTooLarge" });
+          return;
+        }
+
         resolve({
           success: false,
           error: errorData.reason || `HTTP ${statusCode}`,
