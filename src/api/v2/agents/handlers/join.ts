@@ -281,12 +281,27 @@ export async function joinHandler(req: Request, res: Response) {
     "Agent join request received",
   );
 
-  // `/api/v2/agents` is mounted behind `authMiddleware`, so `accountId`
-  // is always populated by the time we reach the handler. Captured here
-  // so it can flow through to `/api/assistants` as the joining user's
-  // account — the runtime uses it later to authenticate user-owned
-  // template creations via `POST /api/v2/agent-templates/generations`.
-  const joiningUserAccountId = res.locals.accountId as string;
+  // `/api/v2/agents` is mounted behind `authMiddleware`, which 401s any
+  // request without a valid JWT, so under normal routing `accountId` is
+  // guaranteed populated by the time we reach the handler. The guard
+  // here is defense-in-depth — if the route ever gets remounted without
+  // auth, or the middleware order regresses, we fail closed rather than
+  // dispatching an assistant with `ownerAccountId: undefined` and
+  // silently breaking downstream authorization (PR 3 will check this
+  // value to authenticate user-owned template creations).
+  const joiningUserAccountId = res.locals.accountId;
+  if (
+    typeof joiningUserAccountId !== "string" ||
+    joiningUserAccountId.length === 0
+  ) {
+    req.log.error("Missing accountId in request context");
+    res.status(401).json({
+      success: false,
+      error: "UNAUTHORIZED",
+      message: "Authentication required",
+    });
+    return;
+  }
 
   // Mutually-exclusive intents: adopting an existing template versus
   // building a new one in-conversation. Other `onboarding` values

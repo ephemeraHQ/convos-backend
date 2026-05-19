@@ -32,17 +32,19 @@ const ASSISTANT_KEY = "test-assistant-key";
 const TEST_ACCOUNT_HEADER = "x-test-account-id";
 
 // `/api/v2/agents` is mounted behind `authMiddleware` in production, which
-// populates `res.locals.accountId` from the JWT. The handler reads it
-// directly. Standing up real JWT auth in this fetch-mocked test would be
-// noise; instead, read a header and forward it to `res.locals` so each
-// test can pick its caller identity.
+// populates `res.locals.accountId` from the JWT. The handler now requires
+// it (401 otherwise). Standing up real JWT auth in this fetch-mocked test
+// would be noise; instead default a placeholder accountId so every test
+// mirrors production's authenticated-only contract, and let individual
+// tests override identity via a header.
+const DEFAULT_TEST_ACCOUNT_ID = "default-test-account";
 function testAccountMiddleware(
   req: Request,
   res: ExpressResponse,
   next: NextFunction,
 ) {
-  const accountId = req.header(TEST_ACCOUNT_HEADER);
-  if (accountId) res.locals.accountId = accountId;
+  res.locals.accountId =
+    req.header(TEST_ACCOUNT_HEADER) ?? DEFAULT_TEST_ACCOUNT_ID;
   next();
 }
 
