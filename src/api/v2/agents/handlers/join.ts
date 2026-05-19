@@ -361,9 +361,7 @@ export async function joinHandler(req: Request, res: Response) {
     // instead of falling through to the generic 502 handler and writing
     // to a closed connection.
     if (error instanceof DOMException && error.name === "AbortError") {
-      req.log.info(
-        "Client disconnected during dispatch — aborting silently",
-      );
+      req.log.info("Client disconnected during dispatch — aborting silently");
       return;
     }
 
