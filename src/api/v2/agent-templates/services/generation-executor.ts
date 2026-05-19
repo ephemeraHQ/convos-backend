@@ -510,7 +510,7 @@ async function _runPipeline(
   // callers that have already chosen part of the template (e.g. via an
   // in-chat identity pre-pass) commit those values without depending on
   // the generator to echo them back.
-  const prefill = (generation.prefill as TemplatePrefill | null) ?? null;
+  const prefill = generation.prefill as TemplatePrefill | null;
   const templateToPersist = applyPrefill(templateResult.template, prefill);
   let persisted: { id: string; slug: string };
   try {
