@@ -35,29 +35,35 @@ export const IS_DEVELOPMENT = process.env.NODE_ENV === "development";
 export const ASSISTANT_API_URL = (process.env.ASSISTANT_API_URL || "").trim();
 export const ASSISTANT_API_KEY = (process.env.ASSISTANT_API_KEY || "").trim();
 
+// Fail-fast at startup when ASSISTANT_API_URL is missing — matches the
+// throw-on-missing pattern for other required envs in this file
+// (SIWE_DOMAIN, SIWE_URI, NONCE_HMAC_SECRET). Surfaces misconfig at deploy
+// time instead of as 503s on the first user join attempt.
+if (!ASSISTANT_API_URL) {
+  throw new Error("ASSISTANT_API_URL is not configured");
+}
+
 // Reject plaintext ASSISTANT_API_URL deployments — the bearer key would
 // otherwise ride the wire in cleartext. Allow http://localhost for local
 // dev so `wrangler dev` against convos-assistants on 127.0.0.1 still works.
-if (ASSISTANT_API_URL) {
-  const parsedAssistantUrl = (() => {
-    try {
-      return new URL(ASSISTANT_API_URL);
-    } catch {
-      throw new Error(
-        `ASSISTANT_API_URL is not a valid URL: ${ASSISTANT_API_URL}`,
-      );
-    }
-  })();
-  const isLocalHost =
-    parsedAssistantUrl.hostname === "localhost" ||
-    parsedAssistantUrl.hostname === "127.0.0.1" ||
-    parsedAssistantUrl.hostname.endsWith(".test.local");
-  if (parsedAssistantUrl.protocol !== "https:" && !isLocalHost) {
+const parsedAssistantUrl = (() => {
+  try {
+    return new URL(ASSISTANT_API_URL);
+  } catch {
     throw new Error(
-      `ASSISTANT_API_URL must use https:// (got ${parsedAssistantUrl.protocol}). ` +
-        `Plaintext is only permitted for localhost / *.test.local hosts.`,
+      `ASSISTANT_API_URL is not a valid URL: ${ASSISTANT_API_URL}`,
     );
   }
+})();
+const isLocalHost =
+  parsedAssistantUrl.hostname === "localhost" ||
+  parsedAssistantUrl.hostname === "127.0.0.1" ||
+  parsedAssistantUrl.hostname.endsWith(".test.local");
+if (parsedAssistantUrl.protocol !== "https:" && !isLocalHost) {
+  throw new Error(
+    `ASSISTANT_API_URL must use https:// (got ${parsedAssistantUrl.protocol}). ` +
+      `Plaintext is only permitted for localhost / *.test.local hosts.`,
+  );
 }
 
 // Agent asset upload auth (optional — endpoint returns 503 if not configured)
