@@ -164,6 +164,14 @@ model AgentTemplateGeneration {
   inputs          Json
   twitterContext  Json?
   clientDeviceId  String?          @db.VarChar(128)
+  // Partial AgentTemplate the caller pinned at submit time — a
+  // server-allowlisted subset of fields the executor overlays onto the
+  // generator's output so the persisted template uses the caller-pinned
+  // values verbatim. The wire shape is validated by `TemplatePrefillSchema`
+  // in `handlers/generations-post.ts`; new pinnable fields are added there.
+  // Stored on the row because the executor is fire-and-forget and re-reads
+  // the row; this is the simplest handoff channel.
+  prefill Json?
   templateId      String?          @db.Uuid
   publishStatus   PublishStatus    @default(draft)
   reply           String?          @db.Text

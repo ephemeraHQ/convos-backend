@@ -157,6 +157,30 @@ const twitterContextSchema = z
   })
   .strict();
 
+/**
+ * Partial AgentTemplate the caller pins ahead of generation. The
+ * generator respects these fields and fills in the rest — so callers
+ * that already know what they want for any allowlisted slot can commit
+ * it without depending on the model to echo the same value back. All
+ * fields are optional; the executor only overlays the ones present.
+ *
+ * The allowlist is intentional — only fields the server lets a caller
+ * pin appear here, and `.strict()` rejects anything else. New pinnable
+ * fields (e.g. category, tools, forkedFromId for fork flows) get added
+ * to this schema; the endpoint's wire signature stays stable.
+ *
+ * Length caps mirror the underlying `AgentTemplate` column expectations
+ * but are otherwise lightly constrained — `agentName` is shown verbatim
+ * in clients, but XSS sanitization is an output-time concern there.
+ */
+const TemplatePrefillSchema = z
+  .object({
+    agentName: z.string().trim().min(1).max(256).optional(),
+    emoji: z.string().trim().min(1).max(64).optional(),
+    description: z.string().trim().min(1).max(1024).optional(),
+  })
+  .strict();
+
 const bodySchema = z
   .object({
     source: z.string().min(1, "source is required"),
@@ -174,11 +198,25 @@ const bodySchema = z
       .enum(["draft", "unlisted", "published"])
       .optional()
       .default("draft"),
+    // Caller-pinned subset of the AgentTemplate fields — see
+    // `TemplatePrefillSchema` above for semantics and the allowlist.
+    // An empty `{}` is normalized to `undefined`: it overlays nothing,
+    // so treating it differently from an omitted prefill would let two
+    // logically identical requests collide on an Idempotency-Key (one
+    // sending `{}`, one omitting) and store meaningless empty objects.
+    prefill: TemplatePrefillSchema.optional().transform((v) =>
+      v && Object.keys(v).length > 0 ? v : undefined,
+    ),
+    // Asserted owner — honoured only when the caller is agent-key-auth'd;
+    // ignored for JWT (JWT account always wins) and anonymous (falls
+    // back to ADMIN). See the owner-resolution block below.
+    ownerAccountId: z.string().uuid().optional(),
   })
   .strict();
 
 type Body = z.infer<typeof bodySchema>;
 type Inputs = z.infer<typeof inputsSchema>;
+export type TemplatePrefill = z.infer<typeof TemplatePrefillSchema>;
 
 // ---------------------------------------------------------------------------
 // Coalescing — for length validation; also used in executor at runtime
@@ -214,7 +252,7 @@ function coalesceInputs(inputs: Inputs): CoalescedInput | null {
 function canonicalize(value: unknown): unknown {
   if (value === null || typeof value !== "object") return value;
   if (Array.isArray(value)) return value.map(canonicalize);
-  const sortedKeys = Object.keys(value as Record<string, unknown>).sort();
+  const sortedKeys = Object.keys(value).sort();
   const out: Record<string, unknown> = {};
   for (const key of sortedKeys) {
     out[key] = canonicalize((value as Record<string, unknown>)[key]);
@@ -426,14 +464,17 @@ async function streamUntilTerminal(args: {
 // Handler
 // ---------------------------------------------------------------------------
 
-/** Internal type for the idempotency dedupe lookup. Includes `source` and
- *  `twitterContext` so the body comparison can detect cross-source or
- *  cross-tweet key reuse (e.g. same Idempotency-Key with source="twitter-bot"
- *  vs source="ios-app", or same key with different tweetIds). */
+/** Internal type for the idempotency dedupe lookup. Carries every field
+ *  that influences the generator's output so the body comparison can
+ *  detect cross-source / cross-tweet / cross-prefill key reuse (e.g.
+ *  same Idempotency-Key with source="twitter-bot" vs source="ios-app",
+ *  same key with different tweetIds, or same key with different caller-
+ *  pinned prefills). */
 interface DedupeRow extends GenerationRow {
   source: string;
   inputs: unknown;
   twitterContext: unknown;
+  prefill: unknown;
 }
 
 const dedupeSelect = {
@@ -441,6 +482,7 @@ const dedupeSelect = {
   source: true,
   inputs: true,
   twitterContext: true,
+  prefill: true,
   status: true,
   templateId: true,
   reply: true,
@@ -449,21 +491,24 @@ const dedupeSelect = {
   updatedAt: true,
 } as const;
 
-/** Compare the full idempotent contract (source + inputs + twitterContext),
- *  not just inputs. Matches the docstring's "409 on body mismatch" promise
- *  and prevents two different tweets that happen to share idea text from
- *  cross-linking under the same Idempotency-Key. */
+/** Compare the full idempotent contract — every field that influences
+ *  the generator's output or the persisted template's identity. A
+ *  mismatch on any of them means the second caller wants a different
+ *  result than the first, so we must 409 rather than silently hand back
+ *  the first caller's row. */
 function dedupeBodiesMatch(existing: DedupeRow, body: Body): boolean {
   return bodiesMatch(
     {
       source: existing.source,
       inputs: existing.inputs,
       twitterContext: existing.twitterContext,
+      prefill: existing.prefill,
     },
     {
       source: body.source,
       inputs: body.inputs,
       twitterContext: body.twitterContext ?? null,
+      prefill: body.prefill ?? null,
     },
   );
 }
@@ -613,11 +658,47 @@ export async function generationsPostHandler(req: Request, res: Response) {
     return;
   }
 
-  // 5. Owner account. The route now uses optional auth so anonymous
-  //    submissions are allowed; those rows are owned by the admin seed
-  //    account (the closest thing we have to a system identity).
-  const ownerAccountId = getEffectiveOwnerId(res) ?? ADMIN_ACCOUNT_ID;
+  // 5. Owner account. Three branches:
+  //
+  //    - **Agent API key auth**: caller is a trusted system component
+  //      (e.g. an agent runtime) authenticating as itself and asserting
+  //      which user account to attribute the work to. Body `ownerAccountId`
+  //      is the assertion; absent it, fall back to ADMIN. The assertion
+  //      is validated against the Account table — invalid accountIds 400
+  //      rather than silently landing on a phantom owner.
+  //    - **JWT auth**: end user submitting through their own account.
+  //      JWT account always wins; any `ownerAccountId` in the body is
+  //      ignored (users can't assert ownership on behalf of others).
+  //    - **Anonymous**: ADMIN seed account. Body `ownerAccountId` ignored.
   const isApiKeyListener = res.locals.isApiKeyListener ?? false;
+  let ownerAccountId: string;
+  if (isApiKeyListener && body.ownerAccountId !== undefined) {
+    const assertedAccountId = body.ownerAccountId;
+    // Best-effort early validation — fail fast before the moderation
+    // calls below spend API budget on a request we're going to reject.
+    // The DB's FK constraint on `ownerAccountId → Account.id` is the
+    // canonical source of truth; a P2003 from the insert (handled in
+    // the catch block below) maps to the same 400 and covers the race
+    // where the account is deleted between this check and the insert.
+    const exists = await prisma.account.findUnique({
+      where: { id: assertedAccountId },
+      select: { id: true },
+    });
+    if (!exists) {
+      res.status(400).json({
+        error: "Asserted ownerAccountId does not exist",
+      });
+      return;
+    }
+    ownerAccountId = assertedAccountId;
+  } else if (isApiKeyListener) {
+    // Agent-key auth without an explicit assertion → keep the existing
+    // default (the agent-key path historically resolves to ADMIN via
+    // `authOrAgentApiKeyAuth`).
+    ownerAccountId = ADMIN_ACCOUNT_ID;
+  } else {
+    ownerAccountId = getEffectiveOwnerId(res) ?? ADMIN_ACCOUNT_ID;
+  }
 
   // 5b. twitterContext is privileged — it ends up attributed to a real
   //     twitter handle. Only the bot (agent API key) is in a position to
@@ -718,11 +799,14 @@ export async function generationsPostHandler(req: Request, res: Response) {
         ownerAccountId,
         source: body.source,
         idempotencyKey,
-        inputs: body.inputs as object,
+        inputs: body.inputs,
         twitterContext: body.twitterContext
           ? (body.twitterContext as Prisma.InputJsonValue)
           : Prisma.JsonNull,
         clientDeviceId: body.clientDeviceId ?? null,
+        prefill: body.prefill
+          ? (body.prefill as Prisma.InputJsonValue)
+          : Prisma.JsonNull,
         publishStatus: body.publishStatus,
         status: "pending",
       },
@@ -758,6 +842,21 @@ export async function generationsPostHandler(req: Request, res: Response) {
         ownerAccountId,
         row: racedRow,
         isClosed,
+      });
+      return;
+    }
+    // Race: the asserted owner account was deleted between our
+    // pre-check (`account.findUnique` in the owner-resolution block)
+    // and this insert, so the FK constraint fires. Map back to the
+    // documented 400 so the caller sees a consistent error code
+    // regardless of race timing — the only FK on this row that can
+    // miss in practice is `ownerAccountId → Account.id`.
+    if (
+      err instanceof Prisma.PrismaClientKnownRequestError &&
+      err.code === "P2003"
+    ) {
+      res.status(400).json({
+        error: "Asserted ownerAccountId does not exist",
       });
       return;
     }

@@ -34,6 +34,7 @@ import {
 } from "@/api/v2/agent-templates/services/templateGen";
 import { __setAgentAssetsApiKeyOverrideForTests } from "@/middleware/agentAuth";
 import { ADMIN_ACCOUNT_ID } from "@/utils/constants";
+import { createJwtToken } from "@/utils/jwt";
 import { prisma } from "@/utils/prisma";
 import {
   stableUuid,
@@ -41,6 +42,12 @@ import {
   validAgentAssetsApiKey,
 } from "./agent-templates.cross.helpers";
 import { makeFakeTemplate } from "./agent-templates.generation.helpers";
+
+// Dedicated user account for owner-assertion tests. Created in beforeAll
+// so the agent-key-auth path can assert it via `body.ownerAccountId`, and
+// the JWT path can authenticate as it. UUID is stable across runs.
+const ASSERTED_ACCOUNT_ID = "00000000-0000-4000-8000-cccccccc0001";
+const NONEXISTENT_ACCOUNT_ID = "00000000-0000-4000-8000-deaddead0001";
 
 const TEST_PORT = 4075;
 const TEST_SOURCE = "generations-post-test";
@@ -72,12 +79,15 @@ const sampleBody = {
 
 async function cleanup() {
   await prisma.agentTemplateGeneration.deleteMany({
-    where: { ownerAccountId: ADMIN_ACCOUNT_ID, source: TEST_SOURCE },
+    where: {
+      ownerAccountId: { in: [ADMIN_ACCOUNT_ID, ASSERTED_ACCOUNT_ID] },
+      source: TEST_SOURCE,
+    },
   });
   await prisma.agentTemplate.deleteMany({
     where: {
-      ownerAccountId: ADMIN_ACCOUNT_ID,
-      agentName: fakeTemplate.agentName,
+      ownerAccountId: { in: [ADMIN_ACCOUNT_ID, ASSERTED_ACCOUNT_ID] },
+      agentName: { in: [fakeTemplate.agentName, "Renamed Agent"] },
     },
   });
 }
@@ -96,6 +106,13 @@ beforeAll(async () => {
     }),
   );
 
+  // Owner-assertion tests need a real account row to assert against.
+  await prisma.account.upsert({
+    where: { id: ASSERTED_ACCOUNT_ID },
+    update: {},
+    create: { id: ASSERTED_ACCOUNT_ID },
+  });
+
   const server = await startAgentTemplatesServer(TEST_PORT);
   baseURL = server.baseURL;
   closeServer = server.close;
@@ -112,6 +129,11 @@ afterAll(async () => {
   __resetGenerateTemplateForTests(null);
   __resetPostHogForTests(null);
   __resetModerationForTests(null);
+  await prisma.account
+    .delete({ where: { id: ASSERTED_ACCOUNT_ID } })
+    .catch(() => {
+      /* idempotent */
+    });
   await closeServer();
 });
 
@@ -314,6 +336,52 @@ describe("POST /generations — idempotency", () => {
     expect(body.error.toLowerCase()).toContain("idempotency-key");
   });
 
+  test("same key + different prefill → 409 (must not cross-link)", async () => {
+    // The prefill influences the generator's output, so two callers
+    // sharing an Idempotency-Key but pinning different values must not
+    // be deduplicated — the second caller would otherwise receive an
+    // AgentTemplate built with the first caller's pinned values, which
+    // is the wrong result.
+    __resetGenerationExecutorForTests(() => Promise.resolve());
+
+    const first = await post(
+      { ...sampleBody, prefill: { agentName: "Alice" } },
+      { headers: withKey("idem-prefill-diff") },
+    );
+    expect(first.status).toBe(202);
+
+    const second = await post(
+      { ...sampleBody, prefill: { agentName: "Bob" } },
+      { headers: withKey("idem-prefill-diff") },
+    );
+    expect(second.status).toBe(409);
+  });
+
+  test("same key + same prefill → dedupes (replay)", async () => {
+    // Sanity check: when the prefill DOES match, the replay path works
+    // as before — same generationId returned, no 409.
+    __resetGenerationExecutorForTests(() => Promise.resolve());
+
+    const pinned = {
+      ...sampleBody,
+      prefill: { agentName: "Alice", emoji: "🦊" },
+    };
+
+    const first = await post(pinned, {
+      headers: withKey("idem-prefill-match"),
+    });
+    expect(first.status).toBe(202);
+    const firstBody = (await first.json()) as { generationId: string };
+
+    const second = await post(pinned, {
+      headers: withKey("idem-prefill-match"),
+    });
+    expect(second.status).toBe(202);
+    const secondBody = (await second.json()) as { generationId: string };
+
+    expect(secondBody.generationId).toBe(firstBody.generationId);
+  });
+
   test("terminal generation re-fetch returns 200, not 202", async () => {
     const first = await post(sampleBody, {
       headers: withKey("idem-3"),
@@ -347,5 +415,239 @@ describe("POST /generations — SSE mode", () => {
     expect(text).toContain("event: result");
     expect(text).toContain('"status":"done"');
     expect(text).toContain('"templateId":');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Caller-pinned prefill + owner assertion
+// ---------------------------------------------------------------------------
+
+describe("POST /generations — prefill", () => {
+  test("agentName / emoji / description overlay the generator's output", async () => {
+    const res = await post(
+      {
+        ...sampleBody,
+        prefill: {
+          agentName: "Renamed Agent",
+          emoji: "🦊",
+          description: "A pinned description.",
+        },
+      },
+      { headers: withKey("prefill-overlay"), query: "?wait_ms=10000" },
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      status: string;
+      templateId?: string;
+    };
+    expect(body.status).toBe("done");
+
+    const template = await prisma.agentTemplate.findUnique({
+      where: { id: body.templateId },
+    });
+    expect(template).not.toBeNull();
+    // Caller-pinned values win over whatever the mocked generator
+    // emitted (`makeFakeTemplate({ agentName: "Post Test Agent", ... })`).
+    expect(template?.agentName).toBe("Renamed Agent");
+    expect(template?.emoji).toBe("🦊");
+    expect(template?.description).toBe("A pinned description.");
+  });
+
+  test("partial prefill — only set fields overlay; others keep generator output", async () => {
+    const res = await post(
+      { ...sampleBody, prefill: { emoji: "🌶️" } },
+      { headers: withKey("prefill-partial"), query: "?wait_ms=10000" },
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { templateId?: string };
+
+    const template = await prisma.agentTemplate.findUnique({
+      where: { id: body.templateId },
+    });
+    expect(template?.emoji).toBe("🌶️");
+    // agentName + description fall through to the mocked generator
+    expect(template?.agentName).toBe(fakeTemplate.agentName);
+    expect(template?.description).toBe(fakeTemplate.description);
+  });
+
+  test("prefill persists on the generation row's prefill column", async () => {
+    __resetGenerationExecutorForTests(() => Promise.resolve());
+
+    const res = await post(
+      { ...sampleBody, prefill: { agentName: "Renamed Agent", emoji: "🦊" } },
+      { headers: withKey("prefill-persist") },
+    );
+    expect(res.status).toBe(202);
+    const body = (await res.json()) as { generationId: string };
+
+    const row = await prisma.agentTemplateGeneration.findUnique({
+      where: { id: body.generationId },
+    });
+    expect(row?.prefill).toEqual({
+      agentName: "Renamed Agent",
+      emoji: "🦊",
+    });
+  });
+
+  test("no prefill → prefill column is null", async () => {
+    __resetGenerationExecutorForTests(() => Promise.resolve());
+
+    const res = await post(sampleBody, {
+      headers: withKey("prefill-absent"),
+    });
+    expect(res.status).toBe(202);
+    const body = (await res.json()) as { generationId: string };
+
+    const row = await prisma.agentTemplateGeneration.findUnique({
+      where: { id: body.generationId },
+    });
+    expect(row?.prefill).toBeNull();
+  });
+
+  test("empty {} prefill is treated as omitted (no spurious 409, persists null)", async () => {
+    // `{}` overlays nothing, so it's semantically identical to an
+    // omitted prefill. The handler normalises it at parse time so the
+    // dedupe contract treats them as the same body, and the row stores
+    // null (not `{}`) for the empty case.
+    __resetGenerationExecutorForTests(() => Promise.resolve());
+
+    const a = await post(sampleBody, { headers: withKey("idem-empty-1") });
+    const b = await post(
+      { ...sampleBody, prefill: {} },
+      { headers: withKey("idem-empty-1") },
+    );
+
+    expect(a.status).toBe(202);
+    expect(b.status).toBe(202);
+    const aBody = (await a.json()) as { generationId: string };
+    const bBody = (await b.json()) as { generationId: string };
+    // Same logical body → dedupe replay, not 409.
+    expect(bBody.generationId).toBe(aBody.generationId);
+
+    const row = await prisma.agentTemplateGeneration.findUnique({
+      where: { id: aBody.generationId },
+    });
+    expect(row?.prefill).toBeNull();
+  });
+
+  test("rejects keys outside the prefill allowlist → 400", async () => {
+    // `TemplatePrefillSchema` is `.strict()` so a caller can't pin
+    // server-managed fields (slug, id, status, ownerAccountId, …) by
+    // sneaking them in alongside the allowed ones. New pinnable fields
+    // go through `TemplatePrefillSchema` explicitly; the wire surface
+    // stays a stable allowlist.
+    const res = await post(
+      {
+        ...sampleBody,
+        prefill: { agentName: "Allowed", slug: "not-allowed" },
+      },
+      { headers: withKey("prefill-strict") },
+    );
+    expect(res.status).toBe(400);
+  });
+});
+
+describe("POST /generations — owner assertion", () => {
+  test("agent-key auth + body.ownerAccountId → row owner is the asserted account", async () => {
+    __resetGenerationExecutorForTests(() => Promise.resolve());
+
+    const res = await post(
+      { ...sampleBody, ownerAccountId: ASSERTED_ACCOUNT_ID },
+      { headers: withKey("owner-asserted") },
+    );
+    expect(res.status).toBe(202);
+    const body = (await res.json()) as { generationId: string };
+
+    const row = await prisma.agentTemplateGeneration.findUnique({
+      where: { id: body.generationId },
+    });
+    expect(row?.ownerAccountId).toBe(ASSERTED_ACCOUNT_ID);
+  });
+
+  test("agent-key auth without assertion → row owner falls back to ADMIN", async () => {
+    __resetGenerationExecutorForTests(() => Promise.resolve());
+
+    const res = await post(sampleBody, { headers: withKey("owner-default") });
+    expect(res.status).toBe(202);
+    const body = (await res.json()) as { generationId: string };
+
+    const row = await prisma.agentTemplateGeneration.findUnique({
+      where: { id: body.generationId },
+    });
+    expect(row?.ownerAccountId).toBe(ADMIN_ACCOUNT_ID);
+  });
+
+  test("agent-key auth + body.ownerAccountId referring to a missing account → 400", async () => {
+    // Covers the common case (account never existed → pre-check fails
+    // → 400). The TOCTOU variant (account deleted between pre-check
+    // and insert → FK violation → 400) is harder to exercise without
+    // mocking `prisma.create` to throw P2003 on demand, but the catch
+    // block in the handler maps the same error to the same 400 via the
+    // FK constraint, so consistency holds across race timings.
+    const res = await post(
+      { ...sampleBody, ownerAccountId: NONEXISTENT_ACCOUNT_ID },
+      { headers: withKey("owner-asserted-invalid") },
+    );
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string };
+    expect(body.error.toLowerCase()).toContain("ownerAccountId".toLowerCase());
+
+    // No row created
+    const rows = await prisma.agentTemplateGeneration.findMany({
+      where: { source: TEST_SOURCE },
+    });
+    expect(rows).toHaveLength(0);
+  });
+
+  test("JWT auth + body.ownerAccountId → JWT account wins, body field ignored", async () => {
+    __resetGenerationExecutorForTests(() => Promise.resolve());
+
+    const jwt = await createJwtToken({
+      deviceId: "owner-assertion-jwt",
+      accountId: ASSERTED_ACCOUNT_ID,
+    });
+    // Body asserts ADMIN — must be ignored because JWT auth wins.
+    const res = await fetch(`${baseURL}/api/v2/agent-templates/generations`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Convos-AuthToken": jwt,
+        "Idempotency-Key": stableUuid("owner-jwt-ignores-body"),
+      },
+      body: JSON.stringify({
+        ...sampleBody,
+        ownerAccountId: ADMIN_ACCOUNT_ID,
+      }),
+    });
+    expect(res.status).toBe(202);
+    const body = (await res.json()) as { generationId: string };
+
+    const row = await prisma.agentTemplateGeneration.findUnique({
+      where: { id: body.generationId },
+    });
+    expect(row?.ownerAccountId).toBe(ASSERTED_ACCOUNT_ID);
+  });
+
+  test("anonymous + body.ownerAccountId → ADMIN, body field ignored", async () => {
+    __resetGenerationExecutorForTests(() => Promise.resolve());
+
+    const res = await fetch(`${baseURL}/api/v2/agent-templates/generations`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Idempotency-Key": stableUuid("owner-anon-ignores-body"),
+      },
+      body: JSON.stringify({
+        ...sampleBody,
+        ownerAccountId: ASSERTED_ACCOUNT_ID,
+      }),
+    });
+    expect(res.status).toBe(202);
+    const body = (await res.json()) as { generationId: string };
+
+    const row = await prisma.agentTemplateGeneration.findUnique({
+      where: { id: body.generationId },
+    });
+    expect(row?.ownerAccountId).toBe(ADMIN_ACCOUNT_ID);
   });
 });

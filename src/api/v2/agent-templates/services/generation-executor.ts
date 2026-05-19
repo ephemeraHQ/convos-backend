@@ -113,6 +113,32 @@ interface TwitterContext {
   idea?: string;
 }
 
+// Caller-pinned partial AgentTemplate — see `TemplatePrefillSchema` in
+// `handlers/generations-post.ts` for the wire shape and allowlist.
+// Stored on the generation row's `prefill` JSON column; applied here at
+// the persist stage so the AgentTemplate uses the caller's pinned values.
+interface TemplatePrefill {
+  agentName?: string;
+  emoji?: string;
+  description?: string;
+}
+
+function applyPrefill<
+  T extends { agentName: string; emoji: string; description: string },
+>(template: T, prefill: TemplatePrefill | null): T {
+  if (prefill === null) return template;
+  return {
+    ...template,
+    ...(prefill.agentName !== undefined
+      ? { agentName: prefill.agentName }
+      : {}),
+    ...(prefill.emoji !== undefined ? { emoji: prefill.emoji } : {}),
+    ...(prefill.description !== undefined
+      ? { description: prefill.description }
+      : {}),
+  };
+}
+
 // ---------------------------------------------------------------------------
 // PostHog actor-attribution fields — shared across every capture site
 // ---------------------------------------------------------------------------
@@ -478,10 +504,18 @@ async function _runPipeline(
       `Invalid initial publishStatus: "archived" — must be draft, unlisted, or published`,
     );
   }
+  // Caller-pinned prefill: when the caller pinned any allowlisted
+  // AgentTemplate field at submit time, overlay it onto the LLM output
+  // so the persisted template uses the caller's value verbatim. Lets
+  // callers that have already chosen part of the template (e.g. via an
+  // in-chat identity pre-pass) commit those values without depending on
+  // the generator to echo them back.
+  const prefill = generation.prefill as TemplatePrefill | null;
+  const templateToPersist = applyPrefill(templateResult.template, prefill);
   let persisted: { id: string; slug: string };
   try {
     persisted = await persistTemplate(
-      templateResult.template,
+      templateToPersist,
       generation.ownerAccountId,
       generation.publishStatus,
     );
@@ -503,7 +537,7 @@ async function _runPipeline(
   const twitterContext = generation.twitterContext as TwitterContext | null;
   if (twitterContext) {
     const firstSentence = firstSentenceOf(
-      templateResult.template.description || templateResult.template.prompt,
+      templateToPersist.description || templateToPersist.prompt,
     );
     // composeReply expects the canonical/hashed slug (e.g. "brewski.x4f9k")
     // — that's the form the resolver in resolve-id-or-hashed-slug.ts matches
@@ -511,9 +545,13 @@ async function _runPipeline(
     // store-base-not-hashed convention from PR #199. Construct the public
     // hashed slug here via buildSlug so the URL the reply contains
     // (`${BUILDER_SITE_URL}/<hashed>`) actually resolves.
+    //
+    // Use `templateToPersist` (which has identity constraints applied)
+    // rather than `templateResult.template` so the reply mirrors what
+    // the user will actually see on the published template.
     const replyInput = {
       handle: twitterContext.twitterHandle,
-      agentName: templateResult.template.agentName,
+      agentName: templateToPersist.agentName,
       firstSentence,
       slug: buildSlug(persisted.slug, persisted.id),
     };
