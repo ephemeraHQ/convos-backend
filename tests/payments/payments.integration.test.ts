@@ -48,6 +48,52 @@ describe("payments/index — composed service", () => {
     expect(rows[0].reason).toBe("grant");
   });
 
+  test("grant returns post-tx newBalance on first call", async () => {
+    const accountId = await seedAccount();
+    cleanupAccounts.push(accountId);
+
+    const r = await grant({
+      accountId,
+      credits: 100,
+      idempotencyKey: "nb-grant-1",
+      kind: "signup_bonus",
+    });
+
+    expect(r.newBalance).toBe(100n);
+    expect(r.newBalance).toBe(await getBalance(accountId));
+  });
+
+  test("grant replay returns current newBalance, not stale grant-time value", async () => {
+    const accountId = await seedAccount();
+    cleanupAccounts.push(accountId);
+
+    await grant({
+      accountId,
+      credits: 100,
+      idempotencyKey: "nb-grant-replay",
+      kind: "signup_bonus",
+    });
+    // Simulate concurrent burn after grant — replay must report current
+    // balance (70n), not the post-grant balance (100n).
+    await consume({
+      accountId,
+      usdCostMicros: 15000n, // 15000 micros × markup 2 × 1000 cpd / 1e6 = 30 credits
+      idempotencyKey: "nb-grant-burn",
+      requestId: "req-burn",
+    });
+
+    const replay = await grant({
+      accountId,
+      credits: 100,
+      idempotencyKey: "nb-grant-replay",
+      kind: "signup_bonus",
+    });
+
+    expect(replay.replayed).toBe(true);
+    expect(replay.newBalance).toBe(70n);
+    expect(replay.newBalance).toBe(await getBalance(accountId));
+  });
+
   test("grant rejects unknown kind", async () => {
     const accountId = await seedAccount();
     cleanupAccounts.push(accountId);

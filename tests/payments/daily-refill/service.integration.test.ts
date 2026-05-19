@@ -151,6 +151,7 @@ describe("runDailyRefill — top-up math", () => {
     expect(entry).toBeDefined();
     expect(entry!.creditsAdded).toBe(100);
     expect(await balanceOf(accountId)).toBe(100n);
+    expect(entry!.newBalance).toBe(100n);
   });
 
   test("balance below cap (40) → grant 60 to reach cap", async () => {
@@ -167,6 +168,7 @@ describe("runDailyRefill — top-up math", () => {
     expect(entry).toBeDefined();
     expect(entry!.creditsAdded).toBe(60);
     expect(await balanceOf(accountId)).toBe(100n);
+    expect(entry!.newBalance).toBe(100n);
   });
 
   test("balance at cap → noOp (no ledger row added)", async () => {
@@ -220,6 +222,7 @@ describe("runDailyRefill — top-up math", () => {
     expect(entry).toBeDefined();
     expect(entry!.creditsAdded).toBe(100);
     expect(await balanceOf(accountId)).toBe(60n); // -40 + 100 = 60
+    expect(entry!.newBalance).toBe(60n);
   });
 });
 

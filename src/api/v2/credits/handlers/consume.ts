@@ -1,6 +1,6 @@
 import { Prisma } from "@prisma/client";
 import type { Request, Response } from "express";
-import { consume as consumeCredits, getBalance } from "@/payments";
+import { consume as consumeCredits } from "@/payments";
 import {
   IdempotencyMismatchError,
   InsufficientBalanceError,
@@ -20,17 +20,13 @@ export async function consume(req: Request, res: Response): Promise<void> {
       requestId,
       model,
     });
-    // `balance` is advisory: read after the consume commit, so concurrent
-    // consumes on the same account may make this value reflect a later state.
-    // Hermes uses it only as a UI signal, not for accounting.
-    const balance = await getBalance(accountId);
     req.log.info(
       { accountId, spent: result.spent, replayed: result.replayed, requestId },
       result.replayed ? "credits.consume.replayed" : "credits.consume.accepted",
     );
     res.status(200).json({
       spent: result.spent,
-      balance: balance.toString(),
+      balance: result.newBalance.toString(),
       replayed: result.replayed,
     });
   } catch (err) {

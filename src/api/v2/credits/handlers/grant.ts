@@ -1,6 +1,6 @@
 import { Prisma } from "@prisma/client";
 import type { Request, Response } from "express";
-import { getBalance, grant as grantCredits } from "@/payments";
+import { grant as grantCredits } from "@/payments";
 import { IdempotencyMismatchError } from "@/payments/errors";
 import { isAccountIdFkViolation } from "../fk-violation";
 import { grantRequestSchema } from "../schemas";
@@ -17,10 +17,6 @@ export async function grant(req: Request, res: Response): Promise<void> {
       idempotencyKey,
       note,
     });
-    // `balance` is advisory: read after the grant commit, not isolated with the
-    // grant transaction. Concurrent grants could make this value reflect a
-    // later state.
-    const balance = await getBalance(accountId);
     req.log.info(
       {
         accountId,
@@ -32,7 +28,7 @@ export async function grant(req: Request, res: Response): Promise<void> {
     );
     res.status(200).json({
       granted: result.granted,
-      balance: balance.toString(),
+      balance: result.newBalance.toString(),
       replayed: result.replayed,
     });
   } catch (err) {

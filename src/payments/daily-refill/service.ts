@@ -102,7 +102,7 @@ export async function runDailyRefill(opts?: {
       summary.refilled.push({
         accountId,
         creditsAdded: result.granted,
-        newBalance: balance + BigInt(result.granted),
+        newBalance: result.newBalance,
       });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
