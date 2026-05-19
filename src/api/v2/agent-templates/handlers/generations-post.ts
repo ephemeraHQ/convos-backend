@@ -158,9 +158,9 @@ const twitterContextSchema = z
   .strict();
 
 /**
- * Identity pre-locks. When the in-chat builder runs an identity pre-pass
- * before calling /generations (convos-assistants PR 5b), it sends the
- * resulting `{agentName, emoji, description}` here so the generator's
+ * Identity pre-locks. Callers that already know what name / emoji /
+ * description the agent should have (e.g. a client that ran an identity
+ * pre-pass before submitting) ship those values here so the generator's
  * output for these fields is overridden with the locked-in values. All
  * fields are optional; the executor only overlays the ones present.
  *
@@ -193,15 +193,14 @@ const bodySchema = z
       .enum(["draft", "unlisted", "published"])
       .optional()
       .default("draft"),
-    // Identity constraints — see `identityConstraintsSchema` above.
-    // Flat on the body (rather than nested under `identity`) to match
-    // the plan in xmtplabs/convos-assistants#1661 PR 5c.
+    // Identity constraints (flat, not nested) — see
+    // `identityConstraintsSchema` above for semantics.
     agentName: identityConstraintsSchema.shape.agentName,
     emoji: identityConstraintsSchema.shape.emoji,
     description: identityConstraintsSchema.shape.description,
-    // Asserted owner — see `resolveOwnerAccountId` below. Honoured only
-    // when the caller is agent-key-auth'd; ignored for JWT (JWT account
-    // always wins) and anonymous (falls back to ADMIN).
+    // Asserted owner — honoured only when the caller is agent-key-auth'd;
+    // ignored for JWT (JWT account always wins) and anonymous (falls
+    // back to ADMIN). See the owner-resolution block below.
     ownerAccountId: z.string().uuid().optional(),
   })
   .strict();
@@ -654,17 +653,16 @@ export async function generationsPostHandler(req: Request, res: Response) {
 
   // 5. Owner account. Three branches:
   //
-  //    - **Agent API key auth** (e.g. the in-chat builder in
-  //      convos-assistants PR 5b): caller is the runtime, asserting which
-  //      user account to attribute the work to. Body `ownerAccountId` is
-  //      the assertion; absent it, fall back to ADMIN. The assertion is
-  //      validated against the Account table — invalid accountIds 400
-  //      rather than silently landing on a phantom owner. Trust model
-  //      mirrors `credits.consume` (referenced in the plan).
-  //    - **JWT auth** (web `/create` flow, web dashboard): JWT account
-  //      always wins; any `ownerAccountId` in the body is ignored.
-  //    - **Anonymous** (web `/create` without auth): ADMIN seed account,
-  //      same as before. Body `ownerAccountId` ignored.
+  //    - **Agent API key auth**: caller is a trusted system component
+  //      (e.g. an agent runtime) authenticating as itself and asserting
+  //      which user account to attribute the work to. Body `ownerAccountId`
+  //      is the assertion; absent it, fall back to ADMIN. The assertion
+  //      is validated against the Account table — invalid accountIds 400
+  //      rather than silently landing on a phantom owner.
+  //    - **JWT auth**: end user submitting through their own account.
+  //      JWT account always wins; any `ownerAccountId` in the body is
+  //      ignored (users can't assert ownership on behalf of others).
+  //    - **Anonymous**: ADMIN seed account. Body `ownerAccountId` ignored.
   const isApiKeyListener = res.locals.isApiKeyListener ?? false;
   let ownerAccountId: string;
   if (isApiKeyListener && body.ownerAccountId !== undefined) {

@@ -373,7 +373,7 @@ describe("POST /generations — SSE mode", () => {
 });
 
 // ---------------------------------------------------------------------------
-// PR 5c — identity constraints + owner assertion
+// Identity constraints + owner assertion
 // ---------------------------------------------------------------------------
 
 describe("POST /generations — identity constraints", () => {

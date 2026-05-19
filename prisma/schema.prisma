@@ -164,12 +164,11 @@ model AgentTemplateGeneration {
   inputs          Json
   twitterContext  Json?
   clientDeviceId  String?          @db.VarChar(128)
-  // Optional identity pre-locks set by callers (e.g. the in-chat builder
-  // in convos-assistants PR 5b) — agentName / emoji / description that
-  // the executor overlays onto the generator's output so the persisted
-  // AgentTemplate uses the caller-provided values verbatim. Stored on
-  // the row because the executor is fire-and-forget and re-reads the
-  // row; this is the simplest handoff channel.
+  // Optional identity pre-locks set by callers — agentName / emoji /
+  // description that the executor overlays onto the generator's output
+  // so the persisted AgentTemplate uses the caller-provided values
+  // verbatim. Stored on the row because the executor is fire-and-forget
+  // and re-reads the row; this is the simplest handoff channel.
   identityConstraints Json?
   templateId      String?          @db.Uuid
   publishStatus   PublishStatus    @default(draft)

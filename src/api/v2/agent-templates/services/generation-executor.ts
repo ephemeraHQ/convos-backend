@@ -507,8 +507,9 @@ async function _runPipeline(
   // Identity pre-locks: when the caller supplied `agentName` / `emoji` /
   // `description` on the /generations request, overlay them onto the LLM
   // output so the persisted template uses the caller-provided identity
-  // verbatim. Used by the in-chat builder (convos-assistants PR 5b) which
-  // runs an identity pre-pass before calling here.
+  // verbatim. Lets callers that have already chosen an identity (e.g.
+  // via an in-chat identity pre-pass) commit it without depending on the
+  // generator to echo the same values back.
   const identityConstraints =
     (generation.identityConstraints as IdentityConstraints | null) ?? null;
   const templateToPersist = applyIdentityConstraints(
