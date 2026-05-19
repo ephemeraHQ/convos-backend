@@ -103,16 +103,27 @@ export class FcmPushService {
             .contentTopic
         : undefined;
 
+    // FCM data messages - all values must be strings.
+    // Data-only messages are always delivered to onMessageReceived() on Android
+    // even when the app is in background, allowing proper handling.
+    // Build payload in its own try so JSON.stringify failures (BigInt, circular refs)
+    // map to the specific "Invalid notification data" error rather than leaking the
+    // raw Error.message through the generic catch below.
+    let wirePayload: ReturnType<typeof buildFcmWirePayload>;
     try {
-      // FCM data messages - all values must be strings.
-      // Data-only messages are always delivered to onMessageReceived() on Android
-      // even when the app is in background, allowing proper handling.
-      // Placed inside try so JSON.stringify errors (BigInt, circular refs) are caught
-      // and returned as { success: false } rather than propagating as uncaught throws.
-      const wirePayload = buildFcmWirePayload({
+      wirePayload = buildFcmWirePayload({
         notification,
         isSilent: !!isSilent,
       });
+    } catch (error) {
+      logger.error(
+        { deviceId: device.id, error },
+        "[FCM] Failed to serialize notification data",
+      );
+      return { success: false, error: "Invalid notification data" };
+    }
+
+    try {
       const { data } = wirePayload;
 
       // Derive identifierType for logging
