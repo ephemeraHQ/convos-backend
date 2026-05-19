@@ -561,6 +561,21 @@ export async function joinHandler(req: Request, res: Response) {
     abortSignal: clientDisconnect.signal,
   });
 
+  // Client disconnected during the poll phase — `pollUntilJoined` swallows
+  // per-poll aborts and falls out with `{ kind: "pending" }` (or even
+  // `"joined"` if a successful poll happened to land in the race window
+  // between loop exit and disconnect). Either way there's no live
+  // response to write to; falling through would (1) crash on a write
+  // to a closed connection and (2) log the misleading "pending after
+  // wait budget" message. Mirror the dispatch-phase silent-return.
+  if (clientDisconnect.signal.aborted) {
+    req.log.info(
+      { instanceId },
+      "Client disconnected during poll — aborting silently",
+    );
+    return;
+  }
+
   if (outcome.kind === "joined") {
     res.status(200).json({ success: true, joined: true, instanceId });
     return;
