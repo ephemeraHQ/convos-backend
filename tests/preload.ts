@@ -79,6 +79,13 @@ void mock.module("firebase-admin/messaging", () => ({
       if (message.token === "valid-fcm-token") {
         return Promise.resolve("mock-message-id");
       }
+      if (message.token === "trigger-payload-size-limit") {
+        const error = new Error("Payload too large") as Error & {
+          code: string;
+        };
+        error.code = "messaging/payload-size-limit-exceeded";
+        return Promise.reject(error);
+      }
       const error = new Error("Invalid registration token");
       (error as Error & { code: string }).code =
         "messaging/invalid-registration-token";

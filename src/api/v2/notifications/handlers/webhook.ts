@@ -1,7 +1,13 @@
 import type { ClientIdentifier, DeviceRegistration } from "@prisma/client";
 import type { Request, Response } from "express";
-import { createApnsService } from "@/api/v2/notifications/apns-push.service";
-import { createFcmService } from "@/api/v2/notifications/fcm-push.service";
+import {
+  buildApnsWirePayload,
+  createApnsService,
+} from "@/api/v2/notifications/apns-push.service";
+import {
+  buildFcmWirePayload,
+  createFcmService,
+} from "@/api/v2/notifications/fcm-push.service";
 import type { V2NotificationPayload } from "@/api/v2/notifications/types";
 import {
   createNotificationClient,
@@ -10,7 +16,12 @@ import {
 } from "@/notifications/client";
 import { createJwtToken } from "@/utils/jwt";
 import { prisma } from "@/utils/prisma";
-import { MAX_PUSH_FAILURES } from "../constants";
+import {
+  APNS_MAX_PAYLOAD_BYTES,
+  FCM_MAX_PAYLOAD_BYTES,
+  MAX_PUSH_FAILURES,
+  PUSH_PAYLOAD_STRIP_MARGIN_BYTES,
+} from "../constants";
 
 const notificationClient = createNotificationClient();
 
@@ -102,7 +113,7 @@ export async function handleXmtpNotification(req: Request, res: Response) {
   }
 }
 
-async function handleV2Notification(args: {
+export async function handleV2Notification(args: {
   notification: WebhookNotificationBody;
   client: ClientIdentifier & { device: DeviceRegistration };
   req: Request;
@@ -152,7 +163,12 @@ async function handleV2Notification(args: {
     messageType: notification.message_context.message_type,
   });
 
+  // Declared early so both the welcome path and the proactive guard can set it,
+  // preventing the reactive retry from firing when the payload is already stripped.
+  let payloadStripped = false;
+
   if (isWelcome) {
+    payloadStripped = true; // welcome path already strips encryptedMessage; reactive shouldn't retry
     req.log.info(
       {
         contentTopic: notification.message.content_topic,
@@ -176,6 +192,39 @@ async function handleV2Notification(args: {
     },
   };
 
+  // Proactive payload size guard.
+  // Measures BYTES of the actual provider wire payload (not the intermediate v2Notification),
+  // so size check matches what APNS/FCM count against their 4096-byte limit.
+  const wirePayload =
+    pushType === "fcm"
+      ? buildFcmWirePayload({ notification: v2Notification, isSilent: false })
+      : buildApnsWirePayload({ notification: v2Notification, isSilent: false });
+  const maxBytes =
+    pushType === "fcm" ? FCM_MAX_PAYLOAD_BYTES : APNS_MAX_PAYLOAD_BYTES;
+  const stripThreshold = maxBytes - PUSH_PAYLOAD_STRIP_MARGIN_BYTES;
+  const fullSize = Buffer.byteLength(JSON.stringify(wirePayload), "utf8");
+
+  if (fullSize > stripThreshold && !isWelcome) {
+    v2Notification.notificationData = {
+      contentTopic: notification.message.content_topic,
+      messageType: notification.message_context.message_type,
+      timestamp: notification.message.timestamp_ns,
+    };
+    payloadStripped = true;
+    req.log.info(
+      {
+        deviceId: client.deviceId,
+        pushTokenType: pushType,
+        contentTopic: notification.message.content_topic,
+        messageType: notification.message_context.message_type,
+        fullSize,
+        stripThreshold,
+        maxBytes,
+      },
+      `${tag} Payload exceeds strip threshold – omitting encryptedMessage`,
+    );
+  }
+
   // Route to appropriate push service based on token type
   let result: { success: boolean; error?: string };
 
@@ -186,7 +235,7 @@ async function handleV2Notification(args: {
       contentTopic: notification.message.content_topic,
       messageType: notification.message_context.message_type,
       isWelcome,
-      payloadSize: JSON.stringify(v2Notification.notificationData).length,
+      payloadSize: fullSize,
     },
     `${tag} Routing push notification to ${pushType} service`,
   );
@@ -208,7 +257,10 @@ async function handleV2Notification(args: {
         pushToken: client.device.pushToken,
         pushTokenType: client.device.pushTokenType,
       },
-      notification: v2Notification,
+      notification: {
+        ...v2Notification,
+        notificationData: { ...v2Notification.notificationData },
+      },
     });
   } else {
     // iOS/APNS push notification
@@ -228,8 +280,89 @@ async function handleV2Notification(args: {
         pushTokenType: client.device.pushTokenType,
         apnsEnv: client.device.apnsEnv,
       },
-      notification: v2Notification,
+      notification: {
+        ...v2Notification,
+        notificationData: { ...v2Notification.notificationData },
+      },
     });
+  }
+
+  // Reactive PayloadTooLarge handling: strip + retry once, do NOT bump pushFailures.
+  if (!result.success && result.error === "PayloadTooLarge") {
+    if (payloadStripped) {
+      req.log.error(
+        {
+          deviceId: client.deviceId,
+          pushTokenType: pushType,
+          contentTopic: notification.message.content_topic,
+          fullSize,
+          stripThreshold,
+        },
+        `${tag} PayloadTooLarge on already-stripped payload – investigate`,
+      );
+      return { success: false, error: result.error };
+    }
+
+    req.log.warn(
+      {
+        deviceId: client.deviceId,
+        pushTokenType: pushType,
+        contentTopic: notification.message.content_topic,
+        fullSize,
+        stripThreshold,
+      },
+      `${tag} PayloadTooLarge after proactive guard – retrying stripped`,
+    );
+
+    v2Notification.notificationData = {
+      contentTopic: notification.message.content_topic,
+      messageType: notification.message_context.message_type,
+      timestamp: notification.message.timestamp_ns,
+    };
+    payloadStripped = true;
+
+    if (pushType === "fcm") {
+      const fcmService = createFcmService();
+      if (!fcmService) {
+        return { success: false, error: "FCM service unavailable on retry" };
+      }
+      result = await fcmService.sendPushNotification({
+        device: {
+          id: client.deviceId,
+          pushToken: client.device.pushToken,
+          pushTokenType: client.device.pushTokenType,
+        },
+        notification: v2Notification,
+      });
+    } else {
+      const apnsService = createApnsService();
+      if (!apnsService) {
+        return { success: false, error: "APNS service unavailable on retry" };
+      }
+      result = await apnsService.sendPushNotification({
+        device: {
+          id: client.deviceId,
+          pushToken: client.device.pushToken,
+          pushTokenType: client.device.pushTokenType,
+          apnsEnv: client.device.apnsEnv,
+        },
+        notification: v2Notification,
+      });
+    }
+
+    if (!result.success) {
+      req.log.error(
+        {
+          deviceId: client.deviceId,
+          error: result.error,
+          pushTokenType: pushType,
+        },
+        `${tag} PayloadTooLarge retry failed`,
+      );
+      // Server-side issue; do NOT bump pushFailures.
+      return { success: false, error: result.error };
+    }
+    // Retry succeeded — fall through to existing success path below.
   }
 
   // Track success/failure using atomic operations to prevent race conditions
@@ -321,6 +454,7 @@ async function handleV2Notification(args: {
 
         // Then attempt notification server cleanup
         try {
+          // eslint-disable-next-line @typescript-eslint/no-unsafe-call
           await notificationClient.deleteInstallation({
             installationId: client.id,
           });

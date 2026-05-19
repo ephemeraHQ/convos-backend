@@ -17,6 +17,38 @@ function maskToken(token: string): string {
   return `${token.slice(0, 8)}...${token.slice(-4)} (len=${token.length})`;
 }
 
+/**
+ * Build the FCM message body for size measurement.
+ * This is the object Firebase counts against the 4096-byte FCM limit (excluding token routing field).
+ * Exported so the handler can size-check before dispatch using identical shape.
+ *
+ * Note: `data` values must all be strings per FCM contract (notificationData is JSON-stringified inline).
+ */
+export function buildFcmWirePayload(args: {
+  notification: AnyNotificationPayloadWithJWT;
+  isSilent: boolean;
+}): {
+  data: Record<string, string>;
+  android: { priority: "normal" | "high" };
+} {
+  const { notification, isSilent } = args;
+  const data: Record<string, string> = {
+    apiJWT: notification.apiJWT,
+    notificationType: notification.notificationType,
+    notificationData: JSON.stringify(notification.notificationData),
+  };
+  // Add clientId or inboxId
+  if ("clientId" in notification && notification.clientId) {
+    data.clientId = notification.clientId;
+  } else if ("inboxId" in notification && notification.inboxId) {
+    data.inboxId = notification.inboxId;
+  }
+  return {
+    data,
+    android: { priority: isSilent ? "normal" : "high" },
+  };
+}
+
 export class FcmPushService {
   private messaging: Messaging;
   /** Firebase project ID extracted from the service account (for diagnostics) */
@@ -63,58 +95,45 @@ export class FcmPushService {
       return { success: false, error: "Device is not configured for FCM" };
     }
 
-    let notificationData: string;
-    try {
-      notificationData = JSON.stringify(notification.notificationData);
-    } catch (error) {
-      logger.error(
-        {
-          deviceId: device.id,
-          error,
-        },
-        "[FCM] Failed to serialize notification data",
-      );
-      return { success: false, error: "Invalid notification data" };
-    }
-
-    // FCM data messages - all values must be strings
-    // Data-only messages are always delivered to onMessageReceived() on Android
-    // even when the app is in background, allowing proper handling
-    const data: Record<string, string> = {
-      apiJWT: notification.apiJWT,
-      notificationType: notification.notificationType,
-      notificationData,
-    };
-
-    // Add clientId or inboxId depending on which is present
-    const identifierType =
-      "clientId" in notification && notification.clientId
-        ? "clientId"
-        : "inboxId" in notification && notification.inboxId
-          ? "inboxId"
-          : undefined;
-    if (
-      identifierType === "clientId" &&
-      "clientId" in notification &&
-      notification.clientId
-    ) {
-      data.clientId = notification.clientId;
-    } else if (
-      identifierType === "inboxId" &&
-      "inboxId" in notification &&
-      notification.inboxId
-    ) {
-      data.inboxId = notification.inboxId;
-    }
-
     // Extract content topic for logging (if Protocol notification)
+    // Safe: notificationData is a JSON-deserialized object from the webhook (already zod-validated).
     const contentTopic =
       "contentTopic" in notification.notificationData
         ? (notification.notificationData as { contentTopic?: string })
             .contentTopic
         : undefined;
 
+    // FCM data messages - all values must be strings.
+    // Data-only messages are always delivered to onMessageReceived() on Android
+    // even when the app is in background, allowing proper handling.
+    // Build payload in its own try so JSON.stringify failures (BigInt, circular refs)
+    // map to the specific "Invalid notification data" error rather than leaking the
+    // raw Error.message through the generic catch below.
+    let wirePayload: ReturnType<typeof buildFcmWirePayload>;
     try {
+      wirePayload = buildFcmWirePayload({
+        notification,
+        isSilent: !!isSilent,
+      });
+    } catch (error) {
+      logger.error(
+        { deviceId: device.id, error },
+        "[FCM] Failed to serialize notification data",
+      );
+      return { success: false, error: "Invalid notification data" };
+    }
+
+    try {
+      const { data } = wirePayload;
+
+      // Derive identifierType for logging
+      const identifierType =
+        "clientId" in data
+          ? "clientId"
+          : "inboxId" in data
+            ? "inboxId"
+            : undefined;
+
       logger.info(
         {
           deviceId: device.id,
@@ -124,18 +143,14 @@ export class FcmPushService {
           identifierType,
           contentTopic,
           firebaseProject: this.projectId,
-          payloadSize: notificationData.length,
+          payloadSize: Buffer.byteLength(JSON.stringify(wirePayload), "utf8"),
         },
         "[FCM] Sending push notification",
       );
 
       const messageId = await this.messaging.send({
         token: device.pushToken,
-        data,
-        android: {
-          // High priority ensures immediate delivery
-          priority: isSilent ? "normal" : "high",
-        },
+        ...wirePayload,
       });
 
       logger.info(
@@ -195,6 +210,10 @@ export class FcmPushService {
         fcmError.code === "messaging/invalid-registration-token"
       ) {
         return { success: false, error: "BadDeviceToken" };
+      }
+
+      if (fcmError.code === "messaging/payload-size-limit-exceeded") {
+        return { success: false, error: "PayloadTooLarge" };
       }
 
       return { success: false, error: fcmError.message || "Unknown FCM error" };

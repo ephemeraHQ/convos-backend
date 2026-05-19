@@ -1,9 +1,20 @@
-import { describe, expect, test } from "bun:test";
-import {
-  createFcmService,
-  FcmPushService,
-} from "@/api/v2/notifications/fcm-push.service";
+import { describe, expect, mock, test } from "bun:test";
 import type { V2NotificationPayload } from "@/api/v2/notifications/types";
+
+// Re-register the real fcm-push.service module so that even when
+// notifications-payload-guard.test.ts has installed a stub mock for this module
+// (needed for its webhook handler tests), fcm-push.test.ts still exercises the
+// real FcmPushService implementation. The preload.ts firebase-admin/messaging mock
+// provides the firebase stub layer.
+//
+// Note: bun:test hoists all mock.module() calls before running any tests.
+// When multiple files mock the same path, the last registration in evaluation order
+// wins. This file's mock uses a dynamic import of the REAL module source to restore
+// real behaviour for this file's unit tests.
+const realModule = await import("@/api/v2/notifications/fcm-push.service");
+void mock.module("@/api/v2/notifications/fcm-push.service", () => realModule);
+
+const { createFcmService, FcmPushService } = realModule;
 
 const mockNotification: V2NotificationPayload = {
   clientId: "test-client-123",
@@ -115,6 +126,23 @@ describe("FcmPushService", () => {
       });
 
       expect(result.success).toBe(true);
+    });
+
+    test("should return PayloadTooLarge for FCM payload-size-limit-exceeded", async () => {
+      const service = createFcmService();
+      expect(service).not.toBeNull();
+
+      const result = await service!.sendPushNotification({
+        device: {
+          id: "device-123",
+          pushToken: "trigger-payload-size-limit",
+          pushTokenType: "fcm",
+        },
+        notification: mockNotification,
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.error).toBe("PayloadTooLarge");
     });
 
     test("should return error when notification data cannot be serialized", async () => {
