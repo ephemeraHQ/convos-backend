@@ -224,3 +224,92 @@ describe("handleV2Notification – proactive size guard", () => {
     expect(stripLog).toBeUndefined();
   });
 });
+
+describe("handleV2Notification – reactive PayloadTooLarge retry", () => {
+  test("APNS PayloadTooLarge triggers strip + single retry, success", async () => {
+    apnsSendMock
+      .mockImplementationOnce(() =>
+        Promise.resolve({ success: false, error: "PayloadTooLarge" }),
+      )
+      .mockImplementationOnce(() => Promise.resolve({ success: true }));
+
+    // Small payload — would NOT trip proactive guard
+    const webhook = makeWebhook({ encryptedMessageLen: 100 });
+    const client = makeClient("apns");
+    const req = makeReq();
+
+    await handleV2Notification({ notification: webhook, client, req });
+
+    expect(apnsSendMock).toHaveBeenCalledTimes(2);
+
+    const reactiveCalls = apnsSendMock.mock.calls as unknown[][];
+
+    // First call: encryptedMessage present
+    const first = (reactiveCalls[0]![0] as {
+      notification: { notificationData: { encryptedMessage?: string } };
+    }).notification;
+    expect(first.notificationData.encryptedMessage).toBeDefined();
+
+    // Second call: encryptedMessage stripped
+    const second = (reactiveCalls[1]![0] as {
+      notification: { notificationData: { encryptedMessage?: string } };
+    }).notification;
+    expect(second.notificationData.encryptedMessage).toBeUndefined();
+
+    // pushFailures NOT bumped (retry succeeded; also PayloadTooLarge wouldn't bump anyway)
+    expect(deviceTxMock).not.toHaveBeenCalled();
+
+    const retryLog = req.capturedLogs.find((l) =>
+      l.msg.includes("PayloadTooLarge after proactive guard – retrying stripped"),
+    );
+    expect(retryLog).toBeDefined();
+    expect(retryLog?.level).toBe("warn");
+  });
+
+  test("Already-stripped + PayloadTooLarge: no retry (no infinite loop)", async () => {
+    apnsSendMock.mockImplementationOnce(() =>
+      Promise.resolve({ success: false, error: "PayloadTooLarge" }),
+    );
+
+    // Oversize payload → proactive strips first
+    const webhook = makeWebhook({ encryptedMessageLen: 4000 });
+    const client = makeClient("apns");
+    const req = makeReq();
+
+    await handleV2Notification({ notification: webhook, client, req });
+
+    expect(apnsSendMock).toHaveBeenCalledTimes(1);
+    expect(deviceTxMock).not.toHaveBeenCalled();
+
+    const errorLog = req.capturedLogs.find((l) =>
+      l.msg.includes("PayloadTooLarge on already-stripped payload"),
+    );
+    expect(errorLog).toBeDefined();
+    expect(errorLog?.level).toBe("error");
+  });
+
+  test("PayloadTooLarge twice: no pushFailures bump", async () => {
+    apnsSendMock
+      .mockImplementationOnce(() =>
+        Promise.resolve({ success: false, error: "PayloadTooLarge" }),
+      )
+      .mockImplementationOnce(() =>
+        Promise.resolve({ success: false, error: "PayloadTooLarge" }),
+      );
+
+    const webhook = makeWebhook({ encryptedMessageLen: 100 });
+    const client = makeClient("apns");
+    const req = makeReq();
+
+    await handleV2Notification({ notification: webhook, client, req });
+
+    expect(apnsSendMock).toHaveBeenCalledTimes(2);
+    expect(deviceTxMock).not.toHaveBeenCalled();
+
+    const retryFailLog = req.capturedLogs.find((l) =>
+      l.msg.includes("PayloadTooLarge retry failed"),
+    );
+    expect(retryFailLog).toBeDefined();
+    expect(retryFailLog?.level).toBe("error");
+  });
+});

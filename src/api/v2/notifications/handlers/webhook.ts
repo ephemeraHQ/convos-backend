@@ -243,7 +243,7 @@ export async function handleV2Notification(args: {
         pushToken: client.device.pushToken,
         pushTokenType: client.device.pushTokenType,
       },
-      notification: v2Notification,
+      notification: { ...v2Notification, notificationData: { ...v2Notification.notificationData } },
     });
   } else {
     // iOS/APNS push notification
@@ -263,8 +263,86 @@ export async function handleV2Notification(args: {
         pushTokenType: client.device.pushTokenType,
         apnsEnv: client.device.apnsEnv,
       },
-      notification: v2Notification,
+      notification: { ...v2Notification, notificationData: { ...v2Notification.notificationData } },
     });
+  }
+
+  // Reactive PayloadTooLarge handling: strip + retry once, do NOT bump pushFailures.
+  if (!result.success && result.error === "PayloadTooLarge") {
+    if (payloadStripped) {
+      req.log.error(
+        {
+          deviceId: client.deviceId,
+          pushTokenType: pushType,
+          contentTopic: notification.message.content_topic,
+          fullSize,
+          stripThreshold,
+        },
+        `${tag} PayloadTooLarge on already-stripped payload – investigate`,
+      );
+      return { success: false, error: result.error };
+    }
+
+    req.log.warn(
+      {
+        deviceId: client.deviceId,
+        pushTokenType: pushType,
+        contentTopic: notification.message.content_topic,
+        fullSize,
+        stripThreshold,
+      },
+      `${tag} PayloadTooLarge after proactive guard – retrying stripped`,
+    );
+
+    v2Notification.notificationData = {
+      contentTopic: notification.message.content_topic,
+      messageType: notification.message_context.message_type,
+      timestamp: notification.message.timestamp_ns,
+    };
+    payloadStripped = true;
+
+    if (pushType === "fcm") {
+      const fcmService = createFcmService();
+      if (!fcmService) {
+        return { success: false, error: "FCM service unavailable on retry" };
+      }
+      result = await fcmService.sendPushNotification({
+        device: {
+          id: client.deviceId,
+          pushToken: client.device.pushToken,
+          pushTokenType: client.device.pushTokenType,
+        },
+        notification: v2Notification,
+      });
+    } else {
+      const apnsService = createApnsService();
+      if (!apnsService) {
+        return { success: false, error: "APNS service unavailable on retry" };
+      }
+      result = await apnsService.sendPushNotification({
+        device: {
+          id: client.deviceId,
+          pushToken: client.device.pushToken,
+          pushTokenType: client.device.pushTokenType,
+          apnsEnv: client.device.apnsEnv,
+        },
+        notification: v2Notification,
+      });
+    }
+
+    if (!result.success) {
+      req.log.error(
+        {
+          deviceId: client.deviceId,
+          error: result.error,
+          pushTokenType: pushType,
+        },
+        `${tag} PayloadTooLarge retry failed`,
+      );
+      // Server-side issue; do NOT bump pushFailures.
+      return { success: false, error: result.error };
+    }
+    // Retry succeeded — fall through to existing success path below.
   }
 
   // Track success/failure using atomic operations to prevent race conditions
