@@ -39,6 +39,12 @@ const bodySchema = z
     // the insert and maps to the same 400 as a bad ownerAccountId below.
     forkedFromId: z.string().uuid().optional(),
   })
+  // .passthrough() (not .strict()) is intentional: create accepts a full
+  // AgentTemplate-shaped body and silently IGNORES the fields it derives
+  // server-side (status, version, firstPublishedAt, …) instead of 400ing, so a
+  // caller can POST a serialized template verbatim. The "ignores server-pinned
+  // fields" test pins this. (generations-post.ts uses .strict() because its
+  // body is a bespoke request envelope, not a template — different by design.)
   .passthrough();
 
 type CreateBody = z.infer<typeof bodySchema>;
