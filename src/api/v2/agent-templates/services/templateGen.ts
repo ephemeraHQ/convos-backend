@@ -28,6 +28,7 @@ import { AppError } from "@/utils/errors";
 import { SYSTEM_PROMPT } from "../lib/system-prompt";
 import {
   openRouterChatCompletion,
+  withAiSpan,
   type TraceContext,
 } from "./openrouter-client";
 
@@ -250,42 +251,69 @@ function isTwitterUrl(url: string): boolean {
 }
 
 /** Extract content from a URL using Exa's /contents API. */
-async function extractViaExa(url: string): Promise<string> {
+async function extractViaExa(
+  url: string,
+  trace?: TraceContext,
+): Promise<string> {
   const exaKey = getExaKey();
   if (!exaKey) {
     throw new Error("BUILDER_EXA_SERVICE_KEY not configured");
   }
 
-  const res = await fetch("https://api.exa.ai/contents", {
-    method: "POST",
-    headers: {
-      "x-api-key": exaKey,
-      "Content-Type": "application/json",
+  return withAiSpan(
+    trace,
+    "exa.contents",
+    { url },
+    async () => {
+      const res = await fetch("https://api.exa.ai/contents", {
+        method: "POST",
+        headers: {
+          "x-api-key": exaKey,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ urls: [url], text: true }),
+        signal: AbortSignal.timeout(30_000),
+      });
+
+      if (!res.ok) {
+        const errText = await res.text();
+        console.error(
+          "[templateGen] Exa error:",
+          res.status,
+          errText.slice(0, 300),
+        );
+        throw new Error(`Exa content extraction failed (${res.status})`);
+      }
+
+      const data = (await res.json()) as any;
+      const result = data?.results?.[0];
+      if (!result?.text) {
+        throw new Error("Exa returned no content for this URL");
+      }
+      return result.text as string;
     },
-    body: JSON.stringify({ urls: [url], text: true }),
-    signal: AbortSignal.timeout(30_000),
-  });
-
-  if (!res.ok) {
-    const errText = await res.text();
-    console.error(
-      "[templateGen] Exa error:",
-      res.status,
-      errText.slice(0, 300),
-    );
-    throw new Error(`Exa content extraction failed (${res.status})`);
-  }
-
-  const data = (await res.json()) as any;
-  const result = data?.results?.[0];
-  if (!result?.text) {
-    throw new Error("Exa returned no content for this URL");
-  }
-  return result.text;
+    (text) => ({ chars: text.length }),
+  );
 }
 
 /** Extract tweet content via oEmbed, following any embedded links. */
-async function extractViaTweetOEmbed(url: string): Promise<string> {
+async function extractViaTweetOEmbed(
+  url: string,
+  trace?: TraceContext,
+): Promise<string> {
+  return withAiSpan(
+    trace,
+    "twitter.oembed",
+    { url },
+    () => extractViaTweetOEmbedInner(url, trace),
+    (out) => ({ chars: out.length }),
+  );
+}
+
+async function extractViaTweetOEmbedInner(
+  url: string,
+  trace?: TraceContext,
+): Promise<string> {
   const oembedUrl = `https://publish.twitter.com/oembed?url=${encodeURIComponent(url)}`;
   const res = await fetch(oembedUrl, { signal: AbortSignal.timeout(10_000) });
   if (!res.ok) throw new Error(`Twitter oEmbed failed (${res.status})`);
@@ -324,7 +352,7 @@ async function extractViaTweetOEmbed(url: string): Promise<string> {
   let linkedContent = "";
   for (const tco of tcoLinks.slice(0, 3)) {
     try {
-      const pageContent = await extractViaExa(tco);
+      const pageContent = await extractViaExa(tco, trace);
       linkedContent += `\n\n--- Linked content from ${tco} ---\n${pageContent}`;
     } catch {
       // skip
@@ -376,19 +404,21 @@ function parseGithubRepoUrl(
   }
 }
 
-async function githubApiGet(path: string): Promise<any> {
-  const res = await fetch(`https://api.github.com${path}`, {
-    headers: {
-      "User-Agent": "Convos-TemplateGen/1.0",
-      Accept: "application/vnd.github+json",
-      "X-GitHub-Api-Version": "2022-11-28",
-    },
-    signal: AbortSignal.timeout(15_000),
+async function githubApiGet(path: string, trace?: TraceContext): Promise<any> {
+  return withAiSpan(trace, "github.api", { path }, async () => {
+    const res = await fetch(`https://api.github.com${path}`, {
+      headers: {
+        "User-Agent": "Convos-TemplateGen/1.0",
+        Accept: "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+      },
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (!res.ok) {
+      throw new Error(`GitHub API ${path} returned ${res.status}`);
+    }
+    return res.json();
   });
-  if (!res.ok) {
-    throw new Error(`GitHub API ${path} returned ${res.status}`);
-  }
-  return res.json();
 }
 
 /** Fetch the raw content of a file in a repo at its default branch. */
@@ -397,11 +427,20 @@ async function githubFetchRaw(
   repo: string,
   branch: string,
   path: string,
+  trace?: TraceContext,
 ): Promise<string> {
-  const url = `https://raw.githubusercontent.com/${owner}/${repo}/${branch}/${path}`;
-  const res = await fetch(url, { signal: AbortSignal.timeout(15_000) });
-  if (!res.ok) throw new Error(`Failed to fetch ${url} (${res.status})`);
-  return res.text();
+  return withAiSpan(
+    trace,
+    "github.raw",
+    { path },
+    async () => {
+      const url = `https://raw.githubusercontent.com/${owner}/${repo}/${branch}/${path}`;
+      const res = await fetch(url, { signal: AbortSignal.timeout(15_000) });
+      if (!res.ok) throw new Error(`Failed to fetch ${url} (${res.status})`);
+      return res.text();
+    },
+    (text) => ({ chars: text.length }),
+  );
 }
 
 type PassthroughType = "install-instructions" | "skill-definition";
@@ -647,7 +686,7 @@ async function tryGithubPassthrough(
     const branch = explicitBranch || "main";
     let content: string;
     try {
-      content = await githubFetchRaw(owner, repo, branch, filePath);
+      content = await githubFetchRaw(owner, repo, branch, filePath, trace);
     } catch (err: any) {
       console.error(
         `[templateGen] Failed to fetch ${owner}/${repo}/${filePath}:`,
@@ -666,7 +705,7 @@ async function tryGithubPassthrough(
 
   let repoInfo: any;
   try {
-    repoInfo = await githubApiGet(`/repos/${owner}/${repo}`);
+    repoInfo = await githubApiGet(`/repos/${owner}/${repo}`, trace);
   } catch (err: any) {
     console.error("[templateGen] GitHub repo lookup failed:", err.message);
     return null;
@@ -680,8 +719,11 @@ async function tryGithubPassthrough(
   let readme = "";
   try {
     const [treeData, readmeRaw] = await Promise.all([
-      githubApiGet(`/repos/${owner}/${repo}/git/trees/${branch}?recursive=1`),
-      githubFetchRaw(owner, repo, branch, "README.md").catch(() => ""),
+      githubApiGet(
+        `/repos/${owner}/${repo}/git/trees/${branch}?recursive=1`,
+        trace,
+      ),
+      githubFetchRaw(owner, repo, branch, "README.md", trace).catch(() => ""),
     ]);
     tree = (treeData.tree || []).map((t: any) => t.path).filter(Boolean);
     readme = readmeRaw;
@@ -712,6 +754,7 @@ async function tryGithubPassthrough(
         repo,
         branch,
         selection.instructionsPath,
+        trace,
       );
     } catch (err: any) {
       console.error(
@@ -935,10 +978,10 @@ async function tryContentPassthrough(
  *  surface, and the rest of the codebase only fetches env-configured or
  *  hardcoded hosts. If both upstream paths fail, we surface the error rather
  *  than fetching the URL ourselves. */
-async function extractUrl(url: string): Promise<string> {
+async function extractUrl(url: string, trace?: TraceContext): Promise<string> {
   if (isTwitterUrl(url)) {
     try {
-      return await extractViaTweetOEmbed(url);
+      return await extractViaTweetOEmbed(url, trace);
     } catch (err: any) {
       console.error(
         "[templateGen] Tweet oEmbed failed, trying Exa:",
@@ -947,7 +990,7 @@ async function extractUrl(url: string): Promise<string> {
     }
   }
 
-  return await extractViaExa(url);
+  return await extractViaExa(url, trace);
 }
 
 // ---------------------------------------------------------------------------
@@ -1053,7 +1096,7 @@ export async function generateTemplate(
       extracted =
         githubResult?.kind === "rawContent"
           ? githubResult.content
-          : await extractUrl(url);
+          : await extractUrl(url, trace);
     }
 
     if (!extracted.trim()) {

@@ -28,8 +28,9 @@
  * `@preset/...` alias, which PostHog can't price) to keep cost resolving.
  */
 
-/* eslint-disable @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-argument */
+/* eslint-disable @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access */
 
+import { randomUUID } from "node:crypto";
 import { OpenAI as PostHogOpenAI } from "@posthog/ai/openai";
 import { OpenAI } from "openai";
 import { getPostHogClient } from "./posthog";
@@ -162,6 +163,85 @@ export async function openRouterChatCompletion(
     { ...opts.body, ...monitoring } as any,
     requestOptions,
   );
+}
+
+// ---------------------------------------------------------------------------
+// Non-LLM spans ($ai_span)
+//
+// The @posthog/ai wrapper only auto-emits `$ai_generation` for the LLM calls
+// it wraps. Non-LLM enrichment steps (Exa, Twitter oEmbed, GitHub) have no
+// wrapper, so we emit `$ai_span` events manually through the same posthog-node
+// client — they stitch into the generation's trace by `$ai_trace_id`. Property
+// shape mirrors PostHog's trace UI (and Hermes' tool-span emitter).
+// ---------------------------------------------------------------------------
+
+/**
+ * Fire-and-forget `$ai_span` capture. No-op when PostHog is unconfigured or no
+ * trace context is supplied. Never throws — analytics must not break a request.
+ */
+export function captureAiSpan(opts: {
+  trace?: TraceContext;
+  /** Span label, e.g. "exa.contents", "github.raw". */
+  name: string;
+  /** `performance.now()` captured when the step started. */
+  startMs: number;
+  inputState?: unknown;
+  outputState?: unknown;
+  /** Optional parent span id; omit to attach at the trace root. */
+  parentId?: string;
+  error?: unknown;
+}): void {
+  if (!opts.trace) return;
+  const ph = getPostHogClient();
+  if (!ph) return;
+  try {
+    ph.capture({
+      distinctId: opts.trace.distinctId ?? `request:${opts.trace.traceId}`,
+      event: "$ai_span",
+      properties: {
+        $ai_trace_id: opts.trace.traceId,
+        $ai_span_id: randomUUID(),
+        ...(opts.parentId ? { $ai_parent_id: opts.parentId } : {}),
+        $ai_span_name: opts.name,
+        $ai_input_state: opts.inputState,
+        $ai_output_state: opts.outputState,
+        // PostHog documents `$ai_latency` in seconds.
+        $ai_latency: (performance.now() - opts.startMs) / 1000,
+        $ai_is_error: opts.error != null,
+        ...opts.trace.properties,
+      },
+    });
+  } catch {
+    /* analytics never breaks the request */
+  }
+}
+
+/**
+ * Run an async non-LLM step and emit one `$ai_span` for it (success or error).
+ * No-op tracing when `trace` is undefined; the wrapped function always runs.
+ */
+export async function withAiSpan<T>(
+  trace: TraceContext | undefined,
+  name: string,
+  inputState: unknown,
+  fn: () => Promise<T>,
+  outputState?: (result: T) => unknown,
+): Promise<T> {
+  const startMs = performance.now();
+  try {
+    const result = await fn();
+    captureAiSpan({
+      trace,
+      name,
+      startMs,
+      inputState,
+      outputState: outputState?.(result),
+    });
+    return result;
+  } catch (error) {
+    captureAiSpan({ trace, name, startMs, inputState, error });
+    throw error;
+  }
 }
 
 export { OPENROUTER_BASE_URL };

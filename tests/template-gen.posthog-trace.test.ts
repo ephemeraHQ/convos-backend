@@ -17,6 +17,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import {
   __resetOpenRouterClientForTests,
   openRouterChatCompletion,
+  withAiSpan,
 } from "@/api/v2/agent-templates/services/openrouter-client";
 import { __setPostHogClientForTests } from "@/api/v2/agent-templates/services/posthog";
 
@@ -170,5 +171,89 @@ describe("openRouterChatCompletion + PostHog tracing", () => {
       "generate",
       "selector",
     ]);
+  });
+});
+
+describe("withAiSpan (non-LLM enrichment spans)", () => {
+  test("success emits $ai_span with trace id, name, output state, latency", async () => {
+    const captured: CapturedEvent[] = [];
+    __setPostHogClientForTests({
+      capture: (e: CapturedEvent) => captured.push(e),
+      on: () => {},
+    });
+
+    const out = await withAiSpan(
+      { traceId: "gen-1", distinctId: "acct-1", properties: { source: "web" } },
+      "exa.contents",
+      { url: "https://example.com" },
+      () => Promise.resolve("hello world"),
+      (r) => ({ chars: r.length }),
+    );
+
+    expect(out).toBe("hello world");
+    const spans = captured.filter((c) => c.event === "$ai_span");
+    expect(spans.length).toBe(1);
+    const p = spans[0].properties ?? {};
+    expect(spans[0].distinctId).toBe("acct-1");
+    expect(p.$ai_trace_id).toBe("gen-1");
+    expect(p.$ai_span_name).toBe("exa.contents");
+    expect(p.$ai_input_state).toEqual({ url: "https://example.com" });
+    expect(p.$ai_output_state).toEqual({ chars: 11 });
+    expect(p.$ai_is_error).toBe(false);
+    expect(typeof p.$ai_span_id).toBe("string");
+    expect(typeof p.$ai_latency).toBe("number");
+    expect(p.source).toBe("web"); // trace properties ride along
+  });
+
+  test("error emits $ai_span with is_error=true and rethrows", async () => {
+    const captured: CapturedEvent[] = [];
+    __setPostHogClientForTests({
+      capture: (e: CapturedEvent) => captured.push(e),
+      on: () => {},
+    });
+
+    const boom = new Error("github 500");
+    let caughtError: unknown;
+    try {
+      await withAiSpan(
+        { traceId: "gen-2" },
+        "github.api",
+        { path: "/repos/x/y" },
+        () => Promise.reject(boom),
+      );
+    } catch (err) {
+      caughtError = err;
+    }
+    expect(caughtError).toBe(boom);
+
+    const spans = captured.filter((c) => c.event === "$ai_span");
+    expect(spans.length).toBe(1);
+    expect(spans[0].properties?.$ai_is_error).toBe(true);
+    expect(spans[0].properties?.$ai_span_name).toBe("github.api");
+  });
+
+  test("no posthog client → no span, fn still runs", async () => {
+    __setPostHogClientForTests(null);
+    __resetOpenRouterClientForTests();
+    let ran = false;
+    const out = await withAiSpan({ traceId: "gen-3" }, "github.raw", {}, () => {
+      ran = true;
+      return Promise.resolve("ok");
+    });
+    expect(ran).toBe(true);
+    expect(out).toBe("ok");
+  });
+
+  test("no trace → no span, fn still runs", async () => {
+    const captured: CapturedEvent[] = [];
+    __setPostHogClientForTests({
+      capture: (e: CapturedEvent) => captured.push(e),
+      on: () => {},
+    });
+    const out = await withAiSpan(undefined, "exa.contents", {}, () =>
+      Promise.resolve("ok"),
+    );
+    expect(out).toBe("ok");
+    expect(captured.filter((c) => c.event === "$ai_span").length).toBe(0);
   });
 });
