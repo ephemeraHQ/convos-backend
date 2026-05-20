@@ -1145,7 +1145,24 @@ export async function generateTemplate(
   const reqBody: any = {
     model,
     messages: [
-      { role: "system", content: SYSTEM_PROMPT },
+      // Prompt-caching breakpoint on the static ~12k-token system prompt. It's
+      // byte-identical across every generation, so caching its prefix cuts
+      // input cost ~90% on cache hits and trims prefill latency. Uses a
+      // PER-BLOCK `cache_control` breakpoint (not top-level) so the Bedrock
+      // provider preference still applies — top-level cache_control forces
+      // Anthropic-only routing on OpenRouter. The varying user message after
+      // the breakpoint is re-processed each call. Cache usage is observable via
+      // `$ai_cache_read_input_tokens` / `$ai_cache_creation_input_tokens`.
+      {
+        role: "system",
+        content: [
+          {
+            type: "text",
+            text: SYSTEM_PROMPT,
+            cache_control: { type: "ephemeral" },
+          },
+        ],
+      },
       { role: "user", content: userContent },
     ],
     temperature: 0.7,
