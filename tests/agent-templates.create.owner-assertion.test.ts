@@ -129,7 +129,10 @@ describe("Agent template create — owner assertion", () => {
     // Body asserts ADMIN — must be ignored because JWT auth wins.
     const { body, response } = await createTemplate({
       baseURL,
-      headers: { "Content-Type": "application/json", "X-Convos-AuthToken": jwt },
+      headers: {
+        "Content-Type": "application/json",
+        "X-Convos-AuthToken": jwt,
+      },
       body: {
         agentName: "Create Owner Test D",
         prompt: "You are helpful",
