@@ -199,6 +199,10 @@ export function captureAiSpan(opts: {
       distinctId: opts.trace.distinctId ?? `request:${opts.trace.traceId}`,
       event: "$ai_span",
       properties: {
+        // Caller-supplied trace properties first, so the reserved/computed
+        // `$ai_*` span fields below always win — a stray `$ai_trace_id` (etc.)
+        // in `trace.properties` can never clobber the real span identity.
+        ...opts.trace.properties,
         $ai_trace_id: opts.trace.traceId,
         $ai_span_id: randomUUID(),
         ...(opts.parentId ? { $ai_parent_id: opts.parentId } : {}),
@@ -208,7 +212,6 @@ export function captureAiSpan(opts: {
         // PostHog documents `$ai_latency` in seconds.
         $ai_latency: (performance.now() - opts.startMs) / 1000,
         $ai_is_error: opts.error != null,
-        ...opts.trace.properties,
       },
     });
   } catch {

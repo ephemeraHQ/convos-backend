@@ -256,4 +256,30 @@ describe("withAiSpan (non-LLM enrichment spans)", () => {
     expect(out).toBe("ok");
     expect(captured.filter((c) => c.event === "$ai_span").length).toBe(0);
   });
+
+  test("trace.properties cannot clobber reserved span fields", async () => {
+    const captured: CapturedEvent[] = [];
+    __setPostHogClientForTests({
+      capture: (e: CapturedEvent) => captured.push(e),
+      on: () => {},
+    });
+    await withAiSpan(
+      {
+        traceId: "real-trace",
+        properties: {
+          $ai_trace_id: "evil",
+          $ai_span_name: "evil",
+          source: "web",
+        },
+      },
+      "github.api",
+      {},
+      () => Promise.resolve("ok"),
+    );
+    const span = captured.find((c) => c.event === "$ai_span");
+    expect(span?.properties?.$ai_trace_id).toBe("real-trace");
+    expect(span?.properties?.$ai_span_name).toBe("github.api");
+    // Non-reserved custom properties still pass through.
+    expect(span?.properties?.source).toBe("web");
+  });
 });

@@ -421,13 +421,20 @@ async function githubApiGet(path: string, trace?: TraceContext): Promise<any> {
   });
 }
 
-/** Fetch the raw content of a file in a repo at its default branch. */
+/** Fetch the raw content of a file in a repo at its default branch.
+ *
+ *  `optional` is for files the caller treats as "nice to have" (e.g. README):
+ *  a missing/unreachable file resolves to `""` and the span records
+ *  `{ found: false }` rather than an error — a missing README is an expected
+ *  outcome, not a failure worth flagging red in the trace UI. Required fetches
+ *  (`optional` omitted) still throw so callers can fall back. */
 async function githubFetchRaw(
   owner: string,
   repo: string,
   branch: string,
   path: string,
   trace?: TraceContext,
+  optional = false,
 ): Promise<string> {
   return withAiSpan(
     trace,
@@ -436,10 +443,13 @@ async function githubFetchRaw(
     async () => {
       const url = `https://raw.githubusercontent.com/${owner}/${repo}/${branch}/${path}`;
       const res = await fetch(url, { signal: AbortSignal.timeout(15_000) });
-      if (!res.ok) throw new Error(`Failed to fetch ${url} (${res.status})`);
+      if (!res.ok) {
+        if (optional) return "";
+        throw new Error(`Failed to fetch ${url} (${res.status})`);
+      }
       return res.text();
     },
-    (text) => ({ chars: text.length }),
+    (text) => ({ chars: text.length, found: text.length > 0 }),
   );
 }
 
@@ -723,7 +733,11 @@ async function tryGithubPassthrough(
         `/repos/${owner}/${repo}/git/trees/${branch}?recursive=1`,
         trace,
       ),
-      githubFetchRaw(owner, repo, branch, "README.md", trace).catch(() => ""),
+      // README is optional: a missing one resolves to "" with a clean
+      // (non-error) span. The outer .catch only covers rare transport errors.
+      githubFetchRaw(owner, repo, branch, "README.md", trace, true).catch(
+        () => "",
+      ),
     ]);
     tree = (treeData.tree || []).map((t: any) => t.path).filter(Boolean);
     readme = readmeRaw;
