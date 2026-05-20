@@ -2,7 +2,8 @@
  * Moderation Service — universal content safety check for agent-template
  * generation requests.
  *
- * Uses Claude Haiku via OpenRouter (same BUILDER_OPENROUTER_API_KEY as templateGen).
+ * Uses a fast model via OpenRouter — default Gemini Flash-Lite (same
+ * BUILDER_OPENROUTER_API_KEY as templateGen).
  * Classifies arbitrary input text into safe vs unsafe content.
  *
  * **Fails open**: on any OpenRouter error (network, non-2xx, parse failure),
@@ -11,7 +12,7 @@
  *
  * Env vars:
  *   BUILDER_OPENROUTER_API_KEY — required for LLM calls (unset → fails open)
- *   CONTENT_MODERATION_MODEL   — model override (default: anthropic/claude-3-5-haiku-20241022)
+ *   CONTENT_MODERATION_MODEL   — model override (default: google/gemini-3.1-flash-lite)
  *
  * Test seam: __resetModerationForTests(override | null) mirrors the
  * singleton-override pattern used by templateGen and PostHog.
