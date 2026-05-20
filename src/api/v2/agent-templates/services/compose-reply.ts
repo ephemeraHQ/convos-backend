@@ -23,12 +23,9 @@
  * Test seam: __resetComposeReplyForTests(override | null).
  */
 
-import {
-  BUILDER_OPENROUTER_API_KEY,
-  BUILDER_SITE_URL,
-  TWITTER_REPLY_MODEL,
-} from "@/config";
+import { BUILDER_OPENROUTER_API_KEY, TWITTER_REPLY_MODEL } from "@/config";
 import logger from "@/utils/logger";
+import { templateUrlFromHashedSlug } from "../lib/template-url";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -72,7 +69,7 @@ function getModel(): string {
 }
 
 function templateUrlFor(slug: string): string {
-  return `${BUILDER_SITE_URL}/${slug}`;
+  return templateUrlFromHashedSlug(slug);
 }
 
 function normalizeHandle(handle: string): string {

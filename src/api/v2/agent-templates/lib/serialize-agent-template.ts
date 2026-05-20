@@ -1,6 +1,5 @@
 import type { Account, AgentTemplate } from "@prisma/client";
-import { BUILDER_SITE_URL } from "@/config";
-import { buildSlug } from "@/utils/slug-hash";
+import { templatePublicUrl } from "./template-url";
 
 export const serializeAccount = (account: Account) => ({
   object: "account",
@@ -15,7 +14,7 @@ export const serializeAccount = (account: Account) => ({
 // rather than rebuilding the URL from `slug`. `null` for drafts.
 const publishedUrlFor = (template: AgentTemplate): string | null => {
   if (template.status === "draft") return null;
-  return `${BUILDER_SITE_URL}/${buildSlug(template.slug, template.id)}`;
+  return templatePublicUrl(template.slug, template.id);
 };
 
 /**
