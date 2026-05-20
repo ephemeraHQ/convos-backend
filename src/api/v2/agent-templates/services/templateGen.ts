@@ -18,6 +18,7 @@
 
 /* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-return, @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-argument */
 
+import { APIConnectionTimeoutError, APIError, APIUserAbortError } from "openai";
 import {
   BUILDER_EXA_SERVICE_KEY,
   BUILDER_MODEL,
@@ -25,6 +26,10 @@ import {
 } from "@/config";
 import { AppError } from "@/utils/errors";
 import { SYSTEM_PROMPT } from "../lib/system-prompt";
+import {
+  openRouterChatCompletion,
+  type TraceContext,
+} from "./openrouter-client";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -38,6 +43,43 @@ const DEFAULT_MODEL = "@preset/assistants-pro";
 // so the same wallclock cap covers both. If the runtime ever streams chunks
 // from upstream, that path needs a separate per-chunk inactivity timer.
 const OPENROUTER_TIMEOUT_MS = 120_000;
+
+// ---------------------------------------------------------------------------
+// LLM error classification
+// ---------------------------------------------------------------------------
+
+/** True when the call timed out or was aborted (internal wallclock cap or an
+ *  external cancellation signal). Mirrors the raw-fetch code's `AbortError`
+ *  branch. */
+function isTimeoutOrAbort(err: unknown): boolean {
+  return (
+    err instanceof APIConnectionTimeoutError || err instanceof APIUserAbortError
+  );
+}
+
+/** True for an HTTP error *response* (4xx/5xx) — `APIError` carries a numeric
+ *  `status`. Network/connection failures are `APIError` subclasses without a
+ *  status; those are NOT "expected" and should propagate, matching the
+ *  raw-fetch code where a non-`AbortError` rejection re-threw. */
+function isHttpStatusError(err: unknown): err is APIError {
+  return err instanceof APIError && typeof err.status === "number";
+}
+
+/** Helper LLM calls (selector, classifier) treat HTTP errors and
+ *  timeouts/aborts as "no result, fall back to normal generation" (return
+ *  null). Anything else (network failure, parse bug) propagates. */
+function isExpectedHelperFailure(err: unknown): boolean {
+  return isTimeoutOrAbort(err) || isHttpStatusError(err);
+}
+
+/** Short, log-friendly description of an LLM call failure. */
+function describeLlmError(err: unknown): string {
+  if (isTimeoutOrAbort(err)) {
+    return `timed out/aborted (cap ${OPENROUTER_TIMEOUT_MS}ms)`;
+  }
+  if (isHttpStatusError(err)) return `HTTP ${err.status}`;
+  return err instanceof Error ? err.message : String(err);
+}
 
 // ---------------------------------------------------------------------------
 // Config-backed accessors (with test-only override seams)
@@ -427,6 +469,7 @@ async function selectInstructionsViaLLM(
   tree: string[],
   readme: string,
   externalSignal?: AbortSignal,
+  trace?: TraceContext,
 ): Promise<{
   selection: GithubInstructionSelection;
   tokens: PassthroughTokens;
@@ -515,52 +558,29 @@ Rules:
 - If you're unsure whether content is "for agents" vs "source material about a topic", lean toward false. Better to fall back to generation than to pass through a human-oriented README.`;
 
   const t0 = performance.now();
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => {
-    controller.abort();
-  }, OPENROUTER_TIMEOUT_MS);
-  // Compose the per-request timeout signal with any external cancellation
-  // signal so the fetch aborts whichever fires first.
-  const signal = externalSignal
-    ? AbortSignal.any([externalSignal, controller.signal])
-    : controller.signal;
   let data: any;
   try {
-    const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
+    data = await openRouterChatCompletion({
+      apiKey,
+      stage: "selector",
+      body: {
         model: getModel(),
         messages: [{ role: "user", content: selectorPrompt }],
         temperature: 0.2,
-      }),
-      signal,
+      },
+      signal: externalSignal,
+      timeoutMs: OPENROUTER_TIMEOUT_MS,
+      trace,
     });
-
-    if (!res.ok) {
-      const body = await res.text();
-      console.error(
-        "[templateGen] GitHub selector LLM error:",
-        res.status,
-        body.slice(0, 300),
-      );
-      return null;
-    }
-
-    data = (await res.json()) as any;
   } catch (err) {
-    if (err instanceof Error && err.name === "AbortError") {
+    if (isExpectedHelperFailure(err)) {
       console.error(
-        `[templateGen] GitHub selector LLM timed out after ${OPENROUTER_TIMEOUT_MS}ms`,
+        "[templateGen] GitHub selector LLM failed:",
+        describeLlmError(err),
       );
       return null;
     }
     throw err;
-  } finally {
-    clearTimeout(timeoutId);
   }
 
   console.log(
@@ -612,6 +632,7 @@ Rules:
 async function tryGithubPassthrough(
   url: string,
   externalSignal?: AbortSignal,
+  trace?: TraceContext,
 ): Promise<GithubPrefetch | null> {
   const parsed = parseGithubRepoUrl(url);
   if (!parsed) return null;
@@ -631,7 +652,7 @@ async function tryGithubPassthrough(
       );
       return null;
     }
-    const bundle = await tryContentPassthrough(content, externalSignal);
+    const bundle = await tryContentPassthrough(content, externalSignal, trace);
     if (bundle) return { kind: "passthrough", bundle };
     // Classifier said this isn't agent-ready, but the user linked directly
     // at the file — hand the raw content back to the caller so it can be
@@ -674,6 +695,7 @@ async function tryGithubPassthrough(
     tree,
     readme,
     externalSignal,
+    trace,
   );
   if (!selectorResult?.selection.hasAgentInstructions) return null;
   const { selection, tokens: selectorTokens } = selectorResult;
@@ -746,6 +768,7 @@ interface ContentPassthroughResult {
 async function classifyPastedContent(
   content: string,
   externalSignal?: AbortSignal,
+  trace?: TraceContext,
 ): Promise<{
   classification: ContentPassthroughResult;
   tokens: PassthroughTokens;
@@ -801,50 +824,29 @@ Rules:
 - The content must be READY-TO-USE as an agent prompt on its own — if it's merely ABOUT agents or references them in passing, that's false.`;
 
   const t0 = performance.now();
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => {
-    controller.abort();
-  }, OPENROUTER_TIMEOUT_MS);
-  const signal = externalSignal
-    ? AbortSignal.any([externalSignal, controller.signal])
-    : controller.signal;
   let data: any;
   try {
-    const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
+    data = await openRouterChatCompletion({
+      apiKey,
+      stage: "classifier",
+      body: {
         model: getModel(),
         messages: [{ role: "user", content: classifierPrompt }],
         temperature: 0.2,
-      }),
-      signal,
+      },
+      signal: externalSignal,
+      timeoutMs: OPENROUTER_TIMEOUT_MS,
+      trace,
     });
-
-    if (!res.ok) {
-      const body = await res.text();
-      console.error(
-        "[templateGen] Content classifier error:",
-        res.status,
-        body.slice(0, 300),
-      );
-      return null;
-    }
-
-    data = (await res.json()) as any;
   } catch (err) {
-    if (err instanceof Error && err.name === "AbortError") {
+    if (isExpectedHelperFailure(err)) {
       console.error(
-        `[templateGen] Content classifier timed out after ${OPENROUTER_TIMEOUT_MS}ms`,
+        "[templateGen] Content classifier failed:",
+        describeLlmError(err),
       );
       return null;
     }
     throw err;
-  } finally {
-    clearTimeout(timeoutId);
   }
 
   console.log(
@@ -895,10 +897,15 @@ Rules:
 async function tryContentPassthrough(
   content: string,
   externalSignal?: AbortSignal,
+  trace?: TraceContext,
 ): Promise<PassthroughBundle | null> {
   if (content.length < PASSTHROUGH_MIN_LENGTH) return null;
 
-  const classifierResult = await classifyPastedContent(content, externalSignal);
+  const classifierResult = await classifyPastedContent(
+    content,
+    externalSignal,
+    trace,
+  );
   if (!classifierResult) return null;
   const { classification, tokens: classifierTokens } = classifierResult;
   if (!classification.isPassthrough || !classification.passthroughType) {
@@ -951,6 +958,7 @@ async function extractUrl(url: string): Promise<string> {
 export async function generateTemplate(
   input: GenerateTemplateInput | string,
   externalSignal?: AbortSignal,
+  trace?: TraceContext,
 ): Promise<GenerationResult> {
   // Backward compat: string input = text
   const opts: GenerateTemplateInput =
@@ -1021,7 +1029,11 @@ export async function generateTemplate(
       //  - `rawContent`: the user linked a specific file but it's not
       //    agent-ready → use the fetched file content as source material
       //    (skip extractUrl, which would scrape GitHub's HTML viewer).
-      const githubResult = await tryGithubPassthrough(url, externalSignal);
+      const githubResult = await tryGithubPassthrough(
+        url,
+        externalSignal,
+        trace,
+      );
       if (githubResult?.kind === "passthrough") {
         const { bundle } = githubResult;
         return {
@@ -1050,6 +1062,7 @@ export async function generateTemplate(
     const passthroughBundle = await tryContentPassthrough(
       extracted,
       externalSignal,
+      trace,
     );
     if (passthroughBundle)
       return {
@@ -1112,46 +1125,32 @@ export async function generateTemplate(
   };
 
   const t0 = performance.now();
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => {
-    controller.abort();
-  }, OPENROUTER_TIMEOUT_MS);
-  const signal = externalSignal
-    ? AbortSignal.any([externalSignal, controller.signal])
-    : controller.signal;
   let data: any;
   try {
-    const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(reqBody),
-      signal,
+    data = await openRouterChatCompletion({
+      apiKey,
+      stage: "generate",
+      body: reqBody,
+      signal: externalSignal,
+      timeoutMs: OPENROUTER_TIMEOUT_MS,
+      trace,
     });
-
-    if (!res.ok) {
-      const body = await res.text();
-      console.error(
-        "[templateGen] OpenRouter error:",
-        res.status,
-        body.slice(0, 500),
-      );
-      throw new Error(`OpenRouter API error ${res.status}`);
-    }
-
-    data = (await res.json()) as any;
   } catch (err) {
-    if (err instanceof Error && err.name === "AbortError") {
+    if (isTimeoutOrAbort(err)) {
       throw new AppError(
         504,
         `OpenRouter request timed out after ${OPENROUTER_TIMEOUT_MS}ms`,
       );
     }
+    if (isHttpStatusError(err)) {
+      console.error(
+        "[templateGen] OpenRouter error:",
+        err.status,
+        err.message.slice(0, 500),
+      );
+      throw new Error(`OpenRouter API error ${err.status}`);
+    }
     throw err;
-  } finally {
-    clearTimeout(timeoutId);
   }
   const latencyMs = Math.round(performance.now() - t0);
   const promptTokens = Number(data?.usage?.prompt_tokens ?? 0);
@@ -1276,11 +1275,12 @@ export function __resetGenerateTemplateForTests(
 export async function callGenerateTemplate(
   input: GenerateTemplateInput | string,
   signal?: AbortSignal,
+  trace?: TraceContext,
 ): Promise<GenerationResult> {
   if (_generateTemplateOverride) {
     return _generateTemplateOverride(input);
   }
-  return generateTemplate(input, signal);
+  return generateTemplate(input, signal, trace);
 }
 
 export { BREVITY_RAIL };

@@ -1,0 +1,161 @@
+/**
+ * OpenRouter client + PostHog LLM Analytics tracing for template generation.
+ *
+ * Wraps the OpenAI SDK (OpenRouter is OpenAI-compatible) so every chat
+ * completion the builder makes — GitHub selector, content classifier, and the
+ * main generation — emits a `$ai_generation` event into PostHog LLM Analytics.
+ *
+ * Why the `@posthog/ai` *wrapper* (not the OTel `PostHogSpanProcessor`):
+ * `src/instrumentation.ts` already runs a NodeSDK that exports every HTTP /
+ * Express / Prisma span to an OTLP collector. Adding the OTel processor would
+ * fan all of those spans into PostHog too. The wrapper captures `$ai_*` events
+ * straight through the existing `posthog-node` client instead — off the OTLP
+ * pipeline, and with explicit per-call `traceId` / `distinctId` control so the
+ * three calls in one generation group under a single trace attributed to the
+ * same actor as the `builder.generation.completed` product event.
+ *
+ * When `POSTHOG_PROJECT_TOKEN` is unset, `getPostHogClient()` returns null and
+ * we fall back to a plain OpenAI client — no tracing, no monitoring params, no
+ * behavioural change. A custom `fetch` delegates to `globalThis.fetch` at call
+ * time so existing fetch-mocking tests keep working, and `maxRetries: 0`
+ * preserves the old single-attempt semantics of the raw-fetch code.
+ *
+ * Model attribution note: the wrapper records the *requested* model as
+ * `$ai_model` (`openAIParams.model ?? result.model`). With the default
+ * `@preset/assistants-pro` OpenRouter preset, PostHog can't price the alias, so
+ * `$ai_total_cost_usd` won't resolve. Setting `BUILDER_MODEL` to a concrete
+ * OpenRouter model id (e.g. `anthropic/claude-sonnet-4.5`) makes cost resolve
+ * automatically — no code change needed (see `getModel()` in templateGen.ts).
+ */
+
+/* eslint-disable @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-argument */
+
+import { OpenAI as PostHogOpenAI } from "@posthog/ai/openai";
+import { OpenAI } from "openai";
+import { getPostHogClient } from "./posthog";
+
+const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
+
+/**
+ * Per-generation trace context threaded from the executor down to each LLM
+ * call. `traceId` groups the calls under one PostHog LLM Analytics trace;
+ * `distinctId` attributes them to the same actor as the product event;
+ * `properties` are merged into every `$ai_generation` for segmentation.
+ */
+export interface TraceContext {
+  traceId: string;
+  distinctId?: string;
+  properties?: Record<string, any>;
+}
+
+// ---------------------------------------------------------------------------
+// Client singleton — rebuilt when the api key or posthog client changes
+// (both can change between tests via their override seams).
+// ---------------------------------------------------------------------------
+
+let _client: OpenAI | null = null;
+let _clientKey: string | null = null;
+let _clientPh: unknown = null;
+let _clientWrapped = false;
+
+function buildClient(apiKey: string): { client: OpenAI; wrapped: boolean } {
+  const ph = getPostHogClient();
+  const common = {
+    apiKey,
+    baseURL: OPENROUTER_BASE_URL,
+    // The raw-fetch code made a single attempt; keep that so error/timeout
+    // tests don't see silent retries.
+    maxRetries: 0,
+    // Resolve the global fetch at call time so tests that reassign
+    // `globalThis.fetch` still intercept the SDK's requests.
+    fetch: (url: any, init?: any) => globalThis.fetch(url, init),
+  };
+  if (ph) {
+    return {
+      client: new PostHogOpenAI({ ...common, posthog: ph }),
+      wrapped: true,
+    };
+  }
+  return { client: new OpenAI(common), wrapped: false };
+}
+
+function getClient(apiKey: string): { client: OpenAI; wrapped: boolean } {
+  const ph = getPostHogClient();
+  if (_client && _clientKey === apiKey && _clientPh === ph) {
+    return { client: _client, wrapped: _clientWrapped };
+  }
+  const built = buildClient(apiKey);
+  _client = built.client;
+  _clientKey = apiKey;
+  _clientPh = ph;
+  _clientWrapped = built.wrapped;
+  return built;
+}
+
+/** Clear the cached client. Test seam — call after changing the api key or
+ *  injecting a posthog client so the next call rebuilds the wrapper. */
+export function __resetOpenRouterClientForTests(): void {
+  _client = null;
+  _clientKey = null;
+  _clientPh = null;
+  _clientWrapped = false;
+}
+
+// ---------------------------------------------------------------------------
+// Chat completion entrypoint
+// ---------------------------------------------------------------------------
+
+export interface OpenRouterChatOptions {
+  apiKey: string;
+  /** Logical pipeline stage — recorded as a property on the `$ai_generation`
+   *  for per-stage segmentation ("selector" | "classifier" | "generate"). */
+  stage: "selector" | "classifier" | "generate";
+  body: OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming;
+  /** External cancellation (e.g. the executor's per-generation timeout). */
+  signal?: AbortSignal;
+  /** Per-request wallclock cap in ms. */
+  timeoutMs?: number;
+  /** Trace context. Omitted/no-op when PostHog isn't configured. */
+  trace?: TraceContext;
+}
+
+/**
+ * Make one OpenRouter chat completion. When PostHog is configured the call is
+ * routed through `@posthog/ai`'s wrapper, which auto-emits a `$ai_generation`
+ * (input, output, tokens, latency) tagged with the trace context. Otherwise it
+ * is a plain OpenAI SDK call. Errors propagate to the caller unchanged so each
+ * call site keeps its own error handling.
+ */
+export async function openRouterChatCompletion(
+  opts: OpenRouterChatOptions,
+): Promise<OpenAI.Chat.Completions.ChatCompletion> {
+  const { client, wrapped } = getClient(opts.apiKey);
+
+  // Monitoring params are only valid on the wrapped client; the plain OpenAI
+  // client would forward unknown `posthog*` keys to OpenRouter as body fields.
+  const monitoring =
+    wrapped && opts.trace
+      ? {
+          posthogTraceId: opts.trace.traceId,
+          posthogDistinctId: opts.trace.distinctId,
+          posthogProperties: {
+            ...opts.trace.properties,
+            ai_stage: opts.stage,
+          },
+        }
+      : {};
+
+  // Only set request options that are defined — the OpenAI SDK validates
+  // `timeout` as a positive integer and rejects an explicit `undefined`.
+  const requestOptions: Record<string, unknown> = {};
+  if (opts.signal) requestOptions.signal = opts.signal;
+  if (typeof opts.timeoutMs === "number")
+    requestOptions.timeout = opts.timeoutMs;
+
+  return client.chat.completions.create(
+    { ...opts.body, ...monitoring } as any,
+    requestOptions,
+  );
+}
+
+export { OPENROUTER_BASE_URL };
