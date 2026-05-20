@@ -1,13 +1,13 @@
 import crypto from "node:crypto";
 import { describe, expect, test } from "bun:test";
 import {
-  buildSlug,
-  buildUniqueSlug,
+  buildUniqueUrlSlug,
+  buildUrlSlug,
   HASH_LEN,
-  isHashedSlug,
+  hashId,
+  isUrlSlug,
   MAX_SLUG_ATTEMPTS,
-  slugHash,
-} from "@/utils/slug-hash";
+} from "@/utils/url-slug";
 
 function referenceSlugHash(id: string) {
   const sha = crypto.createHash("sha1").update(id).digest("hex");
@@ -20,7 +20,7 @@ describe("slug-hash utilities", () => {
     expect(typeof HASH_LEN).toBe("number");
   });
 
-  test("slugHash returns exactly five lowercase base36 chars", () => {
+  test("hashId returns exactly five lowercase base36 chars", () => {
     const inputs = [
       "",
       "a",
@@ -30,52 +30,52 @@ describe("slug-hash utilities", () => {
     ];
 
     for (const input of inputs) {
-      const hash = slugHash(input);
+      const hash = hashId(input);
       expect(hash).toHaveLength(HASH_LEN);
       expect(hash).toMatch(/^[0-9a-z]{5}$/);
     }
   });
 
-  test("slugHash matches the pool reference algorithm", () => {
+  test("hashId matches the pool reference algorithm", () => {
     for (const id of ["a", "tmpl_abc123_extra_long_456", ""]) {
-      expect(slugHash(id)).toBe(referenceSlugHash(id));
+      expect(hashId(id)).toBe(referenceSlugHash(id));
     }
   });
 
-  test("slugHash is deterministic across repeated calls", () => {
-    const first = slugHash("tmpl_abc123");
+  test("hashId is deterministic across repeated calls", () => {
+    const first = hashId("tmpl_abc123");
 
     for (let i = 0; i < 100; i++) {
-      expect(slugHash("tmpl_abc123")).toBe(first);
+      expect(hashId("tmpl_abc123")).toBe(first);
     }
   });
 
-  test("buildSlug concatenates base slug and hash with one dot", () => {
-    const built = buildSlug("brewski", "tmpl_abc123");
+  test("buildUrlSlug concatenates base slug and hash with one dot", () => {
+    const built = buildUrlSlug("brewski", "tmpl_abc123");
 
-    expect(built).toBe(`brewski.${slugHash("tmpl_abc123")}`);
+    expect(built).toBe(`brewski.${hashId("tmpl_abc123")}`);
     expect(built).toMatch(/^brewski\.[0-9a-z]{5}$/);
     expect(built.split(".")).toHaveLength(2);
   });
 
-  test("isHashedSlug accepts a valid lowercase base36 tail", () => {
-    expect(isHashedSlug("brewski.x4f9k")).toBe(true);
-    expect(isHashedSlug("foo.bar.baz12")).toBe(true);
+  test("isUrlSlug accepts a valid lowercase base36 tail", () => {
+    expect(isUrlSlug("brewski.x4f9k")).toBe(true);
+    expect(isUrlSlug("foo.bar.baz12")).toBe(true);
   });
 
-  test("isHashedSlug rejects missing or invalid hash tails", () => {
-    expect(isHashedSlug("brewski")).toBe(false);
-    expect(isHashedSlug("brewski.")).toBe(false);
-    expect(isHashedSlug("brewski.toolong")).toBe(false);
-    expect(isHashedSlug("brewski.UPPER")).toBe(false);
+  test("isUrlSlug rejects missing or invalid hash tails", () => {
+    expect(isUrlSlug("brewski")).toBe(false);
+    expect(isUrlSlug("brewski.")).toBe(false);
+    expect(isUrlSlug("brewski.toolong")).toBe(false);
+    expect(isUrlSlug("brewski.UPPER")).toBe(false);
   });
 });
 
-describe("buildUniqueSlug", () => {
+describe("buildUniqueUrlSlug", () => {
   test("returns the first generated slug when nothing is taken", async () => {
     const ids = ["tmpl_first", "tmpl_second"];
     let calls = 0;
-    const result = await buildUniqueSlug({
+    const result = await buildUniqueUrlSlug({
       baseSlug: "brewski",
       idFactory: () => ids[calls++],
       isTaken: () => Promise.resolve(false),
@@ -83,18 +83,18 @@ describe("buildUniqueSlug", () => {
 
     expect(calls).toBe(1);
     expect(result.id).toBe("tmpl_first");
-    expect(result.slug).toBe(buildSlug("brewski", "tmpl_first"));
+    expect(result.slug).toBe(buildUrlSlug("brewski", "tmpl_first"));
   });
 
   test("retries with a fresh id when the slug is taken", async () => {
     const ids = ["tmpl_first", "tmpl_second", "tmpl_third"];
     let calls = 0;
     const taken = new Set([
-      buildSlug("brewski", "tmpl_first"),
-      buildSlug("brewski", "tmpl_second"),
+      buildUrlSlug("brewski", "tmpl_first"),
+      buildUrlSlug("brewski", "tmpl_second"),
     ]);
 
-    const result = await buildUniqueSlug({
+    const result = await buildUniqueUrlSlug({
       baseSlug: "brewski",
       idFactory: () => ids[calls++],
       isTaken: (slug) => Promise.resolve(taken.has(slug)),
@@ -102,14 +102,14 @@ describe("buildUniqueSlug", () => {
 
     expect(calls).toBe(3);
     expect(result.id).toBe("tmpl_third");
-    expect(result.slug).toBe(buildSlug("brewski", "tmpl_third"));
+    expect(result.slug).toBe(buildUrlSlug("brewski", "tmpl_third"));
   });
 
   test("throws after MAX_SLUG_ATTEMPTS when every candidate is taken", async () => {
     let calls = 0;
     let caught: unknown;
     try {
-      await buildUniqueSlug({
+      await buildUniqueUrlSlug({
         baseSlug: "brewski",
         idFactory: () => `tmpl_${calls++}`,
         isTaken: () => Promise.resolve(true),

@@ -24,6 +24,10 @@ process.env.ASSISTANT_JOIN_WAIT_BUDGET_MS =
 process.env.ASSISTANT_JOIN_POLL_INTERVAL_MS =
   process.env.ASSISTANT_JOIN_POLL_INTERVAL_MS || "20";
 
+// Public template URL origin (required by config.ts; no prod default).
+process.env.BUILDER_SITE_URL =
+  process.env.BUILDER_SITE_URL || "https://dev.convos.org";
+
 process.env.SIWE_DOMAIN = process.env.SIWE_DOMAIN || "convos.app";
 process.env.SIWE_URI = process.env.SIWE_URI || "https://convos.app";
 process.env.SIWE_ALLOWED_CHAIN_IDS = process.env.SIWE_ALLOWED_CHAIN_IDS || "1";

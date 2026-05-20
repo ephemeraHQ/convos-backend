@@ -1,12 +1,12 @@
 import type { Request, Response } from "express";
 import { z } from "zod";
 import { prisma } from "@/utils/prisma";
-import { resolveAgentTemplateByIdOrHashedSlug } from "../lib/resolve-id-or-hashed-slug";
+import { resolveAgentTemplateByIdOrUrlSlug } from "../lib/resolve-id-or-url-slug";
 import { serializeAgentTemplate } from "../lib/serialize-agent-template";
 
 const paramsSchema = z
   .object({
-    idOrHashedSlug: z.string().min(1),
+    idOrUrlSlug: z.string().min(1),
   })
   .strict();
 
@@ -53,23 +53,20 @@ export async function detailHandler(req: Request, res: Response) {
 
   try {
     // First try to resolve via the standard path (published/unlisted/archived only)
-    let template = await resolveAgentTemplateByIdOrHashedSlug({
-      idOrHashedSlug: parsedParams.data.idOrHashedSlug,
+    let template = await resolveAgentTemplateByIdOrUrlSlug({
+      idOrUrlSlug: parsedParams.data.idOrUrlSlug,
     });
 
     // If not found, check if it's a draft template accessible to the caller.
     // The router uses `optionalAuthOrAgentApiKeyAuth`, so `accountId` may be
     // undefined for anonymous callers — they never own a draft, so the
     // ownership check below falls through and they get a 404.
-    if (
-      template === null &&
-      uuidPattern.test(parsedParams.data.idOrHashedSlug)
-    ) {
+    if (template === null && uuidPattern.test(parsedParams.data.idOrUrlSlug)) {
       const accountId: string | undefined = res.locals.accountId;
       const isApiKeyListener = res.locals.isApiKeyListener ?? false;
 
       const draftTemplate = await prisma.agentTemplate.findUnique({
-        where: { id: parsedParams.data.idOrHashedSlug },
+        where: { id: parsedParams.data.idOrUrlSlug },
       });
 
       if (draftTemplate !== null && draftTemplate.status === "draft") {

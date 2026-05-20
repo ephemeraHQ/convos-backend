@@ -143,8 +143,14 @@ export const TWITTER_MODERATION_MODEL =
 export const TWITTER_REPLY_MODEL =
   process.env.TWITTER_REPLY_MODEL?.trim() ||
   "anthropic/claude-3-5-haiku-20241022";
-export const BUILDER_SITE_URL =
-  process.env.BUILDER_SITE_URL?.trim() || "https://convos.org/assistants";
+// Required — public template URLs (`<origin>/a/<slug>`) are user-facing, so a
+// missing value must fail the deploy rather than silently misroute to a wrong
+// origin. Tests seed it via tests/preload.ts.
+const builderSiteUrl = process.env.BUILDER_SITE_URL?.trim();
+if (!builderSiteUrl) {
+  throw new Error("BUILDER_SITE_URL is not configured");
+}
+export const BUILDER_SITE_URL = builderSiteUrl;
 
 // PostHog metering (optional — capture is no-op if the token is unset).
 // Host defaults to PostHog Cloud US so setting only the token Just Works.

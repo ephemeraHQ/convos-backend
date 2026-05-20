@@ -1,5 +1,5 @@
 /**
- * Pick a row id whose `slugHash(id)` doesn't collide with any existing
+ * Pick a row id whose `hashId(id)` doesn't collide with any existing
  * AgentTemplate row sharing the given `baseSlug` — ACROSS owners.
  *
  * Context: AgentTemplate slugs are NOT unique — there is no DB constraint,
@@ -25,12 +25,12 @@
 
 import { randomUUID } from "node:crypto";
 import { prisma } from "@/utils/prisma";
-import { buildUniqueSlug, slugHash } from "@/utils/slug-hash";
+import { buildUniqueUrlSlug, hashId } from "@/utils/url-slug";
 
 export async function pickCollisionFreeId(args: {
   baseSlug: string;
 }): Promise<string> {
-  const { id } = await buildUniqueSlug({
+  const { id } = await buildUniqueUrlSlug({
     baseSlug: args.baseSlug,
     idFactory: () => randomUUID(),
     isTaken: async (candidate) => {
@@ -41,7 +41,7 @@ export async function pickCollisionFreeId(args: {
         where: { slug: base },
         select: { id: true },
       });
-      return rows.some((row) => slugHash(row.id) === hash);
+      return rows.some((row) => hashId(row.id) === hash);
     },
   });
   return id;

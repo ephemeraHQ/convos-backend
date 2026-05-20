@@ -27,7 +27,7 @@ agentTemplatesRouter.post(
   createHandler,
 );
 
-// Async generation surface — must be mounted before /:idOrHashedSlug so the
+// Async generation surface — must be mounted before /:idOrUrlSlug so the
 // wildcard doesn't capture "generations" as a slug-or-id. Both POST and GET
 // are public: anonymous submissions default to the ADMIN owner; the GET
 // status endpoint treats the generation ID itself as the capability token
@@ -62,7 +62,7 @@ agentTemplatesRouter.post(
   publishHandler,
 );
 agentTemplatesRouter.get(
-  "/:idOrHashedSlug",
+  "/:idOrUrlSlug",
   optionalAuthOrAgentApiKeyAuth,
   detailHandler,
 );

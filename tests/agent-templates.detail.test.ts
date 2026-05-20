@@ -12,7 +12,7 @@ import {
 import { ADMIN_ACCOUNT_ID } from "@/utils/constants";
 import { createJwtToken } from "@/utils/jwt";
 import { prisma } from "@/utils/prisma";
-import { slugHash } from "@/utils/slug-hash";
+import { hashId } from "@/utils/url-slug";
 import { buildAgentTemplatesApp } from "./agent-templates.cross.helpers";
 
 type DetailBody = Record<string, unknown>;
@@ -156,7 +156,7 @@ describe("Agent template detail endpoint", () => {
       slug: "brewski",
     });
 
-    const hash = slugHash(tmpl.id);
+    const hash = hashId(tmpl.id);
     const hashed = await readDetail({
       path: `/api/v2/agent-templates/brewski.${hash}`,
     });
@@ -198,7 +198,7 @@ describe("Agent template detail endpoint", () => {
     const headers = await readerAuthHeaders();
     for (const path of [
       `/api/v2/agent-templates/${draft.id}`,
-      `/api/v2/agent-templates/detail-draft.${slugHash(draft.id)}`,
+      `/api/v2/agent-templates/detail-draft.${hashId(draft.id)}`,
     ]) {
       const response = await fetch(`${baseURL}${path}`, { headers });
       expect(response.status).toBe(404);
@@ -215,7 +215,7 @@ describe("Agent template detail endpoint", () => {
       expect(byId.body?.status).toBe(fixture.status);
 
       const byHash = await readDetail({
-        path: `/api/v2/agent-templates/${fixture.slug}.${slugHash(fixture.tmpl.id)}`,
+        path: `/api/v2/agent-templates/${fixture.slug}.${hashId(fixture.tmpl.id)}`,
       });
       expect(byHash.response.status).toBe(200);
       expect(byHash.body?.status).toBe(fixture.status);

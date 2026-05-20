@@ -267,7 +267,7 @@ describe("agent-templates router auth wiring", () => {
     expect(source).toContain("requireAccount,\n  deleteHandler");
     expect(source).toContain("requireAccount,\n  publishHandler");
 
-    // Public routes use the optional middleware: GET /, GET /:idOrHashedSlug,
+    // Public routes use the optional middleware: GET /, GET /:idOrUrlSlug,
     // POST /generations, GET /generations/:generationId. The optional
     // middleware MUST NOT be followed by requireAccount.
     expect(source).toContain("optionalAuthOrAgentApiKeyAuth, listHandler");
