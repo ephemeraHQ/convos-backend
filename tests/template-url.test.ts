@@ -4,7 +4,7 @@ import {
   templateUrlFromUrlSlug,
 } from "@/api/v2/agent-templates/lib/template-url";
 import { BUILDER_SITE_URL } from "@/config";
-import { buildUrlSlug } from "@/utils/slug-hash";
+import { buildUrlSlug } from "@/utils/url-slug";
 
 describe("template public URL helpers", () => {
   // BUILDER_SITE_URL default ("https://convos.org/assistants") carries no

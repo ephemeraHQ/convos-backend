@@ -7,7 +7,7 @@ import { noRouteMiddleware } from "@/middleware/noRoute";
 import { pinoMiddleware } from "@/middleware/pino";
 import { ADMIN_ACCOUNT_ID } from "@/utils/constants";
 import { createJwtToken } from "@/utils/jwt";
-import { buildUrlSlug } from "@/utils/slug-hash";
+import { buildUrlSlug } from "@/utils/url-slug";
 
 /**
  * Derive a deterministic UUIDv5-shaped string from a human-readable label

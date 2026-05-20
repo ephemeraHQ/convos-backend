@@ -42,7 +42,7 @@ import { ADMIN_ACCOUNT_ID } from "@/utils/constants";
 import logger from "@/utils/logger";
 import { prisma } from "@/utils/prisma";
 import { validateSlug } from "@/utils/reserved-slugs";
-import { buildUrlSlug } from "@/utils/slug-hash";
+import { buildUrlSlug } from "@/utils/url-slug";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -278,7 +278,7 @@ function deriveTemplateSlug(agentName: string): string {
  *    malformed (see `deriveTemplateSlug`).
  *  - Slugs are NOT unique (no DB constraint). Any number of rows can share a
  *    base slug; the row `id` is pre-picked via `pickCollisionFreeId` so its
- *    `slugHash(id)` doesn't collide with any existing row sharing `baseSlug`,
+ *    `hashId(id)` doesn't collide with any existing row sharing `baseSlug`,
  *    which is what keeps the public `<base>.<hash>` URL unambiguous. */
 async function persistTemplate(
   template: {

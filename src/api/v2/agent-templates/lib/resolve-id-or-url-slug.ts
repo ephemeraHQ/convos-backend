@@ -1,7 +1,7 @@
 import type { PublishStatus } from "@prisma/client";
 import logger from "@/utils/logger";
 import { prisma } from "@/utils/prisma";
-import { slugHash } from "@/utils/slug-hash";
+import { hashId } from "@/utils/url-slug";
 
 const visibleStatuses = [
   "published",
@@ -16,9 +16,9 @@ const uuidPattern =
 
 export async function resolveAgentTemplateByIdOrUrlSlug(args: {
   idOrUrlSlug: string;
-  slugHasher?: (id: string) => string;
+  hasher?: (id: string) => string;
 }) {
-  const slugHasher = args.slugHasher ?? slugHash;
+  const hasher = args.hasher ?? hashId;
 
   if (uuidPattern.test(args.idOrUrlSlug)) {
     return prisma.agentTemplate.findFirst({
@@ -48,7 +48,7 @@ export async function resolveAgentTemplateByIdOrUrlSlug(args: {
     },
   });
   const matches = candidates.filter(
-    (candidate) => slugHasher(candidate.id) === hash,
+    (candidate) => hasher(candidate.id) === hash,
   );
 
   if (matches.length > 1) {

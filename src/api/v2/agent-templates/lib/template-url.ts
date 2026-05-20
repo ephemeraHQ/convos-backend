@@ -1,5 +1,5 @@
 import { BUILDER_SITE_URL } from "@/config";
-import { buildUrlSlug } from "@/utils/slug-hash";
+import { buildUrlSlug } from "@/utils/url-slug";
 
 /**
  * Single source of truth for an agent template's public Playroom URL.

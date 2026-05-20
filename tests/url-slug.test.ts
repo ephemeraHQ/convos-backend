@@ -4,10 +4,10 @@ import {
   buildUniqueUrlSlug,
   buildUrlSlug,
   HASH_LEN,
+  hashId,
   isUrlSlug,
   MAX_SLUG_ATTEMPTS,
-  slugHash,
-} from "@/utils/slug-hash";
+} from "@/utils/url-slug";
 
 function referenceSlugHash(id: string) {
   const sha = crypto.createHash("sha1").update(id).digest("hex");
@@ -20,7 +20,7 @@ describe("slug-hash utilities", () => {
     expect(typeof HASH_LEN).toBe("number");
   });
 
-  test("slugHash returns exactly five lowercase base36 chars", () => {
+  test("hashId returns exactly five lowercase base36 chars", () => {
     const inputs = [
       "",
       "a",
@@ -30,30 +30,30 @@ describe("slug-hash utilities", () => {
     ];
 
     for (const input of inputs) {
-      const hash = slugHash(input);
+      const hash = hashId(input);
       expect(hash).toHaveLength(HASH_LEN);
       expect(hash).toMatch(/^[0-9a-z]{5}$/);
     }
   });
 
-  test("slugHash matches the pool reference algorithm", () => {
+  test("hashId matches the pool reference algorithm", () => {
     for (const id of ["a", "tmpl_abc123_extra_long_456", ""]) {
-      expect(slugHash(id)).toBe(referenceSlugHash(id));
+      expect(hashId(id)).toBe(referenceSlugHash(id));
     }
   });
 
-  test("slugHash is deterministic across repeated calls", () => {
-    const first = slugHash("tmpl_abc123");
+  test("hashId is deterministic across repeated calls", () => {
+    const first = hashId("tmpl_abc123");
 
     for (let i = 0; i < 100; i++) {
-      expect(slugHash("tmpl_abc123")).toBe(first);
+      expect(hashId("tmpl_abc123")).toBe(first);
     }
   });
 
   test("buildUrlSlug concatenates base slug and hash with one dot", () => {
     const built = buildUrlSlug("brewski", "tmpl_abc123");
 
-    expect(built).toBe(`brewski.${slugHash("tmpl_abc123")}`);
+    expect(built).toBe(`brewski.${hashId("tmpl_abc123")}`);
     expect(built).toMatch(/^brewski\.[0-9a-z]{5}$/);
     expect(built.split(".")).toHaveLength(2);
   });

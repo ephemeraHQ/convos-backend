@@ -13,7 +13,7 @@ const MAX_SLUG_ATTEMPTS = 8;
  * slug (`brewski.x4f9k`) so two skills with the same name don't collide on
  * URL, and so published pages aren't trivially guessable from the agent name.
  */
-export function slugHash(id: string): string {
+export function hashId(id: string): string {
   const sha = crypto.createHash("sha1").update(id).digest("hex");
   const n = parseInt(sha.slice(0, 8), 16);
   return n.toString(36).padStart(HASH_LEN, "0").slice(-HASH_LEN);
@@ -21,7 +21,7 @@ export function slugHash(id: string): string {
 
 /** Combine a base slug with the hash suffix derived from `id`. */
 export function buildUrlSlug(baseSlug: string, id: string): string {
-  return `${baseSlug}.${slugHash(id)}`;
+  return `${baseSlug}.${hashId(id)}`;
 }
 
 /** True when the slug already has the `.hash` suffix. */
