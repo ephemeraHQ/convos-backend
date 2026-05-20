@@ -454,7 +454,6 @@ export async function handleV2Notification(args: {
 
         // Then attempt notification server cleanup
         try {
-          // eslint-disable-next-line @typescript-eslint/no-unsafe-call
           await notificationClient.deleteInstallation({
             installationId: client.id,
           });
