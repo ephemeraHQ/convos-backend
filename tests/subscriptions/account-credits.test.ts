@@ -313,11 +313,12 @@ describe("GET /v2/accounts/me/credits — free-tier (no subscription)", () => {
       .get("/v2/accounts/me/credits")
       .set("X-Convos-AuthToken", token);
     expect(res.status).toBe(200);
-    expect(res.body.balance).toBe(0);
-    expect(res.body.monthlyGrant).toBe(100);
-    expect(res.body.monthlyGrantUsed).toBe(100);
-    expect(res.body.periodLabel).toBe("Daily");
-    expect(typeof res.body.nextRefreshAt).toBe("string");
+    const body = res.body as BalanceBody;
+    expect(body.balance).toBe(0);
+    expect(body.monthlyGrant).toBe(100);
+    expect(body.monthlyGrantUsed).toBe(100);
+    expect(body.periodLabel).toBe("Daily");
+    expect(typeof body.nextRefreshAt).toBe("string");
   });
 
   test("partial balance (60) → balance:60, monthlyGrantUsed:40", async () => {
@@ -327,9 +328,10 @@ describe("GET /v2/accounts/me/credits — free-tier (no subscription)", () => {
     const res = await request(makeApp())
       .get("/v2/accounts/me/credits")
       .set("X-Convos-AuthToken", token);
-    expect(res.body.balance).toBe(60);
-    expect(res.body.monthlyGrant).toBe(100);
-    expect(res.body.monthlyGrantUsed).toBe(40);
+    const body = res.body as BalanceBody;
+    expect(body.balance).toBe(60);
+    expect(body.monthlyGrant).toBe(100);
+    expect(body.monthlyGrantUsed).toBe(40);
   });
 
   test("balance above cap (150) → balance:150, monthlyGrantUsed:0", async () => {
@@ -339,9 +341,10 @@ describe("GET /v2/accounts/me/credits — free-tier (no subscription)", () => {
     const res = await request(makeApp())
       .get("/v2/accounts/me/credits")
       .set("X-Convos-AuthToken", token);
-    expect(res.body.balance).toBe(150);
-    expect(res.body.monthlyGrant).toBe(100);
-    expect(res.body.monthlyGrantUsed).toBe(0);
+    const body = res.body as BalanceBody;
+    expect(body.balance).toBe(150);
+    expect(body.monthlyGrant).toBe(100);
+    expect(body.monthlyGrantUsed).toBe(0);
   });
 
   test("negative balance → balance:0 (clamped), monthlyGrantUsed:cap", async () => {
@@ -351,9 +354,10 @@ describe("GET /v2/accounts/me/credits — free-tier (no subscription)", () => {
     const res = await request(makeApp())
       .get("/v2/accounts/me/credits")
       .set("X-Convos-AuthToken", token);
-    expect(res.body.balance).toBe(0);
-    expect(res.body.monthlyGrant).toBe(100);
-    expect(res.body.monthlyGrantUsed).toBe(100);
+    const body = res.body as BalanceBody;
+    expect(body.balance).toBe(0);
+    expect(body.monthlyGrant).toBe(100);
+    expect(body.monthlyGrantUsed).toBe(100);
   });
 
   test("expired subscription → takes free-tier branch (NOT stale tierGrant)", async () => {
@@ -379,7 +383,8 @@ describe("GET /v2/accounts/me/credits — free-tier (no subscription)", () => {
       .get("/v2/accounts/me/credits")
       .set("X-Convos-AuthToken", token);
     expect(res.status).toBe(200);
-    expect(res.body.periodLabel).toBe("Daily");
-    expect(res.body.monthlyGrant).toBe(100);
+    const body = res.body as BalanceBody;
+    expect(body.periodLabel).toBe("Daily");
+    expect(body.monthlyGrant).toBe(100);
   });
 });
