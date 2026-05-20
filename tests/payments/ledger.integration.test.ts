@@ -137,6 +137,55 @@ describe("payments/ledger/repository", () => {
     expect(await getBalance(accountId)).toBe(50n);
   });
 
+  test("applyDelta first-write returns post-tx newBalance", async () => {
+    const accountId = await seedAccount();
+    cleanupAccounts.push(accountId);
+
+    const result = await applyDelta({
+      accountId,
+      delta: 100n,
+      reason: LedgerReason.grant,
+      idempotencyKey: "nb-1",
+      grantKindId: "manual",
+    });
+
+    expect(result.newBalance).toBe(100n);
+    expect(result.newBalance).toBe(await getBalance(accountId));
+  });
+
+  test("applyDelta replay returns current newBalance, not stale grant-time value", async () => {
+    const accountId = await seedAccount();
+    cleanupAccounts.push(accountId);
+
+    await applyDelta({
+      accountId,
+      delta: 100n,
+      reason: LedgerReason.grant,
+      idempotencyKey: "nb-orig",
+      grantKindId: "manual",
+    });
+    // Intervening consume after original grant — replay must report current
+    // balance (70n), not the post-original-grant balance (100n).
+    await applyDelta({
+      accountId,
+      delta: -30n,
+      reason: LedgerReason.consume,
+      idempotencyKey: "nb-burn",
+    });
+
+    const replay = await applyDelta({
+      accountId,
+      delta: 100n,
+      reason: LedgerReason.grant,
+      idempotencyKey: "nb-orig",
+      grantKindId: "manual",
+    });
+
+    expect(replay.replayed).toBe(true);
+    expect(replay.newBalance).toBe(70n);
+    expect(replay.newBalance).toBe(await getBalance(accountId));
+  });
+
   test("invariant: balance == SUM(delta) after mixed sequence", async () => {
     const accountId = await seedAccount();
     cleanupAccounts.push(accountId);

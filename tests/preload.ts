@@ -49,6 +49,10 @@ process.env.PAYMENTS_MARKUP_RATE = "2.0";
 process.env.PAYMENTS_CREDITS_PER_USD = "1000";
 process.env.PAYMENTS_RESERVED_MAX_TURN_CREDITS = "1";
 process.env.PAYMENTS_MIN_BALANCE_CREDITS = "-1000";
+process.env.PAYMENTS_FREE_TIER_DAILY_CAP_CREDITS = "100";
+process.env.PAYMENTS_CRON_API_KEY =
+  process.env.PAYMENTS_CRON_API_KEY ||
+  "test-cron-api-key-that-is-at-least-32-characters-long";
 
 // Subscription tier credit allotments — placeholder values for tests.
 // Final numbers are set by ops via env in each deploy environment.

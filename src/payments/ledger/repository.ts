@@ -21,6 +21,7 @@ interface ApplyDeltaInput {
 export interface ApplyDeltaResult {
   ledgerId: string;
   replayed: boolean;
+  newBalance: bigint;
 }
 
 interface RawBalanceRow {
@@ -189,7 +190,7 @@ export const applyDeltaWithTx = async (
     },
   });
 
-  return { ledgerId: created.id, replayed: false };
+  return { ledgerId: created.id, replayed: false, newBalance: after };
 };
 
 export const applyDelta = async (
@@ -208,7 +209,11 @@ export const applyDelta = async (
       );
       if (prior) {
         validateReplayPayload(prior, input);
-        return { ledgerId: prior.id, replayed: true };
+        // Replay path: read current balance post-fact. Not the lock-window
+        // exact value, but accurate at read time — same race window as any
+        // independent getBalance call.
+        const newBalance = await getBalance(input.accountId);
+        return { ledgerId: prior.id, replayed: true, newBalance };
       }
     }
     throw err;

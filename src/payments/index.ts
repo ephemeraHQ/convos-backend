@@ -45,7 +45,7 @@ export const consume = async (args: {
 }): Promise<ConsumeResult> => {
   const credits = usdToCredits(args.usdCostMicros);
   try {
-    const { replayed } = await applyDelta({
+    const { replayed, newBalance } = await applyDelta({
       accountId: args.accountId,
       delta: BigInt(-credits),
       reason: LedgerReason.consume,
@@ -57,7 +57,7 @@ export const consume = async (args: {
       requestId: args.requestId,
       floorCheck: { minBalance: config.minBalance },
     });
-    return { spent: credits, replayed };
+    return { spent: credits, replayed, newBalance };
   } catch (err) {
     if (err instanceof LedgerFloorBreachError) {
       throw new InsufficientBalanceError(
@@ -116,12 +116,13 @@ export const grant = async (args: {
   );
   if (prior) {
     validateReplayPayload(prior, ledgerInput);
-    return { granted: args.credits, replayed: true };
+    const newBalance = await ledgerGetBalance(args.accountId);
+    return { granted: args.credits, replayed: true, newBalance };
   }
 
   // 2. Active-kind check only applies on first grant, not on replay.
   try {
-    await prisma.$transaction(async (tx) => {
+    const txResult = await prisma.$transaction(async (tx) => {
       const kindRow = await tx.grantKind.findUnique({
         where: { id: parsedKind },
         select: { id: true, active: true },
@@ -131,7 +132,11 @@ export const grant = async (args: {
       }
       return applyDeltaWithTx(tx, ledgerInput);
     });
-    return { granted: args.credits, replayed: false };
+    return {
+      granted: args.credits,
+      replayed: false,
+      newBalance: txResult.newBalance,
+    };
   } catch (err) {
     if (
       err instanceof Prisma.PrismaClientKnownRequestError &&
@@ -145,7 +150,8 @@ export const grant = async (args: {
       );
       if (racePrior) {
         validateReplayPayload(racePrior, ledgerInput);
-        return { granted: args.credits, replayed: true };
+        const newBalance = await ledgerGetBalance(args.accountId);
+        return { granted: args.credits, replayed: true, newBalance };
       }
     }
     throw err;
@@ -174,7 +180,7 @@ export const adjust = async (args: {
   const opts =
     args.delta < 0 ? { floorCheck: { minBalance: config.minBalance } } : {};
   try {
-    const { replayed } = await applyDelta({
+    const { replayed, newBalance } = await applyDelta({
       accountId: args.accountId,
       delta: BigInt(args.delta),
       reason: LedgerReason.adjust,
@@ -182,7 +188,7 @@ export const adjust = async (args: {
       note: args.note,
       ...opts,
     });
-    return { applied: true, replayed };
+    return { applied: true, replayed, newBalance };
   } catch (err) {
     if (err instanceof LedgerFloorBreachError) {
       throw new InsufficientBalanceError(

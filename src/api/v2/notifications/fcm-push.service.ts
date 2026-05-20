@@ -33,10 +33,14 @@ export function buildFcmWirePayload(args: {
 } {
   const { notification, isSilent } = args;
   const data: Record<string, string> = {
-    apiJWT: notification.apiJWT,
     notificationType: notification.notificationType,
     notificationData: JSON.stringify(notification.notificationData),
   };
+  // apiJWT is only present on user-routed payloads (Protocol, InviteJoinRequest).
+  // Backend-originated payloads (e.g. CreditsRefilled) don't carry one.
+  if ("apiJWT" in notification && notification.apiJWT) {
+    data.apiJWT = notification.apiJWT;
+  }
   // Add clientId or inboxId
   if ("clientId" in notification && notification.clientId) {
     data.clientId = notification.clientId;

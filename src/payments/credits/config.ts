@@ -6,6 +6,7 @@ export interface PaymentsConfig {
   creditsPerDollar: bigint;
   reservedMaxTurnCredits: bigint;
   minBalance: bigint;
+  freeTierDailyCapCredits: number;
 }
 
 const requireFloat = (key: string, raw: string | undefined): number => {
@@ -110,11 +111,28 @@ const loadMinBalanceCredits = (): bigint => {
   return min;
 };
 
+// PAYMENTS_FREE_TIER_DAILY_CAP_CREDITS
+//   Daily top-up-to-cap amount applied by the /credits/daily cron to
+//   SIWE-verified non-subscriber accounts. Must be a positive integer.
+export const loadFreeTierDailyCapCredits = (): number => {
+  const big = requireBigInt(
+    "PAYMENTS_FREE_TIER_DAILY_CAP_CREDITS",
+    process.env.PAYMENTS_FREE_TIER_DAILY_CAP_CREDITS,
+  );
+  if (big <= 0n || big > BigInt(Number.MAX_SAFE_INTEGER)) {
+    throw new ValidationError(
+      `PAYMENTS_FREE_TIER_DAILY_CAP_CREDITS must be a positive safe integer, got: ${big}`,
+    );
+  }
+  return Number(big);
+};
+
 export const loadConfig = (): PaymentsConfig => ({
   ...loadMarkupRate(),
   creditsPerDollar: loadCreditsPerUsd(),
   reservedMaxTurnCredits: loadReservedMaxTurnCredits(),
   minBalance: loadMinBalanceCredits(),
+  freeTierDailyCapCredits: loadFreeTierDailyCapCredits(),
 });
 
 export const config: PaymentsConfig = loadConfig();

@@ -2,7 +2,9 @@ import { Router } from "express";
 import { agentApiKeyAuth } from "@/middleware/agentAuth";
 import { check } from "./handlers/check";
 import { consume } from "./handlers/consume";
+import { dailyRefill } from "./handlers/daily-refill";
 import { grant } from "./handlers/grant";
+import { requireCronApiKey } from "./middleware/cron-api-key";
 
 const creditsRouter = Router();
 
@@ -12,5 +14,8 @@ const creditsRouter = Router();
 creditsRouter.post("/check", agentApiKeyAuth, check);
 creditsRouter.post("/consume", agentApiKeyAuth, consume);
 creditsRouter.post("/grant", agentApiKeyAuth, grant);
+
+// Cron-only — separate gate (PAYMENTS_CRON_API_KEY), not agent key.
+creditsRouter.post("/daily", requireCronApiKey, dailyRefill);
 
 export { creditsRouter };
