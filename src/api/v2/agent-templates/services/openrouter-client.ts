@@ -37,6 +37,14 @@ import { getPostHogClient } from "@/api/v2/agent-templates/services/posthog";
 
 const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
 
+// OpenRouter provider routing: prefer Amazon Bedrock (lower-latency Anthropic
+// serving) but keep fallbacks on (the OpenRouter default) so models Bedrock
+// doesn't serve — e.g. Google Gemini, used by moderation/reply — transparently
+// route elsewhere. `order` is a *preference*, not a hard pin; an unavailable or
+// throttled Bedrock falls back automatically, so this is self-healing. Confirm
+// the actual latency win via PostHog p50 `$ai_latency` after deploy.
+const PROVIDER_ROUTING = { order: ["amazon-bedrock"] };
+
 /**
  * Per-generation trace context threaded from the executor down to each LLM
  * call. `traceId` groups the calls under one PostHog LLM Analytics trace;
@@ -160,7 +168,9 @@ export async function openRouterChatCompletion(
     requestOptions.timeout = opts.timeoutMs;
 
   return client.chat.completions.create(
-    { ...opts.body, ...monitoring } as any,
+    // `provider` is an OpenRouter extension (passed through by the OpenAI SDK).
+    // Default first so a caller-supplied `body.provider` can still override.
+    { provider: PROVIDER_ROUTING, ...opts.body, ...monitoring } as any,
     requestOptions,
   );
 }

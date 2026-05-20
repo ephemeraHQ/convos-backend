@@ -113,6 +113,8 @@ describe("openRouterChatCompletion + PostHog tracing", () => {
     );
     expect(leaked).toEqual([]);
     expect(lastSentBody.model).toBe("anthropic/claude-opus-4.7");
+    // Provider routing prefers Bedrock (fallbacks left on by default).
+    expect(lastSentBody.provider).toEqual({ order: ["amazon-bedrock"] });
   });
 
   test("no posthog client → no events, clean body, call still works", async () => {
@@ -138,6 +140,8 @@ describe("openRouterChatCompletion + PostHog tracing", () => {
       k.startsWith("posthog"),
     );
     expect(leaked).toEqual([]);
+    // Provider routing applies on the plain-client path too.
+    expect(lastSentBody.provider).toEqual({ order: ["amazon-bedrock"] });
   });
 
   test("same trace id groups multiple stages under one trace", async () => {
