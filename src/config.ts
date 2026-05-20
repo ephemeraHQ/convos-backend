@@ -144,7 +144,7 @@ export const TWITTER_REPLY_MODEL =
   process.env.TWITTER_REPLY_MODEL?.trim() ||
   "anthropic/claude-3-5-haiku-20241022";
 export const BUILDER_SITE_URL =
-  process.env.BUILDER_SITE_URL?.trim() || "https://convos.org/assistants";
+  process.env.BUILDER_SITE_URL?.trim() || "https://dev.convos.org";
 
 // PostHog metering (optional — capture is no-op if the token is unset).
 // Host defaults to PostHog Cloud US so setting only the token Just Works.

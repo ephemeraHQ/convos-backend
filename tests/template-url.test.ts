@@ -7,8 +7,8 @@ import { BUILDER_SITE_URL } from "@/config";
 import { buildUrlSlug } from "@/utils/url-slug";
 
 describe("template public URL helpers", () => {
-  // BUILDER_SITE_URL default ("https://convos.org/assistants") carries no
-  // trailing slash; agent pages live under the `/a/` segment.
+  // BUILDER_SITE_URL default ("https://dev.convos.org") carries no trailing
+  // slash; agent pages live under the `/a/` segment.
   test("templateUrlFromUrlSlug joins origin + /a/ + already-hashed slug", () => {
     expect(templateUrlFromUrlSlug("brewski.x4f9k")).toBe(
       `${BUILDER_SITE_URL}/a/brewski.x4f9k`,

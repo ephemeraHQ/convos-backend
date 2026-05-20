@@ -310,7 +310,7 @@ describe("POST /generations — twitter happy path", () => {
 
   test("LLM-composed reply is used when validator accepts it", async () => {
     const llmReply =
-      "@some_user Built it! Meet Tweet Replier — try it now https://convos.org/assistants/tweet-replier.abcde";
+      "@some_user Built it! Meet Tweet Replier — try it now https://dev.convos.org/a/tweet-replier.abcde";
     __resetComposeReplyForTests(() => Promise.resolve({ replyText: llmReply }));
 
     const res = await post(twitterBody(), {
