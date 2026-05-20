@@ -993,7 +993,7 @@ describe("templateGen service — OpenRouter integration", () => {
     const systemPart = req.body.messages[0].content[0];
     expect(systemPart.type).toBe("text");
     expect(systemPart.text).toBe(SYSTEM_PROMPT);
-    expect(systemPart.cache_control).toEqual({ type: "ephemeral" });
+    expect(systemPart.cache_control).toEqual({ type: "ephemeral", ttl: "1h" });
   });
 
   // -----------------------------------------------------------------------

@@ -1153,13 +1153,19 @@ export async function generateTemplate(
       // Anthropic-only routing on OpenRouter. The varying user message after
       // the breakpoint is re-processed each call. Cache usage is observable via
       // `$ai_cache_read_input_tokens` / `$ai_cache_creation_input_tokens`.
+      //
+      // 1-hour TTL (vs the 5-min default): builder traffic is bursty, so the
+      // default would expire between generations and re-write (no read benefit).
+      // The only cost of 1h is a higher write multiplier on misses (2x input vs
+      // 1.25x); reads are 0.1x either way. Net cheaper + faster whenever two
+      // generations land within an hour. Supported per-block on Bedrock.
       {
         role: "system",
         content: [
           {
             type: "text",
             text: SYSTEM_PROMPT,
-            cache_control: { type: "ephemeral" },
+            cache_control: { type: "ephemeral", ttl: "1h" },
           },
         ],
       },
