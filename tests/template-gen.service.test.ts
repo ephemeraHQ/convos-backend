@@ -211,9 +211,9 @@ describe("templateGen service — OpenRouter integration", () => {
   });
 
   // -----------------------------------------------------------------------
-  // Model defaults to @preset/assistants-pro
+  // Model defaults to anthropic/claude-opus-4.7
   // -----------------------------------------------------------------------
-  test("model defaults to @preset/assistants-pro", async () => {
+  test("model defaults to anthropic/claude-opus-4.7", async () => {
     const mod = await import("@/api/v2/agent-templates/services/templateGen");
     generateTemplate = mod.generateTemplate;
 
@@ -239,7 +239,7 @@ describe("templateGen service — OpenRouter integration", () => {
     await generateTemplate({ text: "Build me a helper" });
 
     const req = getLastOpenRouterRequest();
-    expect(req.body.model).toBe("@preset/assistants-pro");
+    expect(req.body.model).toBe("anthropic/claude-opus-4.7");
   });
 
   test("BUILDER_MODEL env override works", async () => {
@@ -521,7 +521,7 @@ describe("templateGen service — OpenRouter integration", () => {
     expect(selectorReq).toBeDefined();
     expect(selectorReq.body.temperature).toBe(0.2);
     expect(selectorReq.body.response_format).toBeUndefined();
-    expect(selectorReq.body.model).toBe("@preset/assistants-pro");
+    expect(selectorReq.body.model).toBe("anthropic/claude-opus-4.7");
     expect(selectorReq.headers["authorization"]).toBe(`Bearer ${TEST_API_KEY}`);
 
     globalThis.fetch = originalMockFetch;
@@ -1103,7 +1103,7 @@ describe("templateGen service — OpenRouter integration", () => {
     const classifierReq = getOpenRouterRequests()[0];
     expect(classifierReq.body.temperature).toBe(0.2);
     expect(classifierReq.body.response_format).toBeUndefined();
-    expect(classifierReq.body.model).toBe("@preset/assistants-pro");
+    expect(classifierReq.body.model).toBe("anthropic/claude-opus-4.7");
     expect(classifierReq.headers["authorization"]).toBe(
       `Bearer ${TEST_API_KEY}`,
     );

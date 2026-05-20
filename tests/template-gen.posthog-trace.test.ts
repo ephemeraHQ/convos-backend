@@ -78,7 +78,7 @@ describe("openRouterChatCompletion + PostHog tracing", () => {
       apiKey: "test-or-key",
       stage: "generate",
       body: {
-        model: "@preset/assistants-pro",
+        model: "anthropic/claude-opus-4.7",
         messages: [{ role: "user", content: "make me an agent" }],
         temperature: 0.7,
       },
@@ -111,7 +111,7 @@ describe("openRouterChatCompletion + PostHog tracing", () => {
       k.startsWith("posthog"),
     );
     expect(leaked).toEqual([]);
-    expect(lastSentBody.model).toBe("@preset/assistants-pro");
+    expect(lastSentBody.model).toBe("anthropic/claude-opus-4.7");
   });
 
   test("no posthog client → no events, clean body, call still works", async () => {
@@ -122,7 +122,7 @@ describe("openRouterChatCompletion + PostHog tracing", () => {
       apiKey: "test-or-key",
       stage: "classifier",
       body: {
-        model: "@preset/assistants-pro",
+        model: "anthropic/claude-opus-4.7",
         messages: [{ role: "user", content: "classify" }],
       },
       trace: {
@@ -153,7 +153,7 @@ describe("openRouterChatCompletion + PostHog tracing", () => {
         apiKey: "test-or-key",
         stage,
         body: {
-          model: "@preset/assistants-pro",
+          model: "anthropic/claude-opus-4.7",
           messages: [{ role: "user", content: stage }],
         },
         trace: { traceId: "gen-shared", distinctId: "acct-1" },

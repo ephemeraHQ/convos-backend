@@ -36,7 +36,10 @@ import {
 // ---------------------------------------------------------------------------
 
 const MAX_CONTENT_LENGTH = 10_000;
-const DEFAULT_MODEL = "@preset/assistants-pro";
+// Concrete OpenRouter model id (not an OpenRouter `@preset/...` alias) so
+// PostHog LLM Analytics can price `$ai_generation` events — `$ai_total_cost_usd`
+// resolves automatically. Override per-environment with `BUILDER_MODEL`.
+const DEFAULT_MODEL = "anthropic/claude-opus-4.7";
 
 // Wallclock cap for every OpenRouter call (selector, classifier, main).
 // Today both JSON and SSE handler modes share a single buffered completion,
@@ -188,7 +191,7 @@ type GithubPrefetch =
 
 /** Convenience constant for test mocks — realistic placeholder metrics. */
 export const DEFAULT_TEST_METRICS: GenerationMetrics = {
-  model: "@preset/assistants-pro",
+  model: "anthropic/claude-opus-4.7",
   promptTokens: 100,
   completionTokens: 200,
   latencyMs: 1500,
