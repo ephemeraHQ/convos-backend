@@ -1,6 +1,7 @@
 import type { ClientIdentifier, DeviceRegistration } from "@prisma/client";
-import { beforeEach, describe, expect, mock, test } from "bun:test";
+import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test";
 import type { Request } from "express";
+import { prisma } from "@/utils/prisma";
 
 // ---- Mocks (must be installed BEFORE importing the SUT) ----
 
@@ -114,29 +115,11 @@ void mock.module("@/api/v2/notifications/fcm-push.service", () => {
   };
 });
 
-const deviceUpdateMock = mock(() =>
-  Promise.resolve({ pushFailures: 0, lastFailureAt: null }),
-);
-const deviceTxMock = mock(() =>
-  Promise.resolve({ pushFailures: 1, lastFailureAt: new Date() }),
-);
-const clientDeleteMock = mock(() => Promise.resolve());
-const txMock = mock(async (fn: (tx: unknown) => Promise<unknown>) =>
-  fn({
-    deviceRegistration: {
-      update: deviceTxMock,
-      updateMany: mock(() => Promise.resolve()),
-    },
-  }),
-);
-
-void mock.module("@/utils/prisma", () => ({
-  prisma: {
-    deviceRegistration: { update: deviceUpdateMock },
-    clientIdentifier: { delete: clientDeleteMock },
-    $transaction: txMock,
-  },
-}));
+// NOTE: prisma is NOT module-mocked here. A global `mock.module("@/utils/prisma")`
+// leaks across the whole `bun test` process (bun hoists module mocks and never
+// restores them), replacing the real client for every test file that loads after
+// this one — which is what poisoned the suite. This file now follows the repo's
+// real-DB integration pattern: seed/clean real rows in beforeEach/afterAll.
 
 void mock.module("@/notifications/client", () => ({
   createNotificationClient: () => ({
@@ -147,14 +130,9 @@ void mock.module("@/notifications/client", () => ({
   },
 }));
 
-void mock.module("@/utils/jwt", () => ({
-  createJwtToken: () =>
-    Promise.resolve(
-      "eyJhbGciOiJFUzI1NiIsImtpZCI6InRlc3Qta2lkLTAxIiwidHlwIjoiSldUIn0." +
-        "x".repeat(280) +
-        ".sig-placeholder",
-    ),
-}));
+// jwt is NOT mocked either — the same leak would replace `@/utils/jwt` (dropping
+// verifyJwtToken etc.) for downstream test files. The handler uses the real
+// createJwtToken (signing keys come from tests/preload.ts).
 
 const { handleV2Notification } = await import(
   "@/api/v2/notifications/handlers/webhook"
@@ -234,11 +212,38 @@ function makeWebhook(args: {
   };
 }
 
-beforeEach(() => {
+// Match the ids makeClient() puts on the in-memory client passed to the handler,
+// so the handler's success/failure bookkeeping (keyed by deviceId / client id)
+// lands on these real rows.
+const TEST_DEVICE_ID = "dev-1";
+const TEST_CLIENT_ID = "client-1";
+
+beforeEach(async () => {
   apnsSendMock.mockClear();
   fcmSendMock.mockClear();
-  deviceUpdateMock.mockClear();
-  deviceTxMock.mockClear();
+  // Real-DB seed scoped to this file's ids (won't disturb other suites).
+  await prisma.clientIdentifier.deleteMany({ where: { id: TEST_CLIENT_ID } });
+  await prisma.deviceRegistration.deleteMany({
+    where: { deviceId: TEST_DEVICE_ID },
+  });
+  await prisma.deviceRegistration.create({
+    data: {
+      deviceId: TEST_DEVICE_ID,
+      pushToken: `seed-${TEST_DEVICE_ID}`,
+      pushTokenType: "apns",
+      apnsEnv: "sandbox",
+    },
+  });
+  await prisma.clientIdentifier.create({
+    data: { id: TEST_CLIENT_ID, deviceId: TEST_DEVICE_ID },
+  });
+});
+
+afterAll(async () => {
+  await prisma.clientIdentifier.deleteMany({ where: { id: TEST_CLIENT_ID } });
+  await prisma.deviceRegistration.deleteMany({
+    where: { deviceId: TEST_DEVICE_ID },
+  });
 });
 
 // ---- Tests ----
@@ -407,7 +412,12 @@ describe("handleV2Notification – reactive PayloadTooLarge retry", () => {
     expect(second.notificationData.encryptedMessage).toBeUndefined();
 
     // pushFailures NOT bumped (retry succeeded; also PayloadTooLarge wouldn't bump anyway)
-    expect(deviceTxMock).not.toHaveBeenCalled();
+    // PayloadTooLarge never bumps pushFailures — the failure transaction must
+    // not have run, so the seeded row stays at 0.
+    const deviceRow = await prisma.deviceRegistration.findUnique({
+      where: { deviceId: TEST_DEVICE_ID },
+    });
+    expect(deviceRow?.pushFailures).toBe(0);
 
     const retryLog = req.capturedLogs.find((l) =>
       l.msg.includes(
@@ -431,7 +441,12 @@ describe("handleV2Notification – reactive PayloadTooLarge retry", () => {
     await handleV2Notification({ notification: webhook, client, req });
 
     expect(apnsSendMock).toHaveBeenCalledTimes(1);
-    expect(deviceTxMock).not.toHaveBeenCalled();
+    // PayloadTooLarge never bumps pushFailures — the failure transaction must
+    // not have run, so the seeded row stays at 0.
+    const deviceRow = await prisma.deviceRegistration.findUnique({
+      where: { deviceId: TEST_DEVICE_ID },
+    });
+    expect(deviceRow?.pushFailures).toBe(0);
 
     const errorLog = req.capturedLogs.find((l) =>
       l.msg.includes("PayloadTooLarge on already-stripped payload"),
@@ -457,7 +472,12 @@ describe("handleV2Notification – reactive PayloadTooLarge retry", () => {
 
     // Welcome path already stripped, so PayloadTooLarge → no retry
     expect(apnsSendMock).toHaveBeenCalledTimes(1);
-    expect(deviceTxMock).not.toHaveBeenCalled();
+    // PayloadTooLarge never bumps pushFailures — the failure transaction must
+    // not have run, so the seeded row stays at 0.
+    const deviceRow = await prisma.deviceRegistration.findUnique({
+      where: { deviceId: TEST_DEVICE_ID },
+    });
+    expect(deviceRow?.pushFailures).toBe(0);
 
     const errorLog = req.capturedLogs.find((l) =>
       l.msg.includes("PayloadTooLarge on already-stripped payload"),
@@ -481,7 +501,12 @@ describe("handleV2Notification – reactive PayloadTooLarge retry", () => {
     await handleV2Notification({ notification: webhook, client, req });
 
     expect(apnsSendMock).toHaveBeenCalledTimes(2);
-    expect(deviceTxMock).not.toHaveBeenCalled();
+    // PayloadTooLarge never bumps pushFailures — the failure transaction must
+    // not have run, so the seeded row stays at 0.
+    const deviceRow = await prisma.deviceRegistration.findUnique({
+      where: { deviceId: TEST_DEVICE_ID },
+    });
+    expect(deviceRow?.pushFailures).toBe(0);
 
     const retryFailLog = req.capturedLogs.find((l) =>
       l.msg.includes("PayloadTooLarge retry failed"),
