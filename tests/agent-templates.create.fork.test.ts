@@ -126,7 +126,7 @@ describe("Agent template create — forkedFromId", () => {
     expect((body.error as string).toLowerCase()).toContain("forkedfromid");
 
     const rows = await prisma.agentTemplate.findMany({
-      where: { slug: "create-fork-test-c" },
+      where: { ownerAccountId: ADMIN_ACCOUNT_ID, slug: "create-fork-test-c" },
     });
     expect(rows).toHaveLength(0);
   });
