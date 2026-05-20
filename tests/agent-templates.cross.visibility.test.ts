@@ -11,11 +11,11 @@ import { prisma } from "@/utils/prisma";
 import {
   createTemplate,
   getTemplate,
-  hashedSlugFor,
   listTemplates,
   patchTemplate,
   publishTemplate,
   startAgentTemplatesServer,
+  urlSlugFor,
 } from "./agent-templates.cross.helpers";
 
 let baseURL: string;
@@ -66,13 +66,13 @@ describe("Agent template cross visibility flow", () => {
       },
     });
     const id = created.body.id as string;
-    const hashedSlug = hashedSlugFor(created.body);
+    const urlSlug = urlSlugFor(created.body);
 
     expect(created.response.status).toBe(201);
     expect(created.body.status).toBe("draft");
     expect(await listContains(id)).toBe(false);
     expect(
-      (await getTemplate({ baseURL, path: hashedSlug })).response.status,
+      (await getTemplate({ baseURL, path: urlSlug })).response.status,
     ).toBe(404);
 
     const published = await publishTemplate({ baseURL, id });
@@ -81,7 +81,7 @@ describe("Agent template cross visibility flow", () => {
     expect(published.body.firstPublishedAt).toEqual(expect.any(String));
     expect(await listContains(id)).toBe(true);
 
-    const publishedDetail = await getTemplate({ baseURL, path: hashedSlug });
+    const publishedDetail = await getTemplate({ baseURL, path: urlSlug });
     expect(publishedDetail.response.status).toBe(200);
     expect(publishedDetail.body.status).toBe("published");
 
@@ -94,7 +94,7 @@ describe("Agent template cross visibility flow", () => {
     expect(archived.body.status).toBe("archived");
     expect(await listContains(id)).toBe(false);
 
-    const archivedDetail = await getTemplate({ baseURL, path: hashedSlug });
+    const archivedDetail = await getTemplate({ baseURL, path: urlSlug });
     expect(archivedDetail.response.status).toBe(200);
     expect(archivedDetail.body.status).toBe("archived");
   });

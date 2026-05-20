@@ -20,17 +20,17 @@ export function slugHash(id: string): string {
 }
 
 /** Combine a base slug with the hash suffix derived from `id`. */
-export function buildSlug(baseSlug: string, id: string): string {
+export function buildUrlSlug(baseSlug: string, id: string): string {
   return `${baseSlug}.${slugHash(id)}`;
 }
 
 /** True when the slug already has the `.hash` suffix. */
-export function isHashedSlug(slug: string): boolean {
+export function isUrlSlug(slug: string): boolean {
   return HASHED_SLUG_RE.test(slug);
 }
 
 /**
- * Reserve a unique hashed slug for a record. Generates a fresh ID per attempt
+ * Reserve a unique url slug for a record. Generates a fresh ID per attempt
  * so a hash collision picks a new suffix instead of clobbering an existing
  * row. Returns the chosen `{ id, slug }` so the caller persists both.
  *
@@ -38,7 +38,7 @@ export function isHashedSlug(slug: string): boolean {
  * arbiter — `isTaken` and the eventual insert race, and the constraint is
  * what keeps that race correct.
  */
-export async function buildUniqueSlug(args: {
+export async function buildUniqueUrlSlug(args: {
   baseSlug: string;
   idFactory: () => string;
   isTaken: (slug: string) => Promise<boolean>;
@@ -46,7 +46,7 @@ export async function buildUniqueSlug(args: {
   const { baseSlug, idFactory, isTaken } = args;
   for (let i = 0; i < MAX_SLUG_ATTEMPTS; i++) {
     const id = idFactory();
-    const slug = buildSlug(baseSlug, id);
+    const slug = buildUrlSlug(baseSlug, id);
     if (!(await isTaken(slug))) {
       return { id, slug };
     }

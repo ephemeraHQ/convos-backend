@@ -9,7 +9,7 @@ export const serializeAccount = (account: Account) => ({
 
 // `template.slug` is the BASE slug ("brewski"); public URLs use the HASHED
 // form ("brewski.x4f9k") that the resolver in
-// `lib/resolve-id-or-hashed-slug.ts` matches against. Single server-side
+// `lib/resolve-id-or-url-slug.ts` matches against. Single server-side
 // source for URL format — clients (iOS, runtime, web) read this field
 // rather than rebuilding the URL from `slug`. `null` for drafts.
 const publishedUrlFor = (template: AgentTemplate): string | null => {

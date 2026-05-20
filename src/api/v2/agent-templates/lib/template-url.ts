@@ -1,5 +1,5 @@
 import { BUILDER_SITE_URL } from "@/config";
-import { buildSlug } from "@/utils/slug-hash";
+import { buildUrlSlug } from "@/utils/slug-hash";
 
 /**
  * Single source of truth for an agent template's public Playroom URL.
@@ -8,15 +8,16 @@ import { buildSlug } from "@/utils/slug-hash";
  * convos.org). The trailing slash is stripped so a configured value with
  * or without one yields the same result (no `//` in the path). Agent pages
  * live under the `/a/` segment; the final path component is the canonical
- * `<base>.<hash>` hashed slug that resolve-id-or-hashed-slug.ts matches.
+ * `<base>.<hash>` url slug that resolve-id-or-url-slug.ts matches. (The hash
+ * is of the template id, not of the slug — the base slug is left intact.)
  */
 
-/** origin + an already-hashed `<base>.<hash>` slug → full public URL */
-export function templateUrlFromHashedSlug(hashedSlug: string): string {
-  return `${BUILDER_SITE_URL.replace(/\/+$/, "")}/a/${hashedSlug}`;
+/** origin + an already-built `<base>.<hash>` url slug → full public URL */
+export function templateUrlFromUrlSlug(urlSlug: string): string {
+  return `${BUILDER_SITE_URL.replace(/\/+$/, "")}/a/${urlSlug}`;
 }
 
 /** template row (base slug + id) → full public URL */
 export function templatePublicUrl(baseSlug: string, id: string): string {
-  return templateUrlFromHashedSlug(buildSlug(baseSlug, id));
+  return templateUrlFromUrlSlug(buildUrlSlug(baseSlug, id));
 }

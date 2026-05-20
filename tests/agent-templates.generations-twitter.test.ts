@@ -291,9 +291,9 @@ describe("POST /generations — twitter happy path", () => {
     // Default deterministic fallback should at least include the handle
     expect(body.reply?.text).toContain("@some_user");
     // The reply URL must use the canonical hashed slug (`<base>.<hash5>`),
-    // not the bare base slug. Resolver in resolve-id-or-hashed-slug.ts
+    // not the bare base slug. Resolver in resolve-id-or-url-slug.ts
     // requires the hash; passing the base would 404. Regression guard for
-    // the executor's buildSlug call.
+    // the executor's buildUrlSlug call.
     expect(body.reply?.text).toMatch(/[a-z0-9-]+\.[0-9a-z]{5}/i);
 
     // Verify the row stores both templateId and reply
@@ -364,7 +364,7 @@ describe("POST /generations — twitter happy path", () => {
       handle: "@some_user",
       agentName: fakeTemplate.agentName,
       firstSentence: "Helps reply to tweets quickly",
-      slug: body.reply!.text.match(/[a-z0-9-]+\.[a-z0-9]+$/i)?.[0] ?? "",
+      urlSlug: body.reply!.text.match(/[a-z0-9-]+\.[a-z0-9]+$/i)?.[0] ?? "",
     });
     // Match prefix, since slug is dynamic
     expect(body.reply?.text.startsWith(expected.split(" — ")[0])).toBe(true);

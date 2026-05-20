@@ -14,28 +14,28 @@ const hashPattern = /^[0-9a-z]{5}$/;
 const uuidPattern =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-export async function resolveAgentTemplateByIdOrHashedSlug(args: {
-  idOrHashedSlug: string;
+export async function resolveAgentTemplateByIdOrUrlSlug(args: {
+  idOrUrlSlug: string;
   slugHasher?: (id: string) => string;
 }) {
   const slugHasher = args.slugHasher ?? slugHash;
 
-  if (uuidPattern.test(args.idOrHashedSlug)) {
+  if (uuidPattern.test(args.idOrUrlSlug)) {
     return prisma.agentTemplate.findFirst({
       where: {
-        id: args.idOrHashedSlug,
+        id: args.idOrUrlSlug,
         status: { in: visibleStatuses },
       },
     });
   }
 
-  const lastDotIndex = args.idOrHashedSlug.lastIndexOf(".");
+  const lastDotIndex = args.idOrUrlSlug.lastIndexOf(".");
   if (lastDotIndex <= 0) {
     return null;
   }
 
-  const baseSlug = args.idOrHashedSlug.slice(0, lastDotIndex);
-  const hash = args.idOrHashedSlug.slice(lastDotIndex + 1);
+  const baseSlug = args.idOrUrlSlug.slice(0, lastDotIndex);
+  const hash = args.idOrUrlSlug.slice(lastDotIndex + 1);
 
   if (!hashPattern.test(hash)) {
     return null;
@@ -62,7 +62,7 @@ export async function resolveAgentTemplateByIdOrHashedSlug(args: {
         hash,
         matchedIds: matches.map((match) => match.id),
       },
-      "[resolve-agent-template] hashed-slug collision: multiple rows match base slug + hash",
+      "[resolve-agent-template] url-slug collision: multiple rows match base slug + hash",
     );
     return null;
   }

@@ -28,11 +28,11 @@ import { ADMIN_ACCOUNT_ID } from "@/utils/constants";
 import { prisma } from "@/utils/prisma";
 import {
   getTemplate,
-  hashedSlugFor,
   listTemplates,
   publishTemplate,
   stableUuid,
   startAgentTemplatesServer,
+  urlSlugFor,
   validAgentAssetsApiKey,
 } from "./agent-templates.cross.helpers";
 import { makeFakeTemplate } from "./agent-templates.generation.helpers";
@@ -198,13 +198,13 @@ describe("Cross-area E2E: Generate → Create → Publish → List → Hashed-sl
     expect(listIds).toContain(persistedId);
 
     // --- Step 5: Public hashed-slug GET (M2 reads, no auth) ---
-    const hashedSlug = hashedSlugFor({
+    const urlSlug = urlSlugFor({
       id: persistedId,
       slug: persistedSlug,
     });
     const { body: detailBody, response: detailResponse } = await getTemplate({
       baseURL,
-      path: hashedSlug,
+      path: urlSlug,
     });
 
     expect(detailResponse.status).toBe(200);

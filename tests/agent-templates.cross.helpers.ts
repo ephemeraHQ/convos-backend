@@ -7,7 +7,7 @@ import { noRouteMiddleware } from "@/middleware/noRoute";
 import { pinoMiddleware } from "@/middleware/pino";
 import { ADMIN_ACCOUNT_ID } from "@/utils/constants";
 import { createJwtToken } from "@/utils/jwt";
-import { buildSlug } from "@/utils/slug-hash";
+import { buildUrlSlug } from "@/utils/slug-hash";
 
 /**
  * Derive a deterministic UUIDv5-shaped string from a human-readable label
@@ -203,5 +203,5 @@ export const getTemplate = async (args: {
   return { body, response };
 };
 
-export const hashedSlugFor = (template: TemplateBody) =>
-  buildSlug(template.slug as string, template.id as string);
+export const urlSlugFor = (template: TemplateBody) =>
+  buildUrlSlug(template.slug as string, template.id as string);

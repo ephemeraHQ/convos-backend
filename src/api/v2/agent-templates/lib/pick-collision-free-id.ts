@@ -25,12 +25,12 @@
 
 import { randomUUID } from "node:crypto";
 import { prisma } from "@/utils/prisma";
-import { buildUniqueSlug, slugHash } from "@/utils/slug-hash";
+import { buildUniqueUrlSlug, slugHash } from "@/utils/slug-hash";
 
 export async function pickCollisionFreeId(args: {
   baseSlug: string;
 }): Promise<string> {
-  const { id } = await buildUniqueSlug({
+  const { id } = await buildUniqueUrlSlug({
     baseSlug: args.baseSlug,
     idFactory: () => randomUUID(),
     isTaken: async (candidate) => {

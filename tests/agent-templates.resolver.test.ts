@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { Prisma } from "@prisma/client";
 import { afterAll, beforeEach, describe, expect, test } from "bun:test";
-import { resolveAgentTemplateByIdOrHashedSlug } from "@/api/v2/agent-templates/lib/resolve-id-or-hashed-slug";
+import { resolveAgentTemplateByIdOrUrlSlug } from "@/api/v2/agent-templates/lib/resolve-id-or-url-slug";
 import { ADMIN_ACCOUNT_ID } from "@/utils/constants";
 import { prisma } from "@/utils/prisma";
 import { slugHash } from "@/utils/slug-hash";
@@ -74,13 +74,13 @@ describe("agent template id-or-hashed-slug resolver", () => {
     const tmplId = await createTemplate({ slug: "unrelated" });
     await createTemplate({ slug: "brewski" });
 
-    const byId = await resolveAgentTemplateByIdOrHashedSlug({
-      idOrHashedSlug: tmplId.id,
+    const byId = await resolveAgentTemplateByIdOrUrlSlug({
+      idOrUrlSlug: tmplId.id,
     });
     expect(byId?.id).toBe(tmplId.id);
 
-    const bareSlug = await resolveAgentTemplateByIdOrHashedSlug({
-      idOrHashedSlug: "brewski",
+    const bareSlug = await resolveAgentTemplateByIdOrUrlSlug({
+      idOrUrlSlug: "brewski",
     });
     expect(bareSlug).toBeNull();
   });
@@ -89,13 +89,13 @@ describe("agent template id-or-hashed-slug resolver", () => {
     const tmpl = await createTemplate({ slug: "my-thing" });
 
     const correctHash = slugHash(tmpl.id);
-    const valid = await resolveAgentTemplateByIdOrHashedSlug({
-      idOrHashedSlug: `my-thing.${correctHash}`,
+    const valid = await resolveAgentTemplateByIdOrUrlSlug({
+      idOrUrlSlug: `my-thing.${correctHash}`,
     });
     expect(valid?.id).toBe(tmpl.id);
 
-    const extraBaseDot = await resolveAgentTemplateByIdOrHashedSlug({
-      idOrHashedSlug: `extra.my-thing.${correctHash}`,
+    const extraBaseDot = await resolveAgentTemplateByIdOrUrlSlug({
+      idOrUrlSlug: `extra.my-thing.${correctHash}`,
     });
     expect(extraBaseDot).toBeNull();
 
@@ -106,8 +106,8 @@ describe("agent template id-or-hashed-slug resolver", () => {
       "!@#$%",
       "",
     ]) {
-      const invalid = await resolveAgentTemplateByIdOrHashedSlug({
-        idOrHashedSlug: `my-thing.${suffix}`,
+      const invalid = await resolveAgentTemplateByIdOrUrlSlug({
+        idOrUrlSlug: `my-thing.${suffix}`,
       });
       expect(invalid).toBeNull();
     }
@@ -129,23 +129,23 @@ describe("agent template id-or-hashed-slug resolver", () => {
     const hashA = slugHash(tmplA.id);
     const hashB = slugHash(tmplB.id);
 
-    const rowA = await resolveAgentTemplateByIdOrHashedSlug({
-      idOrHashedSlug: `shared.${hashA}`,
+    const rowA = await resolveAgentTemplateByIdOrUrlSlug({
+      idOrUrlSlug: `shared.${hashA}`,
     });
     expect(rowA?.id).toBe(tmplA.id);
 
-    const rowB = await resolveAgentTemplateByIdOrHashedSlug({
-      idOrHashedSlug: `shared.${hashB}`,
+    const rowB = await resolveAgentTemplateByIdOrUrlSlug({
+      idOrUrlSlug: `shared.${hashB}`,
     });
     expect(rowB?.id).toBe(tmplB.id);
 
-    const wrongHash = await resolveAgentTemplateByIdOrHashedSlug({
-      idOrHashedSlug: `shared.${slugHash(randomUUID())}`,
+    const wrongHash = await resolveAgentTemplateByIdOrUrlSlug({
+      idOrUrlSlug: `shared.${slugHash(randomUUID())}`,
     });
     expect(wrongHash).toBeNull();
 
-    const collision = await resolveAgentTemplateByIdOrHashedSlug({
-      idOrHashedSlug: "shared.zzzzz",
+    const collision = await resolveAgentTemplateByIdOrUrlSlug({
+      idOrUrlSlug: "shared.zzzzz",
       slugHasher: () => "zzzzz",
     });
     expect(collision).toBeNull();
@@ -166,13 +166,13 @@ describe("agent template id-or-hashed-slug resolver", () => {
       status: "archived",
     });
 
-    const draftById = await resolveAgentTemplateByIdOrHashedSlug({
-      idOrHashedSlug: draft.id,
+    const draftById = await resolveAgentTemplateByIdOrUrlSlug({
+      idOrUrlSlug: draft.id,
     });
     expect(draftById).toBeNull();
 
-    const draftByHash = await resolveAgentTemplateByIdOrHashedSlug({
-      idOrHashedSlug: `resolver-draft.${slugHash(draft.id)}`,
+    const draftByHash = await resolveAgentTemplateByIdOrUrlSlug({
+      idOrUrlSlug: `resolver-draft.${slugHash(draft.id)}`,
     });
     expect(draftByHash).toBeNull();
 
@@ -182,13 +182,13 @@ describe("agent template id-or-hashed-slug resolver", () => {
     ] as const;
 
     for (const fixture of visibleFixtures) {
-      const byId = await resolveAgentTemplateByIdOrHashedSlug({
-        idOrHashedSlug: fixture.tmpl.id,
+      const byId = await resolveAgentTemplateByIdOrUrlSlug({
+        idOrUrlSlug: fixture.tmpl.id,
       });
       expect(byId?.status).toBe(fixture.status);
 
-      const byHash = await resolveAgentTemplateByIdOrHashedSlug({
-        idOrHashedSlug: `${fixture.slug}.${slugHash(fixture.tmpl.id)}`,
+      const byHash = await resolveAgentTemplateByIdOrUrlSlug({
+        idOrUrlSlug: `${fixture.slug}.${slugHash(fixture.tmpl.id)}`,
       });
       expect(byHash?.status).toBe(fixture.status);
     }
@@ -206,26 +206,26 @@ describe("agent template id-or-hashed-slug resolver", () => {
     });
 
     // Hashed slug with matching id resolves correctly
-    const prefixedSlug = await resolveAgentTemplateByIdOrHashedSlug({
-      idOrHashedSlug: `something-inside.${slugHash(tmplPrefixedSlug.id)}`,
+    const prefixedSlug = await resolveAgentTemplateByIdOrUrlSlug({
+      idOrUrlSlug: `something-inside.${slugHash(tmplPrefixedSlug.id)}`,
     });
     expect(prefixedSlug?.id).toBe(tmplPrefixedSlug.id);
 
     // Direct UUID lookup still works
-    const prefixedId = await resolveAgentTemplateByIdOrHashedSlug({
-      idOrHashedSlug: tmplPrefixedSlug.id,
+    const prefixedId = await resolveAgentTemplateByIdOrUrlSlug({
+      idOrUrlSlug: tmplPrefixedSlug.id,
     });
     expect(prefixedId?.id).toBe(tmplPrefixedSlug.id);
 
     // Hash from tmplHashA on slug "bbb" (which belongs to tmplHashB) → null
-    const hashAOnB = await resolveAgentTemplateByIdOrHashedSlug({
-      idOrHashedSlug: `bbb.${slugHash(tmplHashA.id)}`,
+    const hashAOnB = await resolveAgentTemplateByIdOrUrlSlug({
+      idOrUrlSlug: `bbb.${slugHash(tmplHashA.id)}`,
     });
     expect(hashAOnB).toBeNull();
 
     // Hash from tmplHashB on slug "aaa" (which belongs to tmplHashA) → null
-    const hashBOnA = await resolveAgentTemplateByIdOrHashedSlug({
-      idOrHashedSlug: `aaa.${slugHash(tmplHashB.id)}`,
+    const hashBOnA = await resolveAgentTemplateByIdOrUrlSlug({
+      idOrUrlSlug: `aaa.${slugHash(tmplHashB.id)}`,
     });
     expect(hashBOnA).toBeNull();
   });

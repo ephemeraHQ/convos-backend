@@ -42,7 +42,7 @@ import { ADMIN_ACCOUNT_ID } from "@/utils/constants";
 import logger from "@/utils/logger";
 import { prisma } from "@/utils/prisma";
 import { validateSlug } from "@/utils/reserved-slugs";
-import { buildSlug } from "@/utils/slug-hash";
+import { buildUrlSlug } from "@/utils/slug-hash";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -270,8 +270,8 @@ function deriveTemplateSlug(agentName: string): string {
  *
  *  Slug policy mirrors the CRUD handler (handlers/create.ts):
  *  - Stores the **base slug** (e.g. "brewski"). The public hashed-slug URL
- *    is reconstructed by callers via `buildSlug(row.slug, row.id)` and the
- *    resolver in `resolve-id-or-hashed-slug.ts` queries `where: { slug: baseSlug }`.
+ *    is reconstructed by callers via `buildUrlSlug(row.slug, row.id)` and the
+ *    resolver in `resolve-id-or-url-slug.ts` queries `where: { slug: baseSlug }`.
  *    Storing the hashed form would make these rows unreachable via the resolver.
  *  - The slug is derived from agentName and run through `validateSlug`,
  *    falling back to `FALLBACK_SLUG` when the derivation is empty/reserved/
@@ -540,11 +540,11 @@ async function _runPipeline(
       templateToPersist.description || templateToPersist.prompt,
     );
     // composeReply expects the canonical/hashed slug (e.g. "brewski.x4f9k")
-    // — that's the form the resolver in resolve-id-or-hashed-slug.ts matches
+    // — that's the form the resolver in resolve-id-or-url-slug.ts matches
     // against. `persisted.slug` is the BASE form ("brewski") because of the
-    // store-base-not-hashed convention from PR #199. Construct the public
-    // hashed slug here via buildSlug so the URL the reply contains
-    // (`${BUILDER_SITE_URL}/<hashed>`) actually resolves.
+    // store-base-not-hashed convention. Construct the public url slug here
+    // via buildUrlSlug so the URL the reply contains
+    // (`${BUILDER_SITE_URL}/a/<url-slug>`) actually resolves.
     //
     // Use `templateToPersist` (which has identity constraints applied)
     // rather than `templateResult.template` so the reply mirrors what
@@ -553,7 +553,7 @@ async function _runPipeline(
       handle: twitterContext.twitterHandle,
       agentName: templateToPersist.agentName,
       firstSentence,
-      slug: buildSlug(persisted.slug, persisted.id),
+      urlSlug: buildUrlSlug(persisted.slug, persisted.id),
     };
     try {
       const reply = await composeReply(replyInput);

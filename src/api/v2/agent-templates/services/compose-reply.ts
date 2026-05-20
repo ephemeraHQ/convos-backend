@@ -25,7 +25,7 @@
 
 import { BUILDER_OPENROUTER_API_KEY, TWITTER_REPLY_MODEL } from "@/config";
 import logger from "@/utils/logger";
-import { templateUrlFromHashedSlug } from "../lib/template-url";
+import { templateUrlFromUrlSlug } from "../lib/template-url";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -38,12 +38,13 @@ export interface ReplyInput {
   agentName: string;
   /** First sentence of the agent's description or prompt. */
   firstSentence: string;
-  /** **Canonical (hashed) public slug** — e.g. `"brewski.x4f9k"`, the value
-   *  produced by `buildSlug(baseSlug, templateId)`. Callers must NOT pass the
-   *  base slug stored on `AgentTemplate.slug` directly: the public URL
-   *  resolver (resolve-id-or-hashed-slug.ts) requires the `<base>.<hash>`
-   *  form, so passing the base alone would render a reply URL that 404s. */
-  slug: string;
+  /** **Canonical url slug** — e.g. `"brewski.x4f9k"`, the value produced by
+   *  `buildUrlSlug(baseSlug, templateId)` (base slug + a hash of the template
+   *  id). Callers must NOT pass the base slug stored on `AgentTemplate.slug`
+   *  directly: the public URL resolver (resolve-id-or-url-slug.ts) requires the
+   *  `<base>.<hash>` form, so passing the base alone would render a reply URL
+   *  that 404s. */
+  urlSlug: string;
 }
 
 export interface ReplyResult {
@@ -68,8 +69,8 @@ function getModel(): string {
   return TWITTER_REPLY_MODEL;
 }
 
-function templateUrlFor(slug: string): string {
-  return templateUrlFromHashedSlug(slug);
+function templateUrlFor(urlSlug: string): string {
+  return templateUrlFromUrlSlug(urlSlug);
 }
 
 function normalizeHandle(handle: string): string {
@@ -94,8 +95,8 @@ export function __resetComposeReplyForTests(
 
 /** Deterministic fallback: "@{handle} Meet {agentName} — {firstSentence}. {url}" */
 export function buildDeterministicFallback(input: ReplyInput): string {
-  const { handle, agentName, firstSentence, slug } = input;
-  const url = templateUrlFor(slug);
+  const { handle, agentName, firstSentence, urlSlug } = input;
+  const url = templateUrlFor(urlSlug);
   const normalizedHandle = normalizeHandle(handle);
 
   const prefix = `${normalizedHandle} Meet ${agentName} — `;
@@ -121,7 +122,7 @@ export function buildDeterministicFallback(input: ReplyInput): string {
 
 /** Minimal fallback when even agentName is unavailable. */
 export function buildMinimalFallback(input: ReplyInput): string {
-  return `${normalizeHandle(input.handle)} ${templateUrlFor(input.slug)}`;
+  return `${normalizeHandle(input.handle)} ${templateUrlFor(input.urlSlug)}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -129,8 +130,8 @@ export function buildMinimalFallback(input: ReplyInput): string {
 // ---------------------------------------------------------------------------
 
 function buildReplyPrompt(input: ReplyInput): string {
-  const { handle, agentName, firstSentence, slug } = input;
-  const url = templateUrlFor(slug);
+  const { handle, agentName, firstSentence, urlSlug } = input;
+  const url = templateUrlFor(urlSlug);
   // Normalize once so the LLM is instructed to produce the same form that
   // validateLlmReply() checks for. Otherwise a caller passing "alice" (no @)
   // gets a prompt that says "start with: alice", LLM does exactly that,
@@ -186,8 +187,8 @@ export async function composeReply(input: ReplyInput): Promise<ReplyResult> {
 }
 
 async function _composeReply(input: ReplyInput): Promise<ReplyResult> {
-  const { handle, agentName, slug } = input;
-  const url = templateUrlFor(slug);
+  const { handle, agentName, urlSlug } = input;
+  const url = templateUrlFor(urlSlug);
 
   if (!agentName || agentName.trim() === "") {
     return { replyText: buildMinimalFallback(input) };

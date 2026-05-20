@@ -11,10 +11,10 @@ import { prisma } from "@/utils/prisma";
 import {
   createTemplate,
   getTemplate,
-  hashedSlugFor,
   patchTemplate,
   publishTemplate,
   startAgentTemplatesServer,
+  urlSlugFor,
 } from "./agent-templates.cross.helpers";
 
 let baseURL: string;
@@ -95,11 +95,11 @@ describe("Agent template cross slug flow", () => {
 
     const firstDirect = await getTemplate({
       baseURL,
-      path: hashedSlugFor(first.body),
+      path: urlSlugFor(first.body),
     });
     const secondDirect = await getTemplate({
       baseURL,
-      path: hashedSlugFor(second.body),
+      path: urlSlugFor(second.body),
     });
 
     // Each `brewski.<hash>` URL resolves to its own row — the shared base

@@ -12,11 +12,11 @@ import {
   createTemplate,
   deleteTemplate,
   getTemplate,
-  hashedSlugFor,
   listTemplates,
   patchTemplate,
   publishTemplate,
   startAgentTemplatesServer,
+  urlSlugFor,
   type TemplateBody,
 } from "./agent-templates.cross.helpers";
 
@@ -95,7 +95,7 @@ describe("Agent template cross lifecycle flow", () => {
 
     const direct = await getTemplate({
       baseURL,
-      path: hashedSlugFor(created.body),
+      path: urlSlugFor(created.body),
     });
 
     expect(direct.response.status).toBe(200);
