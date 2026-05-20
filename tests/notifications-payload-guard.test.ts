@@ -12,7 +12,14 @@ const fcmSendMock = mock(() =>
   Promise.resolve({ success: true } as { success: boolean; error?: string }),
 );
 
+// Spread the real module so model-level exports (e.g. ApnsPushService) survive:
+// this mock.module registration is global and leaks to any file loaded after
+// this one (apns-push-service.test.ts imports the real ApnsPushService and does
+// not self-defend). Only the network-touching createApnsService + the wire
+// builder are overridden.
+const realApnsModule = await import("@/api/v2/notifications/apns-push.service");
 void mock.module("@/api/v2/notifications/apns-push.service", () => ({
+  ...realApnsModule,
   createApnsService: () => ({ sendPushNotification: apnsSendMock }),
   buildApnsWirePayload: (args: {
     notification: {
