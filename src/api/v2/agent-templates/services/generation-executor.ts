@@ -579,7 +579,7 @@ async function _runPipeline(
       urlSlug: buildUrlSlug(persisted.slug, persisted.id),
     };
     try {
-      const reply = await composeReply(replyInput);
+      const reply = await composeReply(replyInput, trace);
       replyText = reply.replyText;
     } catch (err) {
       // composeReply itself shouldn't throw — fallback is internal. Defensive log + fallback.

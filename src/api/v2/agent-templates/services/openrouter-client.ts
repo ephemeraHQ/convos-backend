@@ -114,7 +114,8 @@ export interface OpenRouterChatOptions {
     | "classifier"
     | "generate"
     | "moderation"
-    | "twitter-intent";
+    | "twitter-intent"
+    | "compose-reply";
   body: OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming;
   /** External cancellation (e.g. the executor's per-generation timeout). */
   signal?: AbortSignal;
