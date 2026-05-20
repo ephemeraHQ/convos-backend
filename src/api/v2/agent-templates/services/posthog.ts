@@ -63,7 +63,23 @@ export interface PostHogCaptureProperties extends GenerationMetrics {
   outcome?: "done" | "failed";
   /** How the request was authenticated. Optional — present only when known. */
   authMode?: "jwt" | "agentKey";
+  /** PostHog LLM Analytics trace id ($ai_trace_id) for this generation. Lets
+   *  dashboards join this product event to the underlying `$ai_generation`
+   *  spans emitted by the OpenRouter calls (see `openrouter-client.ts`). */
+  aiTraceId?: string;
 }
+
+/** Minimal field set `resolveActor` reads — lets callers that only have the
+ *  actor-attribution signals (e.g. the executor's `postHogBase`) resolve a
+ *  distinctId without first assembling the full metrics-bearing object. */
+export type ActorSignals = Pick<
+  PostHogCaptureProperties,
+  | "requestId"
+  | "ownerAccountId"
+  | "isAnonymous"
+  | "clientDeviceId"
+  | "twitterUserId"
+>;
 
 // ---------------------------------------------------------------------------
 // Actor attribution — the distinctId precedence ladder
@@ -109,7 +125,7 @@ export interface ResolvedActor {
  * type with actor identity. `unattributed` says what's actually true: we
  * have no stable actor signal and each event gets a one-off person.
  */
-export function resolveActor(p: PostHogCaptureProperties): ResolvedActor {
+export function resolveActor(p: ActorSignals): ResolvedActor {
   if (p.ownerAccountId && !p.isAnonymous) {
     return { distinctId: p.ownerAccountId, kind: "account" };
   }
@@ -133,8 +149,12 @@ let _posthogClient: any = null;
  * The client is created once and cached for the lifetime of the process.
  * Lazy-loads `posthog-node` so the import cost is only paid when the
  * feature is actually configured.
+ *
+ * Exported so the OpenRouter client (`openrouter-client.ts`) can hand the
+ * SAME posthog-node instance to `@posthog/ai`'s wrapper — one client, one
+ * flush on shutdown, shared event buffer.
  */
-function getPostHogClient(): any {
+export function getPostHogClient(): any {
   if (_posthogClient) return _posthogClient;
 
   if (!POSTHOG_PROJECT_TOKEN || !POSTHOG_HOST) return null;
@@ -175,6 +195,18 @@ export function __resetPostHogForTests(
 ) {
   _captureOverride = override;
   _posthogClient = null;
+}
+
+/**
+ * Inject a posthog-node-shaped client directly (test seam for the OpenRouter
+ * `$ai_generation` path). Lets a test hand a stub with a `capture()` spy to
+ * `@posthog/ai`'s wrapper without setting real env vars. Pass `null` to clear.
+ *
+ * Callers that exercise the wrapper must also clear the OpenRouter client
+ * cache (`__resetOpenRouterClientForTests`) so the wrapper picks up the stub.
+ */
+export function __setPostHogClientForTests(client: unknown): void {
+  _posthogClient = client;
 }
 
 // ---------------------------------------------------------------------------

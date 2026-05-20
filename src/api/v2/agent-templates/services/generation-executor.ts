@@ -28,8 +28,10 @@ import {
   buildDeterministicFallback,
   composeReply,
 } from "@/api/v2/agent-templates/services/compose-reply";
+import { type TraceContext } from "@/api/v2/agent-templates/services/openrouter-client";
 import {
   capturePostHog,
+  resolveActor,
   type PostHogCaptureProperties,
 } from "@/api/v2/agent-templates/services/posthog";
 import {
@@ -473,10 +475,31 @@ async function _runPipeline(
         ? "pdfBase64"
         : "imageBase64";
 
+  // Actor-attribution fields shared by every capture site below, plus the
+  // PostHog LLM Analytics trace id so the product event joins to the
+  // `$ai_generation` spans the OpenRouter calls emit. Built once: the trace's
+  // distinctId reuses the same actor ladder as the product event, so traces
+  // and events attribute to one PostHog person.
+  const base = {
+    ...postHogBase({ generation, requestId: generationId, inputType }),
+    aiTraceId: generationId,
+  };
+  const actor = resolveActor(base);
+  const trace: TraceContext = {
+    traceId: generationId,
+    distinctId: actor.distinctId,
+    properties: {
+      generation_id: generationId,
+      source: generation.source,
+      input_type: inputType,
+      actor_kind: actor.kind,
+    },
+  };
+
   const startTime = performance.now();
   let templateResult: Awaited<ReturnType<typeof callGenerateTemplate>>;
   try {
-    templateResult = await callGenerateTemplate(coalesced, signal);
+    templateResult = await callGenerateTemplate(coalesced, signal, trace);
   } catch (err) {
     // Meter error path
     capturePostHog({
@@ -484,7 +507,7 @@ async function _runPipeline(
       promptTokens: 0,
       completionTokens: 0,
       latencyMs: Math.round(performance.now() - startTime),
-      ...postHogBase({ generation, requestId: generationId, inputType }),
+      ...base,
       outcome: "failed",
     });
     throw new Error(
@@ -522,7 +545,7 @@ async function _runPipeline(
   } catch (err) {
     capturePostHog({
       ...templateResult.metrics,
-      ...postHogBase({ generation, requestId: generationId, inputType }),
+      ...base,
       outcome: "failed",
     });
     throw new Error(
@@ -556,7 +579,7 @@ async function _runPipeline(
       urlSlug: buildUrlSlug(persisted.slug, persisted.id),
     };
     try {
-      const reply = await composeReply(replyInput);
+      const reply = await composeReply(replyInput, trace);
       replyText = reply.replyText;
     } catch (err) {
       // composeReply itself shouldn't throw — fallback is internal. Defensive log + fallback.
@@ -596,7 +619,7 @@ async function _runPipeline(
     }
     capturePostHog({
       ...templateResult.metrics,
-      ...postHogBase({ generation, requestId: generationId, inputType }),
+      ...base,
       outcome: "failed",
     });
     return;
@@ -604,7 +627,7 @@ async function _runPipeline(
 
   capturePostHog({
     ...templateResult.metrics,
-    ...postHogBase({ generation, requestId: generationId, inputType }),
+    ...base,
     outcome: "done",
   });
   logger.info(

@@ -18,6 +18,7 @@
 
 /* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-return, @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-argument */
 
+import { APIConnectionTimeoutError, APIError, APIUserAbortError } from "openai";
 import {
   BUILDER_EXA_SERVICE_KEY,
   BUILDER_MODEL,
@@ -25,19 +26,64 @@ import {
 } from "@/config";
 import { AppError } from "@/utils/errors";
 import { SYSTEM_PROMPT } from "../lib/system-prompt";
+import {
+  openRouterChatCompletion,
+  withAiSpan,
+  type TraceContext,
+} from "./openrouter-client";
 
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
 
 const MAX_CONTENT_LENGTH = 10_000;
-const DEFAULT_MODEL = "@preset/assistants-pro";
+// Concrete OpenRouter model id (not an OpenRouter `@preset/...` alias) so
+// PostHog LLM Analytics can price `$ai_generation` events — `$ai_total_cost_usd`
+// resolves automatically. Override per-environment with `BUILDER_MODEL`.
+const DEFAULT_MODEL = "anthropic/claude-opus-4.7";
 
 // Wallclock cap for every OpenRouter call (selector, classifier, main).
 // Today both JSON and SSE handler modes share a single buffered completion,
 // so the same wallclock cap covers both. If the runtime ever streams chunks
 // from upstream, that path needs a separate per-chunk inactivity timer.
 const OPENROUTER_TIMEOUT_MS = 120_000;
+
+// ---------------------------------------------------------------------------
+// LLM error classification
+// ---------------------------------------------------------------------------
+
+/** True when the call timed out or was aborted (internal wallclock cap or an
+ *  external cancellation signal). Mirrors the raw-fetch code's `AbortError`
+ *  branch. */
+function isTimeoutOrAbort(err: unknown): boolean {
+  return (
+    err instanceof APIConnectionTimeoutError || err instanceof APIUserAbortError
+  );
+}
+
+/** True for an HTTP error *response* (4xx/5xx) — `APIError` carries a numeric
+ *  `status`. Network/connection failures are `APIError` subclasses without a
+ *  status; those are NOT "expected" and should propagate, matching the
+ *  raw-fetch code where a non-`AbortError` rejection re-threw. */
+function isHttpStatusError(err: unknown): err is APIError {
+  return err instanceof APIError && typeof err.status === "number";
+}
+
+/** Helper LLM calls (selector, classifier) treat HTTP errors and
+ *  timeouts/aborts as "no result, fall back to normal generation" (return
+ *  null). Anything else (network failure, parse bug) propagates. */
+function isExpectedHelperFailure(err: unknown): boolean {
+  return isTimeoutOrAbort(err) || isHttpStatusError(err);
+}
+
+/** Short, log-friendly description of an LLM call failure. */
+function describeLlmError(err: unknown): string {
+  if (isTimeoutOrAbort(err)) {
+    return `timed out/aborted (cap ${OPENROUTER_TIMEOUT_MS}ms)`;
+  }
+  if (isHttpStatusError(err)) return `HTTP ${err.status}`;
+  return err instanceof Error ? err.message : String(err);
+}
 
 // ---------------------------------------------------------------------------
 // Config-backed accessors (with test-only override seams)
@@ -146,7 +192,7 @@ type GithubPrefetch =
 
 /** Convenience constant for test mocks — realistic placeholder metrics. */
 export const DEFAULT_TEST_METRICS: GenerationMetrics = {
-  model: "@preset/assistants-pro",
+  model: "anthropic/claude-opus-4.7",
   promptTokens: 100,
   completionTokens: 200,
   latencyMs: 1500,
@@ -205,42 +251,69 @@ function isTwitterUrl(url: string): boolean {
 }
 
 /** Extract content from a URL using Exa's /contents API. */
-async function extractViaExa(url: string): Promise<string> {
+async function extractViaExa(
+  url: string,
+  trace?: TraceContext,
+): Promise<string> {
   const exaKey = getExaKey();
   if (!exaKey) {
     throw new Error("BUILDER_EXA_SERVICE_KEY not configured");
   }
 
-  const res = await fetch("https://api.exa.ai/contents", {
-    method: "POST",
-    headers: {
-      "x-api-key": exaKey,
-      "Content-Type": "application/json",
+  return withAiSpan(
+    trace,
+    "exa.contents",
+    { url },
+    async () => {
+      const res = await fetch("https://api.exa.ai/contents", {
+        method: "POST",
+        headers: {
+          "x-api-key": exaKey,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ urls: [url], text: true }),
+        signal: AbortSignal.timeout(30_000),
+      });
+
+      if (!res.ok) {
+        const errText = await res.text();
+        console.error(
+          "[templateGen] Exa error:",
+          res.status,
+          errText.slice(0, 300),
+        );
+        throw new Error(`Exa content extraction failed (${res.status})`);
+      }
+
+      const data = (await res.json()) as any;
+      const result = data?.results?.[0];
+      if (!result?.text) {
+        throw new Error("Exa returned no content for this URL");
+      }
+      return result.text as string;
     },
-    body: JSON.stringify({ urls: [url], text: true }),
-    signal: AbortSignal.timeout(30_000),
-  });
-
-  if (!res.ok) {
-    const errText = await res.text();
-    console.error(
-      "[templateGen] Exa error:",
-      res.status,
-      errText.slice(0, 300),
-    );
-    throw new Error(`Exa content extraction failed (${res.status})`);
-  }
-
-  const data = (await res.json()) as any;
-  const result = data?.results?.[0];
-  if (!result?.text) {
-    throw new Error("Exa returned no content for this URL");
-  }
-  return result.text;
+    (text) => ({ chars: text.length }),
+  );
 }
 
 /** Extract tweet content via oEmbed, following any embedded links. */
-async function extractViaTweetOEmbed(url: string): Promise<string> {
+async function extractViaTweetOEmbed(
+  url: string,
+  trace?: TraceContext,
+): Promise<string> {
+  return withAiSpan(
+    trace,
+    "twitter.oembed",
+    { url },
+    () => extractViaTweetOEmbedInner(url, trace),
+    (out) => ({ chars: out.length }),
+  );
+}
+
+async function extractViaTweetOEmbedInner(
+  url: string,
+  trace?: TraceContext,
+): Promise<string> {
   const oembedUrl = `https://publish.twitter.com/oembed?url=${encodeURIComponent(url)}`;
   const res = await fetch(oembedUrl, { signal: AbortSignal.timeout(10_000) });
   if (!res.ok) throw new Error(`Twitter oEmbed failed (${res.status})`);
@@ -279,7 +352,7 @@ async function extractViaTweetOEmbed(url: string): Promise<string> {
   let linkedContent = "";
   for (const tco of tcoLinks.slice(0, 3)) {
     try {
-      const pageContent = await extractViaExa(tco);
+      const pageContent = await extractViaExa(tco, trace);
       linkedContent += `\n\n--- Linked content from ${tco} ---\n${pageContent}`;
     } catch {
       // skip
@@ -331,32 +404,53 @@ function parseGithubRepoUrl(
   }
 }
 
-async function githubApiGet(path: string): Promise<any> {
-  const res = await fetch(`https://api.github.com${path}`, {
-    headers: {
-      "User-Agent": "Convos-TemplateGen/1.0",
-      Accept: "application/vnd.github+json",
-      "X-GitHub-Api-Version": "2022-11-28",
-    },
-    signal: AbortSignal.timeout(15_000),
+async function githubApiGet(path: string, trace?: TraceContext): Promise<any> {
+  return withAiSpan(trace, "github.api", { path }, async () => {
+    const res = await fetch(`https://api.github.com${path}`, {
+      headers: {
+        "User-Agent": "Convos-TemplateGen/1.0",
+        Accept: "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+      },
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (!res.ok) {
+      throw new Error(`GitHub API ${path} returned ${res.status}`);
+    }
+    return res.json();
   });
-  if (!res.ok) {
-    throw new Error(`GitHub API ${path} returned ${res.status}`);
-  }
-  return res.json();
 }
 
-/** Fetch the raw content of a file in a repo at its default branch. */
+/** Fetch the raw content of a file in a repo at its default branch.
+ *
+ *  `optional` is for files the caller treats as "nice to have" (e.g. README):
+ *  a missing/unreachable file resolves to `""` and the span records
+ *  `{ found: false }` rather than an error — a missing README is an expected
+ *  outcome, not a failure worth flagging red in the trace UI. Required fetches
+ *  (`optional` omitted) still throw so callers can fall back. */
 async function githubFetchRaw(
   owner: string,
   repo: string,
   branch: string,
   path: string,
+  trace?: TraceContext,
+  optional = false,
 ): Promise<string> {
-  const url = `https://raw.githubusercontent.com/${owner}/${repo}/${branch}/${path}`;
-  const res = await fetch(url, { signal: AbortSignal.timeout(15_000) });
-  if (!res.ok) throw new Error(`Failed to fetch ${url} (${res.status})`);
-  return res.text();
+  return withAiSpan(
+    trace,
+    "github.raw",
+    { path },
+    async () => {
+      const url = `https://raw.githubusercontent.com/${owner}/${repo}/${branch}/${path}`;
+      const res = await fetch(url, { signal: AbortSignal.timeout(15_000) });
+      if (!res.ok) {
+        if (optional) return "";
+        throw new Error(`Failed to fetch ${url} (${res.status})`);
+      }
+      return res.text();
+    },
+    (text) => ({ chars: text.length, found: text.length > 0 }),
+  );
 }
 
 type PassthroughType = "install-instructions" | "skill-definition";
@@ -427,6 +521,7 @@ async function selectInstructionsViaLLM(
   tree: string[],
   readme: string,
   externalSignal?: AbortSignal,
+  trace?: TraceContext,
 ): Promise<{
   selection: GithubInstructionSelection;
   tokens: PassthroughTokens;
@@ -515,52 +610,29 @@ Rules:
 - If you're unsure whether content is "for agents" vs "source material about a topic", lean toward false. Better to fall back to generation than to pass through a human-oriented README.`;
 
   const t0 = performance.now();
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => {
-    controller.abort();
-  }, OPENROUTER_TIMEOUT_MS);
-  // Compose the per-request timeout signal with any external cancellation
-  // signal so the fetch aborts whichever fires first.
-  const signal = externalSignal
-    ? AbortSignal.any([externalSignal, controller.signal])
-    : controller.signal;
   let data: any;
   try {
-    const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
+    data = await openRouterChatCompletion({
+      apiKey,
+      stage: "selector",
+      body: {
         model: getModel(),
         messages: [{ role: "user", content: selectorPrompt }],
         temperature: 0.2,
-      }),
-      signal,
+      },
+      signal: externalSignal,
+      timeoutMs: OPENROUTER_TIMEOUT_MS,
+      trace,
     });
-
-    if (!res.ok) {
-      const body = await res.text();
-      console.error(
-        "[templateGen] GitHub selector LLM error:",
-        res.status,
-        body.slice(0, 300),
-      );
-      return null;
-    }
-
-    data = (await res.json()) as any;
   } catch (err) {
-    if (err instanceof Error && err.name === "AbortError") {
+    if (isExpectedHelperFailure(err)) {
       console.error(
-        `[templateGen] GitHub selector LLM timed out after ${OPENROUTER_TIMEOUT_MS}ms`,
+        "[templateGen] GitHub selector LLM failed:",
+        describeLlmError(err),
       );
       return null;
     }
     throw err;
-  } finally {
-    clearTimeout(timeoutId);
   }
 
   console.log(
@@ -612,6 +684,7 @@ Rules:
 async function tryGithubPassthrough(
   url: string,
   externalSignal?: AbortSignal,
+  trace?: TraceContext,
 ): Promise<GithubPrefetch | null> {
   const parsed = parseGithubRepoUrl(url);
   if (!parsed) return null;
@@ -623,7 +696,7 @@ async function tryGithubPassthrough(
     const branch = explicitBranch || "main";
     let content: string;
     try {
-      content = await githubFetchRaw(owner, repo, branch, filePath);
+      content = await githubFetchRaw(owner, repo, branch, filePath, trace);
     } catch (err: any) {
       console.error(
         `[templateGen] Failed to fetch ${owner}/${repo}/${filePath}:`,
@@ -631,7 +704,7 @@ async function tryGithubPassthrough(
       );
       return null;
     }
-    const bundle = await tryContentPassthrough(content, externalSignal);
+    const bundle = await tryContentPassthrough(content, externalSignal, trace);
     if (bundle) return { kind: "passthrough", bundle };
     // Classifier said this isn't agent-ready, but the user linked directly
     // at the file — hand the raw content back to the caller so it can be
@@ -642,7 +715,7 @@ async function tryGithubPassthrough(
 
   let repoInfo: any;
   try {
-    repoInfo = await githubApiGet(`/repos/${owner}/${repo}`);
+    repoInfo = await githubApiGet(`/repos/${owner}/${repo}`, trace);
   } catch (err: any) {
     console.error("[templateGen] GitHub repo lookup failed:", err.message);
     return null;
@@ -656,8 +729,15 @@ async function tryGithubPassthrough(
   let readme = "";
   try {
     const [treeData, readmeRaw] = await Promise.all([
-      githubApiGet(`/repos/${owner}/${repo}/git/trees/${branch}?recursive=1`),
-      githubFetchRaw(owner, repo, branch, "README.md").catch(() => ""),
+      githubApiGet(
+        `/repos/${owner}/${repo}/git/trees/${branch}?recursive=1`,
+        trace,
+      ),
+      // README is optional: a missing one resolves to "" with a clean
+      // (non-error) span. The outer .catch only covers rare transport errors.
+      githubFetchRaw(owner, repo, branch, "README.md", trace, true).catch(
+        () => "",
+      ),
     ]);
     tree = (treeData.tree || []).map((t: any) => t.path).filter(Boolean);
     readme = readmeRaw;
@@ -674,6 +754,7 @@ async function tryGithubPassthrough(
     tree,
     readme,
     externalSignal,
+    trace,
   );
   if (!selectorResult?.selection.hasAgentInstructions) return null;
   const { selection, tokens: selectorTokens } = selectorResult;
@@ -687,6 +768,7 @@ async function tryGithubPassthrough(
         repo,
         branch,
         selection.instructionsPath,
+        trace,
       );
     } catch (err: any) {
       console.error(
@@ -746,6 +828,7 @@ interface ContentPassthroughResult {
 async function classifyPastedContent(
   content: string,
   externalSignal?: AbortSignal,
+  trace?: TraceContext,
 ): Promise<{
   classification: ContentPassthroughResult;
   tokens: PassthroughTokens;
@@ -801,50 +884,29 @@ Rules:
 - The content must be READY-TO-USE as an agent prompt on its own — if it's merely ABOUT agents or references them in passing, that's false.`;
 
   const t0 = performance.now();
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => {
-    controller.abort();
-  }, OPENROUTER_TIMEOUT_MS);
-  const signal = externalSignal
-    ? AbortSignal.any([externalSignal, controller.signal])
-    : controller.signal;
   let data: any;
   try {
-    const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
+    data = await openRouterChatCompletion({
+      apiKey,
+      stage: "classifier",
+      body: {
         model: getModel(),
         messages: [{ role: "user", content: classifierPrompt }],
         temperature: 0.2,
-      }),
-      signal,
+      },
+      signal: externalSignal,
+      timeoutMs: OPENROUTER_TIMEOUT_MS,
+      trace,
     });
-
-    if (!res.ok) {
-      const body = await res.text();
-      console.error(
-        "[templateGen] Content classifier error:",
-        res.status,
-        body.slice(0, 300),
-      );
-      return null;
-    }
-
-    data = (await res.json()) as any;
   } catch (err) {
-    if (err instanceof Error && err.name === "AbortError") {
+    if (isExpectedHelperFailure(err)) {
       console.error(
-        `[templateGen] Content classifier timed out after ${OPENROUTER_TIMEOUT_MS}ms`,
+        "[templateGen] Content classifier failed:",
+        describeLlmError(err),
       );
       return null;
     }
     throw err;
-  } finally {
-    clearTimeout(timeoutId);
   }
 
   console.log(
@@ -895,10 +957,15 @@ Rules:
 async function tryContentPassthrough(
   content: string,
   externalSignal?: AbortSignal,
+  trace?: TraceContext,
 ): Promise<PassthroughBundle | null> {
   if (content.length < PASSTHROUGH_MIN_LENGTH) return null;
 
-  const classifierResult = await classifyPastedContent(content, externalSignal);
+  const classifierResult = await classifyPastedContent(
+    content,
+    externalSignal,
+    trace,
+  );
   if (!classifierResult) return null;
   const { classification, tokens: classifierTokens } = classifierResult;
   if (!classification.isPassthrough || !classification.passthroughType) {
@@ -925,10 +992,10 @@ async function tryContentPassthrough(
  *  surface, and the rest of the codebase only fetches env-configured or
  *  hardcoded hosts. If both upstream paths fail, we surface the error rather
  *  than fetching the URL ourselves. */
-async function extractUrl(url: string): Promise<string> {
+async function extractUrl(url: string, trace?: TraceContext): Promise<string> {
   if (isTwitterUrl(url)) {
     try {
-      return await extractViaTweetOEmbed(url);
+      return await extractViaTweetOEmbed(url, trace);
     } catch (err: any) {
       console.error(
         "[templateGen] Tweet oEmbed failed, trying Exa:",
@@ -937,7 +1004,7 @@ async function extractUrl(url: string): Promise<string> {
     }
   }
 
-  return await extractViaExa(url);
+  return await extractViaExa(url, trace);
 }
 
 // ---------------------------------------------------------------------------
@@ -951,6 +1018,7 @@ async function extractUrl(url: string): Promise<string> {
 export async function generateTemplate(
   input: GenerateTemplateInput | string,
   externalSignal?: AbortSignal,
+  trace?: TraceContext,
 ): Promise<GenerationResult> {
   // Backward compat: string input = text
   const opts: GenerateTemplateInput =
@@ -1021,7 +1089,11 @@ export async function generateTemplate(
       //  - `rawContent`: the user linked a specific file but it's not
       //    agent-ready → use the fetched file content as source material
       //    (skip extractUrl, which would scrape GitHub's HTML viewer).
-      const githubResult = await tryGithubPassthrough(url, externalSignal);
+      const githubResult = await tryGithubPassthrough(
+        url,
+        externalSignal,
+        trace,
+      );
       if (githubResult?.kind === "passthrough") {
         const { bundle } = githubResult;
         return {
@@ -1038,7 +1110,7 @@ export async function generateTemplate(
       extracted =
         githubResult?.kind === "rawContent"
           ? githubResult.content
-          : await extractUrl(url);
+          : await extractUrl(url, trace);
     }
 
     if (!extracted.trim()) {
@@ -1050,6 +1122,7 @@ export async function generateTemplate(
     const passthroughBundle = await tryContentPassthrough(
       extracted,
       externalSignal,
+      trace,
     );
     if (passthroughBundle)
       return {
@@ -1112,46 +1185,32 @@ export async function generateTemplate(
   };
 
   const t0 = performance.now();
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => {
-    controller.abort();
-  }, OPENROUTER_TIMEOUT_MS);
-  const signal = externalSignal
-    ? AbortSignal.any([externalSignal, controller.signal])
-    : controller.signal;
   let data: any;
   try {
-    const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(reqBody),
-      signal,
+    data = await openRouterChatCompletion({
+      apiKey,
+      stage: "generate",
+      body: reqBody,
+      signal: externalSignal,
+      timeoutMs: OPENROUTER_TIMEOUT_MS,
+      trace,
     });
-
-    if (!res.ok) {
-      const body = await res.text();
-      console.error(
-        "[templateGen] OpenRouter error:",
-        res.status,
-        body.slice(0, 500),
-      );
-      throw new Error(`OpenRouter API error ${res.status}`);
-    }
-
-    data = (await res.json()) as any;
   } catch (err) {
-    if (err instanceof Error && err.name === "AbortError") {
+    if (isTimeoutOrAbort(err)) {
       throw new AppError(
         504,
         `OpenRouter request timed out after ${OPENROUTER_TIMEOUT_MS}ms`,
       );
     }
+    if (isHttpStatusError(err)) {
+      console.error(
+        "[templateGen] OpenRouter error:",
+        err.status,
+        err.message.slice(0, 500),
+      );
+      throw new Error(`OpenRouter API error ${err.status}`);
+    }
     throw err;
-  } finally {
-    clearTimeout(timeoutId);
   }
   const latencyMs = Math.round(performance.now() - t0);
   const promptTokens = Number(data?.usage?.prompt_tokens ?? 0);
@@ -1276,11 +1335,12 @@ export function __resetGenerateTemplateForTests(
 export async function callGenerateTemplate(
   input: GenerateTemplateInput | string,
   signal?: AbortSignal,
+  trace?: TraceContext,
 ): Promise<GenerationResult> {
   if (_generateTemplateOverride) {
     return _generateTemplateOverride(input);
   }
-  return generateTemplate(input, signal);
+  return generateTemplate(input, signal, trace);
 }
 
 export { BREVITY_RAIL };
