@@ -39,6 +39,7 @@
  * Body size: 40 MB (route-specific middleware).
  */
 
+import { randomUUID } from "node:crypto";
 import { Prisma } from "@prisma/client";
 import type { Request, Response } from "express";
 import { z } from "zod";
@@ -47,6 +48,8 @@ import {
   checkContent,
   checkTwitterIntent,
 } from "@/api/v2/agent-templates/services/moderation";
+import { type TraceContext } from "@/api/v2/agent-templates/services/openrouter-client";
+import { resolveActor } from "@/api/v2/agent-templates/services/posthog";
 import { getEffectiveOwnerId } from "@/utils/auth-helpers";
 import { ADMIN_ACCOUNT_ID } from "@/utils/constants";
 import { prisma } from "@/utils/prisma";
@@ -755,12 +758,38 @@ export async function generationsPostHandler(req: Request, res: Response) {
     return;
   }
 
+  // Pre-generate the generation id (same uuid format as the column default) so
+  // the moderation LLM calls share a PostHog LLM Analytics trace with the
+  // generation that follows. Passed as `id` to the create() below, and used as
+  // the trace id by the executor (which keys traces on the generation id).
+  // distinctId reuses the same actor ladder as the executor's product event so
+  // moderation, generation, and the product event all attribute to one person.
+  const generationId = randomUUID();
+  const moderationActor = resolveActor({
+    requestId: generationId,
+    ownerAccountId,
+    isAnonymous: ownerAccountId === ADMIN_ACCOUNT_ID,
+    clientDeviceId: body.clientDeviceId ?? undefined,
+    twitterUserId: body.twitterContext?.twitterHandle
+      ? body.twitterContext.twitterHandle.toLowerCase().replace(/^@/, "")
+      : undefined,
+  });
+  const moderationTrace: TraceContext = {
+    traceId: generationId,
+    distinctId: moderationActor.distinctId,
+    properties: {
+      generation_id: generationId,
+      source: body.source,
+      actor_kind: moderationActor.kind,
+    },
+  };
+
   // 9. Content moderation gate (universal)
   const moderationInput =
     coalesced.kind === "text"
       ? coalesced.text
       : `[binary input: ${coalesced.kind}, ${coalesced.kind === "pdfBase64" ? coalesced.pdfBase64.length : coalesced.imageBase64.length} bytes]`;
-  const moderation = await checkContent(moderationInput);
+  const moderation = await checkContent(moderationInput, moderationTrace);
   if (!moderation.allowed) {
     res.status(422).json({
       reason: moderation.reason || "blocked",
@@ -781,7 +810,7 @@ export async function generationsPostHandler(req: Request, res: Response) {
       });
       return;
     }
-    const intent = await checkTwitterIntent(intentInput);
+    const intent = await checkTwitterIntent(intentInput, moderationTrace);
     if (!intent.allowed) {
       res.status(422).json({
         reason: intent.reason || "not_agent_request",
@@ -796,6 +825,7 @@ export async function generationsPostHandler(req: Request, res: Response) {
   try {
     created = await prisma.agentTemplateGeneration.create({
       data: {
+        id: generationId,
         ownerAccountId,
         source: body.source,
         idempotencyKey,

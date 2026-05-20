@@ -108,8 +108,13 @@ export function __resetOpenRouterClientForTests(): void {
 export interface OpenRouterChatOptions {
   apiKey: string;
   /** Logical pipeline stage — recorded as a property on the `$ai_generation`
-   *  for per-stage segmentation ("selector" | "classifier" | "generate"). */
-  stage: "selector" | "classifier" | "generate";
+   *  for per-stage segmentation. */
+  stage:
+    | "selector"
+    | "classifier"
+    | "generate"
+    | "moderation"
+    | "twitter-intent";
   body: OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming;
   /** External cancellation (e.g. the executor's per-generation timeout). */
   signal?: AbortSignal;
