@@ -133,13 +133,9 @@ export const CONTENT_MODERATION_MODEL =
 export const BUILDER_EXA_SERVICE_KEY =
   process.env.BUILDER_EXA_SERVICE_KEY?.trim() || "";
 
-// Twitter integration (optional — moderation/reply paths only fire when
-// twitterContext is present on a generation; defaults match the content
-// moderation model so a single env var change can pin everything to one
-// model if desired).
-export const TWITTER_MODERATION_MODEL =
-  process.env.TWITTER_MODERATION_MODEL?.trim() ||
-  "google/gemini-3.1-flash-lite";
+// Twitter reply composition (optional — only fires when twitterContext is
+// present on a generation). The twitter intent check reuses
+// CONTENT_MODERATION_MODEL (both are the same cheap-classifier knob).
 export const TWITTER_REPLY_MODEL =
   process.env.TWITTER_REPLY_MODEL?.trim() || "google/gemini-3.1-flash-lite";
 // Required — public template URLs (`<origin>/a/<slug>`) are user-facing, so a

@@ -25,11 +25,7 @@
  *     checkContent passes, only when twitterContext is present.
  */
 
-import {
-  BUILDER_OPENROUTER_API_KEY,
-  CONTENT_MODERATION_MODEL,
-  TWITTER_MODERATION_MODEL,
-} from "@/config";
+import { BUILDER_OPENROUTER_API_KEY, CONTENT_MODERATION_MODEL } from "@/config";
 import logger from "@/utils/logger";
 import {
   openRouterChatCompletion,
@@ -81,13 +77,11 @@ export function __setBuilderApiKeyOverrideForTests(
   _apiKeyOverride = key;
 }
 
-/** Override `CONTENT_MODERATION_MODEL` for tests. Pass `null` to clear. */
+/** Override `CONTENT_MODERATION_MODEL` for tests. Pass `null` to clear.
+ *  Applies to both the content-safety and twitter-intent checks (they share
+ *  the same model). */
 export function __setContentModelOverrideForTests(model: string | null): void {
   _contentModelOverride = model;
-}
-
-function getTwitterIntentModel(): string {
-  return TWITTER_MODERATION_MODEL;
 }
 
 // ---------------------------------------------------------------------------
@@ -254,7 +248,8 @@ async function _checkTwitterIntent(
     input,
     promptBuilder: buildTwitterIntentPrompt,
     labelMapper: mapTwitterIntentLabel,
-    model: getTwitterIntentModel(),
+    // Shares CONTENT_MODERATION_MODEL — same cheap-classifier knob.
+    model: getContentModel(),
     logTag: "[moderation:twitter-intent]",
     stage: "twitter-intent",
     trace,
