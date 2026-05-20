@@ -2,7 +2,8 @@
  * Moderation Service — universal content safety check for agent-template
  * generation requests.
  *
- * Uses Claude Haiku via OpenRouter (same BUILDER_OPENROUTER_API_KEY as templateGen).
+ * Uses a fast model via OpenRouter — default Gemini Flash-Lite (same
+ * BUILDER_OPENROUTER_API_KEY as templateGen).
  * Classifies arbitrary input text into safe vs unsafe content.
  *
  * **Fails open**: on any OpenRouter error (network, non-2xx, parse failure),
@@ -11,7 +12,7 @@
  *
  * Env vars:
  *   BUILDER_OPENROUTER_API_KEY — required for LLM calls (unset → fails open)
- *   CONTENT_MODERATION_MODEL   — model override (default: anthropic/claude-3-5-haiku-20241022)
+ *   CONTENT_MODERATION_MODEL   — model override (default: google/gemini-3.1-flash-lite)
  *
  * Test seam: __resetModerationForTests(override | null) mirrors the
  * singleton-override pattern used by templateGen and PostHog.
@@ -24,11 +25,7 @@
  *     checkContent passes, only when twitterContext is present.
  */
 
-import {
-  BUILDER_OPENROUTER_API_KEY,
-  CONTENT_MODERATION_MODEL,
-  TWITTER_MODERATION_MODEL,
-} from "@/config";
+import { BUILDER_OPENROUTER_API_KEY, CONTENT_MODERATION_MODEL } from "@/config";
 import logger from "@/utils/logger";
 import {
   openRouterChatCompletion,
@@ -80,13 +77,11 @@ export function __setBuilderApiKeyOverrideForTests(
   _apiKeyOverride = key;
 }
 
-/** Override `CONTENT_MODERATION_MODEL` for tests. Pass `null` to clear. */
+/** Override `CONTENT_MODERATION_MODEL` for tests. Pass `null` to clear.
+ *  Applies to both the content-safety and twitter-intent checks (they share
+ *  the same model). */
 export function __setContentModelOverrideForTests(model: string | null): void {
   _contentModelOverride = model;
-}
-
-function getTwitterIntentModel(): string {
-  return TWITTER_MODERATION_MODEL;
 }
 
 // ---------------------------------------------------------------------------
@@ -253,7 +248,8 @@ async function _checkTwitterIntent(
     input,
     promptBuilder: buildTwitterIntentPrompt,
     labelMapper: mapTwitterIntentLabel,
-    model: getTwitterIntentModel(),
+    // Shares CONTENT_MODERATION_MODEL — same cheap-classifier knob.
+    model: getContentModel(),
     logTag: "[moderation:twitter-intent]",
     stage: "twitter-intent",
     trace,

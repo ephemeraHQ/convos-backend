@@ -2,7 +2,8 @@
  * Twitter Reply Composition Service — composes tweet replies for
  * agent templates built from Twitter @mention requests.
  *
- * Uses Claude Haiku via OpenRouter (same BUILDER_OPENROUTER_API_KEY as templateGen).
+ * Uses a fast model via OpenRouter — default Gemini Flash-Lite (same
+ * BUILDER_OPENROUTER_API_KEY as templateGen).
  * Composes a tweet reply that:
  *   - Starts with @{handle}
  *   - Contains the template URL
@@ -17,7 +18,7 @@
  *
  * Env vars:
  *   BUILDER_OPENROUTER_API_KEY — required for LLM calls
- *   TWITTER_REPLY_MODEL        — model override (default: anthropic/claude-3-5-haiku-20241022)
+ *   TWITTER_REPLY_MODEL        — model override (default: google/gemini-3.1-flash-lite)
  *   BUILDER_SITE_URL           — base URL for builder (default: https://dev.convos.org)
  *
  * Test seam: __resetComposeReplyForTests(override | null).
