@@ -103,6 +103,9 @@ describe("openRouterChatCompletion + PostHog tracing", () => {
     const props = gens[0].properties ?? {};
     expect(gens[0].distinctId).toBe("acct-42");
     expect(props.$ai_trace_id).toBe("gen-abc");
+    // Native provider field corrected from the SDK default ("openai") to the
+    // actual gateway we call.
+    expect(props.$ai_provider).toBe("openrouter");
     expect(props.$ai_input_tokens).toBe(11);
     expect(props.$ai_output_tokens).toBe(7);
     // Our per-call segmentation properties ride along.

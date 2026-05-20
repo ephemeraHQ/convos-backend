@@ -158,6 +158,12 @@ export async function openRouterChatCompletion(
       ? {
           posthogTraceId: opts.trace.traceId,
           posthogDistinctId: opts.trace.distinctId,
+          // Correct the native `$ai_provider` field. The wrapper defaults it to
+          // "openai" (the SDK), but we call OpenRouter — so the gateway is
+          // OpenRouter. The *resolved upstream* it routed to (Bedrock /
+          // Anthropic / Google) is only known post-response and has no native
+          // field; that's captured separately on `builder.generation.llm_call`.
+          posthogProviderOverride: "openrouter",
           posthogProperties: {
             ...opts.trace.properties,
             ai_stage: opts.stage,
@@ -184,11 +190,13 @@ export async function openRouterChatCompletion(
     requestOptions,
   );
 
-  // Record which upstream OpenRouter actually served the call. The @posthog/ai
-  // wrapper hardcodes `$ai_provider: "openai"` (the SDK), so without this we
-  // can't tell from telemetry whether the Bedrock preference took effect or
-  // fell back — and can't segment latency by provider. Fire-and-forget; only on
-  // success (errors propagate and are captured by the wrapper's own event).
+  // Record which upstream OpenRouter actually routed to. `$ai_provider` is the
+  // native API-provider field (now "openrouter" — the gateway), but it can't
+  // hold the resolved upstream: that's only on the response, after the wrapper
+  // has captured `$ai_generation`. So we emit it ourselves to tell whether the
+  // Bedrock preference took effect or fell back, and to segment latency by
+  // upstream. Fire-and-forget; only on success (errors are captured by the
+  // wrapper's own event).
   captureProviderTelemetry(opts, response, performance.now() - startedMs);
   return response;
 }
