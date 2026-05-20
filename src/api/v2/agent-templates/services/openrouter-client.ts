@@ -33,7 +33,7 @@
 import { randomUUID } from "node:crypto";
 import { OpenAI as PostHogOpenAI } from "@posthog/ai/openai";
 import { OpenAI } from "openai";
-import { getPostHogClient } from "./posthog";
+import { getPostHogClient } from "@/api/v2/agent-templates/services/posthog";
 
 const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
 
