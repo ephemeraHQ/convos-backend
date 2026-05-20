@@ -281,27 +281,27 @@ export async function joinHandler(req: Request, res: Response) {
     "Agent join request received",
   );
 
-  // `/api/v2/agents` is mounted behind `authMiddleware`, which 401s any
-  // request without a valid JWT, so under normal routing `accountId` is
+  // `/api/v2/agents/join` is mounted behind `authMiddleware` (401s any
+  // request without a valid JWT) and gated by `requireAccount` (403s a
+  // valid-but-account-less JWT), so under normal routing `accountId` is
   // guaranteed populated by the time we reach the handler. The guard
   // here is defense-in-depth — if the route ever gets remounted without
-  // auth, or the middleware order regresses, we fail closed rather than
-  // dispatching an assistant with `ownerAccountId: undefined` and
+  // those gates, or the middleware order regresses, we fail closed rather
+  // than dispatching an assistant with `ownerAccountId: undefined` and
   // silently breaking downstream authorization (the runtime asserts
   // this value back to the backend when creating user-owned templates
   // mid-conversation, and a phantom owner there would corrupt the
-  // ownership chain).
+  // ownership chain). Mirrors `requireAccount` exactly (403 + identical
+  // body) so the response is the same whichever gate fires — and a 403,
+  // not a 401, because the request IS authenticated; it just lacks an
+  // account binding.
   const joiningUserAccountId = res.locals.accountId;
   if (
     typeof joiningUserAccountId !== "string" ||
     joiningUserAccountId.length === 0
   ) {
     req.log.error("Missing accountId in request context");
-    res.status(401).json({
-      success: false,
-      error: "UNAUTHORIZED",
-      message: "Authentication required",
-    });
+    res.status(403).json({ error: "Account required" });
     return;
   }
 
