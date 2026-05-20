@@ -133,6 +133,16 @@ export async function createHandler(req: Request, res: Response) {
   // Validate the fork source if asserted. Like ownerAccountId, the FK is the
   // canonical check (handled in the catch below); this pre-check fails fast
   // with a clear error before the collision-free-id lookup.
+  //
+  // Policy: forking is intentionally NOT gated on the source's visibility or
+  // ownership. `forkedFromId` is provenance only — a bare id pointer that
+  // grants no access to the source's content (a non-owner still 404s when
+  // resolving a draft/private source), so recording it can't leak anything.
+  // Source ids are unguessable UUIDs, so the existence check ("does not exist"
+  // vs created) is not a useful oracle. Keeping it ungated also lets the
+  // agent-key path (which can see every row) fork the catalog template a group
+  // adopted without a special case. If a visibility rule is ever wanted, add
+  // it here.
   if (parsed.data.forkedFromId !== undefined) {
     const source = await prisma.agentTemplate.findUnique({
       where: { id: parsed.data.forkedFromId },
