@@ -42,8 +42,13 @@ const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
 // doesn't serve — e.g. Google Gemini, used by moderation/reply — transparently
 // route elsewhere. `order` is a *preference*, not a hard pin; an unavailable or
 // throttled Bedrock falls back automatically, so this is self-healing. Confirm
-// the actual latency win via PostHog p50 `$ai_latency` after deploy.
-const PROVIDER_ROUTING = { order: ["amazon-bedrock"] };
+// the actual latency win via PostHog p50 `$ai_latency` after deploy (segment by
+// the `upstream_provider` recorded on `builder.generation.llm_call`).
+const DEFAULT_PROVIDER_PREFERENCE = { order: ["amazon-bedrock"] };
+
+/** PostHog event recording the upstream provider that served one LLM call.
+ *  One per call, alongside the wrapper's `$ai_generation`. */
+export const LLM_CALL_EVENT = "builder.generation.llm_call";
 
 /**
  * Per-generation trace context threaded from the executor down to each LLM
@@ -167,12 +172,58 @@ export async function openRouterChatCompletion(
   if (typeof opts.timeoutMs === "number")
     requestOptions.timeout = opts.timeoutMs;
 
-  return client.chat.completions.create(
+  const startedMs = performance.now();
+  const response = await client.chat.completions.create(
     // `provider` is an OpenRouter extension (passed through by the OpenAI SDK).
     // Default first so a caller-supplied `body.provider` can still override.
-    { provider: PROVIDER_ROUTING, ...opts.body, ...monitoring } as any,
+    {
+      provider: DEFAULT_PROVIDER_PREFERENCE,
+      ...opts.body,
+      ...monitoring,
+    } as any,
     requestOptions,
   );
+
+  // Record which upstream OpenRouter actually served the call. The @posthog/ai
+  // wrapper hardcodes `$ai_provider: "openai"` (the SDK), so without this we
+  // can't tell from telemetry whether the Bedrock preference took effect or
+  // fell back — and can't segment latency by provider. Fire-and-forget; only on
+  // success (errors propagate and are captured by the wrapper's own event).
+  captureProviderTelemetry(opts, response, performance.now() - startedMs);
+  return response;
+}
+
+/** Custom event recording the resolved upstream provider + served model for one
+ *  OpenRouter call, so latency can be segmented by `upstream_provider` in
+ *  PostHog. No-op when PostHog/trace is absent; never throws. */
+function captureProviderTelemetry(
+  opts: OpenRouterChatOptions,
+  response: OpenAI.Chat.Completions.ChatCompletion,
+  latencyMs: number,
+): void {
+  if (!opts.trace) return;
+  const ph = getPostHogClient();
+  if (!ph) return;
+  try {
+    const r = response as unknown as { model?: string; provider?: string };
+    ph.capture({
+      distinctId: opts.trace.distinctId ?? `request:${opts.trace.traceId}`,
+      event: LLM_CALL_EVENT,
+      properties: {
+        ...opts.trace.properties,
+        $ai_trace_id: opts.trace.traceId,
+        ai_stage: opts.stage,
+        requested_model: opts.body.model,
+        served_model: r.model,
+        // OpenRouter's resolved upstream (e.g. "Amazon Bedrock"); undefined on
+        // providers/responses that don't report it.
+        upstream_provider: r.provider,
+        latency_ms: latencyMs,
+      },
+    });
+  } catch {
+    /* analytics never breaks the request */
+  }
 }
 
 // ---------------------------------------------------------------------------

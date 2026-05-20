@@ -16,6 +16,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import {
   __resetOpenRouterClientForTests,
+  LLM_CALL_EVENT,
   openRouterChatCompletion,
   withAiSpan,
 } from "@/api/v2/agent-templates/services/openrouter-client";
@@ -40,6 +41,8 @@ function installFetch() {
         object: "chat.completion",
         created: 0,
         model: "anthropic/claude-sonnet-4.5",
+        // OpenRouter extension: the upstream that actually served the call.
+        provider: "Amazon Bedrock",
         choices: [
           {
             index: 0,
@@ -115,6 +118,40 @@ describe("openRouterChatCompletion + PostHog tracing", () => {
     expect(lastSentBody.model).toBe("anthropic/claude-opus-4.7");
     // Provider routing prefers Bedrock (fallbacks left on by default).
     expect(lastSentBody.provider).toEqual({ order: ["amazon-bedrock"] });
+  });
+
+  test("records resolved upstream provider on builder.generation.llm_call", async () => {
+    const captured: CapturedEvent[] = [];
+    __setPostHogClientForTests({
+      capture: (e: CapturedEvent) => captured.push(e),
+      on: () => {},
+    });
+    __resetOpenRouterClientForTests();
+
+    await openRouterChatCompletion({
+      apiKey: "test-or-key",
+      stage: "generate",
+      body: {
+        model: "anthropic/claude-opus-4.7",
+        messages: [{ role: "user", content: "go" }],
+      },
+      trace: {
+        traceId: "gen-bedrock",
+        distinctId: "acct-1",
+        properties: { generation_id: "gen-bedrock" },
+      },
+    });
+
+    const calls = captured.filter((c) => c.event === LLM_CALL_EVENT);
+    expect(calls.length).toBe(1);
+    const p = calls[0].properties ?? {};
+    expect(calls[0].distinctId).toBe("acct-1");
+    expect(p.upstream_provider).toBe("Amazon Bedrock"); // from OpenRouter response
+    expect(p.ai_stage).toBe("generate");
+    expect(p.requested_model).toBe("anthropic/claude-opus-4.7");
+    expect(p.served_model).toBe("anthropic/claude-sonnet-4.5"); // mock response.model
+    expect(p.$ai_trace_id).toBe("gen-bedrock");
+    expect(typeof p.latency_ms).toBe("number");
   });
 
   test("no posthog client → no events, clean body, call still works", async () => {
