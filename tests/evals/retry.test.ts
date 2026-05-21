@@ -3,16 +3,17 @@
  */
 
 import { describe, expect, test } from "bun:test";
-import { isRetryableError, withRetry } from "./lib/retry";
+import { isRetryableError, NonRetryableError, withRetry } from "./lib/retry";
 
 describe("isRetryableError", () => {
-  test("429 / 5xx / rate-limit / network are retryable", () => {
+  test("our transient HTTP + network errors are retryable", () => {
     for (const m of [
       "OpenRouter API error 429",
+      "OpenRouter API error 503",
+      "Judge HTTP 429: too many requests",
       "Judge HTTP 503: upstream",
-      "rate limit exceeded",
-      "Provider overloaded",
       "fetch failed",
+      "Connection error",
       "ETIMEDOUT",
     ]) {
       expect(isRetryableError(new Error(m))).toBe(true);
@@ -28,6 +29,24 @@ describe("isRetryableError", () => {
     ]) {
       expect(isRetryableError(new Error(m))).toBe(false);
     }
+  });
+
+  test("a status/rate token embedded in model text is NOT retryable (anchored)", () => {
+    // Status codes only match when prefixed by our own error wording; "rate
+    // limit"/"overloaded" aren't matched at all. So a malformed model response
+    // quoting these can't look retryable.
+    expect(
+      isRetryableError(
+        new Error("LLM output mentioned 503, rate limit, and overloaded"),
+      ),
+    ).toBe(false);
+  });
+
+  test("NonRetryableError is never retried, even if its message embeds tokens", () => {
+    const e = new NonRetryableError(
+      'Judge response was not JSON: {"idea":"a 429 / 503 rate-limit fetch-failed monitor"}',
+    );
+    expect(isRetryableError(e)).toBe(false);
   });
 });
 
@@ -64,7 +83,7 @@ describe("withRetry", () => {
       await withRetry(
         () => {
           calls++;
-          return Promise.reject(new Error("503 overloaded"));
+          return Promise.reject(new Error("OpenRouter API error 503"));
         },
         { ...fast, retries: 2 },
       );
@@ -87,6 +106,23 @@ describe("withRetry", () => {
       err = e;
     }
     expect(String(err)).toMatch(/400/);
+    expect(calls).toBe(1);
+  });
+
+  test("does not retry a NonRetryableError even with retry tokens in the message", async () => {
+    let calls = 0;
+    let err: unknown;
+    try {
+      await withRetry(() => {
+        calls++;
+        return Promise.reject(
+          new NonRetryableError("malformed: contains 429 and 503"),
+        );
+      }, fast);
+    } catch (e) {
+      err = e;
+    }
+    expect(String(err)).toMatch(/malformed/);
     expect(calls).toBe(1);
   });
 });

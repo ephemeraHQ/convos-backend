@@ -10,7 +10,7 @@
 
 /* eslint-disable @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-assignment */
 
-import { withRetry } from "./retry";
+import { NonRetryableError, withRetry } from "./retry";
 
 const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
 
@@ -35,10 +35,18 @@ function parseJson(content: string): unknown {
     // Tolerate a fenced or prose-wrapped object, mirroring templateGen's
     // parser fallback.
     const match = content.match(/\{[\s\S]*\}/);
-    if (!match) {
-      throw new Error(`Judge response was not JSON: ${content.slice(0, 200)}`);
+    if (match) {
+      try {
+        return JSON.parse(match[0]) as unknown;
+      } catch {
+        /* fall through to the terminal error */
+      }
     }
-    return JSON.parse(match[0]) as unknown;
+    // A malformed judge response is a quality failure, not a transient one —
+    // NonRetryableError so the embedded `content` snippet can never look retryable.
+    throw new NonRetryableError(
+      `Judge response was not JSON: ${content.slice(0, 200)}`,
+    );
   }
 }
 
@@ -95,13 +103,17 @@ export async function openRouterJSON(
 
     if (!res.ok) {
       const body = await res.text().catch(() => "");
-      throw new Error(`Judge HTTP ${res.status}: ${body.slice(0, 300)}`);
+      const msg = `Judge HTTP ${res.status}: ${body.slice(0, 300)}`;
+      // Retry throttles / server errors by STATUS (not body text); other 4xx
+      // (e.g. 400 bad schema) are terminal.
+      if (res.status === 429 || res.status >= 500) throw new Error(msg);
+      throw new NonRetryableError(msg);
     }
 
     const data: any = await res.json();
     const content = data?.choices?.[0]?.message?.content;
     if (typeof content !== "string") {
-      throw new Error("Judge returned no message content");
+      throw new NonRetryableError("Judge returned no message content");
     }
     return parseJson(content);
   });

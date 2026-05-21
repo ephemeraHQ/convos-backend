@@ -14,10 +14,25 @@
  * model.
  */
 
+/** A definite, terminal failure (e.g. a model quality / parse error). Never
+ *  retried, regardless of message content — so embedded model output can't
+ *  accidentally trigger a retry. */
+export class NonRetryableError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "NonRetryableError";
+  }
+}
+
+// Status codes are anchored to our known error-message prefixes ("OpenRouter API
+// error 429", "Judge HTTP 503: …") so a stray "503"/"429" inside *model output*
+// embedded in an error message can't match. Network tokens are specific enough
+// to be safe on their own.
 const RETRYABLE =
-  /\b(429|408|425|500|502|503|504)\b|rate[ -]?limit|too many requests|overloaded|fetch failed|terminated|ETIMEDOUT|ECONNRESET|ENOTFOUND|EAI_AGAIN/i;
+  /(?:OpenRouter API error|Judge HTTP)\s*(?:429|408|425|5\d\d)\b|Connection error|fetch failed|terminated|ETIMEDOUT|ECONNRESET|ENOTFOUND|EAI_AGAIN/i;
 
 export function isRetryableError(err: unknown): boolean {
+  if (err instanceof NonRetryableError) return false;
   return RETRYABLE.test(err instanceof Error ? err.message : String(err));
 }
 
