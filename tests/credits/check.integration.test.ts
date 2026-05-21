@@ -7,7 +7,14 @@ import {
   describe,
   expect,
   test,
+  vi,
 } from "vitest";
+
+vi.mock("firebase-admin/app");
+vi.mock("firebase-admin/app-check");
+vi.mock("firebase-admin/messaging");
+vi.mock("jsonwebtoken");
+
 import { __setAgentAssetsApiKeyOverrideForTests } from "@/middleware/agentAuth";
 import {
   buildCreditsApp,

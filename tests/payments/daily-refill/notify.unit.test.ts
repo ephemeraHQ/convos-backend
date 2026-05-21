@@ -4,6 +4,7 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 vi.mock("firebase-admin/app");
 vi.mock("firebase-admin/app-check");
 vi.mock("firebase-admin/messaging");
+vi.mock("jsonwebtoken");
 import { fanOutCreditsRefilled } from "@/payments/daily-refill/notify";
 import { prisma } from "@/utils/prisma";
 

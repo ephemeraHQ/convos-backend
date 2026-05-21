@@ -6,7 +6,14 @@ import {
   describe,
   expect,
   test,
+  vi,
 } from "vitest";
+
+vi.mock("firebase-admin/app");
+vi.mock("firebase-admin/app-check");
+vi.mock("firebase-admin/messaging");
+vi.mock("jsonwebtoken");
+
 import { __setCronApiKeyOverrideForTests } from "@/api/v2/credits/middleware/cron-api-key";
 import { prisma } from "@/utils/prisma";
 import { buildCreditsApp, cleanupAccounts, seedAccount } from "./helpers";

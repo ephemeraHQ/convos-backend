@@ -10,8 +10,14 @@ import {
   describe,
   expect,
   test,
+  vi,
 } from "vitest";
-import jsonwebtoken from "jsonwebtoken";
+
+vi.mock("firebase-admin/app");
+vi.mock("firebase-admin/app-check");
+vi.mock("firebase-admin/messaging");
+
+import { SignJWT, importPKCS8 } from "jose";
 import {
   buildVerifierConfig,
   getVerifier,
@@ -64,8 +70,12 @@ beforeAll(() => {
   signingPrivateKey = privateKey as unknown as string;
 });
 
-const signPayload = (payload: object): string =>
-  jsonwebtoken.sign(payload, signingPrivateKey, { algorithm: "ES256" });
+const signPayload = async (payload: object): Promise<string> => {
+  const privateKey = await importPKCS8(signingPrivateKey, "ES256");
+  return new SignJWT(payload as Record<string, unknown>)
+    .setProtectedHeader({ alg: "ES256" })
+    .sign(privateKey);
+};
 
 const expectRejects = async (fn: () => Promise<unknown>) => {
   let threw = false;
@@ -240,7 +250,7 @@ describe("verifyAndDecodeNotification (LOCAL_TESTING fixture)", () => {
         status: 1,
       },
     };
-    const signed = signPayload(payload);
+    const signed = await signPayload(payload);
 
     const decoded = await verifyAndDecodeNotification(signed);
 
@@ -253,7 +263,7 @@ describe("verifyAndDecodeNotification (LOCAL_TESTING fixture)", () => {
   });
 
   test("decodes a DID_RENEW notification", async () => {
-    const signed = signPayload({
+    const signed = await signPayload({
       notificationType: "DID_RENEW",
       notificationUUID: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
       version: "2.0",
@@ -276,7 +286,7 @@ describe("verifyAndDecodeNotification (LOCAL_TESTING fixture)", () => {
   });
 
   test("rejects a notification with mismatched bundleId", async () => {
-    const signed = signPayload({
+    const signed = await signPayload({
       notificationType: "SUBSCRIBED",
       notificationUUID: "33333333-4444-5555-6666-777777777777",
       version: "2.0",
@@ -294,7 +304,7 @@ describe("verifyAndDecodeNotification (LOCAL_TESTING fixture)", () => {
   });
 
   test("rejects a notification from a different environment than the verifier", async () => {
-    const signed = signPayload({
+    const signed = await signPayload({
       notificationType: "SUBSCRIBED",
       notificationUUID: "44444444-5555-6666-7777-888888888888",
       version: "2.0",
@@ -316,7 +326,7 @@ describe("verifyAndDecodeNotification (LOCAL_TESTING fixture)", () => {
   });
 
   test("rejects a JWT with the wrong shape", async () => {
-    const signed = signPayload({ hello: "world" });
+    const signed = await signPayload({ hello: "world" });
     await expectRejects(() => verifyAndDecodeNotification(signed));
   });
 });
@@ -334,7 +344,7 @@ describe("verifyAndDecodeTransaction (LOCAL_TESTING fixture)", () => {
   test("decodes a transaction payload with appAccountToken", async () => {
     const appAccountToken = "12345678-1234-1234-1234-123456789012";
     const originalTransactionId = "2000000123456789";
-    const signed = signPayload({
+    const signed = await signPayload({
       transactionId: "2000000123456790",
       originalTransactionId,
       bundleId: TEST_BUNDLE_ID,

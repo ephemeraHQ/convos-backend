@@ -1,6 +1,15 @@
 import { describe, expect, vi, test } from "vitest";
 import type { ApnsDevice } from "@/api/v2/notifications/apns-push.service";
 
+// jsonwebtoken@9 uses buffer-equal-constant-time which calls SlowBuffer —
+// removed in Node 22+. Stub sign() so the module never loads.
+vi.mock("jsonwebtoken", () => ({
+  default: {
+    sign: (_payload: unknown, _key: unknown, _opts: unknown) =>
+      "mock-apns-jwt-token",
+  },
+}));
+
 type EventListener = (...args: unknown[]) => void;
 
 class FakeClient {

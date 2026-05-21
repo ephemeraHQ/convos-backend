@@ -9,7 +9,7 @@ vi.mock("firebase-admin/app");
 vi.mock("firebase-admin/app-check");
 vi.mock("firebase-admin/messaging");
 import express, { json } from "express";
-import jsonwebtoken from "jsonwebtoken";
+import { SignJWT, importPKCS8 } from "jose";
 import request from "supertest";
 import { accountsRouter } from "@/api/v2/accounts/accounts.router";
 import { authMiddleware } from "@/middleware/auth";
@@ -94,7 +94,7 @@ type VerifyBody = {
   };
 };
 
-const signTransaction = (overrides: Record<string, unknown>) => {
+const signTransaction = async (overrides: Record<string, unknown>) => {
   const payload = {
     transactionId: "2000000000000001",
     originalTransactionId: "2000000000000001",
@@ -110,7 +110,10 @@ const signTransaction = (overrides: Record<string, unknown>) => {
     environment: "LocalTesting",
     ...overrides,
   };
-  return jsonwebtoken.sign(payload, signingPrivateKey, { algorithm: "ES256" });
+  const privateKey = await importPKCS8(signingPrivateKey, "ES256");
+  return new SignJWT(payload as Record<string, unknown>)
+    .setProtectedHeader({ alg: "ES256" })
+    .sign(privateKey);
 };
 
 describe("GET /v2/accounts/me/subscription", () => {
@@ -140,7 +143,7 @@ describe("GET /v2/accounts/me/subscription", () => {
       .post("/v2/accounts/me/subscription/verify")
       .set("X-Convos-AuthToken", token)
       .send({
-        jwsRepresentation: signTransaction({
+        jwsRepresentation: await signTransaction({
           appAccountToken: "11111111-2222-3333-4444-555555555555",
         }),
       });
@@ -168,7 +171,7 @@ describe("POST /v2/accounts/me/subscription/verify", () => {
     const res = await request(makeApp())
       .post("/v2/accounts/me/subscription/verify")
       .set("X-Convos-AuthToken", token)
-      .send({ jwsRepresentation: signTransaction({}) });
+      .send({ jwsRepresentation: await signTransaction({}) });
     expect(res.status).toBe(403);
   });
 
@@ -191,7 +194,7 @@ describe("POST /v2/accounts/me/subscription/verify", () => {
       .post("/v2/accounts/me/subscription/verify")
       .set("X-Convos-AuthToken", token)
       .send({
-        jwsRepresentation: signTransaction({}),
+        jwsRepresentation: await signTransaction({}),
         appAccountToken: "11111111-2222-3333-4444-555555555555",
       });
     expect(res.status).toBe(400);
@@ -217,7 +220,7 @@ describe("POST /v2/accounts/me/subscription/verify", () => {
       .post("/v2/accounts/me/subscription/verify")
       .set("X-Convos-AuthToken", token)
       .send({
-        jwsRepresentation: signTransaction({ appAccountToken: undefined }),
+        jwsRepresentation: await signTransaction({ appAccountToken: undefined }),
       });
     expect(res.status).toBe(400);
     expect((res.body as ErrorBody).error).toMatch(/appAccountToken/);
@@ -231,7 +234,7 @@ describe("POST /v2/accounts/me/subscription/verify", () => {
       .post("/v2/accounts/me/subscription/verify")
       .set("X-Convos-AuthToken", token)
       .send({
-        jwsRepresentation: signTransaction({ productId: "app.bogus.sku" }),
+        jwsRepresentation: await signTransaction({ productId: "app.bogus.sku" }),
       });
     expect(res.status).toBe(400);
     expect((res.body as ErrorBody).error).toMatch(/Unrecognized productId/);
@@ -245,7 +248,7 @@ describe("POST /v2/accounts/me/subscription/verify", () => {
       .post("/v2/accounts/me/subscription/verify")
       .set("X-Convos-AuthToken", token)
       .send({
-        jwsRepresentation: signTransaction({
+        jwsRepresentation: await signTransaction({
           productId: "app.convos.subs.pro.annual",
           appAccountToken: "11111111-2222-3333-4444-555555555555",
         }),
@@ -280,7 +283,7 @@ describe("POST /v2/accounts/me/subscription/verify", () => {
       .post("/v2/accounts/me/subscription/verify")
       .set("X-Convos-AuthToken", token)
       .send({
-        jwsRepresentation: signTransaction({
+        jwsRepresentation: await signTransaction({
           appAccountToken: "11111111-2222-3333-4444-555555555555",
           offerType: 1, // INTRODUCTORY_OFFER
         }),
@@ -299,7 +302,7 @@ describe("POST /v2/accounts/me/subscription/verify", () => {
       .post("/v2/accounts/me/subscription/verify")
       .set("X-Convos-AuthToken", token)
       .send({
-        jwsRepresentation: signTransaction({
+        jwsRepresentation: await signTransaction({
           appAccountToken: "11111111-2222-3333-4444-555555555555",
           expiresDate: Date.now() - 60_000,
           offerType: 1, // INTRODUCTORY_OFFER would be trial if not expired
@@ -316,7 +319,7 @@ describe("POST /v2/accounts/me/subscription/verify", () => {
     const accountId = await newAccount();
     const token = await tokenFor(accountId);
     const body = {
-      jwsRepresentation: signTransaction({
+      jwsRepresentation: await signTransaction({
         appAccountToken: "11111111-2222-3333-4444-555555555555",
       }),
     };
@@ -348,7 +351,7 @@ describe("POST /v2/accounts/me/subscription/verify", () => {
       .post("/v2/accounts/me/subscription/verify")
       .set("X-Convos-AuthToken", tokenA)
       .send({
-        jwsRepresentation: signTransaction({
+        jwsRepresentation: await signTransaction({
           appAccountToken: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
         }),
       });
@@ -361,7 +364,7 @@ describe("POST /v2/accounts/me/subscription/verify", () => {
       .post("/v2/accounts/me/subscription/verify")
       .set("X-Convos-AuthToken", tokenB)
       .send({
-        jwsRepresentation: signTransaction({
+        jwsRepresentation: await signTransaction({
           appAccountToken: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
           transactionId: "2000000000000002",
         }),

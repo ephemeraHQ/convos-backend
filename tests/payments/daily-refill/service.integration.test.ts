@@ -1,6 +1,12 @@
 import { randomUUID } from "node:crypto";
 import { LedgerReason } from "@prisma/client";
-import { afterEach, describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
+
+vi.mock("firebase-admin/app");
+vi.mock("firebase-admin/app-check");
+vi.mock("firebase-admin/messaging");
+vi.mock("jsonwebtoken");
+
 import { getBalance } from "@/payments";
 import { runDailyRefill } from "@/payments/daily-refill/service";
 import { ymdUtc } from "@/payments/daily-refill/utc";

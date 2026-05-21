@@ -3,9 +3,14 @@ import {
   Environment,
   SignedDataVerifier,
 } from "@apple/app-store-server-library";
-import { afterEach, beforeAll, describe, expect, test } from "vitest";
+import { afterEach, beforeAll, describe, expect, test, vi } from "vitest";
+
+vi.mock("firebase-admin/app");
+vi.mock("firebase-admin/app-check");
+vi.mock("firebase-admin/messaging");
+
 import express, { json } from "express";
-import jsonwebtoken from "jsonwebtoken";
+import { SignJWT, importPKCS8 } from "jose";
 import request from "supertest";
 import { appleWebhookRouter } from "@/api/v2/subscriptions/apple-webhook.router";
 import { pinoMiddleware } from "@/middleware/pino";
@@ -78,8 +83,12 @@ afterEach(async () => {
   resetVerifierForTests();
 });
 
-const sign = (payload: object) =>
-  jsonwebtoken.sign(payload, signingPrivateKey, { algorithm: "ES256" });
+const sign = async (payload: object) => {
+  const privateKey = await importPKCS8(signingPrivateKey, "ES256");
+  return new SignJWT(payload as Record<string, unknown>)
+    .setProtectedHeader({ alg: "ES256" })
+    .sign(privateKey);
+};
 
 const signTransaction = (overrides: Record<string, unknown>) =>
   sign({
@@ -97,7 +106,7 @@ const signTransaction = (overrides: Record<string, unknown>) =>
     ...overrides,
   });
 
-const signNotification = (args: {
+const signNotification = async (args: {
   notificationType: string;
   subtype?: string;
   signedTransactionInfo: string;
@@ -166,7 +175,7 @@ describe("POST /v2/webhooks/apple/ssn", () => {
   test("acks 200 with skipped=no_transaction for notifications without a transaction", async () => {
     installLocalTestingVerifier();
     // Build a notification without data.signedTransactionInfo.
-    const signedPayload = sign({
+    const signedPayload = await sign({
       notificationType: "TEST",
       notificationUUID: "11111111-2222-3333-4444-555555555555",
       version: "2.0",
@@ -190,14 +199,14 @@ describe("POST /v2/webhooks/apple/ssn", () => {
     const otid = "1000000000000010";
     const { subscription } = await seedSubscription(otid);
 
-    const transactionJws = signTransaction({
+    const transactionJws = await signTransaction({
       originalTransactionId: otid,
       transactionId: "3000000000000010",
       productId: "app.convos.subs.builder.monthly",
       purchaseDate: new Date("2026-06-01T00:00:00.000Z").getTime(),
       expiresDate: new Date("2026-07-01T00:00:00.000Z").getTime(),
     });
-    const signedPayload = signNotification({
+    const signedPayload = await signNotification({
       notificationType: "DID_RENEW",
       signedTransactionInfo: transactionJws,
     });
@@ -229,12 +238,12 @@ describe("POST /v2/webhooks/apple/ssn", () => {
     const otid = "1000000000000020";
     const { subscription } = await seedSubscription(otid);
 
-    const transactionJws = signTransaction({
+    const transactionJws = await signTransaction({
       originalTransactionId: otid,
       transactionId: "3000000000000020",
       expiresDate: new Date("2026-06-15T00:00:00.000Z").getTime(),
     });
-    const signedPayload = signNotification({
+    const signedPayload = await signNotification({
       notificationType: "DID_FAIL_TO_RENEW",
       subtype: "GRACE_PERIOD",
       signedTransactionInfo: transactionJws,
@@ -260,10 +269,10 @@ describe("POST /v2/webhooks/apple/ssn", () => {
     const otid = "1000000000000030";
     const { subscription } = await seedSubscription(otid);
 
-    const signedPayload = signNotification({
+    const signedPayload = await signNotification({
       notificationType: "DID_FAIL_TO_RENEW",
       subtype: "BILLING_RETRY",
-      signedTransactionInfo: signTransaction({
+      signedTransactionInfo: await signTransaction({
         originalTransactionId: otid,
         transactionId: "3000000000000030",
       }),
@@ -286,9 +295,9 @@ describe("POST /v2/webhooks/apple/ssn", () => {
     const otid = "1000000000000040";
     const { subscription } = await seedSubscription(otid);
 
-    const signedPayload = signNotification({
+    const signedPayload = await signNotification({
       notificationType: "EXPIRED",
-      signedTransactionInfo: signTransaction({
+      signedTransactionInfo: await signTransaction({
         originalTransactionId: otid,
         transactionId: "3000000000000040",
       }),
@@ -312,9 +321,9 @@ describe("POST /v2/webhooks/apple/ssn", () => {
     const otid = "1000000000000050";
     const { subscription } = await seedSubscription(otid);
 
-    const signedPayload = signNotification({
+    const signedPayload = await signNotification({
       notificationType: "REVOKE",
-      signedTransactionInfo: signTransaction({
+      signedTransactionInfo: await signTransaction({
         originalTransactionId: otid,
         transactionId: "3000000000000050",
       }),
@@ -339,10 +348,10 @@ describe("POST /v2/webhooks/apple/ssn", () => {
     const otid = "1000000000000060";
     const { subscription } = await seedSubscription(otid);
 
-    const signedPayload = signNotification({
+    const signedPayload = await signNotification({
       notificationType: "DID_CHANGE_RENEWAL_STATUS",
       subtype: "AUTO_RENEW_DISABLED",
-      signedTransactionInfo: signTransaction({
+      signedTransactionInfo: await signTransaction({
         originalTransactionId: otid,
         transactionId: "3000000000000060",
       }),
@@ -366,10 +375,10 @@ describe("POST /v2/webhooks/apple/ssn", () => {
     const otid = "1000000000000070";
     const { subscription } = await seedSubscription(otid);
 
-    const signedPayload = signNotification({
+    const signedPayload = await signNotification({
       notificationType: "DID_CHANGE_RENEWAL_PREF",
       subtype: "UPGRADE",
-      signedTransactionInfo: signTransaction({
+      signedTransactionInfo: await signTransaction({
         originalTransactionId: otid,
         transactionId: "3000000000000070",
         productId: "app.convos.subs.pro.monthly",
@@ -394,9 +403,9 @@ describe("POST /v2/webhooks/apple/ssn", () => {
     const otid = "1000000000000075";
     const { subscription: original } = await seedSubscription(otid);
 
-    const signedPayload = signNotification({
+    const signedPayload = await signNotification({
       notificationType: "DID_RENEW",
-      signedTransactionInfo: signTransaction({
+      signedTransactionInfo: await signTransaction({
         originalTransactionId: otid,
         transactionId: "3000000000000075",
         productId: "app.convos.subs.unknown.future",
@@ -428,10 +437,10 @@ describe("POST /v2/webhooks/apple/ssn", () => {
     const otid = "1000000000000071";
     const { subscription: original } = await seedSubscription(otid);
 
-    const signedPayload = signNotification({
+    const signedPayload = await signNotification({
       notificationType: "DID_CHANGE_RENEWAL_PREF",
       subtype: "UPGRADE",
-      signedTransactionInfo: signTransaction({
+      signedTransactionInfo: await signTransaction({
         originalTransactionId: otid,
         transactionId: "3000000000000071",
         productId: undefined,
@@ -456,9 +465,9 @@ describe("POST /v2/webhooks/apple/ssn", () => {
 
   test("unknown subscription: acks 200, no row created", async () => {
     installLocalTestingVerifier();
-    const signedPayload = signNotification({
+    const signedPayload = await signNotification({
       notificationType: "DID_RENEW",
-      signedTransactionInfo: signTransaction({
+      signedTransactionInfo: await signTransaction({
         originalTransactionId: "9999999999999999",
         transactionId: "3000000000000080",
       }),
@@ -481,9 +490,9 @@ describe("POST /v2/webhooks/apple/ssn", () => {
     const otid = "1000000000000090";
     const { subscription } = await seedSubscription(otid);
 
-    const renewPayload = signNotification({
+    const renewPayload = await signNotification({
       notificationType: "DID_RENEW",
-      signedTransactionInfo: signTransaction({
+      signedTransactionInfo: await signTransaction({
         originalTransactionId: otid,
         transactionId: "3000000000000090",
       }),
@@ -514,9 +523,9 @@ describe("POST /v2/webhooks/apple/ssn", () => {
     const otid = "1000000000000100";
     await seedSubscription(otid);
 
-    const signedPayload = signNotification({
+    const signedPayload = await signNotification({
       notificationType: "TEST",
-      signedTransactionInfo: signTransaction({
+      signedTransactionInfo: await signTransaction({
         originalTransactionId: otid,
         transactionId: "3000000000000100",
       }),
