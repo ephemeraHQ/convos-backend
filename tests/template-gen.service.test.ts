@@ -1038,6 +1038,25 @@ describe("templateGen service — OpenRouter integration", () => {
     expect(userContent[1].type).toBe("image_url");
   });
 
+  test("emoji-only prefill pins the emoji without a dangling name requirement", async () => {
+    const mod = await import("@/api/v2/agent-templates/services/templateGen");
+    generateTemplate = mod.generateTemplate;
+
+    await generateTemplate({ text: "a trip planner" }, undefined, {
+      emoji: "🧭",
+    });
+
+    const req = getLastOpenRouterRequest();
+    const userMsg = req.body.messages[1].content as string;
+    expect(userMsg).toContain("REQUIRED IDENTITY");
+    expect(userMsg).toContain('emoji: "🧭"');
+    // No name was pinned — the directive must not reference one.
+    expect(userMsg).not.toContain('name: "');
+    expect(userMsg).not.toContain(
+      '"agentName" you return MUST equal this name',
+    );
+  });
+
   test("description-only prefill adds no identity directive", async () => {
     const mod = await import("@/api/v2/agent-templates/services/templateGen");
     generateTemplate = mod.generateTemplate;
