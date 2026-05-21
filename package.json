@@ -22,7 +22,7 @@
     "start": "node --enable-source-maps --import @opentelemetry/instrumentation/hook.mjs --import ./dist/instrumentation.js dist/index.js",
     "test": "vitest run",
     "test:local": "pnpm prisma migrate reset --force && vitest run",
-    "test:notifications-client": "TEST_NOTIFICATION_DELIVERY_URL=http://host.docker.internal:8081 dev/restart-notification && vitest run tests/notifications.client.test.ts",
+    "test:notifications-client": "TEST_NOTIFICATION_DELIVERY_URL=http://host.docker.internal:8081 XMTP_NOTIFICATION_SECRET=test-notification-secret dev/restart-notification && vitest run tests/notifications.client.test.ts",
     "test:push": "tsx scripts/test-push-notification.ts",
     "test:push-simple": "tsx scripts/simple-push-test.ts",
     "test:watch": "vitest",
