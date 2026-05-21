@@ -475,6 +475,11 @@ async function _runPipeline(
         ? "pdfBase64"
         : "imageBase64";
 
+  // Caller-pinned prefill is read up front so it can be fed INTO the generator
+  // (so the produced prompt + welcome use the pinned name), not just overlaid
+  // onto the metadata at persist below.
+  const prefill = generation.prefill as TemplatePrefill | null;
+
   // Actor-attribution fields shared by every capture site below, plus the
   // PostHog LLM Analytics trace id so the product event joins to the
   // `$ai_generation` spans the OpenRouter calls emit. Built once: the trace's
@@ -499,7 +504,12 @@ async function _runPipeline(
   const startTime = performance.now();
   let templateResult: Awaited<ReturnType<typeof callGenerateTemplate>>;
   try {
-    templateResult = await callGenerateTemplate(coalesced, signal, trace);
+    templateResult = await callGenerateTemplate(
+      coalesced,
+      signal,
+      prefill,
+      trace,
+    );
   } catch (err) {
     // Meter error path
     capturePostHog({
@@ -527,13 +537,10 @@ async function _runPipeline(
       `Invalid initial publishStatus: "archived" — must be draft, unlisted, or published`,
     );
   }
-  // Caller-pinned prefill: when the caller pinned any allowlisted
-  // AgentTemplate field at submit time, overlay it onto the LLM output
-  // so the persisted template uses the caller's value verbatim. Lets
-  // callers that have already chosen part of the template (e.g. via an
-  // in-chat identity pre-pass) commit those values without depending on
-  // the generator to echo them back.
-  const prefill = generation.prefill as TemplatePrefill | null;
+  // Caller-pinned prefill: overlay the allowlisted AgentTemplate fields onto
+  // the LLM output so the persisted metadata matches the caller's pinned values
+  // verbatim. This is the exact-match floor; the same `prefill` was also fed
+  // into the generator above so the prompt body agrees with the metadata.
   const templateToPersist = applyPrefill(templateResult.template, prefill);
   let persisted: { id: string; slug: string };
   try {

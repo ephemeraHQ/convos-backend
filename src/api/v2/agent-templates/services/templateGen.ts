@@ -230,6 +230,44 @@ export interface GenerateTemplateInput {
   filename?: string;
 }
 
+/** Caller-pinned identity fields (mirror of the generation row's `prefill`
+ *  column; see `applyPrefill` in generation-executor). Fed INTO the generator
+ *  so the produced agentName, prompt body, and WELCOME MESSAGE use the pinned
+ *  name rather than a model-invented one that the persist-stage metadata
+ *  overlay would then silently contradict. */
+export interface GenerationPrefill {
+  agentName?: string;
+  emoji?: string;
+  description?: string;
+}
+
+/** Build the user-message addendum that pins the assistant's identity. Returns
+ *  "" when nothing identity-shaped was pinned — `description` alone is not an
+ *  identity the prompt body must echo (it's overlaid as metadata at persist). */
+function buildIdentityDirective(prefill?: GenerationPrefill | null): string {
+  if (!prefill) return "";
+  const name = prefill.agentName?.trim();
+  const emoji = prefill.emoji?.trim();
+  const parts: string[] = [];
+  if (name) parts.push(`name: "${name}"`);
+  if (emoji) parts.push(`emoji: "${emoji}"`);
+  if (parts.length === 0) return "";
+  // The closing clause depends on whether a name was pinned: with a name, the
+  // whole persona must read as it; emoji-only pins just the glyph and leaves
+  // the model free to name the assistant (so "this name" would be a dangling
+  // reference).
+  const closing = name
+    ? `The "agentName" you return MUST equal this name, and the prompt body, every ` +
+      `self-reference, and the WELCOME MESSAGE must read as this named assistant.`
+    : `The "emoji" you return MUST equal this emoji; you may choose a name and ` +
+      `persona that fit it.`;
+  return (
+    `\n\nREQUIRED IDENTITY — the user has already pinned part of this assistant's identity. ` +
+    `Use these exact values; do NOT substitute different ones: ${parts.join(", ")}. ` +
+    closing
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Brevity rail helper — exported for testing
 // ---------------------------------------------------------------------------
@@ -1031,6 +1069,7 @@ async function extractUrl(url: string, trace?: TraceContext): Promise<string> {
 export async function generateTemplate(
   input: GenerateTemplateInput | string,
   externalSignal?: AbortSignal,
+  prefill?: GenerationPrefill | null,
   trace?: TraceContext,
 ): Promise<GenerationResult> {
   // Backward compat: string input = text
@@ -1154,6 +1193,24 @@ export async function generateTemplate(
     }
 
     userContent = `Create an assistant based on the following content:\n\n---\n${extracted}\n---`;
+  }
+
+  // Caller-pinned identity: fold the already-chosen name/emoji into the user
+  // message so the model writes agentName, the prompt body, all self-references,
+  // and the WELCOME MESSAGE as this named assistant. Without this the model
+  // invents its own identity and the persist-stage applyPrefill overlay leaves
+  // the card's name at odds with the prompt the assistant actually runs on.
+  const identityDirective = buildIdentityDirective(prefill);
+  if (identityDirective) {
+    if (typeof userContent === "string") {
+      userContent = `${userContent}${identityDirective}`;
+    } else if (
+      Array.isArray(userContent) &&
+      userContent[0]?.type === "text" &&
+      typeof userContent[0].text === "string"
+    ) {
+      userContent[0].text = `${userContent[0].text}${identityDirective}`;
+    }
   }
 
   const reqBody: any = {
@@ -1353,13 +1410,23 @@ export function parseTemplateResponse(
 // ---------------------------------------------------------------------------
 
 let _generateTemplateOverride:
-  | ((input: GenerateTemplateInput | string) => Promise<GenerationResult>)
+  | ((
+      input: GenerateTemplateInput | string,
+      signal?: AbortSignal,
+      prefill?: GenerationPrefill | null,
+      trace?: TraceContext,
+    ) => Promise<GenerationResult>)
   | null = null;
 
 /** Install a test override for `generateTemplate`. Pass `null` to restore. */
 export function __resetGenerateTemplateForTests(
   override:
-    | ((input: GenerateTemplateInput | string) => Promise<GenerationResult>)
+    | ((
+        input: GenerateTemplateInput | string,
+        signal?: AbortSignal,
+        prefill?: GenerationPrefill | null,
+        trace?: TraceContext,
+      ) => Promise<GenerationResult>)
     | null,
 ) {
   _generateTemplateOverride = override;
@@ -1376,12 +1443,13 @@ export function __resetGenerateTemplateForTests(
 export async function callGenerateTemplate(
   input: GenerateTemplateInput | string,
   signal?: AbortSignal,
+  prefill?: GenerationPrefill | null,
   trace?: TraceContext,
 ): Promise<GenerationResult> {
   if (_generateTemplateOverride) {
-    return _generateTemplateOverride(input);
+    return _generateTemplateOverride(input, signal, prefill, trace);
   }
-  return generateTemplate(input, signal, trace);
+  return generateTemplate(input, signal, prefill, trace);
 }
 
 export { BREVITY_RAIL };

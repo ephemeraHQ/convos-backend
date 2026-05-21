@@ -997,6 +997,91 @@ describe("templateGen service — OpenRouter integration", () => {
   });
 
   // -----------------------------------------------------------------------
+  // Caller-pinned identity directive (prefill → generation prompt)
+  // -----------------------------------------------------------------------
+  test("prefill name + emoji append a REQUIRED IDENTITY directive to the user message", async () => {
+    const mod = await import("@/api/v2/agent-templates/services/templateGen");
+    generateTemplate = mod.generateTemplate;
+
+    await generateTemplate(
+      { text: "a coordinator for our wake surf crew" },
+      undefined,
+      { agentName: "Wave Boss", emoji: "🏄" },
+    );
+
+    const req = getLastOpenRouterRequest();
+    const userMsg = req.body.messages[1].content as string;
+    expect(userMsg).toContain("REQUIRED IDENTITY");
+    expect(userMsg).toContain('name: "Wave Boss"');
+    expect(userMsg).toContain('emoji: "🏄"');
+    // The original idea is still present.
+    expect(userMsg).toContain("wake surf crew");
+  });
+
+  test("prefill directive rides on the text element of multimodal (image) content", async () => {
+    const mod = await import("@/api/v2/agent-templates/services/templateGen");
+    generateTemplate = mod.generateTemplate;
+
+    await generateTemplate(
+      { imageBase64: "iVBORw0KGgo=", mimeType: "image/png", text: "" },
+      undefined,
+      { agentName: "Pixel Pal", emoji: "📸" },
+    );
+
+    const req = getLastOpenRouterRequest();
+    const userContent = req.body.messages[1].content;
+    expect(Array.isArray(userContent)).toBe(true);
+    expect(userContent[0].type).toBe("text");
+    expect(userContent[0].text).toContain("REQUIRED IDENTITY");
+    expect(userContent[0].text).toContain('name: "Pixel Pal"');
+    // The image part is untouched.
+    expect(userContent[1].type).toBe("image_url");
+  });
+
+  test("emoji-only prefill pins the emoji without a dangling name requirement", async () => {
+    const mod = await import("@/api/v2/agent-templates/services/templateGen");
+    generateTemplate = mod.generateTemplate;
+
+    await generateTemplate({ text: "a trip planner" }, undefined, {
+      emoji: "🧭",
+    });
+
+    const req = getLastOpenRouterRequest();
+    const userMsg = req.body.messages[1].content as string;
+    expect(userMsg).toContain("REQUIRED IDENTITY");
+    expect(userMsg).toContain('emoji: "🧭"');
+    // No name was pinned — the directive must not reference one.
+    expect(userMsg).not.toContain('name: "');
+    expect(userMsg).not.toContain(
+      '"agentName" you return MUST equal this name',
+    );
+  });
+
+  test("description-only prefill adds no identity directive", async () => {
+    const mod = await import("@/api/v2/agent-templates/services/templateGen");
+    generateTemplate = mod.generateTemplate;
+
+    await generateTemplate({ text: "a helper for trip planning" }, undefined, {
+      description: "Plans group trips.",
+    });
+
+    const req = getLastOpenRouterRequest();
+    const userMsg = req.body.messages[1].content as string;
+    expect(userMsg).not.toContain("REQUIRED IDENTITY");
+  });
+
+  test("no prefill adds no identity directive", async () => {
+    const mod = await import("@/api/v2/agent-templates/services/templateGen");
+    generateTemplate = mod.generateTemplate;
+
+    await generateTemplate({ text: "a helper for trip planning" });
+
+    const req = getLastOpenRouterRequest();
+    const userMsg = req.body.messages[1].content as string;
+    expect(userMsg).not.toContain("REQUIRED IDENTITY");
+  });
+
+  // -----------------------------------------------------------------------
   // Missing BUILDER_OPENROUTER_API_KEY throws
   // -----------------------------------------------------------------------
   test("missing BUILDER_OPENROUTER_API_KEY throws error", async () => {
