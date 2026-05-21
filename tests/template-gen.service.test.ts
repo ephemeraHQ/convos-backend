@@ -953,9 +953,10 @@ describe("templateGen service — OpenRouter integration", () => {
   });
 
   // -----------------------------------------------------------------------
-  // SYSTEM_PROMPT is forwarded verbatim as the system message
+  // SYSTEM_PROMPT is forwarded verbatim as the system message, with a
+  // per-block prompt-caching breakpoint.
   // -----------------------------------------------------------------------
-  test("system prompt forwarded verbatim to OpenRouter", async () => {
+  test("system prompt forwarded verbatim with cache breakpoint", async () => {
     const mod = await import("@/api/v2/agent-templates/services/templateGen");
     generateTemplate = mod.generateTemplate;
 
@@ -986,7 +987,13 @@ describe("templateGen service — OpenRouter integration", () => {
 
     const req = getLastOpenRouterRequest();
     expect(req.body.messages[0].role).toBe("system");
-    expect(req.body.messages[0].content).toBe(SYSTEM_PROMPT);
+    // System content is now a content-part array carrying the verbatim prompt
+    // plus a per-block ephemeral cache breakpoint (works on Bedrock; preserves
+    // provider routing, unlike top-level cache_control).
+    const systemPart = req.body.messages[0].content[0];
+    expect(systemPart.type).toBe("text");
+    expect(systemPart.text).toBe(SYSTEM_PROMPT);
+    expect(systemPart.cache_control).toEqual({ type: "ephemeral", ttl: "1h" });
   });
 
   // -----------------------------------------------------------------------
