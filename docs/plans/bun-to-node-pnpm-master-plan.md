@@ -1,4 +1,4 @@
-# Bun → Node/Yarn Master Plan
+# Bun → Node/pnpm Master Plan
 
 > **Status:** Proposed  
 > **Base:** `otr-dev`  
@@ -6,18 +6,20 @@
 
 ## Decision
 
-This is **not** `yarn` vs `node`:
+This is **not** `pnpm` vs `node`:
 
 - **Node.js** = runtime.
-- **Yarn** = package manager.
+- **pnpm** = package manager.
 
-Default target: **Node.js 22 LTS + Yarn 4 via Corepack**.
+Default target: **Node.js 22 LTS + pnpm 10 via Corepack**.
+
+Why pnpm over Yarn here: fast, strict, widely used, boring in CI/Docker, and no Yarn Berry/PnP footguns. Use a committed `pnpm-lock.yaml`; do not use zero-install.
 
 Guardrails:
 
-- Use Yarn with `node_modules` linker first. No PnP / zero-install during the migration.
 - Avoid dependency upgrades unless they unblock the migration.
 - Keep API/runtime behavior unchanged.
+- Fix undeclared dependency issues surfaced by pnpm instead of relaxing pnpm.
 
 ## Current Bun surface
 
@@ -34,25 +36,25 @@ No runtime `src/` Bun API dependency was found in the initial scan; the largest 
 
 | Slice | Change | Gate |
 | --- | --- | --- |
-| 1. Toolchain | Pin Node 22, add `packageManager: yarn@...`, add Yarn lock/config, install via Corepack. | `yarn install --immutable` |
-| 2. Runtime | Replace Bun TS execution with Node-compatible tooling: `tsx` for dev/scripts/evals; bundled JS for production. | `yarn dev`, `yarn build`, `yarn start` |
-| 3. Tests | Move `bun:test` to Vitest; port mocks/preload/setup. | `yarn test` |
-| 4. Infra/docs cleanup | Switch CI/Docker/entrypoint/docs from Bun to Node/Yarn; remove Bun pins/lock/config. | CI green + Docker image boots + `/healthcheck` |
+| 1. Toolchain | Pin Node 22, add `packageManager: pnpm@...`, add `pnpm-lock.yaml`, install via Corepack. | `pnpm install --frozen-lockfile` |
+| 2. Runtime | Replace Bun TS execution with Node-compatible tooling: `tsx` for dev/scripts/evals; bundled JS for production. | `pnpm dev`, `pnpm build`, `pnpm start` |
+| 3. Tests | Move `bun:test` to Vitest; port mocks/preload/setup. | `pnpm test` |
+| 4. Infra/docs cleanup | Switch CI/Docker/entrypoint/docs from Bun to Node/pnpm; remove Bun pins/lock/config. | CI green + Docker image boots + `/healthcheck` |
 
 These slices can be stacked or split into small PRs. Do not start slice 4 cleanup until slices 1–3 are green.
 
 ## Proposed implementation defaults
 
-- **Package manager:** Yarn 4, Corepack-managed, `yarn install --immutable` in CI.
+- **Package manager:** pnpm 10, Corepack-managed, `pnpm install --frozen-lockfile` in CI.
 - **Node version:** Node 22 LTS, pinned consistently in `.nvmrc`, `.node-version`, Docker, and GitHub Actions.
 - **Dev runtime:** `tsx watch src/index.ts`.
-- **One-off TS scripts/evals:** `tsx <script>.ts` through Yarn scripts.
-- **Production runtime:** build to `dist/` and run with `node`; keep native deps like `@xmtp/node-bindings` external.
+- **One-off TS scripts/evals:** `tsx <script>.ts` through package scripts.
+- **Production runtime:** bundle `src/index.ts` to `dist/` with a Node-targeted bundler, then run `node dist/index.js`; keep native deps like `@xmtp/node-bindings` external.
 - **Test runner:** Vitest, because it is the closest replacement for `bun:test` ergonomics and mocking.
 
 ## Definition of done
 
 - `bun` is not required locally, in CI, in Docker, or in production.
 - `bun.lock`, `bunfig.toml`, `.bun-version`, and Bun docs references are removed.
-- `yarn install --immutable && yarn check && yarn test` pass.
+- `pnpm install --frozen-lockfile && pnpm check && pnpm test` pass.
 - Docker build succeeds and the container serves `/healthcheck`.
