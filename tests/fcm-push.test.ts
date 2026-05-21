@@ -1,20 +1,22 @@
-import { describe, expect, mock, test } from "vitest";
+import { describe, expect, vi, test } from "vitest";
 import type { V2NotificationPayload } from "@/api/v2/notifications/types";
 
 // Re-register the real fcm-push.service module so that even when
 // notifications-payload-guard.test.ts has installed a stub mock for this module
 // (needed for its webhook handler tests), fcm-push.test.ts still exercises the
-// real FcmPushService implementation. The preload.ts firebase-admin/messaging mock
-// provides the firebase stub layer.
+// real FcmPushService implementation. The __mocks__/firebase-admin/ stubs provide
+// the firebase stub layer.
 //
-// Note: bun:test hoists all mock.module() calls before running any tests.
-// When multiple files mock the same path, the last registration in evaluation order
-// wins. This file's mock uses a dynamic import of the REAL module source to restore
-// real behaviour for this file's unit tests.
-const realModule = await import("@/api/v2/notifications/fcm-push.service");
-void mock.module("@/api/v2/notifications/fcm-push.service", () => realModule);
+// Note: Vitest's Vite plugin hoists vi.mock() calls to the top of the file before
+// any imports or top-level awaits. The async factory runs at hoist time via
+// vi.importActual, which safely loads the real module implementation.
+vi.mock("@/api/v2/notifications/fcm-push.service", async () => {
+  return await vi.importActual("@/api/v2/notifications/fcm-push.service");
+});
 
-const { createFcmService, FcmPushService } = realModule;
+const { createFcmService, FcmPushService } = await import(
+  "@/api/v2/notifications/fcm-push.service"
+);
 
 const mockNotification: V2NotificationPayload = {
   clientId: "test-client-123",

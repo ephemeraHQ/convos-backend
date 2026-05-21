@@ -5,7 +5,7 @@ import {
   beforeEach,
   describe,
   expect,
-  mock,
+  vi,
   test,
 } from "vitest";
 import express from "express";
@@ -32,10 +32,10 @@ interface MockCommand {
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-let mockS3Send = mock((_cmd: any) => Promise.resolve({}));
+let mockS3Send = vi.fn((_cmd: any) => Promise.resolve({}));
 
 // Mock S3 before handler module loads.
-void mock.module("@aws-sdk/client-s3", () => ({
+vi.mock("@aws-sdk/client-s3", () => ({
   S3Client: class {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     send(command: any) {
@@ -126,7 +126,7 @@ describe("POST /api/v2/assets/test/migrate-timestamps", () => {
   beforeEach(() => {
     process.env.LIFECYCLE_TEST_TOKEN =
       "test-secret-token-for-lifecycle-testing-minimum-32-chars";
-    mockS3Send = mock(() => Promise.reject(new Error("unmocked S3 call")));
+    mockS3Send = vi.fn(() => Promise.reject(new Error("unmocked S3 call")));
   });
 
   const post = (query = "", token?: string) =>
@@ -147,7 +147,7 @@ describe("POST /api/v2/assets/test/migrate-timestamps", () => {
   });
 
   test("defaults to dryRun=true and does not copy objects", async () => {
-    mockS3Send = mock((command: MockCommand) => {
+    mockS3Send = vi.fn((command: MockCommand) => {
       if (commandName(command) === "HeadBucketCommand") {
         return Promise.resolve({});
       }
@@ -207,7 +207,7 @@ describe("POST /api/v2/assets/test/migrate-timestamps", () => {
   });
 
   test("copies eligible objects with COPY metadata directive", async () => {
-    mockS3Send = mock((command: MockCommand) => {
+    mockS3Send = vi.fn((command: MockCommand) => {
       if (commandName(command) === "HeadBucketCommand") {
         return Promise.resolve({});
       }
@@ -285,7 +285,7 @@ describe("POST /api/v2/assets/test/migrate-timestamps", () => {
   });
 
   test("handles paginated listing and continues after individual copy failures", async () => {
-    mockS3Send = mock((command: MockCommand) => {
+    mockS3Send = vi.fn((command: MockCommand) => {
       if (commandName(command) === "HeadBucketCommand") {
         return Promise.resolve({});
       }
@@ -369,7 +369,7 @@ describe("POST /api/v2/assets/test/migrate-timestamps", () => {
   });
 
   test("returns nextContinuationToken when maxPages limit is reached", async () => {
-    mockS3Send = mock((command: MockCommand) => {
+    mockS3Send = vi.fn((command: MockCommand) => {
       if (commandName(command) === "HeadBucketCommand") {
         return Promise.resolve({});
       }
@@ -415,7 +415,7 @@ describe("POST /api/v2/assets/test/migrate-timestamps", () => {
   });
 
   test("starts listing from provided continuationToken", async () => {
-    mockS3Send = mock((command: MockCommand) => {
+    mockS3Send = vi.fn((command: MockCommand) => {
       if (commandName(command) === "HeadBucketCommand") {
         return Promise.resolve({});
       }
@@ -448,7 +448,7 @@ describe("POST /api/v2/assets/test/migrate-timestamps", () => {
   });
 
   test("returns 500 when bucket access check fails", async () => {
-    mockS3Send = mock((command: MockCommand) => {
+    mockS3Send = vi.fn((command: MockCommand) => {
       if (commandName(command) === "HeadBucketCommand") {
         const error = new Error("bucket denied");
         error.name = "AccessDenied";

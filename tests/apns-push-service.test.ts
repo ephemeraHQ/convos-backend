@@ -1,4 +1,4 @@
-import { describe, expect, mock, test } from "vitest";
+import { describe, expect, vi, test } from "vitest";
 import type { ApnsDevice } from "@/api/v2/notifications/apns-push.service";
 
 type EventListener = (...args: unknown[]) => void;
@@ -48,7 +48,7 @@ class FakeRequest {
 
 let fakeClient: FakeClient;
 
-void mock.module("node:http2", () => ({
+vi.mock("node:http2", () => ({
   default: {
     connect: () => {
       fakeClient = new FakeClient();
@@ -61,7 +61,7 @@ void mock.module("node:http2", () => ({
   },
 }));
 
-// Import AFTER mock.module so service picks up stubbed http2
+// Import AFTER vi.mock so service picks up stubbed http2
 const { ApnsPushService } = await import(
   "@/api/v2/notifications/apns-push.service"
 );
