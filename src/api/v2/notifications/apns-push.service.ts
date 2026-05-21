@@ -96,7 +96,7 @@ export class ApnsPushService {
       iat: Math.floor(now),
     };
 
-    this.jwtToken = jwt.sign(payload, this.config.privateKey, {
+    const token = jwt.sign(payload, this.config.privateKey, {
       algorithm: "ES256",
       header: {
         alg: "ES256",
@@ -104,8 +104,9 @@ export class ApnsPushService {
       },
     });
 
+    this.jwtToken = token;
     this.jwtTokenExpiry = now + 3600; // 1 hour
-    return this.jwtToken;
+    return token;
   }
 
   private getApnsUrl(device: ApnsDevice): string {

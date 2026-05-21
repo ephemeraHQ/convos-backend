@@ -176,6 +176,9 @@ importers:
       "@types/express":
         specifier: ^5.0.0
         version: 5.0.6
+      "@types/jsonwebtoken":
+        specifier: ^9.0.10
+        version: 9.0.10
       "@types/mime-types":
         specifier: ^2.1.4
         version: 2.1.4
