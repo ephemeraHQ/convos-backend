@@ -171,6 +171,35 @@ export interface GenerateTemplateInput {
   filename?: string;
 }
 
+/** Caller-pinned identity fields (mirror of the generation row's `prefill`
+ *  column; see `applyPrefill` in generation-executor). Fed INTO the generator
+ *  so the produced agentName, prompt body, and WELCOME MESSAGE use the pinned
+ *  name rather than a model-invented one that the persist-stage metadata
+ *  overlay would then silently contradict. */
+export interface GenerationPrefill {
+  agentName?: string;
+  emoji?: string;
+  description?: string;
+}
+
+/** Build the user-message addendum that pins the assistant's identity. Returns
+ *  "" when nothing identity-shaped was pinned — `description` alone is not an
+ *  identity the prompt body must echo (it's overlaid as metadata at persist). */
+function buildIdentityDirective(prefill?: GenerationPrefill | null): string {
+  if (!prefill) return "";
+  const parts: string[] = [];
+  if (prefill.agentName?.trim())
+    parts.push(`name: "${prefill.agentName.trim()}"`);
+  if (prefill.emoji?.trim()) parts.push(`emoji: "${prefill.emoji.trim()}"`);
+  if (parts.length === 0) return "";
+  return (
+    `\n\nREQUIRED IDENTITY — this assistant has already been named by the user. ` +
+    `Use this exact identity; do NOT invent a different name or emoji: ${parts.join(", ")}. ` +
+    `The "agentName" you return MUST equal this name, and the prompt body, every ` +
+    `self-reference, and the WELCOME MESSAGE must read as this named assistant.`
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Brevity rail helper — exported for testing
 // ---------------------------------------------------------------------------
@@ -951,6 +980,7 @@ async function extractUrl(url: string): Promise<string> {
 export async function generateTemplate(
   input: GenerateTemplateInput | string,
   externalSignal?: AbortSignal,
+  prefill?: GenerationPrefill | null,
 ): Promise<GenerationResult> {
   // Backward compat: string input = text
   const opts: GenerateTemplateInput =
@@ -1067,6 +1097,24 @@ export async function generateTemplate(
     }
 
     userContent = `Create an assistant based on the following content:\n\n---\n${extracted}\n---`;
+  }
+
+  // Caller-pinned identity: fold the already-chosen name/emoji into the user
+  // message so the model writes agentName, the prompt body, all self-references,
+  // and the WELCOME MESSAGE as this named assistant. Without this the model
+  // invents its own identity and the persist-stage applyPrefill overlay leaves
+  // the card's name at odds with the prompt the assistant actually runs on.
+  const identityDirective = buildIdentityDirective(prefill);
+  if (identityDirective) {
+    if (typeof userContent === "string") {
+      userContent = `${userContent}${identityDirective}`;
+    } else if (
+      Array.isArray(userContent) &&
+      userContent[0]?.type === "text" &&
+      typeof userContent[0].text === "string"
+    ) {
+      userContent[0].text = `${userContent[0].text}${identityDirective}`;
+    }
   }
 
   const reqBody: any = {
@@ -1276,11 +1324,12 @@ export function __resetGenerateTemplateForTests(
 export async function callGenerateTemplate(
   input: GenerateTemplateInput | string,
   signal?: AbortSignal,
+  prefill?: GenerationPrefill | null,
 ): Promise<GenerationResult> {
   if (_generateTemplateOverride) {
     return _generateTemplateOverride(input);
   }
-  return generateTemplate(input, signal);
+  return generateTemplate(input, signal, prefill);
 }
 
 export { BREVITY_RAIL };
