@@ -18,6 +18,7 @@
  *     --model anthropic/claude-opus-4.7
  */
 
+import { execFileSync } from "node:child_process";
 import { appendFileSync, readFileSync } from "node:fs";
 import { parseArgs } from "node:util";
 import * as braintrust from "braintrust";
@@ -39,11 +40,15 @@ const { values } = parseArgs({
     project: { type: "string" },
     concurrency: { type: "string" },
     label: { type: "string" },
+    "base-ref": { type: "string" },
     "fail-under": { type: "string" },
   },
 });
 
 const BASE = values.base ?? process.env.EVAL_BASE_PROMPT;
+// When --base isn't given (local use), extract the head path from this git ref.
+const BASE_REF =
+  values["base-ref"] ?? process.env.EVAL_BASE_REF ?? "origin/otr-dev";
 const HEAD =
   values.head ??
   process.env.EVAL_HEAD_PROMPT ??
@@ -102,13 +107,25 @@ async function main(): Promise<void> {
       "No OpenRouter key (BUILDER_OPENROUTER_API_KEY or EVAL_OPENROUTER_API_KEY).",
     );
   }
-  if (!BASE) {
-    throw new Error(
-      "--base <file> is required (the base-branch prompt to compare against).",
-    );
+  // Base prompt: an explicit --base file (CI extracts the base SHA's version),
+  // else auto-extract the head path from --base-ref via git (local convenience,
+  // so `bun run eval:prompt` with no args compares working tree vs the default
+  // branch). `git fetch` first if origin/<branch> is stale.
+  const baseLabel = BASE ?? `${BASE_REF}:${HEAD}`;
+  let basePrompt: string;
+  if (BASE) {
+    basePrompt = readFileSync(BASE, "utf8").trim();
+  } else {
+    try {
+      basePrompt = execFileSync("git", ["show", `${BASE_REF}:${HEAD}`], {
+        encoding: "utf8",
+      }).trim();
+    } catch (err) {
+      throw new Error(
+        `Could not read base prompt from "${BASE_REF}:${HEAD}" (try \`git fetch\`, or pass --base <file>): ${String(err)}`,
+      );
+    }
   }
-
-  const basePrompt = readFileSync(BASE, "utf8").trim();
   const headPrompt = readFileSync(HEAD, "utf8").trim();
   if (basePrompt === headPrompt) {
     emitSummary(
@@ -120,7 +137,7 @@ async function main(): Promise<void> {
   const all = loadCases(DATASET);
   const cases = LIMIT > 0 ? all.slice(0, LIMIT) : all;
   console.log(
-    `Prompt A/B: head(${HEAD}) vs base(${BASE}) · model ${MODEL} · judge ${JUDGE_MODEL} · ${cases.length} cases`,
+    `Prompt A/B: head(${HEAD}) vs base(${baseLabel}) · model ${MODEL} · judge ${JUDGE_MODEL} · ${cases.length} cases`,
   );
 
   const experiment = braintrust.init(PROJECT, {
@@ -132,7 +149,7 @@ async function main(): Promise<void> {
       rubricVersion: RUBRIC_VERSION,
       dataset: DATASET,
       cases: cases.length,
-      basePrompt: BASE,
+      basePrompt: baseLabel,
       headPrompt: HEAD,
     },
   });

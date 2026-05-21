@@ -53,11 +53,11 @@ A full run is slow and costs real tokens (see below), so try a tiny one first:
 
 ```bash
 # ~1-2 min: one fast model, 2-case smoke dataset, no pairwise
-bun run eval --models google/gemini-3.5-flash \
+bun run eval:models --models google/gemini-3.5-flash \
   --dataset tests/evals/datasets/smoke.jsonl
 
 # or cap any dataset to N cases:
-bun run eval --limit 2
+bun run eval:models --limit 2
 ```
 
 Then open the printed Braintrust experiment URL.
@@ -71,8 +71,8 @@ real decision.
 ## Mode A — model bake-off
 
 ```bash
-bun run eval                                # opus-4.7 vs gemini-3.5-flash
-bun run tests/evals/run.ts \
+bun run eval:models                         # opus-4.7 vs gemini-3.5-flash
+bun run eval:models \
   --models anthropic/claude-opus-4.7,google/gemini-3.5-flash \
   --judge openai/gpt-5.5 \
   --dataset tests/evals/datasets/core.jsonl \
@@ -91,18 +91,29 @@ under test is unambiguous. Logs to project `convos-agent-prompts` (absolute) and
 ## Mode B — prompt regression (base vs PR)
 
 Compares two versions of `data/template-generator-prompt.txt` with the model held
-fixed:
+fixed. Run it locally — with no `--base`, it compares your working tree against
+the default branch (`origin/otr-dev`):
 
 ```bash
-bun run tests/evals/compare-prompts.ts \
+git fetch origin                     # make sure origin/otr-dev is current
+bun run eval:prompt                                              # core dataset
+bun run eval:prompt --dataset tests/evals/datasets/smoke.jsonl --limit 2  # quick
+```
+
+Or compare two explicit prompt files (this is how CI runs it, passing the base
+commit's version):
+
+```bash
+bun run eval:prompt \
   --base /path/to/old-prompt.txt \
   --head data/template-generator-prompt.txt \
   --model anthropic/claude-opus-4.7
 ```
 
-`--fail-under 0.45` makes it exit non-zero when the PR prompt's mean win rate
-drops below the threshold (a regression gate). It prints a markdown summary and
-writes it to `$GITHUB_STEP_SUMMARY`.
+`--base-ref` (default `origin/otr-dev`) is the git ref the base is extracted from
+when `--base` is omitted. `--fail-under 0.45` makes it exit non-zero when the
+mean win rate drops below the threshold (a regression gate). It prints a markdown
+summary and writes it to `$GITHUB_STEP_SUMMARY`.
 
 **In CI:** `.github/workflows/eval-prompt.yml` triggers on PRs that touch
 `data/template-generator-prompt.txt`, extracts the base-branch version of the
