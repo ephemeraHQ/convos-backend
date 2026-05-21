@@ -42,12 +42,20 @@ jobs:
           persist-credentials: false # no authed git ops after checkout
           fetch-depth: 0 # need the base commit to extract its prompt version
 
-      - uses: oven-sh/setup-bun@v2
+      - uses: actions/setup-node@v4
         if: steps.secrets.outputs.present == 'true'
         with:
-          bun-version-file: ".bun-version"
+          node-version-file: ".nvmrc"
 
-      - run: bun install
+      - name: Enable Corepack + activate pnpm
+        if: steps.secrets.outputs.present == 'true'
+        env:
+          COREPACK_ENABLE_DOWNLOAD_PROMPT: "0"
+        run: |
+          corepack enable
+          corepack prepare pnpm@10.33.4 --activate
+
+      - run: pnpm install --frozen-lockfile
         if: steps.secrets.outputs.present == 'true'
 
       - name: Extract base-branch prompt
@@ -71,7 +79,7 @@ jobs:
           IN_DATASET: tests/evals/datasets/smoke.jsonl
           IN_LABEL: ${{ github.event.pull_request.head.sha }}
         run: |
-          bun run tests/evals/compare-prompts.ts \
+          pnpm tsx tests/evals/compare-prompts.ts \
             --base /tmp/base-prompt.txt \
             --head data/template-generator-prompt.txt \
             --model "$IN_MODEL" \
