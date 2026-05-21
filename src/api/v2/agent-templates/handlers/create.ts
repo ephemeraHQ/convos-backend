@@ -32,7 +32,19 @@ const bodySchema = z
     // agent runtime can attribute a created template to the user it's acting
     // on behalf of rather than the ADMIN seed account.
     ownerAccountId: z.string().uuid().optional(),
+    // Provenance for forks. When a row is created as a copy of an existing
+    // template (e.g. the runtime forking a catalog template a group adopted),
+    // this records the source id. The FK (`forkedFromId → AgentTemplate.id`,
+    // ON DELETE SET NULL) is the canonical check — a dangling reference fails
+    // the insert and maps to the same 400 as a bad ownerAccountId below.
+    forkedFromId: z.string().uuid().optional(),
   })
+  // .passthrough() (not .strict()) is intentional: create accepts a full
+  // AgentTemplate-shaped body and silently IGNORES the fields it derives
+  // server-side (status, version, firstPublishedAt, …) instead of 400ing, so a
+  // caller can POST a serialized template verbatim. The "ignores server-pinned
+  // fields" test pins this. (generations-post.ts uses .strict() because its
+  // body is a bespoke request envelope, not a template — different by design.)
   .passthrough();
 
 type CreateBody = z.infer<typeof bodySchema>;
@@ -66,7 +78,7 @@ const createTemplateRow = (args: {
       id: args.id,
       slug: args.slug,
       ownerAccountId: args.ownerAccountId,
-      forkedFromId: null,
+      forkedFromId: args.body.forkedFromId ?? null,
       agentName: args.body.agentName,
       description: args.body.description ?? null,
       prompt: args.body.prompt,
@@ -124,6 +136,30 @@ export async function createHandler(req: Request, res: Response) {
     return;
   }
 
+  // Validate the fork source if asserted. Like ownerAccountId, the FK is the
+  // canonical check (handled in the catch below); this pre-check fails fast
+  // with a clear error before the collision-free-id lookup.
+  //
+  // Policy: forking is intentionally NOT gated on the source's visibility or
+  // ownership. `forkedFromId` is provenance only — a bare id pointer that
+  // grants no access to the source's content (a non-owner still 404s when
+  // resolving a draft/private source), so recording it can't leak anything.
+  // Source ids are unguessable UUIDs, so the existence check ("does not exist"
+  // vs created) is not a useful oracle. Keeping it ungated also lets the
+  // agent-key path (which can see every row) fork the catalog template a group
+  // adopted without a special case. If a visibility rule is ever wanted, add
+  // it here.
+  if (parsed.data.forkedFromId !== undefined) {
+    const source = await prisma.agentTemplate.findUnique({
+      where: { id: parsed.data.forkedFromId },
+      select: { id: true },
+    });
+    if (!source) {
+      res.status(400).json({ error: "forkedFromId does not exist" });
+      return;
+    }
+  }
+
   // Slugs are not unique. An explicit slug is taken verbatim; an absent one
   // is derived from agentName. Either way it only has to pass format /
   // reserved-word validation — duplicate slugs (within or across owners) are
@@ -148,15 +184,17 @@ export async function createHandler(req: Request, res: Response) {
     });
     res.status(201).json(serializeAgentTemplate(template));
   } catch (error) {
-    // Race: the asserted owner account was deleted between the pre-check and
-    // this insert, so the ownerAccountId → Account.id FK fires. Map back to
-    // the same 400 as the pre-check so the error code is stable regardless of
+    // Race: a referenced row (ownerAccountId → Account, or forkedFromId →
+    // AgentTemplate) was deleted between the pre-check and this insert, so its
+    // FK fires. Map back to a 400 so the error code is stable regardless of
     // race timing.
     if (
       error instanceof Prisma.PrismaClientKnownRequestError &&
       error.code === "P2003"
     ) {
-      res.status(400).json({ error: "Asserted ownerAccountId does not exist" });
+      res.status(400).json({
+        error: "Referenced ownerAccountId or forkedFromId does not exist",
+      });
       return;
     }
     req.log.error(
