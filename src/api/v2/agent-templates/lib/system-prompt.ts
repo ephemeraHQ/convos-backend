@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { logError } from "@/utils/errors";
@@ -7,10 +7,15 @@ import { logError } from "@/utils/errors";
  * System prompt loaded once at module init.
  * The prompt file is a verbatim copy of pool/data/skill-generator-prompt.txt.
  *
- * Path is resolved relative to THIS module via `import.meta.url` so the
- * lookup works regardless of the directory the Node process was started
- * from. (Previously used `resolve("data/template-generator-prompt.txt")`
- * which only worked when cwd was the repo root.)
+ * Path is resolved by walking up from this module's directory until a
+ * package.json is found (= repo root), then joining "data/template-generator-prompt.txt".
+ *
+ * This approach works in both modes:
+ *   - tsx watch (source): __dirname = .../src/api/v2/agent-templates/lib/ → walks 5 levels to repo root
+ *   - bundled (dist/index.js): __dirname = .../dist/ → walks 1 level to repo root
+ * The old 5x ".." construction was correct only in source mode; in bundled mode it
+ * escaped the repo entirely, causing readFileSync to fail silently and SYSTEM_PROMPT
+ * to be null in production (502 on all template-generation endpoints).
  *
  * If readFileSync throws at import time (file missing, unreadable, etc.),
  * the module does not crash — SYSTEM_PROMPT is set to null and downstream
@@ -18,19 +23,21 @@ import { logError } from "@/utils/errors";
  */
 let SYSTEM_PROMPT: string | null = null;
 
-// __dirname for ESM. This file lives at src/api/v2/agent-templates/lib/,
-// so the repo root is 5 levels up.
+function findRepoRoot(start: string): string {
+  let dir = start;
+  while (!existsSync(join(dir, "package.json"))) {
+    const parent = dirname(dir);
+    if (parent === dir) {
+      throw new Error(`Could not find repo root from ${start}`);
+    }
+    dir = parent;
+  }
+  return dir;
+}
+
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const PROMPT_PATH = join(
-  __dirname,
-  "..",
-  "..",
-  "..",
-  "..",
-  "..",
-  "data",
-  "template-generator-prompt.txt",
-);
+const REPO_ROOT = findRepoRoot(__dirname);
+const PROMPT_PATH = join(REPO_ROOT, "data", "template-generator-prompt.txt");
 
 try {
   SYSTEM_PROMPT = readFileSync(PROMPT_PATH, "utf8").trim();
