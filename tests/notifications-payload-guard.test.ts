@@ -7,14 +7,8 @@ vi.mock("firebase-admin/app");
 vi.mock("firebase-admin/app-check");
 vi.mock("firebase-admin/messaging");
 // jsonwebtoken@9 uses buffer-equal-constant-time which calls SlowBuffer —
-// removed in Node 22+. Stub sign() so the real apns-push.service can load
-// via vi.importActual below without crashing at import time.
-vi.mock("jsonwebtoken", () => ({
-  default: {
-    sign: (_payload: unknown, _key: unknown, _opts: unknown) =>
-      "mock-apns-jwt-token",
-  },
-}));
+// removed in Node 22+. Falls through to __mocks__/jsonwebtoken.ts.
+vi.mock("jsonwebtoken");
 
 // ---- Mocks (must be installed BEFORE importing the SUT) ----
 
