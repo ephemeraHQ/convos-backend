@@ -36,10 +36,14 @@ function findRepoRoot(start: string): string {
 }
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const REPO_ROOT = findRepoRoot(__dirname);
-const PROMPT_PATH = join(REPO_ROOT, "data", "template-generator-prompt.txt");
+// Initialize PROMPT_PATH to a best-effort relative path so the catch handler
+// always has something readable to log even if findRepoRoot() itself throws
+// (e.g. import-time chroot, no package.json above this module).
+let PROMPT_PATH = "data/template-generator-prompt.txt";
 
 try {
+  const repoRoot = findRepoRoot(__dirname);
+  PROMPT_PATH = join(repoRoot, "data", "template-generator-prompt.txt");
   SYSTEM_PROMPT = readFileSync(PROMPT_PATH, "utf8").trim();
 } catch (err) {
   // Intentionally swallowed: module must not crash on import.

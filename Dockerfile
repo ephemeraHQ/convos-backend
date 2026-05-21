@@ -63,17 +63,20 @@ WORKDIR /app
 
 RUN apt-get update \
   && apt-get install -y --no-install-recommends openssl ca-certificates tini \
-  && rm -rf /var/lib/apt/lists/*
+  && rm -rf /var/lib/apt/lists/* \
+  && useradd --system --create-home --uid 10001 appuser
 
 ENV NODE_ENV=production
 
-COPY --from=builder /app/node_modules ./node_modules
-COPY --from=builder /app/package.json ./package.json
-COPY --from=builder /app/dist ./dist
-COPY --from=builder /app/prisma ./prisma
-COPY --from=builder /app/data ./data
+COPY --from=builder --chown=appuser:appuser /app/node_modules ./node_modules
+COPY --from=builder --chown=appuser:appuser /app/package.json ./package.json
+COPY --from=builder --chown=appuser:appuser /app/dist ./dist
+COPY --from=builder --chown=appuser:appuser /app/prisma ./prisma
+COPY --from=builder --chown=appuser:appuser /app/data ./data
 
-COPY --chmod=0755 dev/entrypoint.sh ./entrypoint.sh
+COPY --chmod=0755 --chown=appuser:appuser dev/entrypoint.sh ./entrypoint.sh
+
+USER appuser
 
 # tini reaps zombie children — important because the node process spawns
 # prisma migrate as a subprocess on boot.
