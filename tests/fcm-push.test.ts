@@ -11,7 +11,7 @@ import type { V2NotificationPayload } from "@/api/v2/notifications/types";
 // any imports or top-level awaits. The async factory runs at hoist time via
 // vi.importActual, which safely loads the real module implementation.
 vi.mock("@/api/v2/notifications/fcm-push.service", async () => {
-  return await vi.importActual("@/api/v2/notifications/fcm-push.service");
+  return await vi.importActual<typeof import("@/api/v2/notifications/fcm-push.service")>("@/api/v2/notifications/fcm-push.service");
 });
 
 const { createFcmService, FcmPushService } = await import(
