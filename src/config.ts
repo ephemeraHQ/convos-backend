@@ -147,6 +147,13 @@ if (!builderSiteUrl) {
 }
 export const BUILDER_SITE_URL = builderSiteUrl;
 
+// Shared bearer for the assistants-dashboard /api/revalidate webhook. When
+// unset, the revalidate service no-ops (relies on the dashboard's 60s TTL
+// fallback). Reuses BUILDER_SITE_URL as the dashboard base — see
+// services/revalidate-dashboard.ts.
+export const BUILDER_REVALIDATE_SECRET =
+  process.env.BUILDER_REVALIDATE_SECRET?.trim() || "";
+
 // PostHog metering (optional — capture is no-op if the token is unset).
 // Host defaults to PostHog Cloud US so setting only the token Just Works.
 export const POSTHOG_PROJECT_TOKEN =

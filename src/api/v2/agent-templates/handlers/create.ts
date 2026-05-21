@@ -3,6 +3,7 @@ import type { Request, Response } from "express";
 import { z } from "zod";
 import { pickCollisionFreeId } from "@/api/v2/agent-templates/lib/pick-collision-free-id";
 import { serializeAgentTemplate } from "@/api/v2/agent-templates/lib/serialize-agent-template";
+import { revalidateTemplate } from "@/api/v2/agent-templates/services/revalidate-dashboard";
 import { getEffectiveOwnerId } from "@/utils/auth-helpers";
 import { prisma } from "@/utils/prisma";
 import { validateSlug } from "@/utils/reserved-slugs";
@@ -182,6 +183,13 @@ export async function createHandler(req: Request, res: Response) {
       slug: validation.slug,
       ownerAccountId,
     });
+
+    void revalidateTemplate({
+      id: template.id,
+      slug: template.slug,
+      log: req.log,
+    });
+
     res.status(201).json(serializeAgentTemplate(template));
   } catch (error) {
     // Race: a referenced row (ownerAccountId → Account, or forkedFromId →

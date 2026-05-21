@@ -1,5 +1,6 @@
 import type { Request, Response } from "express";
 import { z } from "zod";
+import { revalidateTemplate } from "@/api/v2/agent-templates/services/revalidate-dashboard";
 import { prisma } from "@/utils/prisma";
 
 const paramsSchema = z.object({
@@ -19,7 +20,7 @@ export async function deleteHandler(req: Request, res: Response) {
   try {
     const template = await prisma.agentTemplate.findUnique({
       where: { id: parsedParams.data.id },
-      select: { id: true, ownerAccountId: true },
+      select: { id: true, slug: true, ownerAccountId: true },
     });
 
     if (template === null) {
@@ -58,6 +59,12 @@ export async function deleteHandler(req: Request, res: Response) {
       res.status(404).json({ error: "Agent template not found" });
       return;
     }
+
+    void revalidateTemplate({
+      id: template.id,
+      slug: template.slug,
+      log: req.log,
+    });
 
     res.status(200).json({
       object: "agent_template",

@@ -34,6 +34,7 @@ import {
   resolveActor,
   type PostHogCaptureProperties,
 } from "@/api/v2/agent-templates/services/posthog";
+import { revalidateTemplate } from "@/api/v2/agent-templates/services/revalidate-dashboard";
 import {
   callGenerateTemplate,
   getModel,
@@ -630,6 +631,13 @@ async function _runPipeline(
     ...base,
     outcome: "done",
   });
+
+  // Only fire revalidation when the new row is actually visible on the
+  // dashboard. Drafts aren't surfaced, so the cache has nothing to drop.
+  if (generation.publishStatus !== "draft") {
+    void revalidateTemplate({ id: persisted.id, slug: persisted.slug });
+  }
+
   logger.info(
     {
       generationId,
