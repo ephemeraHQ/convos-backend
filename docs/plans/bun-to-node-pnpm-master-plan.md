@@ -6,7 +6,7 @@
 
 ## Decision
 
-Default target: **Node.js 22 LTS + pnpm 10 via Corepack**.
+Default target: **Node.js 24 LTS + pnpm 10 via Corepack**.
 
 Why pnpm over Yarn here: fast, strict, widely used, boring in CI/Docker, and no Yarn Berry/PnP footguns. Use a committed `pnpm-lock.yaml`; do not use zero-install.
 
@@ -31,7 +31,7 @@ No runtime `src/` Bun API dependency was found in the initial scan; the largest 
 
 | Slice                 | Change                                                                                                         | Gate                                                                                                                                                          |
 | --------------------- | -------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1. Toolchain          | Pin Node 22, add `packageManager: pnpm@...`, add `pnpm-lock.yaml`, install via Corepack.                       | `pnpm install --frozen-lockfile`                                                                                                                              |
+| 1. Toolchain          | Pin Node 24, add `packageManager: pnpm@...`, add `pnpm-lock.yaml`, install via Corepack.                       | `pnpm install --frozen-lockfile`                                                                                                                              |
 | 2. Runtime            | Replace Bun TS execution with Node-compatible tooling: `tsx` for dev/scripts/evals; bundled JS for production. | `pnpm dev`, `pnpm build`, `pnpm start`                                                                                                                        |
 | 3. Tests              | Move `bun:test` to Vitest; port mocks/preload/setup.                                                           | `pnpm test`                                                                                                                                                   |
 | 4. Infra/docs cleanup | Switch CI/Docker/entrypoint/docs from Bun to Node/pnpm; remove Bun pins/lock/config.                           | CI green + Docker image boots + `/healthcheck` + POST `/v2/accounts/me/subscription/verify` with a real Sandbox JWS returns 200 + persists `Subscription` row |
@@ -41,7 +41,7 @@ These slices can be stacked or split into small PRs. Do not start slice 4 cleanu
 ## Proposed implementation defaults
 
 - **Package manager:** pnpm 10, Corepack-managed, `pnpm install --frozen-lockfile` in CI.
-- **Node version:** Node 22 LTS, pinned consistently in `.nvmrc`, `.node-version`, Docker, and GitHub Actions.
+- **Node version:** Node 24 LTS, pinned consistently in `.nvmrc`, `.node-version`, Docker, and GitHub Actions.
 - **Dev runtime:** `tsx watch src/index.ts`.
 - **One-off TS scripts/evals:** `tsx <script>.ts` through package scripts.
 - **Production runtime:** bundle `src/index.ts` to `dist/` with a Node-targeted bundler, then run `node dist/index.js`; keep native deps like `@xmtp/node-bindings` external.
