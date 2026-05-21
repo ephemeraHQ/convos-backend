@@ -10,6 +10,8 @@
 
 /* eslint-disable @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-assignment */
 
+import { NonRetryableError, withRetry } from "./retry";
+
 const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
 
 /** Per-call wallclock cap for judge requests; override via env for slow models
@@ -33,10 +35,18 @@ function parseJson(content: string): unknown {
     // Tolerate a fenced or prose-wrapped object, mirroring templateGen's
     // parser fallback.
     const match = content.match(/\{[\s\S]*\}/);
-    if (!match) {
-      throw new Error(`Judge response was not JSON: ${content.slice(0, 200)}`);
+    if (match) {
+      try {
+        return JSON.parse(match[0]) as unknown;
+      } catch {
+        /* fall through to the terminal error */
+      }
     }
-    return JSON.parse(match[0]) as unknown;
+    // A malformed judge response is a quality failure, not a transient one —
+    // NonRetryableError so the embedded `content` snippet can never look retryable.
+    throw new NonRetryableError(
+      `Judge response was not JSON: ${content.slice(0, 200)}`,
+    );
   }
 }
 
@@ -64,40 +74,47 @@ export async function openRouterJSON(
     );
   }
 
-  const res = await fetch(OPENROUTER_URL, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      model: opts.model,
-      temperature: opts.temperature ?? 0,
-      messages: [
-        { role: "system", content: opts.system },
-        { role: "user", content: opts.user },
-      ],
-      response_format: {
-        type: "json_schema",
-        json_schema: {
-          name: opts.schemaName,
-          strict: true,
-          schema: opts.schema,
-        },
+  // Retry transient throttles (429) / 5xx; the signal is re-created per attempt.
+  return withRetry(async () => {
+    const res = await fetch(OPENROUTER_URL, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
       },
-    }),
-    signal: AbortSignal.timeout(opts.timeoutMs ?? DEFAULT_JUDGE_TIMEOUT_MS),
+      body: JSON.stringify({
+        model: opts.model,
+        temperature: opts.temperature ?? 0,
+        messages: [
+          { role: "system", content: opts.system },
+          { role: "user", content: opts.user },
+        ],
+        response_format: {
+          type: "json_schema",
+          json_schema: {
+            name: opts.schemaName,
+            strict: true,
+            schema: opts.schema,
+          },
+        },
+      }),
+      signal: AbortSignal.timeout(opts.timeoutMs ?? DEFAULT_JUDGE_TIMEOUT_MS),
+    });
+
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      const msg = `Judge HTTP ${res.status}: ${body.slice(0, 300)}`;
+      // Retry throttles / server errors by STATUS (not body text); other 4xx
+      // (e.g. 400 bad schema) are terminal.
+      if (res.status === 429 || res.status >= 500) throw new Error(msg);
+      throw new NonRetryableError(msg);
+    }
+
+    const data: any = await res.json();
+    const content = data?.choices?.[0]?.message?.content;
+    if (typeof content !== "string") {
+      throw new NonRetryableError("Judge returned no message content");
+    }
+    return parseJson(content);
   });
-
-  if (!res.ok) {
-    const body = await res.text().catch(() => "");
-    throw new Error(`Judge HTTP ${res.status}: ${body.slice(0, 300)}`);
-  }
-
-  const data: any = await res.json();
-  const content = data?.choices?.[0]?.message?.content;
-  if (typeof content !== "string") {
-    throw new Error("Judge returned no message content");
-  }
-  return parseJson(content);
 }

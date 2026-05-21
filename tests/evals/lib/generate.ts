@@ -22,6 +22,7 @@
  */
 
 import type * as TemplateGenModule from "../../../src/api/v2/agent-templates/services/templateGen";
+import { withRetry } from "./retry";
 import type { GeneratedTemplateLite, GenMetrics } from "./types";
 
 function setDefault(key: string, value: string): void {
@@ -89,7 +90,18 @@ export function generateForModel(
     tg.__setBuilderModelOverrideForTests(model);
     // null restores the loaded prompt, so model-only runs are unaffected.
     tg.__setSystemPromptOverrideForTests(systemPrompt ?? null);
-    const { template, metrics } = await tg.generateTemplate({ text: input });
+    // Retry transient throttles (429) / 5xx. Runs inside the serialized chain,
+    // so the backoff also re-paces the queue and prevents a 429 cascade.
+    const { template, metrics } = await withRetry(
+      () => tg.generateTemplate({ text: input }),
+      {
+        onRetry: (err, attempt, delayMs) => {
+          console.warn(
+            `  ↻ generate retry ${attempt} [${model}] in ${Math.round(delayMs)}ms: ${String(err)}`,
+          );
+        },
+      },
+    );
     // connections is always server-injected as []; drop it from the eval view.
     const { connections: _connections, ...lite } = template;
     return { template: lite, metrics };
