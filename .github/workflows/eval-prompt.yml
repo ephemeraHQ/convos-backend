@@ -1,0 +1,81 @@
+name: Eval generator prompt
+
+# Runs only when the generator system prompt changes. Compares the base-branch
+# version of the prompt against the PR version (model held fixed), pairwise-judged,
+# and posts a win-rate summary to the run's job summary. See tests/evals/.
+on:
+  pull_request:
+    paths:
+      - "data/template-generator-prompt.txt"
+
+# A new push to the PR supersedes an in-flight run.
+concurrency:
+  group: eval-prompt-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  prompt-eval:
+    # Skip on forks (which can't read secrets). When the repo secrets aren't
+    # configured, the first step short-circuits the rest so the job stays green
+    # (skipped) instead of failing.
+    if: github.event.pull_request.head.repo.fork == false
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Check eval secrets are configured
+        id: secrets
+        env:
+          BT: ${{ secrets.BRAINTRUST_API_KEY }}
+          OR: ${{ secrets.EVAL_OPENROUTER_API_KEY }}
+        run: |
+          if [ -n "$BT" ] && [ -n "$OR" ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Skipping prompt eval — set repo secrets BRAINTRUST_API_KEY and EVAL_OPENROUTER_API_KEY to enable it."
+          fi
+
+      - uses: actions/checkout@v4
+        if: steps.secrets.outputs.present == 'true'
+        with:
+          persist-credentials: false # no authed git ops after checkout
+          fetch-depth: 0 # need the base commit to extract its prompt version
+
+      - uses: oven-sh/setup-bun@v2
+        if: steps.secrets.outputs.present == 'true'
+        with:
+          bun-version-file: ".bun-version"
+
+      - run: bun install
+        if: steps.secrets.outputs.present == 'true'
+
+      - name: Extract base-branch prompt
+        if: steps.secrets.outputs.present == 'true'
+        run: |
+          git show "${{ github.event.pull_request.base.sha }}:data/template-generator-prompt.txt" > /tmp/base-prompt.txt
+          wc -l /tmp/base-prompt.txt
+
+      - name: Compare base vs PR prompt
+        if: steps.secrets.outputs.present == 'true'
+        env:
+          # GitHub auto-masks any `secrets.*` value in logs, and the eval scripts
+          # only ever log response snippets / error messages (never the API key
+          # or request bodies), so secrets can't leak via output here.
+          BRAINTRUST_API_KEY: ${{ secrets.BRAINTRUST_API_KEY }}
+          EVAL_OPENROUTER_API_KEY: ${{ secrets.EVAL_OPENROUTER_API_KEY }}
+          # Inputs passed via env (not interpolated into the shell) for safety.
+          IN_MODEL: anthropic/claude-opus-4.7
+          IN_JUDGE: openai/gpt-5.5
+          # Smoke dataset keeps CI fast; switch to core.jsonl for a fuller signal.
+          IN_DATASET: tests/evals/datasets/smoke.jsonl
+          IN_LABEL: ${{ github.event.pull_request.head.sha }}
+        run: |
+          bun run tests/evals/compare-prompts.ts \
+            --base /tmp/base-prompt.txt \
+            --head data/template-generator-prompt.txt \
+            --model "$IN_MODEL" \
+            --judge "$IN_JUDGE" \
+            --dataset "$IN_DATASET" \
+            --label "$IN_LABEL"
+          # To gate merges on no-regression, add: --fail-under 0.45

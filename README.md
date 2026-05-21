@@ -84,6 +84,8 @@ Adjust the `-p 4000:4000` flag to match the port in the `.env` file. The default
 
 - `bun clean`: Removes `node_modules` folder and `*.db3*` files
 - `bun dev`: Run the app in watch mode
+- `bun eval:models`: Bake off generation models for agent-prompt quality, scored on Braintrust (see [`tests/evals/README.md`](tests/evals/README.md))
+- `bun eval:prompt`: Compare the working-tree generator prompt against the default branch (prompt regression)
 - `bun format:check`: Run prettier format check
 - `bun format`: Run prettier format and write changes
 - `bun generate:key`: Generate a key for XMTP database encryption

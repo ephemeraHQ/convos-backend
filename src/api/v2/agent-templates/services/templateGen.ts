@@ -92,6 +92,7 @@ function describeLlmError(err: unknown): string {
 let _apiKeyOverride: string | null | undefined = undefined;
 let _builderModelOverride: string | null = null;
 let _exaKeyOverride: string | null | undefined = undefined;
+let _systemPromptOverride: string | null = null;
 
 function getApiKey(): string | null {
   if (_apiKeyOverride !== undefined) return _apiKeyOverride;
@@ -121,6 +122,18 @@ export function __setBuilderApiKeyOverrideForTests(
 /** Override `BUILDER_MODEL` for tests. Pass `null` to clear. */
 export function __setBuilderModelOverrideForTests(model: string | null): void {
   _builderModelOverride = model;
+}
+
+/** The system prompt actually used for generation — the loaded file unless an
+ *  override is installed. */
+function getSystemPrompt(): string | null {
+  return _systemPromptOverride ?? SYSTEM_PROMPT;
+}
+
+/** Override the generator system prompt (e.g. to A/B a base-branch vs PR version
+ *  of data/template-generator-prompt.txt in an eval). Pass `null` to clear. */
+export function __setSystemPromptOverrideForTests(prompt: string | null): void {
+  _systemPromptOverride = prompt;
 }
 
 /** Override `BUILDER_EXA_SERVICE_KEY` for tests. Pass `null` to simulate "unset",
@@ -1028,7 +1041,8 @@ export async function generateTemplate(
   if (!apiKey) {
     throw new Error("BUILDER_OPENROUTER_API_KEY not configured");
   }
-  if (!SYSTEM_PROMPT) {
+  const systemPrompt = getSystemPrompt();
+  if (!systemPrompt) {
     throw new Error("Template generator system prompt not loaded");
   }
 
@@ -1159,12 +1173,16 @@ export async function generateTemplate(
       // The only cost of 1h is a higher write multiplier on misses (2x input vs
       // 1.25x); reads are 0.1x either way. Net cheaper + faster whenever two
       // generations land within an hour. Supported per-block on Bedrock.
+      //
+      // `systemPrompt` (not the raw SYSTEM_PROMPT import) so the eval harness's
+      // __setSystemPromptOverrideForTests seam still applies; in production
+      // there's no override, so the text stays byte-identical and caches.
       {
         role: "system",
         content: [
           {
             type: "text",
-            text: SYSTEM_PROMPT,
+            text: systemPrompt,
             cache_control: { type: "ephemeral", ttl: "1h" },
           },
         ],
