@@ -7,8 +7,8 @@
  * Two concerns this file handles:
  *
  * 1. Config bootstrap. templateGen.ts imports @/config, which validates a set of
- *    env vars at module load (tests/preload.ts seeds them under `bun test`, but
- *    this harness runs under plain `bun run`). We set the config-required
+ *    env vars at module load (tests/setup.ts seeds them for `pnpm test`, but
+ *    this harness runs under plain `pnpm tsx`). We set the config-required
  *    placeholders BEFORE the dynamic import. We deliberately do NOT set
  *    BUILDER_OPENROUTER_API_KEY (must be a real key from the environment) or
  *    POSTHOG_PROJECT_TOKEN (left unset so eval generations never pollute product

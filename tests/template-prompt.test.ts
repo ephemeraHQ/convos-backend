@@ -51,9 +51,9 @@ describe("template-generator-prompt.txt file fidelity", () => {
 describe("system-prompt module loading", () => {
   let SYSTEM_PROMPT: string | null;
 
-  // Import the module once — Bun caches it, so re-requiring returns the same object.
-  // This is intentional: the module loads the prompt once at init and the constant
-  // is immutable for the lifetime of the process.
+  // Import the module once — Node's ESM loader caches it, so re-importing returns
+  // the same object. The module loads the prompt once at init and the constant is
+  // immutable for the lifetime of the process.
   beforeAll(() => {
     SYSTEM_PROMPT = LOADED_SYSTEM_PROMPT;
   });
@@ -74,7 +74,7 @@ describe("system-prompt module loading", () => {
 
   test("SYSTEM_PROMPT is immutable after import (loaded once)", () => {
     // Re-importing returns the cached module — the value must not change.
-    // Bun's module cache means the same object reference is returned.
+    // Node's ESM module cache means the same object reference is returned.
     const originalPrompt = SYSTEM_PROMPT as string;
     // Importing again gives the same cached value
     expect(LOADED_SYSTEM_PROMPT).toBe(originalPrompt);

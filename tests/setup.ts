@@ -1,7 +1,8 @@
-// Env vars ported verbatim from tests/preload.ts.
-// vi.mock for firebase-admin lives in tests/__mocks__/ + per-test-file vi.mock() declarations (see Task 3b/3e).
+// vi.mock for firebase-admin lives in __mocks__/ + per-test-file vi.mock()
+// declarations.
 
-// Disable pino-pretty worker threads to prevent Bun segfaults during tests
+// Pin pino to JSON output during tests; pino-pretty starts a worker thread
+// that can race the Vitest test-file teardown when many files run.
 process.env.LOG_FORMAT = "json";
 
 // Set required environment variables for tests
