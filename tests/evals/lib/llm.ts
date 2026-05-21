@@ -10,6 +10,8 @@
 
 /* eslint-disable @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-assignment */
 
+import { withRetry } from "./retry";
+
 const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
 
 /** Per-call wallclock cap for judge requests; override via env for slow models
@@ -64,40 +66,43 @@ export async function openRouterJSON(
     );
   }
 
-  const res = await fetch(OPENROUTER_URL, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      model: opts.model,
-      temperature: opts.temperature ?? 0,
-      messages: [
-        { role: "system", content: opts.system },
-        { role: "user", content: opts.user },
-      ],
-      response_format: {
-        type: "json_schema",
-        json_schema: {
-          name: opts.schemaName,
-          strict: true,
-          schema: opts.schema,
-        },
+  // Retry transient throttles (429) / 5xx; the signal is re-created per attempt.
+  return withRetry(async () => {
+    const res = await fetch(OPENROUTER_URL, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
       },
-    }),
-    signal: AbortSignal.timeout(opts.timeoutMs ?? DEFAULT_JUDGE_TIMEOUT_MS),
+      body: JSON.stringify({
+        model: opts.model,
+        temperature: opts.temperature ?? 0,
+        messages: [
+          { role: "system", content: opts.system },
+          { role: "user", content: opts.user },
+        ],
+        response_format: {
+          type: "json_schema",
+          json_schema: {
+            name: opts.schemaName,
+            strict: true,
+            schema: opts.schema,
+          },
+        },
+      }),
+      signal: AbortSignal.timeout(opts.timeoutMs ?? DEFAULT_JUDGE_TIMEOUT_MS),
+    });
+
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      throw new Error(`Judge HTTP ${res.status}: ${body.slice(0, 300)}`);
+    }
+
+    const data: any = await res.json();
+    const content = data?.choices?.[0]?.message?.content;
+    if (typeof content !== "string") {
+      throw new Error("Judge returned no message content");
+    }
+    return parseJson(content);
   });
-
-  if (!res.ok) {
-    const body = await res.text().catch(() => "");
-    throw new Error(`Judge HTTP ${res.status}: ${body.slice(0, 300)}`);
-  }
-
-  const data: any = await res.json();
-  const content = data?.choices?.[0]?.message?.content;
-  if (typeof content !== "string") {
-    throw new Error("Judge returned no message content");
-  }
-  return parseJson(content);
 }
