@@ -21,6 +21,7 @@
 import { appendFileSync, readFileSync } from "node:fs";
 import { parseArgs } from "node:util";
 import * as braintrust from "braintrust";
+import { mapLimit } from "./lib/concurrency";
 import { loadCases } from "./lib/dataset";
 import { clearModelOverride, generateForModel } from "./lib/generate";
 import { judgePairwiseWinRate } from "./lib/judge";
@@ -67,26 +68,6 @@ const FAIL_UNDER = Number(
   values["fail-under"] ?? process.env.EVAL_FAIL_UNDER ?? "0",
 );
 
-async function mapLimit<T, R>(
-  items: T[],
-  limit: number,
-  fn: (item: T) => Promise<R>,
-): Promise<R[]> {
-  const results: R[] = new Array<R>(items.length);
-  let cursor = 0;
-  await Promise.all(
-    Array.from({ length: Math.min(limit, items.length) }, () =>
-      (async () => {
-        while (cursor < items.length) {
-          const i = cursor++;
-          results[i] = await fn(items[i]);
-        }
-      })(),
-    ),
-  );
-  return results;
-}
-
 function mean(xs: number[]): number {
   return xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : NaN;
 }
@@ -103,8 +84,8 @@ function emitSummary(md: string): void {
   if (f) {
     try {
       appendFileSync(f, md + "\n");
-    } catch {
-      /* not fatal */
+    } catch (err) {
+      console.warn(`Failed to write GITHUB_STEP_SUMMARY: ${String(err)}`);
     }
   }
 }

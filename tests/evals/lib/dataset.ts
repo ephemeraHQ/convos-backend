@@ -3,10 +3,13 @@
  * with at least `id` and `input`.
  */
 
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import type { EvalCase } from "./types";
 
 export function loadCases(path: string): EvalCase[] {
+  if (!existsSync(path)) {
+    throw new Error(`Dataset not found: ${path}`);
+  }
   const text = readFileSync(path, "utf8");
   const seen = new Set<string>();
   const cases: EvalCase[] = [];

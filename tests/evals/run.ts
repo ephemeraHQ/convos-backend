@@ -25,6 +25,7 @@
 import { parseArgs } from "node:util";
 import * as braintrust from "braintrust";
 import { runGate } from "./lib/checks";
+import { mapLimit } from "./lib/concurrency";
 import { loadCases } from "./lib/dataset";
 import { clearModelOverride, generateForModel } from "./lib/generate";
 import { judgePairwiseWinRate, judgeRubric } from "./lib/judge";
@@ -84,29 +85,6 @@ const PAIRWISE = values.pairwise || MODELS.length > 1;
 
 const expName = (model: string): string =>
   `${model.replace(/[^a-z0-9.-]/gi, "-")}-${new Date().toISOString().slice(0, 16)}`;
-
-// ---------------------------------------------------------------------------
-// Tiny concurrency limiter
-// ---------------------------------------------------------------------------
-
-async function mapLimit<T, R>(
-  items: T[],
-  limit: number,
-  fn: (item: T, index: number) => Promise<R>,
-): Promise<R[]> {
-  const results: R[] = new Array<R>(items.length);
-  let cursor = 0;
-  const workers = Array.from({ length: Math.min(limit, items.length) }, () =>
-    (async () => {
-      while (cursor < items.length) {
-        const i = cursor++;
-        results[i] = await fn(items[i], i);
-      }
-    })(),
-  );
-  await Promise.all(workers);
-  return results;
-}
 
 // ---------------------------------------------------------------------------
 // Absolute scoring run (one Braintrust experiment per model)
