@@ -1,4 +1,4 @@
-import { describe, expect, mock, test } from "bun:test";
+import { describe, expect, mock, test } from "vitest";
 import type { V2NotificationPayload } from "@/api/v2/notifications/types";
 
 // Re-register the real fcm-push.service module so that even when

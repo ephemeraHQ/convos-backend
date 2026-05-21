@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "vitest";
 import type { NextFunction, Request, Response } from "express";
 import {
   __setCronApiKeyOverrideForTests,

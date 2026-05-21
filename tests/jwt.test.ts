@@ -1,4 +1,4 @@
-import { beforeAll, describe, expect, test } from "bun:test";
+import { beforeAll, describe, expect, test } from "vitest";
 import * as jose from "jose";
 import { JWT_ISSUER } from "@/config";
 import { DEVICE_ID_MAX_LENGTH } from "@/utils/device-id";

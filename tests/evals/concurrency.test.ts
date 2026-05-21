@@ -2,7 +2,7 @@
  * Offline unit tests for the bounded-parallelism map. No network.
  */
 
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "vitest";
 import { mapLimit } from "./lib/concurrency";
 
 describe("mapLimit", () => {

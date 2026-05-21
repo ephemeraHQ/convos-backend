@@ -1,5 +1,5 @@
 import { existsSync, readFileSync } from "node:fs";
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "vitest";
 
 const readRepoFile = (path: string) =>
   readFileSync(new URL(`../${path}`, import.meta.url), "utf8");

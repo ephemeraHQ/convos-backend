@@ -1,7 +1,7 @@
 import crypto from "node:crypto";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { resolve } from "node:path";
-import { beforeAll, describe, expect, test } from "bun:test";
+import { beforeAll, describe, expect, test } from "vitest";
 import { SYSTEM_PROMPT as LOADED_SYSTEM_PROMPT } from "@/api/v2/agent-templates/lib/system-prompt";
 
 const PROMPT_PATH = resolve("data/template-generator-prompt.txt");

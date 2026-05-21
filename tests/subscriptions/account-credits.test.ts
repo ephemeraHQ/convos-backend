@@ -1,5 +1,5 @@
 import { LedgerReason } from "@prisma/client";
-import { afterEach, beforeAll, describe, expect, test } from "bun:test";
+import { afterEach, beforeAll, describe, expect, test } from "vitest";
 import express from "express";
 import request from "supertest";
 import { accountsRouter } from "@/api/v2/accounts/accounts.router";

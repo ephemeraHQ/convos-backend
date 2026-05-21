@@ -10,7 +10,7 @@
 
 import { readFileSync } from "node:fs";
 import type { Server } from "node:http";
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import express, { type Response } from "express";
 import {
   __setAgentAssetsApiKeyOverrideForTests,

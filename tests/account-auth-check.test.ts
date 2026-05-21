@@ -1,4 +1,4 @@
-import { beforeAll, describe, expect, test } from "bun:test";
+import { beforeAll, describe, expect, test } from "vitest";
 import express from "express";
 import request from "supertest";
 import { authMiddleware, requireAccount } from "@/middleware/auth";

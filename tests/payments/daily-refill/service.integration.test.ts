@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { LedgerReason } from "@prisma/client";
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "vitest";
 import { getBalance } from "@/payments";
 import { runDailyRefill } from "@/payments/daily-refill/service";
 import { ymdUtc } from "@/payments/daily-refill/utc";

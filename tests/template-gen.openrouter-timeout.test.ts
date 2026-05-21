@@ -17,7 +17,7 @@
 // `expect(...).rejects.toThrow(...)` matcher, which returns Promise<void>
 // at runtime but is typed as `void` in current @types/bun (await still works).
 
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "vitest";
 
 const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
 const TEST_API_KEY = "test-openrouter-api-key";

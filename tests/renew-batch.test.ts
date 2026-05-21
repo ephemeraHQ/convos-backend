@@ -7,7 +7,7 @@ import {
   expect,
   mock,
   test,
-} from "bun:test";
+} from "vitest";
 import express from "express";
 import { jsonMiddleware } from "@/middleware/json";
 import { pinoMiddleware } from "@/middleware/pino";

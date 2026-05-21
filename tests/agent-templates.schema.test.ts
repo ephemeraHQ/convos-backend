@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { Prisma } from "@prisma/client";
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "vitest";
 import { prisma } from "@/utils/prisma";
 
 const schema = readFileSync(

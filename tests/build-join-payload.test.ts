@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { AgentTemplate, PublishStatus } from "@prisma/client";
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "vitest";
 import { buildJoinPayload } from "@/api/v2/agents/lib/build-join-payload";
 
 // Cross-repo drift contract for the on-disk `TEMPLATE.json` shape.

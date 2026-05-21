@@ -1,4 +1,4 @@
-import { afterEach, beforeAll, describe, expect, test } from "bun:test";
+import { afterEach, beforeAll, describe, expect, test } from "vitest";
 import cookieParser from "cookie-parser";
 import { Wallet } from "ethers";
 import express from "express";

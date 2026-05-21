@@ -4,7 +4,7 @@
  * `bun test`.
  */
 
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "vitest";
 import { runGate } from "./lib/checks";
 import type { GeneratedTemplateLite } from "./lib/types";
 

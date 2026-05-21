@@ -15,7 +15,7 @@ import {
   describe,
   expect,
   test,
-} from "bun:test";
+} from "vitest";
 import { __resetGenerationExecutorForTests } from "@/api/v2/agent-templates/services/generation-executor";
 import { __resetModerationForTests } from "@/api/v2/agent-templates/services/moderation";
 import { __resetPostHogForTests } from "@/api/v2/agent-templates/services/posthog";

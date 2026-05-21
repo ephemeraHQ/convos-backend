@@ -1,4 +1,4 @@
-import { describe, expect, mock, test } from "bun:test";
+import { describe, expect, mock, test } from "vitest";
 import type { ApnsDevice } from "@/api/v2/notifications/apns-push.service";
 
 type EventListener = (...args: unknown[]) => void;

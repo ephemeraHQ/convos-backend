@@ -6,7 +6,7 @@ import {
   describe,
   expect,
   test,
-} from "bun:test";
+} from "vitest";
 import express from "express";
 import { jsonMiddleware } from "@/middleware/json";
 import { lifecycleTestAuthMiddleware } from "@/middleware/lifecycleTestAuth";

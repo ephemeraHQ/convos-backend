@@ -6,7 +6,7 @@ import {
   describe,
   expect,
   test,
-} from "bun:test";
+} from "vitest";
 import express from "express";
 import { inviteCodesRouter } from "@/api/v2/invite-codes/invite-codes.router";
 import { jsonMiddleware } from "@/middleware/json";

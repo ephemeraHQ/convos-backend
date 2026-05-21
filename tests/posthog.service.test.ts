@@ -13,7 +13,7 @@
  * twitter, and unattributed rungs directly.
  */
 
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "vitest";
 import {
   resolveActor,
   type PostHogCaptureProperties,

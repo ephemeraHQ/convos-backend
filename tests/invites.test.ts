@@ -1,5 +1,5 @@
 import type { Server } from "node:http";
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import express from "express";
 import invitesV2Router from "@/api/v2/invites/invites.router";
 import { jsonMiddleware } from "@/middleware/json";

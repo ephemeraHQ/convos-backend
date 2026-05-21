@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "vitest";
 import { Wallet } from "ethers";
 import type { SiweMessage } from "siwe";
 import { InvalidSiweError, verifySiwe } from "@/api/v2/auth/handlers/siwe";

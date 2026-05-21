@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "vitest";
 import { isAllowedFromBalance } from "@/payments/credits/policy";
 import { creditsToUsd, usdToCredits } from "@/payments/credits/pricing";
 

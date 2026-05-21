@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "vitest";
 
 describe("PAYMENTS_FREE_TIER_DAILY_CAP_CREDITS", () => {
   const original = process.env.PAYMENTS_FREE_TIER_DAILY_CAP_CREDITS;

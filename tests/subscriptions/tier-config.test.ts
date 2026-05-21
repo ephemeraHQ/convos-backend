@@ -1,5 +1,5 @@
 import { SubscriptionPeriod, SubscriptionTier } from "@prisma/client";
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { tierGrant } from "@/subscriptions/tier-config";
 
 const snap = () => ({

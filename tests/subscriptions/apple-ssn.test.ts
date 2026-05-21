@@ -3,7 +3,7 @@ import {
   Environment,
   SignedDataVerifier,
 } from "@apple/app-store-server-library";
-import { afterEach, beforeAll, describe, expect, test } from "bun:test";
+import { afterEach, beforeAll, describe, expect, test } from "vitest";
 import express, { json } from "express";
 import jsonwebtoken from "jsonwebtoken";
 import request from "supertest";

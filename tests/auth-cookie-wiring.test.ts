@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "vitest";
 import cookieParser from "cookie-parser";
 import express from "express";
 import request from "supertest";

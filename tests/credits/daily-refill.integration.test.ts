@@ -6,7 +6,7 @@ import {
   describe,
   expect,
   test,
-} from "bun:test";
+} from "vitest";
 import { __setCronApiKeyOverrideForTests } from "@/api/v2/credits/middleware/cron-api-key";
 import { prisma } from "@/utils/prisma";
 import { buildCreditsApp, cleanupAccounts, seedAccount } from "./helpers";

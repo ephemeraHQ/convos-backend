@@ -19,7 +19,7 @@ import {
   describe,
   expect,
   test,
-} from "bun:test";
+} from "vitest";
 import { __setSseKeepaliveMsForTests } from "@/api/v2/agent-templates/handlers/generations-post";
 import {
   __resetGenerationExecutorForTests,

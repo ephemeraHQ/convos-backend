@@ -8,7 +8,7 @@ import {
   describe,
   expect,
   test,
-} from "bun:test";
+} from "vitest";
 import express, {
   type Response as ExpressResponse,
   type NextFunction,

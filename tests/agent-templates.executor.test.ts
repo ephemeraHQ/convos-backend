@@ -21,7 +21,7 @@ import {
   describe,
   expect,
   test,
-} from "bun:test";
+} from "vitest";
 import {
   __resetGenerationExecutorForTests,
   __setExecutorTimeoutMsForTests,

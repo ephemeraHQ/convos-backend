@@ -7,7 +7,7 @@ import {
   describe,
   expect,
   test,
-} from "bun:test";
+} from "vitest";
 import { __setAgentAssetsApiKeyOverrideForTests } from "@/middleware/agentAuth";
 import {
   buildCreditsApp,

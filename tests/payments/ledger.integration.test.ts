@@ -1,5 +1,5 @@
 import { LedgerReason } from "@prisma/client";
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "vitest";
 import { IdempotencyMismatchError } from "@/payments/errors";
 import {
   applyDelta,

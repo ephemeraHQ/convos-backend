@@ -1,5 +1,5 @@
 import type { ClientIdentifier, DeviceRegistration } from "@prisma/client";
-import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test";
+import { afterAll, beforeEach, describe, expect, mock, test } from "vitest";
 import type { Request } from "express";
 import { prisma } from "@/utils/prisma";
 

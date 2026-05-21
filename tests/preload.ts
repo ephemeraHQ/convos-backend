@@ -1,4 +1,4 @@
-import { mock } from "bun:test";
+import { mock } from "vitest";
 
 // Disable pino-pretty worker threads to prevent Bun segfaults during tests
 process.env.LOG_FORMAT = "json";

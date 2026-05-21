@@ -14,7 +14,7 @@ import {
   describe,
   expect,
   test,
-} from "bun:test";
+} from "vitest";
 import express from "express";
 import {
   __resetComposioServiceForTests,

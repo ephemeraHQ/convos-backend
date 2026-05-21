@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "vitest";
 import {
   NONCE_COOKIE_CLEAR_FLAGS,
   NONCE_COOKIE_NAME,
