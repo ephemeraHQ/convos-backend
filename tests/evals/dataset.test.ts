@@ -56,4 +56,12 @@ describe("loadCases", () => {
     const path = tmpFile("{not json}");
     expect(() => loadCases(path)).toThrow(/not valid JSON/);
   });
+
+  test("reports the physical file line number (not the filtered index)", () => {
+    // comment (line 1), valid (line 2), invalid (line 3)
+    const path = tmpFile(
+      ["// comment", '{"id":"a","input":"ok"}', "{bad json}"].join("\n"),
+    );
+    expect(() => loadCases(path)).toThrow(/line 3 is not valid JSON/);
+  });
 });

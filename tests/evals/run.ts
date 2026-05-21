@@ -81,7 +81,9 @@ const CONCURRENCY = Number(
 );
 // 0 = no limit. Cap the number of dataset cases for a quick/cheap smoke run.
 const LIMIT = Number(values.limit ?? process.env.EVAL_LIMIT ?? "0");
-const PAIRWISE = values.pairwise || MODELS.length > 1;
+// Opt-in only — pairwise doubles generation + judge spend, so don't enable it
+// implicitly just because multiple models are listed.
+const PAIRWISE = Boolean(values.pairwise);
 
 const expName = (model: string): string =>
   `${model.replace(/[^a-z0-9.-]/gi, "-")}-${new Date().toISOString().slice(0, 16)}`;

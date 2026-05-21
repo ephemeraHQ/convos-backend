@@ -62,11 +62,11 @@ bun run eval:models --limit 2
 
 Then open the printed Braintrust experiment URL.
 
-**Runtime/cost expectations:** opus generation is ~50s per case. The full default
-run (12 cases × 2 models, absolute + pairwise ≈ 48 generations + judge calls,
-serialized) takes roughly 20–40 min and a few dollars. Use `--limit`, the smoke
-dataset, or a single fast model to iterate cheaply; reserve the full run for a
-real decision.
+**Runtime/cost expectations:** opus generation is ~50s per case. A default run
+(12 cases × 2 models, absolute only ≈ 24 generations + judge calls, serialized)
+takes roughly 10–20 min; adding `--pairwise` roughly doubles it. Use `--limit`,
+the smoke dataset, or a single fast model to iterate cheaply; reserve the full
+run for a real decision.
 
 ## Mode A — model bake-off
 
@@ -82,7 +82,8 @@ bun run eval:models \
 Flags (each also reads an env var; flags win): `--models` (`EVAL_MODELS`),
 `--judge` (`EVAL_JUDGE_MODEL`), `--dataset` (`EVAL_DATASET`), `--samples`
 (`EVAL_SAMPLES`), `--baseline` (`EVAL_BASELINE_MODEL`), `--limit` (`EVAL_LIMIT`),
-`--project` (`EVAL_PROJECT`), `--concurrency` (`EVAL_CONCURRENCY`), `--pairwise`.
+`--project` (`EVAL_PROJECT`), `--concurrency` (`EVAL_CONCURRENCY`), `--pairwise`
+(opt-in head-to-head; off unless passed).
 
 Use a **concrete** OpenRouter model id (not a `@preset/...` alias) so the model
 under test is unambiguous. Logs to project `convos-agent-prompts` (absolute) and

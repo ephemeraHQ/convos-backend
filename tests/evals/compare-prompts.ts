@@ -168,17 +168,28 @@ async function main(): Promise<void> {
     };
     let head: GeneratedTemplateLite | null = null;
     let base: GeneratedTemplateLite | null = null;
+    // Generate head and base independently (both serialize through the chain),
+    // so a head-prompt failure doesn't skip base — otherwise a broken PR prompt
+    // would be mis-scored neutral instead of as a regression.
     try {
-      // Both calls serialize through the generation chain internally.
       head = (await generateForModel(c.input, MODEL, headPrompt)).template;
+    } catch (err) {
+      metadata.headError = String(err);
+      console.error(`  ✗ generate head [${c.id}]: ${String(err)}`);
+    }
+    try {
       base = (await generateForModel(c.input, MODEL, basePrompt)).template;
     } catch (err) {
-      metadata.error = String(err);
-      console.error(`  ✗ generate [${c.id}]: ${String(err)}`);
+      metadata.baseError = String(err);
+      console.error(`  ✗ generate base [${c.id}]: ${String(err)}`);
     }
+    metadata.error =
+      [metadata.headError, metadata.baseError].filter(Boolean).join(" | ") ||
+      undefined;
 
     if (!head || !base) {
-      // If the PR prompt is the one that failed, that's a hard regression (0).
+      // PR prompt broke generation while base still worked → hard regression (0).
+      // Other cases (base failed, or both failed) aren't judgeable → neutral.
       const win = !head && base ? 0 : 0.5;
       winRates.push(win);
       experiment.log({
