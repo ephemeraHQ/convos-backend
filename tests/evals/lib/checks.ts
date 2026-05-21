@@ -18,6 +18,12 @@ const RAIL_MARKER = "## Runtime Reminder";
 
 const GENERIC_NAMES = new Set(["assistant", "helper", "bot", "ai", "agent"]);
 
+// Authored-prompt length bounds (excludes the appended brevity rail). The
+// playbook targets ~800 words, ≤1000; we allow slack at the top and a floor
+// that still rejects a stub.
+const MIN_AUTHORED_WORDS = 250;
+const MAX_AUTHORED_WORDS = 1100;
+
 /** The model-authored prompt, minus the server-appended brevity rail. */
 function authoredPrompt(prompt: string): string {
   const i = prompt.indexOf(RAIL_MARKER);
@@ -65,7 +71,8 @@ export function runGate(t: GeneratedTemplateLite): GateResult {
     welcome_present:
       /welcome message/i.test(authored) && /"[^"]{10,}"/.test(authored),
     // Field requirements: ~800 words, hard ceiling ~1000 (allow slack to 1100).
-    word_count_reasonable: words >= 250 && words <= 1100,
+    word_count_reasonable:
+      words >= MIN_AUTHORED_WORDS && words <= MAX_AUTHORED_WORDS,
   };
 
   const values = Object.values(checks);

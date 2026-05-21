@@ -39,6 +39,9 @@ jobs:
 
       - name: Compare base vs PR prompt
         env:
+          # GitHub auto-masks any `secrets.*` value in logs, and the eval scripts
+          # only ever log response snippets / error messages (never the API key
+          # or request bodies), so secrets can't leak via output here.
           BRAINTRUST_API_KEY: ${{ secrets.BRAINTRUST_API_KEY }}
           EVAL_OPENROUTER_API_KEY: ${{ secrets.EVAL_OPENROUTER_API_KEY }}
           # Inputs passed via env (not interpolated into the shell) for safety.

@@ -12,6 +12,11 @@
 
 const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
 
+/** Per-call wallclock cap for judge requests; override via env for slow models
+ *  (e.g. in CI). Falls back to 120s. */
+const DEFAULT_JUDGE_TIMEOUT_MS =
+  Number(process.env.EVAL_JUDGE_TIMEOUT_MS) || 120_000;
+
 /** The judge can use a dedicated key, else fall back to the builder key. */
 export function judgeApiKey(): string {
   return (
@@ -81,7 +86,7 @@ export async function openRouterJSON(
         },
       },
     }),
-    signal: AbortSignal.timeout(opts.timeoutMs ?? 120_000),
+    signal: AbortSignal.timeout(opts.timeoutMs ?? DEFAULT_JUDGE_TIMEOUT_MS),
   });
 
   if (!res.ok) {

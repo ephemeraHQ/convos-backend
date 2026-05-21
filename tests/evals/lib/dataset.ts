@@ -27,8 +27,15 @@ export function loadCases(path: string): EvalCase[] {
           `Dataset line ${i + 1} is not valid JSON: ${String(err)}`,
         );
       }
-      if (!obj.id || !obj.input) {
-        throw new Error(`Dataset line ${i + 1} is missing required id/input`);
+      if (
+        typeof obj.id !== "string" ||
+        obj.id.trim() === "" ||
+        typeof obj.input !== "string" ||
+        obj.input.trim() === ""
+      ) {
+        throw new Error(
+          `Dataset line ${i + 1}: id and input must be non-empty strings`,
+        );
       }
       if (seen.has(obj.id)) {
         throw new Error(`Dataset has duplicate case id: ${obj.id}`);

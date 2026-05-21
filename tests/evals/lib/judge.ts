@@ -216,11 +216,22 @@ export async function judgePairwiseWinRate(
   dimWins: Record<string, number>;
   verdicts: PairwiseVerdict[];
 }> {
-  // Order 1: candidate = A. Order 2: candidate = B.
-  const [v1, v2] = await Promise.all([
+  // Order 1: candidate = A. Order 2: candidate = B. allSettled (not all) so a
+  // rejection in one ordering can't leave the other as a dangling unhandled
+  // rejection; we surface the first failure to the caller's try/catch.
+  const settled = await Promise.allSettled([
     judgePairwiseOnce(input, candidate, baseline, judgeModel, notes),
     judgePairwiseOnce(input, baseline, candidate, judgeModel, notes),
   ]);
+  const rejected = settled.find((s) => s.status === "rejected");
+  if (rejected?.status === "rejected") {
+    throw rejected.reason instanceof Error
+      ? rejected.reason
+      : new Error(String(rejected.reason));
+  }
+  const [v1, v2] = (settled as PromiseFulfilledResult<PairwiseVerdict>[]).map(
+    (s) => s.value,
+  );
   const s1 = overallToCandidateScore(v1.overall, "A");
   const s2 = overallToCandidateScore(v2.overall, "B");
   // Same order-bias cancellation per dimension, so the pairwise experiment
