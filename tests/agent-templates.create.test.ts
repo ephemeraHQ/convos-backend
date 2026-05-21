@@ -146,6 +146,9 @@ describe("Agent template create endpoint", () => {
   });
 
   test("ignores server-pinned fields from the body and persists pinned values", async () => {
+    // forkedFromId is no longer server-pinned — it's a caller-settable provenance
+    // field validated against the AgentTemplate table (see the dedicated
+    // agent-templates.create.fork.test.ts), so it's not exercised here.
     const { body, response } = await createTemplate({
       agentName: "Create Test Sneaky",
       prompt: "You are still a draft",
@@ -154,7 +157,6 @@ describe("Agent template create endpoint", () => {
       status: "published",
       version: 99,
       firstPublishedAt: "2020-01-01T00:00:00.000Z",
-      forkedFromId: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
     });
 
     expect(response.status).toBe(201);

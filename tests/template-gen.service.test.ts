@@ -211,9 +211,9 @@ describe("templateGen service — OpenRouter integration", () => {
   });
 
   // -----------------------------------------------------------------------
-  // Model defaults to @preset/assistants-pro
+  // Model defaults to anthropic/claude-opus-4.7
   // -----------------------------------------------------------------------
-  test("model defaults to @preset/assistants-pro", async () => {
+  test("model defaults to anthropic/claude-opus-4.7", async () => {
     const mod = await import("@/api/v2/agent-templates/services/templateGen");
     generateTemplate = mod.generateTemplate;
 
@@ -239,7 +239,7 @@ describe("templateGen service — OpenRouter integration", () => {
     await generateTemplate({ text: "Build me a helper" });
 
     const req = getLastOpenRouterRequest();
-    expect(req.body.model).toBe("@preset/assistants-pro");
+    expect(req.body.model).toBe("anthropic/claude-opus-4.7");
   });
 
   test("BUILDER_MODEL env override works", async () => {
@@ -521,7 +521,7 @@ describe("templateGen service — OpenRouter integration", () => {
     expect(selectorReq).toBeDefined();
     expect(selectorReq.body.temperature).toBe(0.2);
     expect(selectorReq.body.response_format).toBeUndefined();
-    expect(selectorReq.body.model).toBe("@preset/assistants-pro");
+    expect(selectorReq.body.model).toBe("anthropic/claude-opus-4.7");
     expect(selectorReq.headers["authorization"]).toBe(`Bearer ${TEST_API_KEY}`);
 
     globalThis.fetch = originalMockFetch;
@@ -953,9 +953,10 @@ describe("templateGen service — OpenRouter integration", () => {
   });
 
   // -----------------------------------------------------------------------
-  // SYSTEM_PROMPT is forwarded verbatim as the system message
+  // SYSTEM_PROMPT is forwarded verbatim as the system message, with a
+  // per-block prompt-caching breakpoint.
   // -----------------------------------------------------------------------
-  test("system prompt forwarded verbatim to OpenRouter", async () => {
+  test("system prompt forwarded verbatim with cache breakpoint", async () => {
     const mod = await import("@/api/v2/agent-templates/services/templateGen");
     generateTemplate = mod.generateTemplate;
 
@@ -986,7 +987,13 @@ describe("templateGen service — OpenRouter integration", () => {
 
     const req = getLastOpenRouterRequest();
     expect(req.body.messages[0].role).toBe("system");
-    expect(req.body.messages[0].content).toBe(SYSTEM_PROMPT);
+    // System content is now a content-part array carrying the verbatim prompt
+    // plus a per-block ephemeral cache breakpoint (works on Bedrock; preserves
+    // provider routing, unlike top-level cache_control).
+    const systemPart = req.body.messages[0].content[0];
+    expect(systemPart.type).toBe("text");
+    expect(systemPart.text).toBe(SYSTEM_PROMPT);
+    expect(systemPart.cache_control).toEqual({ type: "ephemeral", ttl: "1h" });
   });
 
   // -----------------------------------------------------------------------
@@ -1169,7 +1176,7 @@ describe("templateGen service — OpenRouter integration", () => {
     const classifierReq = getOpenRouterRequests()[0];
     expect(classifierReq.body.temperature).toBe(0.2);
     expect(classifierReq.body.response_format).toBeUndefined();
-    expect(classifierReq.body.model).toBe("@preset/assistants-pro");
+    expect(classifierReq.body.model).toBe("anthropic/claude-opus-4.7");
     expect(classifierReq.headers["authorization"]).toBe(
       `Bearer ${TEST_API_KEY}`,
     );

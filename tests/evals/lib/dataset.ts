@@ -1,0 +1,51 @@
+/**
+ * Dataset loader. One JSON object per line (JSONL). Each line is an EvalCase
+ * with at least `id` and `input`.
+ */
+
+import { existsSync, readFileSync } from "node:fs";
+import type { EvalCase } from "./types";
+
+export function loadCases(path: string): EvalCase[] {
+  if (!existsSync(path)) {
+    throw new Error(`Dataset not found: ${path}`);
+  }
+  const text = readFileSync(path, "utf8");
+  const seen = new Set<string>();
+  const cases: EvalCase[] = [];
+
+  // Iterate raw lines so error messages report the physical file line number
+  // (blank/comment lines are skipped, not filtered out of the index).
+  text.split("\n").forEach((rawLine, i) => {
+    const line = rawLine.trim();
+    if (line.length === 0 || line.startsWith("//")) return;
+    let obj: EvalCase;
+    try {
+      obj = JSON.parse(line) as EvalCase;
+    } catch (err) {
+      throw new Error(
+        `Dataset line ${i + 1} is not valid JSON: ${String(err)}`,
+      );
+    }
+    if (
+      typeof obj.id !== "string" ||
+      obj.id.trim() === "" ||
+      typeof obj.input !== "string" ||
+      obj.input.trim() === ""
+    ) {
+      throw new Error(
+        `Dataset line ${i + 1}: id and input must be non-empty strings`,
+      );
+    }
+    if (seen.has(obj.id)) {
+      throw new Error(`Dataset has duplicate case id: ${obj.id}`);
+    }
+    seen.add(obj.id);
+    cases.push(obj);
+  });
+
+  if (cases.length === 0) {
+    throw new Error(`Dataset ${path} contained no cases`);
+  }
+  return cases;
+}

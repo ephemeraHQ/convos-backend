@@ -2,7 +2,8 @@
  * Moderation Service — universal content safety check for agent-template
  * generation requests.
  *
- * Uses Claude Haiku via OpenRouter (same BUILDER_OPENROUTER_API_KEY as templateGen).
+ * Uses a fast model via OpenRouter — default Gemini Flash-Lite (same
+ * BUILDER_OPENROUTER_API_KEY as templateGen).
  * Classifies arbitrary input text into safe vs unsafe content.
  *
  * **Fails open**: on any OpenRouter error (network, non-2xx, parse failure),
@@ -11,7 +12,7 @@
  *
  * Env vars:
  *   BUILDER_OPENROUTER_API_KEY — required for LLM calls (unset → fails open)
- *   CONTENT_MODERATION_MODEL   — model override (default: anthropic/claude-3-5-haiku-20241022)
+ *   CONTENT_MODERATION_MODEL   — model override (default: google/gemini-3.1-flash-lite)
  *
  * Test seam: __resetModerationForTests(override | null) mirrors the
  * singleton-override pattern used by templateGen and PostHog.
@@ -24,12 +25,12 @@
  *     checkContent passes, only when twitterContext is present.
  */
 
-import {
-  BUILDER_OPENROUTER_API_KEY,
-  CONTENT_MODERATION_MODEL,
-  TWITTER_MODERATION_MODEL,
-} from "@/config";
+import { BUILDER_OPENROUTER_API_KEY, CONTENT_MODERATION_MODEL } from "@/config";
 import logger from "@/utils/logger";
+import {
+  openRouterChatCompletion,
+  type TraceContext,
+} from "./openrouter-client";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -46,7 +47,6 @@ export type ModerationOverride = (input: string) => Promise<ModerationResult>;
 // Constants
 // ---------------------------------------------------------------------------
 
-const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
 const MODERATION_TIMEOUT_MS = 5_000;
 
 // ---------------------------------------------------------------------------
@@ -77,13 +77,11 @@ export function __setBuilderApiKeyOverrideForTests(
   _apiKeyOverride = key;
 }
 
-/** Override `CONTENT_MODERATION_MODEL` for tests. Pass `null` to clear. */
+/** Override `CONTENT_MODERATION_MODEL` for tests. Pass `null` to clear.
+ *  Applies to both the content-safety and twitter-intent checks (they share
+ *  the same model). */
 export function __setContentModelOverrideForTests(model: string | null): void {
   _contentModelOverride = model;
-}
-
-function getTwitterIntentModel(): string {
-  return TWITTER_MODERATION_MODEL;
 }
 
 // ---------------------------------------------------------------------------
@@ -198,11 +196,14 @@ function mapContentLabel(label: string): ModerationResult {
  * Universal content safety check. Runs on every generation submission.
  * Fails open on infrastructure errors.
  */
-export async function checkContent(input: string): Promise<ModerationResult> {
+export async function checkContent(
+  input: string,
+  trace?: TraceContext,
+): Promise<ModerationResult> {
   if (_contentOverride) {
     return _contentOverride(input);
   }
-  return _checkContent(input);
+  return _checkContent(input, trace);
 }
 
 /**
@@ -212,34 +213,46 @@ export async function checkContent(input: string): Promise<ModerationResult> {
  */
 export async function checkTwitterIntent(
   input: string,
+  trace?: TraceContext,
 ): Promise<ModerationResult> {
   if (_twitterIntentOverride) {
     return _twitterIntentOverride(input);
   }
-  return _checkTwitterIntent(input);
+  return _checkTwitterIntent(input, trace);
 }
 
 // ---------------------------------------------------------------------------
 // Internal implementation
 // ---------------------------------------------------------------------------
 
-async function _checkContent(input: string): Promise<ModerationResult> {
+async function _checkContent(
+  input: string,
+  trace?: TraceContext,
+): Promise<ModerationResult> {
   return _classify({
     input,
     promptBuilder: buildContentPrompt,
     labelMapper: mapContentLabel,
     model: getContentModel(),
     logTag: "[moderation:content]",
+    stage: "moderation",
+    trace,
   });
 }
 
-async function _checkTwitterIntent(input: string): Promise<ModerationResult> {
+async function _checkTwitterIntent(
+  input: string,
+  trace?: TraceContext,
+): Promise<ModerationResult> {
   return _classify({
     input,
     promptBuilder: buildTwitterIntentPrompt,
     labelMapper: mapTwitterIntentLabel,
-    model: getTwitterIntentModel(),
+    // Shares CONTENT_MODERATION_MODEL — same cheap-classifier knob.
+    model: getContentModel(),
     logTag: "[moderation:twitter-intent]",
+    stage: "twitter-intent",
+    trace,
   });
 }
 
@@ -249,6 +262,8 @@ interface ClassifyOptions {
   labelMapper: (label: string) => ModerationResult;
   model: string;
   logTag: string;
+  stage: "moderation" | "twitter-intent";
+  trace?: TraceContext;
 }
 
 async function _classify(opts: ClassifyOptions): Promise<ModerationResult> {
@@ -261,40 +276,26 @@ async function _classify(opts: ClassifyOptions): Promise<ModerationResult> {
   }
 
   const prompt = opts.promptBuilder(opts.input);
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => {
-    controller.abort();
-  }, MODERATION_TIMEOUT_MS);
 
   try {
-    const res = await fetch(OPENROUTER_URL, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
+    // Routed through the OpenRouter client so the call emits a `$ai_generation`
+    // into PostHog LLM Analytics (grouped under the generation's trace when a
+    // trace context is supplied). Errors (HTTP, timeout, network) throw and are
+    // caught below — moderation always fails open.
+    const data = await openRouterChatCompletion({
+      apiKey,
+      stage: opts.stage,
+      body: {
         model: opts.model,
         messages: [{ role: "user", content: prompt }],
         temperature: 0.1,
         max_tokens: 20,
-      }),
-      signal: controller.signal,
+      },
+      timeoutMs: MODERATION_TIMEOUT_MS,
+      trace: opts.trace,
     });
 
-    if (!res.ok) {
-      const body = await res.text().catch(() => "");
-      logger.error(
-        { status: res.status, body: body.slice(0, 300) },
-        `${opts.logTag} OpenRouter error`,
-      );
-      return { allowed: true };
-    }
-
-    const data = (await res.json()) as {
-      choices?: Array<{ message?: { content?: string } }>;
-    };
-    const content = data.choices?.[0]?.message?.content;
+    const content = data.choices[0]?.message?.content;
     if (!content) {
       logger.warn(`${opts.logTag} Empty LLM response, failing open`);
       return { allowed: true };
@@ -307,7 +308,5 @@ async function _classify(opts: ClassifyOptions): Promise<ModerationResult> {
       `${opts.logTag} Error during moderation, failing open`,
     );
     return { allowed: true };
-  } finally {
-    clearTimeout(timeoutId);
   }
 }

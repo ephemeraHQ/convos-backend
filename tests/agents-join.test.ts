@@ -31,12 +31,12 @@ const ASSISTANT_URL = "https://assistants.test.local";
 const ASSISTANT_KEY = "test-assistant-key";
 const TEST_ACCOUNT_HEADER = "x-test-account-id";
 
-// `/api/v2/agents` is mounted behind `authMiddleware` in production, which
-// populates `res.locals.accountId` from the JWT. The handler now requires
-// it (401 otherwise). Standing up real JWT auth in this fetch-mocked test
-// would be noise; instead default a placeholder accountId so every test
-// mirrors production's authenticated-only contract, and let individual
-// tests override identity via a header.
+// `/api/v2/agents/join` is mounted behind `authMiddleware` + `requireAccount`
+// in production, which populate and require `res.locals.accountId` (403
+// otherwise). Standing up real JWT auth in this fetch-mocked test would be
+// noise; instead default a placeholder accountId so every test mirrors
+// production's authenticated-only contract, and let individual tests
+// override identity via a header.
 const DEFAULT_TEST_ACCOUNT_ID = "default-test-account";
 function testAccountMiddleware(
   req: Request,
@@ -316,16 +316,17 @@ describe("agents join (assistant API)", () => {
       expect(data.error).toBe("INVALID_REQUEST");
     });
 
-    test("returns 401 when accountId is missing from request context", async () => {
-      // Defense-in-depth: the route sits behind `authMiddleware` in
-      // production, which 401s missing JWTs — so the handler's guard
-      // is unreachable through normal routing. The test exercises it
-      // anyway by sending an explicit empty `x-test-account-id` header,
-      // simulating a hypothetical middleware-order regression.
+    test("returns 403 when accountId is missing from request context", async () => {
+      // Defense-in-depth: the route sits behind `authMiddleware` +
+      // `requireAccount` in production, so the handler's inline guard is
+      // unreachable through normal routing. The test exercises it anyway
+      // by sending an explicit empty `x-test-account-id` header,
+      // simulating a hypothetical middleware-order regression. Mirrors
+      // `requireAccount` exactly (403 + `{ error: "Account required" }`).
       const res = await post({ slug: "x" }, { accountId: "" });
-      expect(res.status).toBe(401);
+      expect(res.status).toBe(403);
       const data = (await res.json()) as { error: string };
-      expect(data.error).toBe("UNAUTHORIZED");
+      expect(data.error).toBe("Account required");
     });
 
     test("forwards options.skipGreeting upstream when provided", async () => {

@@ -2,7 +2,8 @@
  * Twitter Reply Composition Service — composes tweet replies for
  * agent templates built from Twitter @mention requests.
  *
- * Uses Claude Haiku via OpenRouter (same BUILDER_OPENROUTER_API_KEY as templateGen).
+ * Uses a fast model via OpenRouter — default Gemini Flash-Lite (same
+ * BUILDER_OPENROUTER_API_KEY as templateGen).
  * Composes a tweet reply that:
  *   - Starts with @{handle}
  *   - Contains the template URL
@@ -17,7 +18,7 @@
  *
  * Env vars:
  *   BUILDER_OPENROUTER_API_KEY — required for LLM calls
- *   TWITTER_REPLY_MODEL        — model override (default: anthropic/claude-3-5-haiku-20241022)
+ *   TWITTER_REPLY_MODEL        — model override (default: google/gemini-3.1-flash-lite)
  *   BUILDER_SITE_URL           — base URL for builder (default: https://dev.convos.org)
  *
  * Test seam: __resetComposeReplyForTests(override | null).
@@ -26,6 +27,10 @@
 import { BUILDER_OPENROUTER_API_KEY, TWITTER_REPLY_MODEL } from "@/config";
 import logger from "@/utils/logger";
 import { templateUrlFromUrlSlug } from "../lib/template-url";
+import {
+  openRouterChatCompletion,
+  type TraceContext,
+} from "./openrouter-client";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -57,7 +62,6 @@ export type ReplyOverride = (input: ReplyInput) => Promise<ReplyResult>;
 // Constants
 // ---------------------------------------------------------------------------
 
-const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
 const REPLY_TIMEOUT_MS = 10_000;
 const MAX_REPLY_LENGTH = 270;
 
@@ -181,12 +185,18 @@ function validateLlmReply(
 // Public API
 // ---------------------------------------------------------------------------
 
-export async function composeReply(input: ReplyInput): Promise<ReplyResult> {
+export async function composeReply(
+  input: ReplyInput,
+  trace?: TraceContext,
+): Promise<ReplyResult> {
   if (_override) return _override(input);
-  return _composeReply(input);
+  return _composeReply(input, trace);
 }
 
-async function _composeReply(input: ReplyInput): Promise<ReplyResult> {
+async function _composeReply(
+  input: ReplyInput,
+  trace?: TraceContext,
+): Promise<ReplyResult> {
   const { handle, agentName, urlSlug } = input;
   const url = templateUrlFor(urlSlug);
 
@@ -203,40 +213,26 @@ async function _composeReply(input: ReplyInput): Promise<ReplyResult> {
   }
 
   const prompt = buildReplyPrompt(input);
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => {
-    controller.abort();
-  }, REPLY_TIMEOUT_MS);
 
   try {
-    const res = await fetch(OPENROUTER_URL, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
+    // Routed through the OpenRouter client so the reply composition emits a
+    // `$ai_generation` into PostHog LLM Analytics (grouped under the
+    // generation's trace via `trace`). Any error throws and is caught below —
+    // composition always falls back to deterministic text.
+    const data = await openRouterChatCompletion({
+      apiKey,
+      stage: "compose-reply",
+      body: {
         model: getModel(),
         messages: [{ role: "user", content: prompt }],
         temperature: 0.7,
         max_tokens: 100,
-      }),
-      signal: controller.signal,
+      },
+      timeoutMs: REPLY_TIMEOUT_MS,
+      trace,
     });
 
-    if (!res.ok) {
-      const body = await res.text().catch(() => "");
-      logger.error(
-        { status: res.status, body: body.slice(0, 300) },
-        "[compose-reply] OpenRouter error",
-      );
-      return { replyText: buildDeterministicFallback(input) };
-    }
-
-    const data = (await res.json()) as {
-      choices?: Array<{ message?: { content?: string } }>;
-    };
-    const content = data.choices?.[0]?.message?.content;
+    const content = data.choices[0]?.message?.content;
     if (!content) {
       logger.warn("[compose-reply] Empty LLM response, using fallback");
       return { replyText: buildDeterministicFallback(input) };
@@ -252,7 +248,5 @@ async function _composeReply(input: ReplyInput): Promise<ReplyResult> {
       "[compose-reply] Error during reply composition, using fallback",
     );
     return { replyText: buildDeterministicFallback(input) };
-  } finally {
-    clearTimeout(timeoutId);
   }
 }
