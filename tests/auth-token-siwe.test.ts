@@ -1,5 +1,9 @@
-import { afterEach, beforeAll, describe, expect, test } from "vitest";
+import { afterEach, beforeAll, describe, expect, test, vi } from "vitest";
 import cookieParser from "cookie-parser";
+
+vi.mock("firebase-admin/app");
+vi.mock("firebase-admin/app-check");
+vi.mock("firebase-admin/messaging");
 import { Wallet } from "ethers";
 import express from "express";
 import request from "supertest";

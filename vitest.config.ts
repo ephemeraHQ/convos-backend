@@ -8,7 +8,7 @@ export default defineConfig({
     poolOptions: {
       forks: { singleFork: true },
     },
-    isolate: false,
+    isolate: true,
     fileParallelism: false,
     globals: false,
     environment: "node",
