@@ -1,6 +1,10 @@
 import { describe, expect, vi, test } from "vitest";
 import type { V2NotificationPayload } from "@/api/v2/notifications/types";
 
+vi.mock("firebase-admin/app");
+vi.mock("firebase-admin/app-check");
+vi.mock("firebase-admin/messaging");
+
 // Re-register the real fcm-push.service module so that even when
 // notifications-payload-guard.test.ts has installed a stub mock for this module
 // (needed for its webhook handler tests), fcm-push.test.ts still exercises the

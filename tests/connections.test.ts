@@ -14,7 +14,12 @@ import {
   describe,
   expect,
   test,
+  vi,
 } from "vitest";
+
+vi.mock("firebase-admin/app");
+vi.mock("firebase-admin/app-check");
+vi.mock("firebase-admin/messaging");
 import express from "express";
 import {
   __resetComposioServiceForTests,

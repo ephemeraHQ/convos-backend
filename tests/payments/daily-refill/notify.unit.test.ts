@@ -1,5 +1,9 @@
 import { randomUUID } from "node:crypto";
-import { afterEach, describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
+
+vi.mock("firebase-admin/app");
+vi.mock("firebase-admin/app-check");
+vi.mock("firebase-admin/messaging");
 import { fanOutCreditsRefilled } from "@/payments/daily-refill/notify";
 import { prisma } from "@/utils/prisma";
 

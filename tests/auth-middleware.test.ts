@@ -10,7 +10,11 @@
 
 import { readFileSync } from "node:fs";
 import type { Server } from "node:http";
-import { afterAll, beforeAll, describe, expect, test } from "vitest";
+import { afterAll, beforeAll, describe, expect, test, vi } from "vitest";
+
+vi.mock("firebase-admin/app");
+vi.mock("firebase-admin/app-check");
+vi.mock("firebase-admin/messaging");
 import express, { type Response } from "express";
 import {
   __setAgentAssetsApiKeyOverrideForTests,

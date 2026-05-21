@@ -3,7 +3,11 @@ import {
   Environment,
   SignedDataVerifier,
 } from "@apple/app-store-server-library";
-import { afterEach, beforeAll, describe, expect, test } from "vitest";
+import { afterEach, beforeAll, describe, expect, test, vi } from "vitest";
+
+vi.mock("firebase-admin/app");
+vi.mock("firebase-admin/app-check");
+vi.mock("firebase-admin/messaging");
 import express, { json } from "express";
 import jsonwebtoken from "jsonwebtoken";
 import request from "supertest";

@@ -3,6 +3,10 @@ import { afterAll, beforeEach, describe, expect, vi, test } from "vitest";
 import type { Request } from "express";
 import { prisma } from "@/utils/prisma";
 
+vi.mock("firebase-admin/app");
+vi.mock("firebase-admin/app-check");
+vi.mock("firebase-admin/messaging");
+
 // ---- Mocks (must be installed BEFORE importing the SUT) ----
 
 // vi.hoisted runs at hoist time (same time as vi.mock factories), so these vars

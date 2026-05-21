@@ -1,5 +1,9 @@
 import { LedgerReason } from "@prisma/client";
-import { afterEach, beforeAll, describe, expect, test } from "vitest";
+import { afterEach, beforeAll, describe, expect, test, vi } from "vitest";
+
+vi.mock("firebase-admin/app");
+vi.mock("firebase-admin/app-check");
+vi.mock("firebase-admin/messaging");
 import express from "express";
 import request from "supertest";
 import { accountsRouter } from "@/api/v2/accounts/accounts.router";

@@ -1,4 +1,8 @@
-import { beforeAll, describe, expect, test } from "vitest";
+import { beforeAll, describe, expect, test, vi } from "vitest";
+
+vi.mock("firebase-admin/app");
+vi.mock("firebase-admin/app-check");
+vi.mock("firebase-admin/messaging");
 import express from "express";
 import request from "supertest";
 import { authMiddleware, requireAccount } from "@/middleware/auth";
