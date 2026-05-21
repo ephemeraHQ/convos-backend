@@ -83,7 +83,7 @@ const CONCURRENCY = Number(
 const LIMIT = Number(values.limit ?? process.env.EVAL_LIMIT ?? "0");
 // Opt-in only — pairwise doubles generation + judge spend, so don't enable it
 // implicitly just because multiple models are listed.
-const PAIRWISE = Boolean(values.pairwise);
+const PAIRWISE = values.pairwise;
 
 const expName = (model: string): string =>
   `${model.replace(/[^a-z0-9.-]/gi, "-")}-${new Date().toISOString().slice(0, 16)}`;

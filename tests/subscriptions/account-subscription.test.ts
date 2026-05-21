@@ -73,7 +73,7 @@ beforeAll(async () => {
     privateKeyEncoding: { type: "pkcs8", format: "pem" },
     publicKeyEncoding: { type: "spki", format: "pem" },
   });
-  signingPrivateKey = privateKey as unknown as string;
+  signingPrivateKey = privateKey;
 });
 
 afterEach(async () => {
@@ -111,7 +111,7 @@ const signTransaction = async (overrides: Record<string, unknown>) => {
     ...overrides,
   };
   const privateKey = await importPKCS8(signingPrivateKey, "ES256");
-  return new SignJWT(payload as Record<string, unknown>)
+  return new SignJWT(payload)
     .setProtectedHeader({ alg: "ES256" })
     .sign(privateKey);
 };

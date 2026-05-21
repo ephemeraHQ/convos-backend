@@ -16,6 +16,7 @@ vi.mock("firebase-admin/messaging");
 // vi.importActual, which safely loads the real module implementation.
 vi.mock("@/api/v2/notifications/fcm-push.service", async () => {
   return await vi.importActual<
+    // eslint-disable-next-line @typescript-eslint/consistent-type-imports
     typeof import("@/api/v2/notifications/fcm-push.service")
   >("@/api/v2/notifications/fcm-push.service");
 });

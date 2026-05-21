@@ -30,6 +30,7 @@ const { apnsSendMock, fcmSendMock } = vi.hoisted(() => ({
 // builder are overridden.
 vi.mock("@/api/v2/notifications/apns-push.service", async () => {
   const realApnsModule = await vi.importActual<
+    // eslint-disable-next-line @typescript-eslint/consistent-type-imports
     typeof import("@/api/v2/notifications/apns-push.service")
   >("@/api/v2/notifications/apns-push.service");
   return {
@@ -202,7 +203,7 @@ function makeClient(pushType: "apns" | "fcm"): ClientIdentifier & {
       addedAt: new Date(),
       updatedAt: new Date(),
     } as unknown as DeviceRegistration,
-  } as unknown as ClientIdentifier & { device: DeviceRegistration };
+  };
 }
 
 function makeWebhook(args: {

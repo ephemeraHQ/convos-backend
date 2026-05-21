@@ -7,7 +7,7 @@
  *
  */
 
-/* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-return, @typescript-eslint/no-explicit-any, @typescript-eslint/consistent-type-imports, @typescript-eslint/await-thenable, @typescript-eslint/no-confusing-void-expression */
+/* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-return, @typescript-eslint/no-explicit-any, @typescript-eslint/consistent-type-imports */
 
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 
@@ -39,7 +39,7 @@ function extractHeaders(init?: RequestInit): Record<string, string> {
       headers[k.toLowerCase()] = v;
     });
   } else if (Array.isArray(init.headers)) {
-    for (const [k, v] of init.headers as [string, string][]) {
+    for (const [k, v] of init.headers) {
       headers[k.toLowerCase()] = v;
     }
   } else {

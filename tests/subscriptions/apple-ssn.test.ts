@@ -74,7 +74,7 @@ beforeAll(() => {
     privateKeyEncoding: { type: "pkcs8", format: "pem" },
     publicKeyEncoding: { type: "spki", format: "pem" },
   });
-  signingPrivateKey = privateKey as unknown as string;
+  signingPrivateKey = privateKey;
 });
 
 afterEach(async () => {

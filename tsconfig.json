@@ -19,6 +19,9 @@
     "prisma/**/*",
     "tests/**/*",
     "dev/scripts/**/*",
-    "scripts/**/*"
+    "scripts/**/*",
+    "__mocks__/**/*",
+    "tsup.config.ts",
+    "vitest.config.ts"
   ]
 }

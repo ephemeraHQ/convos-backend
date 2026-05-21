@@ -97,7 +97,7 @@ describe("payments/index — composed service", () => {
   test("grant rejects unknown kind", async () => {
     const accountId = await seedAccount();
     cleanupAccounts.push(accountId);
-    expect(
+    await expect(
       grant({
         accountId,
         credits: 10,
@@ -151,7 +151,7 @@ describe("payments/index — composed service", () => {
       idempotencyKey: "seed",
       note: "drop balance below safe",
     });
-    expect(
+    await expect(
       consume({
         accountId,
         usdCostMicros: 5000n,
@@ -190,7 +190,7 @@ describe("payments/index — composed service", () => {
     const accountId = await seedAccount();
     cleanupAccounts.push(accountId);
 
-    expect(
+    await expect(
       adjust({
         accountId,
         delta: -2000,
@@ -286,7 +286,7 @@ describe("payments/index — replay + concurrency", () => {
       requestId: "req-1",
       model: "claude-opus-4-7",
     });
-    expect(
+    await expect(
       consume({
         accountId,
         usdCostMicros: 2000n,
@@ -313,7 +313,7 @@ describe("payments/index — replay + concurrency", () => {
       idempotencyKey: "c1",
       requestId: "req-1",
     });
-    expect(
+    await expect(
       consume({
         accountId,
         usdCostMicros: 2000n,
@@ -385,7 +385,7 @@ describe("payments/index — replay + concurrency", () => {
       kind: "manual",
       note: "first reason",
     });
-    expect(
+    await expect(
       grant({
         accountId,
         credits: 50,
@@ -406,7 +406,7 @@ describe("payments/index — replay + concurrency", () => {
       idempotencyKey: "g1",
       kind: "manual",
     });
-    expect(
+    await expect(
       grant({
         accountId,
         credits: 50,
@@ -425,7 +425,7 @@ describe("payments/index — replay + concurrency", () => {
       idempotencyKey: "a1",
       note: "original note",
     });
-    expect(
+    await expect(
       adjust({
         accountId,
         delta: 25,

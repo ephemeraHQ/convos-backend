@@ -66,7 +66,7 @@ beforeAll(() => {
     publicKeyEncoding: { type: "spki", format: "pem" },
     privateKeyEncoding: { type: "pkcs8", format: "pem" },
   });
-  signingPrivateKey = privateKey as unknown as string;
+  signingPrivateKey = privateKey;
 });
 
 const signPayload = async (payload: object): Promise<string> => {

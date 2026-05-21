@@ -10,7 +10,7 @@
  *   - the timeout timer is cleared on the non-2xx error path (finally runs)
  */
 
-/* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-argument, @typescript-eslint/await-thenable, @typescript-eslint/no-confusing-void-expression */
+/* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-argument */
 // The unsafe-argument disables are for the global setTimeout/clearTimeout
 // spies — they wrap variadic args of historically `any`-typed Node globals.
 // The await-thenable / no-confusing-void-expression disables cover Bun's
@@ -138,7 +138,7 @@ describe("templateGen service — OpenRouter wallclock timeout", () => {
   });
 
   test("timer is cleared on success path (no leak)", async () => {
-    globalThis.fetch = (() =>
+    globalThis.fetch = () =>
       Promise.resolve(
         new Response(
           JSON.stringify({
@@ -161,7 +161,7 @@ describe("templateGen service — OpenRouter wallclock timeout", () => {
           }),
           { status: 200, headers: { "Content-Type": "application/json" } },
         ),
-      )) as any;
+      );
 
     const before = { ...timerStats };
     const mod = await import("@/api/v2/agent-templates/services/templateGen");

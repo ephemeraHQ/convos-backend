@@ -36,7 +36,7 @@ type MockFetch = (
 ) => Promise<Response>;
 
 function installFetchMock(mock: MockFetch) {
-  globalThis.fetch = mock as typeof globalThis.fetch;
+  globalThis.fetch = mock;
 }
 
 function restoreFetch() {

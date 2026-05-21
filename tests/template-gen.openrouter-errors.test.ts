@@ -6,7 +6,7 @@
  *
  */
 
-/* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-explicit-any, @typescript-eslint/consistent-type-imports, @typescript-eslint/no-unused-vars, @typescript-eslint/await-thenable, @typescript-eslint/no-confusing-void-expression */
+/* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-explicit-any, @typescript-eslint/consistent-type-imports, @typescript-eslint/no-unused-vars */
 
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 

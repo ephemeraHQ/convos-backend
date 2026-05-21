@@ -68,7 +68,7 @@ beforeAll(() => {
     privateKeyEncoding: { type: "pkcs8", format: "pem" },
     publicKeyEncoding: { type: "spki", format: "pem" },
   });
-  testSigningKeyPem = privateKey as unknown as string;
+  testSigningKeyPem = privateKey;
 });
 
 const setValidEnv = () => {
