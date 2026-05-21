@@ -1,5 +1,5 @@
-import { afterEach, describe, expect, test } from "vitest";
 import type { NextFunction, Request, Response } from "express";
+import { afterEach, describe, expect, test } from "vitest";
 import {
   __setCronApiKeyOverrideForTests,
   requireCronApiKey,

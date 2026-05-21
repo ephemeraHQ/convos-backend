@@ -1,11 +1,11 @@
+import express from "express";
+import request from "supertest";
 import { describe, expect, test, vi } from "vitest";
+import { requireAccount } from "@/middleware/auth";
 
 vi.mock("firebase-admin/app");
 vi.mock("firebase-admin/app-check");
 vi.mock("firebase-admin/messaging");
-import express from "express";
-import request from "supertest";
-import { requireAccount } from "@/middleware/auth";
 
 describe("requireAccount middleware", () => {
   function makeApp(accountId?: string) {

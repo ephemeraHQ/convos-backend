@@ -11,14 +11,7 @@
  *   - composeReply LLM failure → deterministic fallback text still written
  */
 
-import {
-  afterAll,
-  afterEach,
-  beforeAll,
-  describe,
-  expect,
-  test,
-} from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, test } from "vitest";
 import {
   __resetComposeReplyForTests,
   buildDeterministicFallback,

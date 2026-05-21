@@ -1,13 +1,13 @@
+import express from "express";
+import request from "supertest";
 import { beforeAll, describe, expect, test, vi } from "vitest";
+import { authMiddleware, requireAccount } from "@/middleware/auth";
+import { pinoMiddleware } from "@/middleware/pino";
+import { createJwtToken, validateJWTKeys } from "@/utils/jwt";
 
 vi.mock("firebase-admin/app");
 vi.mock("firebase-admin/app-check");
 vi.mock("firebase-admin/messaging");
-import express from "express";
-import request from "supertest";
-import { authMiddleware, requireAccount } from "@/middleware/auth";
-import { pinoMiddleware } from "@/middleware/pino";
-import { createJwtToken, validateJWTKeys } from "@/utils/jwt";
 
 function makeApp() {
   const app = express();

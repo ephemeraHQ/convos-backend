@@ -1,14 +1,14 @@
 import type { Server } from "node:http";
+import express from "express";
 import {
   afterAll,
   beforeAll,
   beforeEach,
   describe,
   expect,
-  vi,
   test,
+  vi,
 } from "vitest";
-import express from "express";
 import { jsonMiddleware } from "@/middleware/json";
 import { pinoMiddleware } from "@/middleware/pino";
 
@@ -74,9 +74,8 @@ vi.mock("@aws-sdk/client-s3", () => ({
 }));
 
 // Import after mocking
-const { renewBatchHandler } = await import(
-  "@/api/v2/assets/handlers/renew-batch"
-);
+const { renewBatchHandler } =
+  await import("@/api/v2/assets/handlers/renew-batch");
 
 const app = express();
 app.use(pinoMiddleware);

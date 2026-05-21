@@ -1,11 +1,7 @@
 import { LedgerReason } from "@prisma/client";
-import { afterEach, beforeAll, describe, expect, test, vi } from "vitest";
-
-vi.mock("firebase-admin/app");
-vi.mock("firebase-admin/app-check");
-vi.mock("firebase-admin/messaging");
 import express from "express";
 import request from "supertest";
+import { afterEach, beforeAll, describe, expect, test, vi } from "vitest";
 import { accountsRouter } from "@/api/v2/accounts/accounts.router";
 import { authMiddleware } from "@/middleware/auth";
 import { pinoMiddleware } from "@/middleware/pino";
@@ -18,6 +14,10 @@ import {
 } from "@/subscriptions/repository";
 import { createJwtToken, validateJWTKeys } from "@/utils/jwt";
 import { prisma } from "@/utils/prisma";
+
+vi.mock("firebase-admin/app");
+vi.mock("firebase-admin/app-check");
+vi.mock("firebase-admin/messaging");
 
 const makeApp = () => {
   const app = express();

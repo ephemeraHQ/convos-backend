@@ -1,6 +1,6 @@
-import { describe, expect, test } from "vitest";
 import { Wallet } from "ethers";
 import type { SiweMessage } from "siwe";
+import { describe, expect, test } from "vitest";
 import { InvalidSiweError, verifySiwe } from "@/api/v2/auth/handlers/siwe";
 import { buildSiweMessage } from "./helpers/siwe";
 

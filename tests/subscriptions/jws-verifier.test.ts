@@ -3,6 +3,7 @@ import {
   Environment,
   SignedDataVerifier,
 } from "@apple/app-store-server-library";
+import { importPKCS8, SignJWT } from "jose";
 import {
   afterEach,
   beforeAll,
@@ -12,12 +13,6 @@ import {
   test,
   vi,
 } from "vitest";
-
-vi.mock("firebase-admin/app");
-vi.mock("firebase-admin/app-check");
-vi.mock("firebase-admin/messaging");
-
-import { SignJWT, importPKCS8 } from "jose";
 import {
   buildVerifierConfig,
   getVerifier,
@@ -26,6 +21,10 @@ import {
   verifyAndDecodeNotification,
   verifyAndDecodeTransaction,
 } from "@/subscriptions/jws-verifier";
+
+vi.mock("firebase-admin/app");
+vi.mock("firebase-admin/app-check");
+vi.mock("firebase-admin/messaging");
 
 const TEST_BUNDLE_ID = "app.convos.test";
 

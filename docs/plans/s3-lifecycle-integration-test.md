@@ -29,7 +29,6 @@ Already implemented:
 **Changes Required**:
 
 1. **Add token-based auth to test endpoint** (`src/middleware/lifecycleTestAuth.ts`)
-
    - Follow `webhookAuthMiddleware` pattern
    - Use `LIFECYCLE_TEST_TOKEN` env var
    - Check `Authorization: Bearer <token>` header
@@ -46,7 +45,6 @@ Already implemented:
    ```
 
 3. **Add CI workflow jobs** (`.github/workflows/deploy-aws.yml`)
-
    - Add `test_lifecycle_dev` job after `deploy_otr_dev`
    - Add `test_lifecycle_prod` job after `deploy_otr_prod`
 
@@ -122,7 +120,6 @@ Already implemented:
 **Approach - "Canary File System"**:
 
 1. **Create new endpoint** `POST /v2/assets/test/lifecycle-status`
-
    - Protected by same `LIFECYCLE_TEST_TOKEN`
    - Logic:
      1. Create today's canary files:

@@ -48,9 +48,8 @@ function loadTemplateGen(): Promise<typeof TemplateGenModule> {
   if (!modPromise) {
     bootstrapEnv();
     modPromise = (async () => {
-      const tg = await import(
-        "../../../src/api/v2/agent-templates/services/templateGen"
-      );
+      const tg =
+        await import("../../../src/api/v2/agent-templates/services/templateGen");
       // Generation reads BUILDER_OPENROUTER_API_KEY (the production var). When
       // it's unset but EVAL_OPENROUTER_API_KEY is, drive generation from the
       // eval key too, so a single key powers both generation and the judge.

@@ -3,14 +3,10 @@ import {
   Environment,
   SignedDataVerifier,
 } from "@apple/app-store-server-library";
-import { afterEach, beforeAll, describe, expect, test, vi } from "vitest";
-
-vi.mock("firebase-admin/app");
-vi.mock("firebase-admin/app-check");
-vi.mock("firebase-admin/messaging");
 import express, { json } from "express";
-import { SignJWT, importPKCS8 } from "jose";
+import { importPKCS8, SignJWT } from "jose";
 import request from "supertest";
+import { afterEach, beforeAll, describe, expect, test, vi } from "vitest";
 import { accountsRouter } from "@/api/v2/accounts/accounts.router";
 import { authMiddleware } from "@/middleware/auth";
 import { pinoMiddleware } from "@/middleware/pino";
@@ -20,6 +16,10 @@ import {
 } from "@/subscriptions/jws-verifier";
 import { createJwtToken, validateJWTKeys } from "@/utils/jwt";
 import { prisma } from "@/utils/prisma";
+
+vi.mock("firebase-admin/app");
+vi.mock("firebase-admin/app-check");
+vi.mock("firebase-admin/messaging");
 
 const TEST_BUNDLE_ID = "app.convos.test";
 
@@ -220,7 +220,9 @@ describe("POST /v2/accounts/me/subscription/verify", () => {
       .post("/v2/accounts/me/subscription/verify")
       .set("X-Convos-AuthToken", token)
       .send({
-        jwsRepresentation: await signTransaction({ appAccountToken: undefined }),
+        jwsRepresentation: await signTransaction({
+          appAccountToken: undefined,
+        }),
       });
     expect(res.status).toBe(400);
     expect((res.body as ErrorBody).error).toMatch(/appAccountToken/);
@@ -234,7 +236,9 @@ describe("POST /v2/accounts/me/subscription/verify", () => {
       .post("/v2/accounts/me/subscription/verify")
       .set("X-Convos-AuthToken", token)
       .send({
-        jwsRepresentation: await signTransaction({ productId: "app.bogus.sku" }),
+        jwsRepresentation: await signTransaction({
+          productId: "app.bogus.sku",
+        }),
       });
     expect(res.status).toBe(400);
     expect((res.body as ErrorBody).error).toMatch(/Unrecognized productId/);

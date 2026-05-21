@@ -3,15 +3,10 @@ import {
   Environment,
   SignedDataVerifier,
 } from "@apple/app-store-server-library";
-import { afterEach, beforeAll, describe, expect, test, vi } from "vitest";
-
-vi.mock("firebase-admin/app");
-vi.mock("firebase-admin/app-check");
-vi.mock("firebase-admin/messaging");
-
 import express, { json } from "express";
-import { SignJWT, importPKCS8 } from "jose";
+import { importPKCS8, SignJWT } from "jose";
 import request from "supertest";
+import { afterEach, beforeAll, describe, expect, test, vi } from "vitest";
 import { appleWebhookRouter } from "@/api/v2/subscriptions/apple-webhook.router";
 import { pinoMiddleware } from "@/middleware/pino";
 import {
@@ -26,6 +21,10 @@ import {
   upsertFromVerify,
 } from "@/subscriptions/repository";
 import { prisma } from "@/utils/prisma";
+
+vi.mock("firebase-admin/app");
+vi.mock("firebase-admin/app-check");
+vi.mock("firebase-admin/messaging");
 
 const TEST_BUNDLE_ID = "app.convos.test";
 

@@ -7,6 +7,7 @@ import type {
   ConnectedAccountStatus,
   ConnectionRequest,
 } from "@composio/core";
+import express from "express";
 import {
   afterAll,
   beforeAll,
@@ -16,11 +17,6 @@ import {
   test,
   vi,
 } from "vitest";
-
-vi.mock("firebase-admin/app");
-vi.mock("firebase-admin/app-check");
-vi.mock("firebase-admin/messaging");
-import express from "express";
 import {
   __resetComposioServiceForTests,
   ComposioService,
@@ -30,6 +26,10 @@ import { authMiddleware } from "@/middleware/auth";
 import { jsonMiddleware } from "@/middleware/json";
 import { pinoMiddleware } from "@/middleware/pino";
 import { createJwtToken } from "@/utils/jwt";
+
+vi.mock("firebase-admin/app");
+vi.mock("firebase-admin/app-check");
+vi.mock("firebase-admin/messaging");
 
 // Stub shapes — match just what the service touches on the Composio client.
 type ConnectedAccountsStub = {

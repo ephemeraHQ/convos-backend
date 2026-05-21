@@ -1,12 +1,8 @@
-import { afterEach, beforeAll, describe, expect, test, vi } from "vitest";
 import cookieParser from "cookie-parser";
-
-vi.mock("firebase-admin/app");
-vi.mock("firebase-admin/app-check");
-vi.mock("firebase-admin/messaging");
 import { Wallet } from "ethers";
 import express from "express";
 import request from "supertest";
+import { afterEach, beforeAll, describe, expect, test, vi } from "vitest";
 import { issueNonce } from "@/api/v2/auth/auth-nonce.repository";
 import { authRouter } from "@/api/v2/auth/auth.router";
 import { NONCE_COOKIE_NAME, signNonce } from "@/api/v2/auth/nonce-cookie";
@@ -15,6 +11,10 @@ import { ADMIN_ACCOUNT_ID } from "@/utils/constants";
 import { verifyJwtToken } from "@/utils/jwt";
 import { prisma } from "@/utils/prisma";
 import { buildSiweMessage } from "./helpers/siwe";
+
+vi.mock("firebase-admin/app");
+vi.mock("firebase-admin/app-check");
+vi.mock("firebase-admin/messaging");
 
 function makeApp() {
   const app = express();

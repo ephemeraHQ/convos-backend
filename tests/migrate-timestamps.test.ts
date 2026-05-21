@@ -1,14 +1,14 @@
 import type { Server } from "node:http";
+import express from "express";
 import {
   afterAll,
   beforeAll,
   beforeEach,
   describe,
   expect,
-  vi,
   test,
+  vi,
 } from "vitest";
-import express from "express";
 import { jsonMiddleware } from "@/middleware/json";
 import { lifecycleTestAuthMiddleware } from "@/middleware/lifecycleTestAuth";
 import { pinoMiddleware } from "@/middleware/pino";
@@ -80,9 +80,8 @@ vi.mock("@aws-sdk/client-s3", () => ({
   },
 }));
 
-const { migrateTimestampsHandler } = await import(
-  "@/api/v2/assets/handlers/migrate-timestamps"
-);
+const { migrateTimestampsHandler } =
+  await import("@/api/v2/assets/handlers/migrate-timestamps");
 
 const app = express();
 app.use(pinoMiddleware);

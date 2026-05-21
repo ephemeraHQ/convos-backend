@@ -9,12 +9,6 @@ import {
   test,
   vi,
 } from "vitest";
-
-vi.mock("firebase-admin/app");
-vi.mock("firebase-admin/app-check");
-vi.mock("firebase-admin/messaging");
-vi.mock("jsonwebtoken");
-
 import { __setAgentAssetsApiKeyOverrideForTests } from "@/middleware/agentAuth";
 import {
   buildCreditsApp,
@@ -22,6 +16,11 @@ import {
   seedAccount,
   TEST_AGENT_API_KEY,
 } from "./helpers";
+
+vi.mock("firebase-admin/app");
+vi.mock("firebase-admin/app-check");
+vi.mock("firebase-admin/messaging");
+vi.mock("jsonwebtoken");
 
 let BASE = "";
 let server: Server;

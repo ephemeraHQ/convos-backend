@@ -1,17 +1,16 @@
 import { randomUUID } from "node:crypto";
 import { LedgerReason } from "@prisma/client";
 import { afterEach, describe, expect, test, vi } from "vitest";
-
-vi.mock("firebase-admin/app");
-vi.mock("firebase-admin/app-check");
-vi.mock("firebase-admin/messaging");
-vi.mock("jsonwebtoken");
-
 import { getBalance } from "@/payments";
 import { runDailyRefill } from "@/payments/daily-refill/service";
 import { ymdUtc } from "@/payments/daily-refill/utc";
 import { applyDelta } from "@/payments/ledger/repository";
 import { prisma } from "@/utils/prisma";
+
+vi.mock("firebase-admin/app");
+vi.mock("firebase-admin/app-check");
+vi.mock("firebase-admin/messaging");
+vi.mock("jsonwebtoken");
 
 const tracker: string[] = [];
 

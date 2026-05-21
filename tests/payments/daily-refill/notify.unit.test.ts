@@ -1,12 +1,12 @@
 import { randomUUID } from "node:crypto";
 import { afterEach, describe, expect, test, vi } from "vitest";
+import { fanOutCreditsRefilled } from "@/payments/daily-refill/notify";
+import { prisma } from "@/utils/prisma";
 
 vi.mock("firebase-admin/app");
 vi.mock("firebase-admin/app-check");
 vi.mock("firebase-admin/messaging");
 vi.mock("jsonwebtoken");
-import { fanOutCreditsRefilled } from "@/payments/daily-refill/notify";
-import { prisma } from "@/utils/prisma";
 
 const tracker: string[] = [];
 const deviceTracker: string[] = [];

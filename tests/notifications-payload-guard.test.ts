@@ -1,6 +1,6 @@
 import type { ClientIdentifier, DeviceRegistration } from "@prisma/client";
-import { afterAll, beforeEach, describe, expect, vi, test } from "vitest";
 import type { Request } from "express";
+import { afterAll, beforeEach, describe, expect, test, vi } from "vitest";
 import { prisma } from "@/utils/prisma";
 
 vi.mock("firebase-admin/app");
@@ -156,9 +156,8 @@ vi.mock("@/notifications/client", () => ({
 // verifyJwtToken etc.) for downstream test files. The handler uses the real
 // createJwtToken (signing keys come from tests/setup.ts).
 
-const { handleV2Notification } = await import(
-  "@/api/v2/notifications/handlers/webhook"
-);
+const { handleV2Notification } =
+  await import("@/api/v2/notifications/handlers/webhook");
 
 // ---- Test helpers ----
 

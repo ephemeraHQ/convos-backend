@@ -1,13 +1,13 @@
-import { describe, expect, test, vi } from "vitest";
 import cookieParser from "cookie-parser";
+import express from "express";
+import request from "supertest";
+import { describe, expect, test, vi } from "vitest";
+import { authRouter } from "@/api/v2/auth/auth.router";
+import { pinoMiddleware } from "@/middleware/pino";
 
 vi.mock("firebase-admin/app");
 vi.mock("firebase-admin/app-check");
 vi.mock("firebase-admin/messaging");
-import express from "express";
-import request from "supertest";
-import { authRouter } from "@/api/v2/auth/auth.router";
-import { pinoMiddleware } from "@/middleware/pino";
 
 function makeApp() {
   const app = express();

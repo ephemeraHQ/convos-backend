@@ -89,7 +89,10 @@ function buildClient(apiKey: string): { client: OpenAI; wrapped: boolean } {
     // mismatch (OpenAI carries a `#private` field that the @posthog/ai
     // re-export doesn't share). Cast through unknown to bridge the brand.
     return {
-      client: new PostHogOpenAI({ ...common, posthog: ph }) as unknown as OpenAI,
+      client: new PostHogOpenAI({
+        ...common,
+        posthog: ph,
+      }) as unknown as OpenAI,
       wrapped: true,
     };
   }

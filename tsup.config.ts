@@ -1,5 +1,5 @@
-import { defineConfig } from "tsup";
 import { tsconfigPathsPlugin } from "esbuild-plugin-tsconfig-paths";
+import { defineConfig } from "tsup";
 
 export default defineConfig({
   entry: ["src/index.ts", "src/instrumentation.ts"],

@@ -405,7 +405,6 @@ req.log.error(
 **Files to create:**
 
 1. **`src/api/v2/assets/assets.router.ts`**
-
    - Import Express Router
    - Import `renewBatchHandler`
    - Create router with POST `/renew-batch` route
@@ -420,7 +419,6 @@ req.log.error(
 **Files to modify:**
 
 3. **`src/api/v2/index.ts`**
-
    - Import `assetsRouter`
    - Add route: `v2Router.use("/assets", authMiddleware, assetRenewalLimiter, assetsRouter)`
 
@@ -725,19 +723,16 @@ describe("POST /v2/assets/renew-batch", () => {
 ### Manual Testing Scenarios
 
 1. **Happy path:**
-
    - Upload profile image → get CDN URL → extract key
    - Renew via batch endpoint with key
    - Verify 200 response, renewed: 1, failed: 0
 
 2. **404 handling:**
-
    - Request renewal for non-existent key
    - Verify response includes `not_found` error
    - Client should re-upload from cache
 
 3. **Invalid key:**
-
    - Send empty key or path traversal attempt
    - Verify `invalid_key` error returned
 

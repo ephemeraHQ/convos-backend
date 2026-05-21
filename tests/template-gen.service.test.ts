@@ -960,9 +960,8 @@ describe("templateGen service — OpenRouter integration", () => {
     const mod = await import("@/api/v2/agent-templates/services/templateGen");
     generateTemplate = mod.generateTemplate;
 
-    const { SYSTEM_PROMPT } = await import(
-      "@/api/v2/agent-templates/lib/system-prompt"
-    );
+    const { SYSTEM_PROMPT } =
+      await import("@/api/v2/agent-templates/lib/system-prompt");
 
     setOpenRouterResponse({
       model: "@preset/assistants-pro",

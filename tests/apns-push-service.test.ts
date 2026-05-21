@@ -1,4 +1,4 @@
-import { describe, expect, vi, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import type { ApnsDevice } from "@/api/v2/notifications/apns-push.service";
 
 // jsonwebtoken@9 uses buffer-equal-constant-time which calls SlowBuffer —
@@ -66,9 +66,8 @@ vi.mock("node:http2", () => ({
 }));
 
 // Import AFTER vi.mock so service picks up stubbed http2
-const { ApnsPushService } = await import(
-  "@/api/v2/notifications/apns-push.service"
-);
+const { ApnsPushService } =
+  await import("@/api/v2/notifications/apns-push.service");
 
 const ES256_TEST_KEY = `-----BEGIN PRIVATE KEY-----
 MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgevZzL1gdAFr88hb2
