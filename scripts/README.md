@@ -19,13 +19,13 @@ DATABASE_URL=your-database-url
 ### Quick Test
 
 ```bash
-bun run scripts/simple-push-test.ts <userId>
+pnpm tsx scripts/simple-push-test.ts <userId>
 ```
 
 ### Advanced Test with Options
 
 ```bash
-bun run scripts/test-push-notification.ts <userId> [options]
+pnpm tsx scripts/test-push-notification.ts <userId> [options]
 ```
 
 **Options:**
@@ -40,10 +40,10 @@ bun run scripts/test-push-notification.ts <userId> [options]
 
 ```bash
 # Basic test
-bun run scripts/test-push-notification.ts 6bb0bd17-4dae-4749-adaf-cb4d7806a9dc
+pnpm tsx scripts/test-push-notification.ts 6bb0bd17-4dae-4749-adaf-cb4d7806a9dc
 
 # Custom message with sandbox
-bun run scripts/test-push-notification.ts 6bb0bd17-4dae-4749-adaf-cb4d7806a9dc --title "Hello" --body "Test message" --sandbox
+pnpm tsx scripts/test-push-notification.ts 6bb0bd17-4dae-4749-adaf-cb4d7806a9dc --title "Hello" --body "Test message" --sandbox
 ```
 
 ## Find User IDs

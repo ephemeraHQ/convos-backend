@@ -2,7 +2,8 @@
 
 ## Prerequisites
 
-- [Bun](https://bun.sh/) runtime
+- Node.js 24 (see `.nvmrc`)
+- pnpm 10.33.4 (provisioned via Corepack: `corepack enable && corepack prepare pnpm@10.33.4 --activate`)
 - [Docker](https://www.docker.com/) for running dependencies
 
 ## Quick Start
@@ -10,29 +11,29 @@
 1. **Start Docker services** (PostgreSQL, XMTP node, notification server):
 
    ```bash
-   cd dev && ./up
+   ./dev/up
    ```
 
 2. **Configure environment** - copy `.env.example` to `.env` and generate keys:
 
    ```bash
    # Generate JWT ECDSA key pair
-   bun run dev/scripts/generateEcdsaKeys.ts
+   pnpm tsx dev/scripts/generateEcdsaKeys.ts
 
    # Generate notification webhook secret
-   bun run dev/scripts/generateNotificationSecret.ts
+   pnpm generate:notification-secret
    ```
 
 3. **Initialize the database:**
 
    ```bash
-   bun run migrate:dev
+   pnpm migrate:deploy
    ```
 
 4. **Start the backend:**
 
    ```bash
-   bun run dev
+   pnpm dev
    ```
 
 5. **Verify setup:**

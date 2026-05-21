@@ -4,7 +4,7 @@ import * as jose from "jose";
  * Generate ECDSA P-256 key pair for JWT authentication
  *
  * Usage:
- *   bun run dev/scripts/generateEcdsaKeys.ts
+ *   pnpm tsx dev/scripts/generateEcdsaKeys.ts
  *
  * This generates a private key for the backend (JWT_PRIVATE_KEY)
  * and a public key for the gateway (JWT_PUBLIC_KEY)

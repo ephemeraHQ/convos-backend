@@ -10,9 +10,23 @@ See our [contribution guide](./CONTRIBUTING.md) to learn more about contributing
 
 ### Prerequisites
 
-#### Bun
+#### Node.js 24 + pnpm
 
-See [Bun's documentation](https://bun.sh/docs/installation) for installation instructions.
+Use [nvm](https://github.com/nvm-sh/nvm) (or any Node version manager) and pick
+the version in `.nvmrc`:
+
+```bash
+nvm install
+nvm use
+```
+
+pnpm is provisioned via [Corepack](https://nodejs.org/api/corepack.html) — the
+version is pinned in `package.json#packageManager`:
+
+```bash
+corepack enable
+corepack prepare pnpm@10.33.4 --activate
+```
 
 #### Docker
 
@@ -25,12 +39,13 @@ See [Docker's documentation](https://docs.docker.com/get-docker/) for installati
 
 #### Setup environment
 
-Copy `.env.example` to `.env`.
+Copy `.env.example` to `.env`. Every var tagged `# REQUIRED` in `.env.example`
+must be set or the server will refuse to start.
 
 For secure communication with the XMTP notification server, generate a secret:
 
 ```bash
-bun generate:notification-secret
+pnpm generate:notification-secret
 ```
 
 Add the generated value to your `.env` file.
@@ -38,7 +53,7 @@ Add the generated value to your `.env` file.
 For JWT authentication, generate an ECDSA P-256 key pair:
 
 ```bash
-bun run dev/scripts/generateEcdsaKeys.ts
+pnpm tsx dev/scripts/generateEcdsaKeys.ts
 ```
 
 Add the `JWT_PRIVATE_KEY` to your backend `.env` file and share the `JWT_PUBLIC_KEY` with the gateway service.
@@ -46,30 +61,28 @@ Add the `JWT_PRIVATE_KEY` to your backend `.env` file and share the `JWT_PUBLIC_
 #### Run the app locally
 
 ```bash
-# Run local Docker container for the Convos database
-./dev/convos-db/up
-
-# Run local Docker container for an XMTP node
-./dev/xmtp/up
+# Bring up the dev compose stack (Postgres + XMTP node + notification server)
+./dev/up
 
 # Install dependencies
-bun install
+pnpm install
 
 # Apply migrations to the local database
-bun migrate:dev
+pnpm migrate:deploy
+
+# Generate Prisma client + zod schemas + protobufs
+pnpm prisma generate
+pnpm buf:generate
 
 # Run the app in watch mode
-bun dev
+pnpm dev
 ```
 
 #### Run the app locally with Docker
 
 ```bash
-# Run local Docker container for the Convos database
-./dev/convos-db/up
-
-# Run local Docker container for an XMTP node
-./dev/xmtp/up
+# Bring up the dev compose stack (Postgres + XMTP node + notification server)
+./dev/up
 
 # Build the Docker image
 docker build -t "convos-api-service" .
@@ -82,20 +95,21 @@ Adjust the `-p 4000:4000` flag to match the port in the `.env` file. The default
 
 ### Useful commands
 
-- `bun clean`: Removes `node_modules` folder and `*.db3*` files
-- `bun dev`: Run the app in watch mode
-- `bun eval:models`: Bake off generation models for agent-prompt quality, scored on Braintrust (see [`tests/evals/README.md`](tests/evals/README.md))
-- `bun eval:prompt`: Compare the working-tree generator prompt against the default branch (prompt regression)
-- `bun format:check`: Run prettier format check
-- `bun format`: Run prettier format and write changes
-- `bun generate:key`: Generate a key for XMTP database encryption
-- `bun generate:notification-secret`: Generate a secure token for XMTP notification authentication
-- `bun run dev/scripts/generateEcdsaKeys.ts`: Generate ECDSA P-256 key pair for JWT authentication
-- `bun install`: Installs all dependencies
-- `bun lint`: Lint with ESLint
-- `bun migrate:dev`: Create a Prisma migration from changes in the Prisma schema, apply to the database, and generate Prisma client code
-- `bun migrate:deploy`: Apply pending migrations to the database
-- `bun run build`: Builds the app
-- `bun start`: Run the app
-- `bun test`: Run tests
-- `bun typecheck`: Typecheck with `tsc`
+- `pnpm clean`: Removes `node_modules` folder
+- `pnpm dev`: Run the app in watch mode
+- `pnpm eval:models`: Bake off generation models for agent-prompt quality, scored on Braintrust (see [`tests/evals/README.md`](tests/evals/README.md))
+- `pnpm eval:prompt`: Compare the working-tree generator prompt against the default branch (prompt regression)
+- `pnpm format:check`: Run prettier format check
+- `pnpm format`: Run prettier format and write changes
+- `pnpm generate:key`: Generate a key for XMTP database encryption
+- `pnpm generate:notification-secret`: Generate a secure token for XMTP notification authentication
+- `pnpm tsx dev/scripts/generateEcdsaKeys.ts`: Generate ECDSA P-256 key pair for JWT authentication
+- `pnpm install`: Installs all dependencies
+- `pnpm lint`: Lint with ESLint
+- `pnpm migrate:dev`: Create a Prisma migration from changes in the Prisma schema, apply to the database, and generate Prisma client code
+- `pnpm migrate:deploy`: Apply pending migrations to the database
+- `pnpm build`: Builds the app
+- `pnpm start`: Run the built app
+- `pnpm test`: Run tests
+- `pnpm typecheck`: Typecheck with `tsc`
+- `pnpm check`: Run typecheck + format:check + lint together (CI gate)
