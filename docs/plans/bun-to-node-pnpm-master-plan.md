@@ -29,12 +29,12 @@ No runtime `src/` Bun API dependency was found in the initial scan; the largest 
 
 ## Migration shape
 
-| Slice | Change | Gate |
-| --- | --- | --- |
-| 1. Toolchain | Pin Node 22, add `packageManager: pnpm@...`, add `pnpm-lock.yaml`, install via Corepack. | `pnpm install --frozen-lockfile` |
-| 2. Runtime | Replace Bun TS execution with Node-compatible tooling: `tsx` for dev/scripts/evals; bundled JS for production. | `pnpm dev`, `pnpm build`, `pnpm start` |
-| 3. Tests | Move `bun:test` to Vitest; port mocks/preload/setup. | `pnpm test` |
-| 4. Infra/docs cleanup | Switch CI/Docker/entrypoint/docs from Bun to Node/pnpm; remove Bun pins/lock/config. | CI green + Docker image boots + `/healthcheck` + POST `/v2/accounts/me/subscription/verify` with a real Sandbox JWS returns 200 + persists `Subscription` row |
+| Slice                 | Change                                                                                                         | Gate                                                                                                                                                          |
+| --------------------- | -------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1. Toolchain          | Pin Node 22, add `packageManager: pnpm@...`, add `pnpm-lock.yaml`, install via Corepack.                       | `pnpm install --frozen-lockfile`                                                                                                                              |
+| 2. Runtime            | Replace Bun TS execution with Node-compatible tooling: `tsx` for dev/scripts/evals; bundled JS for production. | `pnpm dev`, `pnpm build`, `pnpm start`                                                                                                                        |
+| 3. Tests              | Move `bun:test` to Vitest; port mocks/preload/setup.                                                           | `pnpm test`                                                                                                                                                   |
+| 4. Infra/docs cleanup | Switch CI/Docker/entrypoint/docs from Bun to Node/pnpm; remove Bun pins/lock/config.                           | CI green + Docker image boots + `/healthcheck` + POST `/v2/accounts/me/subscription/verify` with a real Sandbox JWS returns 200 + persists `Subscription` row |
 
 These slices can be stacked or split into small PRs. Do not start slice 4 cleanup until slices 1–3 are green.
 
