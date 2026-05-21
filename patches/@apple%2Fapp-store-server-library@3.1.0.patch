@@ -1,0 +1,31 @@
+diff --git a/dist/jws_verification.js b/dist/jws_verification.js
+index aadaf43fef6c927da909a343192be0cb50d9ea67..f8206c7bef3fcc3fbe8fb9136d6a2d2aba6e579d 100644
+--- a/dist/jws_verification.js
++++ b/dist/jws_verification.js
+@@ -213,10 +213,22 @@ class SignedDataVerifier {
+             }
+             const effectiveDate = this.enableOnlineChecks ? new Date() : signedDateExtractor(decodedJWT);
+             const publicKey = await this.verifyCertificateChain(this.rootCertificates, certificateChain[0], certificateChain[1], effectiveDate);
+-            const encodedKey = publicKey.export({
+-                type: "spki",
+-                format: "pem"
+-            });
++            // bun compat: X509Certificate.publicKey returns a Node KeyObject
++            // (has .export()) on Node, but a Web Crypto CryptoKey on bun.
++            // jsonwebtoken needs an SPKI public-key PEM specifically (cert
++            // PEM works on Node but trips bun's createPublicKey, which then
++            // defaults to RSA algorithm guesses and rejects ES256). So:
++            //   Node path: use the existing .export().
++            //   Bun path:  exportKey('spki', cryptoKey) + manual PEM wrap.
++            let encodedKey;
++            if (typeof publicKey.export === "function") {
++                encodedKey = publicKey.export({ type: "spki", format: "pem" });
++            } else {
++                const spki = await crypto.subtle.exportKey("spki", publicKey);
++                const b64 = Buffer.from(spki).toString("base64");
++                const lines = b64.match(/.{1,64}/g) ?? [b64];
++                encodedKey = "-----BEGIN PUBLIC KEY-----\n" + lines.join("\n") + "\n-----END PUBLIC KEY-----\n";
++            }
+             jsonwebtoken.verify(jwt, encodedKey);
+             return decodedJWT;
+         }

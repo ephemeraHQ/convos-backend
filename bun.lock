@@ -1,6 +1,5 @@
 {
   "lockfileVersion": 1,
-  "configVersion": 0,
   "workspaces": {
     "": {
       "name": "convos-backend",
@@ -76,6 +75,9 @@
         "zod-prisma-types": "^3.2.4",
       },
     },
+  },
+  "patchedDependencies": {
+    "@apple/app-store-server-library@3.1.0": "patches/@apple%2Fapp-store-server-library@3.1.0.patch",
   },
   "packages": {
     "@adraffy/ens-normalize": ["@adraffy/ens-normalize@1.10.1", "", {}, "sha512-96Z2IP3mYmF1Xg2cDm8f1gWGf/HUVedQ3FMifV4kG/PQ4yEP51xDtRAEfhVNt5f/uzpNkZHwWQuUcu6D6K+Ekw=="],

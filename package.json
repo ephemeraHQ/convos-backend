@@ -100,5 +100,8 @@
   },
   "engines": {
     "node": ">=20"
+  },
+  "patchedDependencies": {
+    "@apple/app-store-server-library@3.1.0": "patches/@apple%2Fapp-store-server-library@3.1.0.patch"
   }
 }

@@ -105,6 +105,16 @@ export async function subscriptionVerifyHandler(req: Request, res: Response) {
   let decoded: JWSTransactionDecodedPayload;
   try {
     decoded = await verifyAndDecodeTransaction(parsed.data.jwsRepresentation);
+    req.log.info(
+      {
+        accountId,
+        transactionId: decoded.transactionId,
+        originalTransactionId: decoded.originalTransactionId,
+        productId: decoded.productId,
+        environment: decoded.environment,
+      },
+      "JWS transaction verification succeeded",
+    );
   } catch (err) {
     req.log.warn(
       { err: err instanceof Error ? err.message : err, accountId },
