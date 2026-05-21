@@ -1,0 +1,58 @@
+name: Eval generator prompt
+
+# Runs only when the generator system prompt changes. Compares the base-branch
+# version of the prompt against the PR version (model held fixed), pairwise-judged,
+# and posts a win-rate summary to the run's job summary. See tests/evals/.
+on:
+  pull_request:
+    paths:
+      - "data/template-generator-prompt.txt"
+
+# A new push to the PR supersedes an in-flight run.
+concurrency:
+  group: eval-prompt-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  prompt-eval:
+    # Requires repo secrets BRAINTRUST_API_KEY and EVAL_OPENROUTER_API_KEY; skip
+    # on forks (which can't read secrets) so the job doesn't fail spuriously.
+    if: github.event.pull_request.head.repo.fork == false
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # need the base commit to extract its prompt version
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: ".bun-version"
+
+      - run: bun install
+
+      - name: Extract base-branch prompt
+        run: |
+          git show "${{ github.event.pull_request.base.sha }}:data/template-generator-prompt.txt" > /tmp/base-prompt.txt
+          wc -l /tmp/base-prompt.txt
+
+      - name: Compare base vs PR prompt
+        env:
+          BRAINTRUST_API_KEY: ${{ secrets.BRAINTRUST_API_KEY }}
+          EVAL_OPENROUTER_API_KEY: ${{ secrets.EVAL_OPENROUTER_API_KEY }}
+          # Inputs passed via env (not interpolated into the shell) for safety.
+          IN_MODEL: anthropic/claude-opus-4.7
+          IN_JUDGE: openai/gpt-5.5
+          # Smoke dataset keeps CI fast; switch to core.jsonl for a fuller signal.
+          IN_DATASET: tests/evals/datasets/smoke.jsonl
+          IN_LABEL: ${{ github.event.pull_request.head.sha }}
+        run: |
+          bun run tests/evals/compare-prompts.ts \
+            --base /tmp/base-prompt.txt \
+            --head data/template-generator-prompt.txt \
+            --model "$IN_MODEL" \
+            --judge "$IN_JUDGE" \
+            --dataset "$IN_DATASET" \
+            --label "$IN_LABEL"
+          # To gate merges on no-regression, add: --fail-under 0.45
