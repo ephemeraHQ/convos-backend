@@ -1,5 +1,7 @@
 import { randomUUID } from "node:crypto";
 import express from "express";
+import supertest from "supertest";
+import type { Express } from "express";
 import { creditsRouter } from "@/api/v2/credits/credits.router";
 import { errorHandlerMiddleware } from "@/middleware/errorHandler";
 import { jsonMiddleware } from "@/middleware/json";
@@ -55,3 +57,14 @@ export const cleanupAccounts = async (accountIds: string[]): Promise<void> => {
     await prisma.account.deleteMany({ where: { id: accountId } });
   }
 };
+
+export const agentRequest = (app: Express) => ({
+  get: (path: string) =>
+    supertest(app).get(path).set("X-Agent-API-Key", TEST_AGENT_API_KEY),
+  post: (path: string, idempotencyKey: string, body: unknown) =>
+    supertest(app)
+      .post(path)
+      .set("X-Agent-API-Key", TEST_AGENT_API_KEY)
+      .set("Idempotency-Key", idempotencyKey)
+      .send(body as object),
+});
