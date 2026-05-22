@@ -1,6 +1,6 @@
 import { Router } from "express";
-import { requireCronApiKey } from "./middleware/cron-api-key";
 import { dailyRefill } from "./handlers/daily-refill";
+import { requireCronApiKey } from "./middleware/cron-api-key";
 
 /**
  * Cron-API-key-gated /v2/credits/daily route. External AWS EventBridge

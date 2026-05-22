@@ -1,11 +1,15 @@
-import type { Request, Response } from "express";
 import { Prisma } from "@prisma/client";
-import { consume, InsufficientBalanceError, IdempotencyMismatchError } from "@/payments";
+import type { Request, Response } from "express";
 import {
   accountIdParamSchema,
   transactionRequestSchema,
 } from "@/api/v2/accounts/schemas/credits-by-id";
 import { idempotencyKeySchema } from "@/api/v2/accounts/schemas/shared";
+import {
+  consume,
+  IdempotencyMismatchError,
+  InsufficientBalanceError,
+} from "@/payments";
 
 /**
  * POST /v2/accounts/:accountId/credits/transactions
@@ -94,7 +98,12 @@ export const creditsTransactionsPostHandler = async (
     }
     if (
       err instanceof Prisma.PrismaClientKnownRequestError &&
-      err.code === "P2003" // FK violation — accountId references missing Account
+      // P2003 = Prisma model FK violation.
+      // P2010 wrapping PG SQLSTATE 23503 = same FK violation surfaced via $queryRaw
+      // (lockOrCreateBalance writes UserCredits with raw SQL).
+      (err.code === "P2003" ||
+        (err.code === "P2010" &&
+          (err.meta as { code?: string } | undefined)?.code === "23503"))
     ) {
       res.status(404).json({ code: "account_not_found" });
       return;

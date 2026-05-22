@@ -1,7 +1,7 @@
 import type { Request, Response } from "express";
-import { prisma } from "@/utils/prisma";
 import { getBalance } from "@/payments";
 import { isAllowedFromBalance } from "@/payments/credits/policy";
+import { prisma } from "@/utils/prisma";
 
 /**
  * GET /v2/accounts/:accountId/credits

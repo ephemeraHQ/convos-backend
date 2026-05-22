@@ -8,11 +8,9 @@ export const MAX_USD_COST_MICROS = 1_000_000_000n;
 export const MAX_GRANT_CREDITS = 1_000_000_000;
 
 // Stripe-style idempotency key: ASCII alphanumeric + dash/underscore, 1-255 chars.
-export const idempotencyKeySchema = z
-  .string()
-  .regex(/^[A-Za-z0-9_\-]{1,255}$/, {
-    message: "invalid_idempotency_key",
-  });
+export const idempotencyKeySchema = z.string().regex(/^[A-Za-z0-9_-]{1,255}$/, {
+  message: "invalid_idempotency_key",
+});
 
 // BigInt-safe integer parser: accepts string or number, returns bigint.
 export const bigintStringOrNumber = z

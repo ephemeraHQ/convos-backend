@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { creditsByIdGetHandler } from "./handlers/credits-by-id-get";
-import { creditsTransactionsPostHandler } from "./handlers/credits-transactions-post";
 import { creditsGrantsPostHandler } from "./handlers/credits-grants-post";
+import { creditsTransactionsPostHandler } from "./handlers/credits-transactions-post";
 
 /**
  * Agent-key-authenticated /v2/accounts/:accountId/* surface. Mounted under
@@ -13,8 +13,14 @@ import { creditsGrantsPostHandler } from "./handlers/credits-grants-post";
  * on auth failure (return after res.status(401).json(...)); they do not defer
  * to next(). meGuard is belt-and-suspenders for /:accountId === "me" cases.
  */
-export const accountsByIdRouter = Router();
+// mergeParams: true so child handlers see :accountId from the parent mount in
+// src/api/v2/index.ts. Without this, Express 5 / router 2.x leaves
+// req.params.accountId undefined here, and zod parses of req.params fail.
+export const accountsByIdRouter = Router({ mergeParams: true });
 
 accountsByIdRouter.get("/credits", creditsByIdGetHandler);
-accountsByIdRouter.post("/credits/transactions", creditsTransactionsPostHandler);
+accountsByIdRouter.post(
+  "/credits/transactions",
+  creditsTransactionsPostHandler,
+);
 accountsByIdRouter.post("/credits/grants", creditsGrantsPostHandler);

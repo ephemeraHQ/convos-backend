@@ -8,7 +8,7 @@ export interface ApplyDeltaInput {
   delta: bigint;
   reason: LedgerReason;
   idempotencyKey: string;
-  scope: LedgerScope;                  // mandatory — discriminator for idempotency lookup
+  scope: LedgerScope; // mandatory — discriminator for idempotency lookup
   usdCostMicros?: bigint;
   markupRate?: Prisma.Decimal | string;
   creditsPerDollar?: bigint;
@@ -23,7 +23,7 @@ export interface ApplyDeltaResult {
   ledgerId: string;
   replayed: boolean;
   newBalance: bigint;
-  balanceAfter: bigint;                // snapshot from the inserted/replayed ledger row
+  balanceAfter: bigint; // snapshot from the inserted/replayed ledger row
 }
 
 interface RawBalanceRow {
@@ -41,7 +41,7 @@ export const getBalance = async (accountId: string): Promise<bigint> => {
 export const findLedgerByIdempotencyKey = async (args: {
   accountId: string;
   idempotencyKey: string;
-  scope: LedgerScope;                  // post-filtered below
+  scope: LedgerScope; // post-filtered below
 }): Promise<CreditLedger | null> =>
   prisma.creditLedger
     .findUnique({
@@ -198,8 +198,8 @@ export const applyDeltaWithTx = async (
       delta: input.delta,
       reason: input.reason,
       idempotencyKey: input.idempotencyKey,
-      scope: input.scope,                          // written on every row
-      balanceAfter: after,                          // written on every row
+      scope: input.scope, // written on every row
+      balanceAfter: after, // written on every row
       usdCostMicros: input.usdCostMicros ?? null,
       markupRate:
         input.markupRate !== undefined
@@ -213,7 +213,12 @@ export const applyDeltaWithTx = async (
     },
   });
 
-  return { ledgerId: created.id, replayed: false, newBalance: after, balanceAfter: after };
+  return {
+    ledgerId: created.id,
+    replayed: false,
+    newBalance: after,
+    balanceAfter: after,
+  };
 };
 
 export const applyDelta = async (
