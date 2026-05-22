@@ -244,6 +244,8 @@ model CreditLedger {
   delta            BigInt
   reason           LedgerReason
   idempotencyKey   String
+  scope            String       @db.VarChar(32) @default("transaction")
+  balanceAfter     BigInt?
   usdCostMicros    BigInt?
   markupRate       Decimal?     @db.Decimal(8, 4)
   creditsPerDollar BigInt?
