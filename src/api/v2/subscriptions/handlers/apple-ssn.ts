@@ -41,8 +41,26 @@ export async function appleSsnHandler(req: Request, res: Response) {
   try {
     notification = await verifyAndDecodeNotification(signedPayload);
   } catch (err) {
+    // VerificationException from @apple/app-store-server-library carries
+    // its actionable info on `.status` (enum 0-7), not `.message`
+    // (`super()` is called with no args, so message is "").
+    // Log both so ops can tell INVALID_APP_IDENTIFIER (3) /
+    // INVALID_ENVIRONMENT (4) / INVALID_CERTIFICATE (6) apart from a
+    // signature failure (1).
     req.log.warn(
-      { err: err instanceof Error ? err.message : err },
+      {
+        errName: err instanceof Error ? err.constructor.name : undefined,
+        errStatus: (err as { status?: number } | undefined)?.status,
+        errMessage: err instanceof Error ? err.message : String(err),
+        causeName:
+          err instanceof Error && err.cause instanceof Error
+            ? err.cause.constructor.name
+            : undefined,
+        causeMessage:
+          err instanceof Error && err.cause instanceof Error
+            ? err.cause.message
+            : undefined,
+      },
       "Apple S2S notification JWS verification failed",
     );
     res.status(400).json({ error: "Invalid signed notification" });
@@ -80,7 +98,17 @@ export async function appleSsnHandler(req: Request, res: Response) {
   } catch (err) {
     req.log.warn(
       {
-        err: err instanceof Error ? err.message : err,
+        errName: err instanceof Error ? err.constructor.name : undefined,
+        errStatus: (err as { status?: number } | undefined)?.status,
+        errMessage: err instanceof Error ? err.message : String(err),
+        causeName:
+          err instanceof Error && err.cause instanceof Error
+            ? err.cause.constructor.name
+            : undefined,
+        causeMessage:
+          err instanceof Error && err.cause instanceof Error
+            ? err.cause.message
+            : undefined,
         notificationUUID: notification.notificationUUID,
       },
       "Apple S2S inner transaction JWS verification failed",
