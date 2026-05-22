@@ -164,14 +164,13 @@ describe("buildVerifierConfig", () => {
     }
   });
 
-  test("APPLE_ENV=sandbox throws 500 in production (prod must verify production JWS only)", () => {
+  test("APPLE_ENV=sandbox is allowed under NODE_ENV=production (legitimate combo for staging / dev deploys)", () => {
     const priorNodeEnv = process.env.NODE_ENV;
     process.env.NODE_ENV = "production";
     process.env.APPLE_ENV = "sandbox";
     try {
-      expect(() => buildVerifierConfig()).toThrow(
-        /sandbox is forbidden in production/,
-      );
+      const cfg = buildVerifierConfig();
+      expect(cfg.environment).toBe(Environment.SANDBOX);
     } finally {
       if (priorNodeEnv === undefined) {
         delete process.env.NODE_ENV;

@@ -32,15 +32,22 @@ const resolveEnvironment = () => {
   const isProd = isProductionEnv();
   if (raw === "production") return Environment.PRODUCTION;
   if (raw === "sandbox") {
-    if (isProd) {
-      throw new AppError(500, "APPLE_ENV=sandbox is forbidden in production");
-    }
+    // Sandbox is a legitimate combination with NODE_ENV=production for any
+    // non-laptop deploy pointed at Apple's sandbox endpoint (e.g. otr-dev,
+    // staging, TestFlight backend). The previous defense-in-depth check
+    // rejected this combination, breaking the dev deploy. Real prod
+    // misconfigured with APPLE_ENV=sandbox still fails closed at signature
+    // time — Apple-Production-signed notifications fail INVALID_ENVIRONMENT
+    // against a Sandbox-configured verifier — so the operator-error blast
+    // radius is "no notifications work", not "forged ones accepted".
     return Environment.SANDBOX;
   }
   if (raw === "local-testing") {
-    // LOCAL_TESTING skips JWS signature + chain verification entirely. A
-    // misconfigured prod env with APPLE_ENV=local-testing would silently
-    // accept forged transactions. Fail loudly instead.
+    // LOCAL_TESTING bypasses JWS signature + chain verification entirely
+    // (the library treats payloads as pre-verified). A misconfigured prod
+    // env with APPLE_ENV=local-testing would silently accept any forged
+    // transaction as real. Fail loudly instead — this is the one APPLE_ENV
+    // value that is unsafe under NODE_ENV=production.
     if (isProd) {
       throw new AppError(
         500,
