@@ -16,8 +16,12 @@ export const transactionRequestSchema = z.object({
     (v) => v >= 0n && v <= MAX_USD_COST_MICROS,
     { message: "usdCostMicros out of range" },
   ),
-  requestId: z.string().min(1),
-  model: z.string().optional(),
+  requestId: z.string().trim().min(1).max(256),
+  // model + reason are logged via req.log.info and persisted on the ledger row.
+  // .trim() normalises whitespace; .max(256) caps log/storage pressure from a
+  // misbehaving or compromised caller. Limit chosen generously vs Stripe's
+  // 500-char description field but small enough to keep log lines bounded.
+  model: z.string().trim().max(256).optional(),
 });
 export type TransactionRequest = z.infer<typeof transactionRequestSchema>;
 
@@ -25,6 +29,6 @@ export type TransactionRequest = z.infer<typeof transactionRequestSchema>;
 export const grantRequestSchema = z.object({
   grantKind: z.enum(["signup_bonus", "daily_refill", "manual"]),
   creditsDelta: z.number().int().positive().max(MAX_GRANT_CREDITS),
-  reason: z.string().optional(),
+  reason: z.string().trim().max(256).optional(),
 });
 export type GrantRequest = z.infer<typeof grantRequestSchema>;
