@@ -19,6 +19,7 @@
     "lint": "eslint .",
     "migrate:deploy": "prisma migrate deploy",
     "migrate:dev": "prisma migrate dev",
+    "prisma:generate": "rimraf prisma/generated/zod && prisma generate",
     "start": "node --enable-source-maps --env-file-if-exists=.env --import @opentelemetry/instrumentation/hook.mjs --import ./dist/instrumentation.js dist/index.js",
     "test": "vitest run",
     "test:local": "pnpm prisma migrate reset --force && vitest run",
