@@ -1,5 +1,5 @@
 /**
- * Agent-prompt eval runner (Braintrust SDK, executed under Bun).
+ * Agent-prompt eval runner (Braintrust SDK, executed under tsx).
  *
  * For each model under test, generates a template for every dataset case via the
  * real pipeline, scores it with the deterministic gate + the LLM-as-judge
@@ -8,11 +8,11 @@
  *
  * We use the SDK's init()/log() rather than `braintrust eval` because the CLI's
  * esbuild bundler can't resolve this repo's `@/` path aliases inside
- * templateGen.ts's dependency graph; Bun resolves them natively.
+ * templateGen.ts's dependency graph; tsx resolves them via tsconfig at runtime.
  *
  * Usage:
  *   BRAINTRUST_API_KEY=...  BUILDER_OPENROUTER_API_KEY=...  \
- *   bun run tests/evals/run.ts \
+ *   pnpm tsx tests/evals/run.ts \
  *     --models anthropic/claude-opus-4.7,google/gemini-3.1-flash-lite \
  *     --judge anthropic/claude-opus-4.7 \
  *     --dataset tests/evals/datasets/core.jsonl \
@@ -83,7 +83,7 @@ const CONCURRENCY = Number(
 const LIMIT = Number(values.limit ?? process.env.EVAL_LIMIT ?? "0");
 // Opt-in only — pairwise doubles generation + judge spend, so don't enable it
 // implicitly just because multiple models are listed.
-const PAIRWISE = Boolean(values.pairwise);
+const PAIRWISE = values.pairwise;
 
 const expName = (model: string): string =>
   `${model.replace(/[^a-z0-9.-]/gi, "-")}-${new Date().toISOString().slice(0, 16)}`;

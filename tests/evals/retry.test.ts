@@ -2,7 +2,7 @@
  * Offline unit tests for retry/backoff classification + control flow. No network.
  */
 
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "vitest";
 import { isRetryableError, NonRetryableError, withRetry } from "./lib/retry";
 
 describe("isRetryableError", () => {

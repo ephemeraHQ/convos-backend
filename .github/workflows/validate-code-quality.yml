@@ -12,23 +12,56 @@ jobs:
   check:
     name: Typecheck, format check, lint
     runs-on: warp-ubuntu-latest-x64-8x
+    env:
+      COREPACK_ENABLE_DOWNLOAD_PROMPT: "0"
     steps:
-      - uses: actions/checkout@v4
-      - uses: oven-sh/setup-bun@v2
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
-          bun-version-file: ".bun-version"
-      - run: bun install
-      - run: bun run buf:generate
-      - run: ./dev/up
+          node-version-file: ".nvmrc"
+
+      - name: Enable Corepack (pnpm version from package.json#packageManager)
+        run: |
+          corepack enable
+          pnpm --version
+
+      - name: Cache pnpm store
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ~/.local/share/pnpm/store
+          key: pnpm-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: pnpm-${{ runner.os }}-
+
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm buf:generate
+      - run: pnpm prisma generate
+
+      - name: Bring up dev stack (Postgres + notification server)
+        run: ./dev/up
         env:
           TEST_NOTIFICATION_DELIVERY_URL: "http://host.docker.internal:8081"
           XMTP_NOTIFICATION_SECRET: ${{ secrets.XMTP_NOTIFICATION_SECRET }}
-      - run: sleep 5s
-      - run: bun migrate:dev
+
+      - name: Wait for Postgres to accept connections
+        run: |
+          for i in $(seq 1 30); do
+            if pg_isready -h localhost -p 5432 -U postgres >/dev/null 2>&1; then
+              echo "Postgres ready after ${i}s"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "Postgres did not become ready in 30s"
+          exit 1
+
+      - run: pnpm migrate:deploy
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
-      - run: bun check
-      - run: bun test
+
+      - run: pnpm check
+
+      - run: pnpm test
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           XMTP_ENV: local

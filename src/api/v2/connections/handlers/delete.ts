@@ -1,7 +1,10 @@
 import type { Request, Response } from "express";
 import { createComposioService } from "../composio.service";
 
-export async function deleteHandler(req: Request, res: Response) {
+export async function deleteHandler(
+  req: Request<{ id: string }>,
+  res: Response,
+) {
   const deviceId = res.locals.deviceId;
   if (!deviceId) {
     res.status(401).json({ error: "Unauthorized" });

@@ -14,14 +14,7 @@
  * AgentTemplateGeneration table — migration must be applied).
  */
 
-import {
-  afterAll,
-  afterEach,
-  beforeAll,
-  describe,
-  expect,
-  test,
-} from "bun:test";
+import { afterAll, afterEach, beforeAll, describe, expect, test } from "vitest";
 import {
   __resetGenerationExecutorForTests,
   __setExecutorTimeoutMsForTests,

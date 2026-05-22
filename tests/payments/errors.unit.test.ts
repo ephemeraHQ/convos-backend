@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "vitest";
 import { InsufficientBalanceError } from "@/payments/errors";
 
 describe("InsufficientBalanceError", () => {

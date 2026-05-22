@@ -33,8 +33,9 @@ Two modes:
 ## Setup
 
 1. Braintrust account → **Settings → API Keys** → create a key.
-2. Export keys (in your `.env` or shell — Bun auto-loads `.env` from the dir you
-   run in):
+2. Export keys (the runners read them from the environment; `pnpm tsx` does
+   not auto-load `.env`, so either `export` them in your shell or use a tool
+   like `direnv`):
    ```bash
    export BRAINTRUST_API_KEY=...            # required
    export EVAL_OPENROUTER_API_KEY=...       # powers generation AND the judge
@@ -44,8 +45,8 @@ Two modes:
    At least one OpenRouter key is required. The judge prefers
    `EVAL_OPENROUTER_API_KEY`; generation prefers `BUILDER_OPENROUTER_API_KEY` and
    falls back to `EVAL_OPENROUTER_API_KEY` when it's unset. You do **not** need
-   Braintrust's global CLI (`braintrust.dev/cli/setup.sh`); we run the SDK under
-   Bun.
+   Braintrust's global CLI (`braintrust.dev/cli/setup.sh`); we run the SDK
+   directly via `pnpm tsx`.
 
 ## Quickstart (start with a smoke run)
 
@@ -53,11 +54,11 @@ A full run is slow and costs real tokens (see below), so try a tiny one first:
 
 ```bash
 # ~1-2 min: one fast model, 2-case smoke dataset, no pairwise
-bun run eval:models --models google/gemini-3.5-flash \
+pnpm eval:models --models google/gemini-3.5-flash \
   --dataset tests/evals/datasets/smoke.jsonl
 
 # or cap any dataset to N cases:
-bun run eval:models --limit 2
+pnpm eval:models --limit 2
 ```
 
 Then open the printed Braintrust experiment URL.
@@ -71,8 +72,8 @@ run for a real decision.
 ## Mode A — model bake-off
 
 ```bash
-bun run eval:models                         # opus-4.7 vs gemini-3.5-flash
-bun run eval:models \
+pnpm eval:models                         # opus-4.7 vs gemini-3.5-flash
+pnpm eval:models \
   --models anthropic/claude-opus-4.7,google/gemini-3.5-flash \
   --judge openai/gpt-5.5 \
   --dataset tests/evals/datasets/core.jsonl \
@@ -97,15 +98,15 @@ the default branch (`origin/otr-dev`):
 
 ```bash
 git fetch origin                     # make sure origin/otr-dev is current
-bun run eval:prompt                                              # core dataset
-bun run eval:prompt --dataset tests/evals/datasets/smoke.jsonl --limit 2  # quick
+pnpm eval:prompt                                              # core dataset
+pnpm eval:prompt --dataset tests/evals/datasets/smoke.jsonl --limit 2  # quick
 ```
 
 Or compare two explicit prompt files (this is how CI runs it, passing the base
 commit's version):
 
 ```bash
-bun run eval:prompt \
+pnpm eval:prompt \
   --base /path/to/old-prompt.txt \
   --head data/template-generator-prompt.txt \
   --model anthropic/claude-opus-4.7
@@ -140,7 +141,8 @@ in the workflow to gate merges).
 
 - **Why the SDK, not `braintrust eval`:** the CLI bundles with esbuild, which
   won't resolve this repo's `@/` path aliases inside `templateGen.ts`'s import
-  graph. Bun resolves them natively, so the runners use `braintrust.init()`/`.log()`.
+  graph. `tsx` resolves them via `tsconfig.json` at runtime, so the runners
+  use `braintrust.init()`/`.log()` directly under `pnpm tsx`.
 - **Override seams:** generation reads process-global overrides for the model
   (`__setBuilderModelOverrideForTests`), API key, and system prompt
   (`__setSystemPromptOverrideForTests`). `lib/generate.ts` serializes every
@@ -169,5 +171,5 @@ reference answer). To grow a realistic set, mine real inputs from the
 The harness's own gate logic is unit-tested with no network:
 
 ```bash
-bun test tests/evals/checks.test.ts
+pnpm test tests/evals/checks.test.ts
 ```

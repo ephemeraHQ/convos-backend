@@ -1,7 +1,7 @@
-import { describe, expect, test } from "bun:test";
 import cookieParser from "cookie-parser";
 import express from "express";
 import request from "supertest";
+import { describe, expect, test } from "vitest";
 
 describe("cookie-parser wiring smoke", () => {
   test("server reads cookies from Cookie header", async () => {

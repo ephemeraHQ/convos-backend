@@ -1,7 +1,7 @@
 import { LedgerReason } from "@prisma/client";
-import { afterEach, beforeAll, describe, expect, test } from "bun:test";
 import express from "express";
 import request from "supertest";
+import { afterEach, beforeAll, describe, expect, test, vi } from "vitest";
 import { accountsRouter } from "@/api/v2/accounts/accounts.router";
 import { authMiddleware } from "@/middleware/auth";
 import { pinoMiddleware } from "@/middleware/pino";
@@ -14,6 +14,10 @@ import {
 } from "@/subscriptions/repository";
 import { createJwtToken, validateJWTKeys } from "@/utils/jwt";
 import { prisma } from "@/utils/prisma";
+
+vi.mock("firebase-admin/app");
+vi.mock("firebase-admin/app-check");
+vi.mock("firebase-admin/messaging");
 
 const makeApp = () => {
   const app = express();
@@ -153,7 +157,12 @@ describe("GET /v2/accounts/me/credits", () => {
     expect(body.periodLabel).toBe("May 2026");
   });
 
-  test("expired subscription status returns zero-state credits", async () => {
+  // Expired and past-ended subscriptions now fall through to the free-tier
+  // daily-refill branch (PAYMENTS_FREE_TIER_DAILY_CAP_CREDITS = 100 in tests),
+  // not a hard zero — see src/api/v2/accounts/handlers/credits-get.ts. The
+  // earlier "zero-state" assertion pre-dated the daily-refill cron landing on
+  // otr-dev.
+  test("expired subscription status returns free-tier daily-cap credits", async () => {
     const accountId = await newAccount();
     await upsertFromVerify({
       accountId,
@@ -177,12 +186,13 @@ describe("GET /v2/accounts/me/credits", () => {
       .get("/v2/accounts/me/credits")
       .set("X-Convos-AuthToken", token);
     const body = res.body as BalanceBody;
-    expect(body.monthlyGrant).toBe(0);
-    expect(body.monthlyGrantUsed).toBe(0);
+    expect(body.monthlyGrant).toBe(100);
+    expect(body.monthlyGrantUsed).toBe(100);
     expect(body.balance).toBe(0);
+    expect(body.periodLabel).toBe("Daily");
   });
 
-  test("past-ended active subscription returns zero-state credits", async () => {
+  test("past-ended active subscription returns free-tier daily-cap credits", async () => {
     const accountId = await newAccount();
     const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000);
     await upsertFromVerify({
@@ -209,9 +219,10 @@ describe("GET /v2/accounts/me/credits", () => {
       .get("/v2/accounts/me/credits")
       .set("X-Convos-AuthToken", token);
     const body = res.body as BalanceBody;
-    expect(body.monthlyGrant).toBe(0);
-    expect(body.monthlyGrantUsed).toBe(0);
+    expect(body.monthlyGrant).toBe(100);
+    expect(body.monthlyGrantUsed).toBe(100);
     expect(body.balance).toBe(0);
+    expect(body.periodLabel).toBe("Daily");
   });
 
   test("consumes within current period count against monthlyGrantUsed", async () => {

@@ -1,8 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import type { Server } from "node:http";
-import { afterAll, beforeEach, describe, expect, test } from "bun:test";
 import express, { Router } from "express";
+import { afterAll, beforeEach, describe, expect, test } from "vitest";
 import { agentTemplatesRouter } from "@/api/v2/agent-templates/agent-templates.router";
 import { jsonMiddleware } from "@/middleware/json";
 import { noRouteMiddleware } from "@/middleware/noRoute";

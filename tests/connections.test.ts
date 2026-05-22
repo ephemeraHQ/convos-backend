@@ -4,9 +4,9 @@ import type {
   AuthConfigListResponse,
   ConnectedAccountListResponse,
   ConnectedAccountListResponseItem,
-  ConnectedAccountStatus,
   ConnectionRequest,
 } from "@composio/core";
+import express from "express";
 import {
   afterAll,
   beforeAll,
@@ -14,8 +14,8 @@ import {
   describe,
   expect,
   test,
-} from "bun:test";
-import express from "express";
+  vi,
+} from "vitest";
 import {
   __resetComposioServiceForTests,
   ComposioService,
@@ -25,6 +25,10 @@ import { authMiddleware } from "@/middleware/auth";
 import { jsonMiddleware } from "@/middleware/json";
 import { pinoMiddleware } from "@/middleware/pino";
 import { createJwtToken } from "@/utils/jwt";
+
+vi.mock("firebase-admin/app");
+vi.mock("firebase-admin/app-check");
+vi.mock("firebase-admin/messaging");
 
 // Stub shapes — match just what the service touches on the Composio client.
 type ConnectedAccountsStub = {
@@ -107,7 +111,7 @@ function makeStub(
           isComposioManaged: true,
           isDisabled: false,
         },
-        status: "INITIATED" as ConnectedAccountStatus,
+        status: "INITIATED",
         statusReason: null,
         toolkit: { slug: "google_calendar" },
         isDisabled: false,
@@ -116,12 +120,12 @@ function makeStub(
       });
       return Promise.resolve({
         id,
-        status: "INITIATED" as ConnectedAccountStatus,
+        status: "INITIATED",
         redirectUrl: "https://composio.example/auth",
         waitForConnection: () => Promise.reject(new Error("not used in tests")),
         toJSON: () => ({
           id,
-          status: "INITIATED" as ConnectedAccountStatus,
+          status: "INITIATED",
           redirectUrl: "https://composio.example/auth",
         }),
         toString: () => id,
@@ -337,7 +341,7 @@ describe("Connections API", () => {
           isComposioManaged: true,
           isDisabled: false,
         },
-        status: "ACTIVE" as ConnectedAccountStatus,
+        status: "ACTIVE",
         statusReason: null,
         toolkit: { slug: "google_calendar" },
         isDisabled: false,
@@ -380,7 +384,7 @@ describe("Connections API", () => {
           isComposioManaged: true,
           isDisabled: false,
         },
-        status: "ACTIVE" as ConnectedAccountStatus,
+        status: "ACTIVE",
         statusReason: null,
         toolkit: { slug: "google_calendar" },
         isDisabled: false,
@@ -395,7 +399,7 @@ describe("Connections API", () => {
           isComposioManaged: true,
           isDisabled: false,
         },
-        status: "ACTIVE" as ConnectedAccountStatus,
+        status: "ACTIVE",
         statusReason: null,
         toolkit: { slug: "google_calendar" },
         isDisabled: false,
@@ -428,7 +432,7 @@ describe("Connections API", () => {
           isComposioManaged: true,
           isDisabled: false,
         },
-        status: "ACTIVE" as ConnectedAccountStatus,
+        status: "ACTIVE",
         statusReason: null,
         toolkit: { slug: "google_calendar" },
         isDisabled: false,
@@ -459,7 +463,7 @@ describe("Connections API", () => {
           isComposioManaged: true,
           isDisabled: false,
         },
-        status: "ACTIVE" as ConnectedAccountStatus,
+        status: "ACTIVE",
         statusReason: null,
         toolkit: { slug: "google_calendar" },
         isDisabled: false,
@@ -491,7 +495,7 @@ describe("Connections API", () => {
           isComposioManaged: true,
           isDisabled: false,
         },
-        status: "ACTIVE" as ConnectedAccountStatus,
+        status: "ACTIVE",
         statusReason: null,
         toolkit: { slug: "google_calendar" },
         isDisabled: false,

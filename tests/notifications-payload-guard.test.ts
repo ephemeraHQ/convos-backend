@@ -1,44 +1,60 @@
 import type { ClientIdentifier, DeviceRegistration } from "@prisma/client";
-import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test";
 import type { Request } from "express";
+import { afterAll, beforeEach, describe, expect, test, vi } from "vitest";
 import { prisma } from "@/utils/prisma";
+
+vi.mock("firebase-admin/app");
+vi.mock("firebase-admin/app-check");
+vi.mock("firebase-admin/messaging");
+// jsonwebtoken@9 uses buffer-equal-constant-time which calls SlowBuffer —
+// removed in Node 22+. Falls through to __mocks__/jsonwebtoken.ts.
+vi.mock("jsonwebtoken");
 
 // ---- Mocks (must be installed BEFORE importing the SUT) ----
 
-const apnsSendMock = mock(() =>
-  Promise.resolve({ success: true } as { success: boolean; error?: string }),
-);
-const fcmSendMock = mock(() =>
-  Promise.resolve({ success: true } as { success: boolean; error?: string }),
-);
+// vi.hoisted runs at hoist time (same time as vi.mock factories), so these vars
+// are safely initialized before the vi.mock factories below reference them.
+const { apnsSendMock, fcmSendMock } = vi.hoisted(() => ({
+  apnsSendMock: vi.fn(() =>
+    Promise.resolve({ success: true } as { success: boolean; error?: string }),
+  ),
+  fcmSendMock: vi.fn(() =>
+    Promise.resolve({ success: true } as { success: boolean; error?: string }),
+  ),
+}));
 
 // Spread the real module so model-level exports (e.g. ApnsPushService) survive:
-// this mock.module registration is global and leaks to any file loaded after
+// this vi.mock registration is global and leaks to any file loaded after
 // this one (apns-push-service.test.ts imports the real ApnsPushService and does
 // not self-defend). Only the network-touching createApnsService + the wire
 // builder are overridden.
-const realApnsModule = await import("@/api/v2/notifications/apns-push.service");
-void mock.module("@/api/v2/notifications/apns-push.service", () => ({
-  ...realApnsModule,
-  createApnsService: () => ({ sendPushNotification: apnsSendMock }),
-  buildApnsWirePayload: (args: {
-    notification: {
-      apiJWT: string;
-      notificationType: string;
-      notificationData: Record<string, unknown>;
-      clientId?: string;
-    };
-    isSilent: boolean;
-  }) => ({
-    aps: {
-      alert: { body: "New message" },
-      sound: "default",
-      "mutable-content": 1,
-    },
-    ...args.notification,
-  }),
-}));
-void mock.module("@/api/v2/notifications/fcm-push.service", () => {
+vi.mock("@/api/v2/notifications/apns-push.service", async () => {
+  const realApnsModule = await vi.importActual<
+    // eslint-disable-next-line @typescript-eslint/consistent-type-imports
+    typeof import("@/api/v2/notifications/apns-push.service")
+  >("@/api/v2/notifications/apns-push.service");
+  return {
+    ...realApnsModule,
+    createApnsService: () => ({ sendPushNotification: apnsSendMock }),
+    buildApnsWirePayload: (args: {
+      notification: {
+        apiJWT: string;
+        notificationType: string;
+        notificationData: Record<string, unknown>;
+        clientId?: string;
+      };
+      isSilent: boolean;
+    }) => ({
+      aps: {
+        alert: { body: "New message" },
+        sound: "default",
+        "mutable-content": 1,
+      },
+      ...args.notification,
+    }),
+  };
+});
+vi.mock("@/api/v2/notifications/fcm-push.service", () => {
   // Singleton instance cache — mirrors the real createFcmService() caching behaviour
   // so that fcm-push.test.ts's "should return cached instance" assertion passes.
   let instance: FcmPushService | null = null;
@@ -122,15 +138,15 @@ void mock.module("@/api/v2/notifications/fcm-push.service", () => {
   };
 });
 
-// NOTE: prisma is NOT module-mocked here. A global `mock.module("@/utils/prisma")`
-// leaks across the whole `bun test` process (bun hoists module mocks and never
-// restores them), replacing the real client for every test file that loads after
-// this one — which is what poisoned the suite. This file now follows the repo's
-// real-DB integration pattern: seed/clean real rows in beforeEach/afterAll.
+// NOTE: prisma is NOT module-mocked here. A global vi.mock("@/utils/prisma")
+// leaks across the whole test process (singleFork + isolate:false), replacing
+// the real client for every test file that loads after this one — which is what
+// poisoned the suite. This file now follows the repo's real-DB integration
+// pattern: seed/clean real rows in beforeEach/afterAll.
 
-void mock.module("@/notifications/client", () => ({
+vi.mock("@/notifications/client", () => ({
   createNotificationClient: () => ({
-    deleteInstallation: mock(() => Promise.resolve()),
+    deleteInstallation: vi.fn(() => Promise.resolve()),
   }),
   webhookNotificationBodySchema: {
     safeParse: () => ({ success: true, data: {} }),
@@ -139,11 +155,10 @@ void mock.module("@/notifications/client", () => ({
 
 // jwt is NOT mocked either — the same leak would replace `@/utils/jwt` (dropping
 // verifyJwtToken etc.) for downstream test files. The handler uses the real
-// createJwtToken (signing keys come from tests/preload.ts).
+// createJwtToken (signing keys come from tests/setup.ts).
 
-const { handleV2Notification } = await import(
-  "@/api/v2/notifications/handlers/webhook"
-);
+const { handleV2Notification } =
+  await import("@/api/v2/notifications/handlers/webhook");
 
 // ---- Test helpers ----
 
@@ -188,7 +203,7 @@ function makeClient(pushType: "apns" | "fcm"): ClientIdentifier & {
       addedAt: new Date(),
       updatedAt: new Date(),
     } as unknown as DeviceRegistration,
-  } as unknown as ClientIdentifier & { device: DeviceRegistration };
+  };
 }
 
 function makeWebhook(args: {

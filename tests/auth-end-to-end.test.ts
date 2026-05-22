@@ -1,13 +1,17 @@
-import { afterEach, beforeAll, describe, expect, test } from "bun:test";
 import cookieParser from "cookie-parser";
 import express from "express";
 import request from "supertest";
+import { afterEach, beforeAll, describe, expect, test, vi } from "vitest";
 import { authRouter } from "@/api/v2/auth/auth.router";
 import { authMiddleware, requireAccount } from "@/middleware/auth";
 import { pinoMiddleware } from "@/middleware/pino";
 import { ADMIN_ACCOUNT_ID } from "@/utils/constants";
 import { prisma } from "@/utils/prisma";
 import { buildSiweMessage } from "./helpers/siwe";
+
+vi.mock("firebase-admin/app");
+vi.mock("firebase-admin/app-check");
+vi.mock("firebase-admin/messaging");
 
 function makeApp() {
   const app = express();

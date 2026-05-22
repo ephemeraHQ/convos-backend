@@ -12,7 +12,7 @@
  * below x (a regression gate).
  *
  * Usage (see .github/workflows/eval-prompt.yml):
- *   bun run tests/evals/compare-prompts.ts \
+ *   pnpm tsx tests/evals/compare-prompts.ts \
  *     --base /tmp/base-prompt.txt \
  *     --head data/template-generator-prompt.txt \
  *     --model anthropic/claude-opus-4.7
@@ -109,7 +109,7 @@ async function main(): Promise<void> {
   }
   // Base prompt: an explicit --base file (CI extracts the base SHA's version),
   // else auto-extract the head path from --base-ref via git (local convenience,
-  // so `bun run eval:prompt` with no args compares working tree vs the default
+  // so `pnpm eval:prompt` with no args compares working tree vs the default
   // branch). `git fetch` first if origin/<branch> is stale.
   const baseLabel = BASE ?? `${BASE_REF}:${HEAD}`;
   let basePrompt: string;

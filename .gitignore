@@ -39,6 +39,7 @@ logs
 
 # build artifacts
 /index.js
+/dist/
 
 # yarn
 .pnp.*

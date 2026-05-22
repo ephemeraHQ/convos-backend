@@ -1,6 +1,6 @@
 import { OfferType } from "@apple/app-store-server-library";
 import { SubscriptionStatus } from "@prisma/client";
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "vitest";
 import {
   deriveSubscriptionStatusFromTransaction,
   effectiveSubscriptionStatus,

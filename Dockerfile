@@ -1,50 +1,84 @@
-FROM ubuntu:22.04 AS base
-WORKDIR /usr/src/app
+# syntax=docker/dockerfile:1.7
 
-# install dependencies into temp directory
-# this will cache them and speed up future builds
-FROM base AS install
+# -----------------------------------------------------------------------------
+# Stage 1 — deps: full install (dev + prod) so native modules (bufferutil,
+# utf-8-validate, secp256k1, keccak, sharp …) compile once with build-essential
+# and python3 present. release stage copies the resulting node_modules and
+# prunes dev deps, avoiding a second native compile.
+# -----------------------------------------------------------------------------
+FROM node:24-bookworm-slim AS deps
+WORKDIR /app
 
-# install bun
-RUN apt-get update && apt-get install -y curl unzip
-RUN curl -fsSL https://bun.sh/install | bash -s "bun-v1.2.2" && \
-  ln -s $HOME/.bun/bin/bun /usr/local/bin/bun
+# build-essential + python3 — node-gyp toolchain for native pre-build.
+# openssl/ca-certificates — Prisma engine + Apple JWS verifier at runtime.
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends \
+    build-essential python3 \
+    openssl ca-certificates \
+  && rm -rf /var/lib/apt/lists/*
 
-RUN mkdir -p /temp/prod
-COPY package.json bun.lock tsconfig.json buf.yaml buf.gen.yaml /temp/prod/
-RUN mkdir -p /temp/prod/src
-COPY src /temp/prod/src
-RUN mkdir -p /temp/prod/prisma
-COPY prisma /temp/prod/prisma
-RUN mkdir -p /temp/prod/proto
-COPY proto /temp/prod/proto
-RUN mkdir -p /temp/prod/data
-COPY data /temp/prod/data
+# Activate pnpm via Corepack. The version is sourced from `packageManager`
+# in package.json (copied below) — single source of truth, no second pin here.
+ENV COREPACK_ENABLE_DOWNLOAD_PROMPT=0
+RUN corepack enable
 
-# Install all dependencies (including devDependencies needed for code generation)
-RUN cd /temp/prod && bun install --frozen-lockfile
+# Cache the dep graph: copy lockfile + package.json first, then install.
+COPY package.json pnpm-lock.yaml .npmrc* ./
+RUN --mount=type=cache,id=pnpm-store,target=/root/.local/share/pnpm/store \
+  pnpm install --frozen-lockfile
+
+# -----------------------------------------------------------------------------
+# Stage 2 — builder: code-gen (buf + prisma) and tsup bundle.
+# -----------------------------------------------------------------------------
+FROM deps AS builder
+WORKDIR /app
+
+# Copy the rest of the source. Order chosen so changes outside src/proto/prisma
+# don't invalidate earlier layers.
+COPY tsconfig.json tsup.config.ts vitest.config.ts ./
+COPY buf.yaml buf.gen.yaml ./
+COPY proto ./proto
+COPY prisma ./prisma
+COPY data ./data
+COPY src ./src
+
+# Generate buf protobufs + Prisma client + zod schemas (all into src/gen and
+# prisma/generated). pnpm prisma generate also pulls the platform-correct
+# query engine binary into node_modules.
+RUN pnpm buf:generate
+RUN pnpm prisma generate
+
+# Bundle src → dist (ESM, target node24).
+RUN pnpm build
+
+# Prune devDependencies in-place. Keeps the native pre-builds intact (no
+# recompile) and shrinks node_modules to prod-only for the release copy.
+RUN pnpm prune --prod
+
+# -----------------------------------------------------------------------------
+# Stage 3 — release: lean runtime image. No build tools, just node + tini +
+# the pre-built dist, pruned node_modules, and the runtime support files.
+# -----------------------------------------------------------------------------
+FROM node:24-bookworm-slim AS release
+WORKDIR /app
+
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends openssl ca-certificates tini \
+  && rm -rf /var/lib/apt/lists/* \
+  && useradd --system --create-home --uid 10001 appuser
 
 ENV NODE_ENV=production
 
-# generate protobuf types
-RUN cd /temp/prod && bun run buf:generate
+COPY --from=builder --chown=appuser:appuser /app/node_modules ./node_modules
+COPY --from=builder --chown=appuser:appuser /app/package.json ./package.json
+COPY --from=builder --chown=appuser:appuser /app/dist ./dist
+COPY --from=builder --chown=appuser:appuser /app/prisma ./prisma
+COPY --from=builder --chown=appuser:appuser /app/data ./data
 
-# generate Prisma client
-RUN cd /temp/prod && bun prisma generate
+COPY --chmod=0755 --chown=appuser:appuser dev/entrypoint.sh ./entrypoint.sh
 
-# Remove devDependencies to keep the image small
-RUN cd /temp/prod && bun install --frozen-lockfile --production
+USER appuser
 
-FROM base AS release
-
-# install bun
-RUN apt-get update && apt-get install -y curl unzip
-RUN curl -fsSL https://bun.sh/install | bash -s "bun-v1.2.2" && \
-  ln -s $HOME/.bun/bin/bun /usr/local/bin/bun
-
-COPY --chmod=0755 dev/entrypoint.sh .
-# copy production dependencies and source into release image
-COPY --from=install /temp/prod .
-
-# run the app from source
-ENTRYPOINT [ "./entrypoint.sh" ]
+# tini reaps zombie children — important because the node process spawns
+# prisma migrate as a subprocess on boot.
+ENTRYPOINT ["/usr/bin/tini", "--", "./entrypoint.sh"]

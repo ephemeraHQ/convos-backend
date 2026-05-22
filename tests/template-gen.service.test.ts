@@ -7,9 +7,9 @@
  *
  */
 
-/* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-return, @typescript-eslint/no-explicit-any, @typescript-eslint/consistent-type-imports, @typescript-eslint/await-thenable, @typescript-eslint/no-confusing-void-expression */
+/* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-return, @typescript-eslint/no-explicit-any, @typescript-eslint/consistent-type-imports */
 
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "vitest";
 
 // ---------------------------------------------------------------------------
 // Fetch interceptor — captures all outbound fetch calls so we can assert
@@ -39,7 +39,7 @@ function extractHeaders(init?: RequestInit): Record<string, string> {
       headers[k.toLowerCase()] = v;
     });
   } else if (Array.isArray(init.headers)) {
-    for (const [k, v] of init.headers as [string, string][]) {
+    for (const [k, v] of init.headers) {
       headers[k.toLowerCase()] = v;
     }
   } else {
@@ -960,9 +960,8 @@ describe("templateGen service — OpenRouter integration", () => {
     const mod = await import("@/api/v2/agent-templates/services/templateGen");
     generateTemplate = mod.generateTemplate;
 
-    const { SYSTEM_PROMPT } = await import(
-      "@/api/v2/agent-templates/lib/system-prompt"
-    );
+    const { SYSTEM_PROMPT } =
+      await import("@/api/v2/agent-templates/lib/system-prompt");
 
     setOpenRouterResponse({
       model: "@preset/assistants-pro",

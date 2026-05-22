@@ -9,6 +9,7 @@
     "noEmit": true,
     "strict": true,
     "skipLibCheck": true,
+    "types": ["node"],
     "paths": {
       "@/*": ["./src/*"],
       "@prisma-zod/*": ["./prisma/generated/zod/*"]
@@ -19,6 +20,9 @@
     "prisma/**/*",
     "tests/**/*",
     "dev/scripts/**/*",
-    "scripts/**/*"
+    "scripts/**/*",
+    "__mocks__/**/*",
+    "tsup.config.ts",
+    "vitest.config.ts"
   ]
 }

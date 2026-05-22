@@ -10,8 +10,8 @@
 
 import { readFileSync } from "node:fs";
 import type { Server } from "node:http";
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import express, { type Response } from "express";
+import { afterAll, beforeAll, describe, expect, test, vi } from "vitest";
 import {
   __setAgentAssetsApiKeyOverrideForTests,
   authOrAgentApiKeyAuth,
@@ -22,6 +22,10 @@ import { pinoMiddleware } from "@/middleware/pino";
 import { getEffectiveOwnerId } from "@/utils/auth-helpers";
 import { ADMIN_ACCOUNT_ID } from "@/utils/constants";
 import { createJwtToken } from "@/utils/jwt";
+
+vi.mock("firebase-admin/app");
+vi.mock("firebase-admin/app-check");
+vi.mock("firebase-admin/messaging");
 
 // ---------------------------------------------------------------------------
 // Test helpers

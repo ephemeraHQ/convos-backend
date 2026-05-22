@@ -1,10 +1,10 @@
 /**
  * Offline unit tests for the deterministic gate. No network, no app imports —
  * keeps the harness's own logic regression-covered and runnable in CI via
- * `bun test`.
+ * `pnpm test`.
  */
 
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "vitest";
 import { runGate } from "./lib/checks";
 import type { GeneratedTemplateLite } from "./lib/types";
 

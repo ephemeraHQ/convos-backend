@@ -61,7 +61,7 @@ export const validateReplayPayload = (
   input: ApplyDeltaInput,
 ): void => {
   const checks: Array<[string, unknown, unknown]> = [
-    ["delta", BigInt(prior.delta), input.delta],
+    ["delta", prior.delta, input.delta],
     ["reason", prior.reason, input.reason],
     ["usdCostMicros", prior.usdCostMicros, input.usdCostMicros ?? null],
     [

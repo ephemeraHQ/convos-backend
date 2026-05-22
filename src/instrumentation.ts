@@ -36,9 +36,7 @@ const sdk = new NodeSDK({
     // Auto instrument Express
     new ExpressInstrumentation(),
     // Auto instrument Prisma
-    new PrismaInstrumentation({
-      middleware: false,
-    }),
+    new PrismaInstrumentation(),
     new PinoInstrumentation(),
   ],
 });

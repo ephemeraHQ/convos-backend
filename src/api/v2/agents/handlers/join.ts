@@ -216,12 +216,11 @@ export async function joinHandler(req: Request, res: Response) {
   // Cancel in-flight upstream work when the client disconnects before we've
   // responded. Saves backend + upstream load on abandoned joins (force-quit
   // mid-provision, network blip mid-poll, etc.). Listen on `res` rather
-  // than `req`: `req.on('close')` can fire on body-stream end in some
-  // HTTP runtimes (Bun in particular) and would falsely abort before the
-  // handler has even reached the poll loop. `res.on('close')` fires when
-  // the underlying connection terminates, and the `!res.writableEnded`
-  // guard distinguishes "client disconnected before response" from
-  // "response completed normally."
+  // than `req`: `req.on('close')` fires when the request body is fully
+  // consumed, which can race the poll loop and falsely abort before the
+  // handler has even reached it. `res.on('close')` fires when the underlying
+  // connection terminates, and the `!res.writableEnded` guard distinguishes
+  // "client disconnected before response" from "response completed normally."
   const clientDisconnect = new AbortController();
   res.on("close", () => {
     if (!res.writableEnded) {

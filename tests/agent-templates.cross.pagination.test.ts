@@ -5,7 +5,7 @@ import {
   describe,
   expect,
   test,
-} from "bun:test";
+} from "vitest";
 import { ADMIN_ACCOUNT_ID } from "@/utils/constants";
 import { prisma } from "@/utils/prisma";
 import {
@@ -101,9 +101,9 @@ describe("Agent template cross pagination flow", () => {
     expect(first.body.hasMore).toBe(true);
     expect(second.body.hasMore).toBe(true);
     expect(third.body.hasMore).toBe(false);
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
+
     expect(first.body.nextCursor).toEqual(expect.any(String));
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
+
     expect(second.body.nextCursor).toEqual(expect.any(String));
     expect(second.body.nextCursor).not.toBe(firstCursor);
     expect(third.body.nextCursor).toBeNull();

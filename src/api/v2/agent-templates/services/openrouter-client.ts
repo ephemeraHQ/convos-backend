@@ -85,8 +85,14 @@ function buildClient(apiKey: string): { client: OpenAI; wrapped: boolean } {
     fetch: (url: any, init?: any) => globalThis.fetch(url, init),
   };
   if (ph) {
+    // PostHogOpenAI extends OpenAI structurally but TS sees a private-brand
+    // mismatch (OpenAI carries a `#private` field that the @posthog/ai
+    // re-export doesn't share). Cast through unknown to bridge the brand.
     return {
-      client: new PostHogOpenAI({ ...common, posthog: ph }),
+      client: new PostHogOpenAI({
+        ...common,
+        posthog: ph,
+      }) as unknown as OpenAI,
       wrapped: true,
     };
   }

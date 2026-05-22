@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "vitest";
 
 describe("PAYMENTS_FREE_TIER_DAILY_CAP_CREDITS", () => {
   const original = process.env.PAYMENTS_FREE_TIER_DAILY_CAP_CREDITS;
@@ -13,25 +13,22 @@ describe("PAYMENTS_FREE_TIER_DAILY_CAP_CREDITS", () => {
 
   test("loads positive int", async () => {
     process.env.PAYMENTS_FREE_TIER_DAILY_CAP_CREDITS = "100";
-    const { loadFreeTierDailyCapCredits } = await import(
-      "@/payments/credits/config"
-    );
+    const { loadFreeTierDailyCapCredits } =
+      await import("@/payments/credits/config");
     expect(loadFreeTierDailyCapCredits()).toBe(100);
   });
 
   test("rejects missing", async () => {
     delete process.env.PAYMENTS_FREE_TIER_DAILY_CAP_CREDITS;
-    const { loadFreeTierDailyCapCredits } = await import(
-      "@/payments/credits/config"
-    );
+    const { loadFreeTierDailyCapCredits } =
+      await import("@/payments/credits/config");
     expect(() => loadFreeTierDailyCapCredits()).toThrow(/not configured/);
   });
 
   test("rejects zero", async () => {
     process.env.PAYMENTS_FREE_TIER_DAILY_CAP_CREDITS = "0";
-    const { loadFreeTierDailyCapCredits } = await import(
-      "@/payments/credits/config"
-    );
+    const { loadFreeTierDailyCapCredits } =
+      await import("@/payments/credits/config");
     expect(() => loadFreeTierDailyCapCredits()).toThrow(
       /must be a positive safe integer/,
     );
@@ -39,9 +36,8 @@ describe("PAYMENTS_FREE_TIER_DAILY_CAP_CREDITS", () => {
 
   test("rejects negative", async () => {
     process.env.PAYMENTS_FREE_TIER_DAILY_CAP_CREDITS = "-5";
-    const { loadFreeTierDailyCapCredits } = await import(
-      "@/payments/credits/config"
-    );
+    const { loadFreeTierDailyCapCredits } =
+      await import("@/payments/credits/config");
     expect(() => loadFreeTierDailyCapCredits()).toThrow(
       /must be a positive safe integer/,
     );
@@ -49,17 +45,15 @@ describe("PAYMENTS_FREE_TIER_DAILY_CAP_CREDITS", () => {
 
   test("rejects non-integer", async () => {
     process.env.PAYMENTS_FREE_TIER_DAILY_CAP_CREDITS = "1.5";
-    const { loadFreeTierDailyCapCredits } = await import(
-      "@/payments/credits/config"
-    );
+    const { loadFreeTierDailyCapCredits } =
+      await import("@/payments/credits/config");
     expect(() => loadFreeTierDailyCapCredits()).toThrow(/must be an integer/);
   });
 
   test("rejects alpha string", async () => {
     process.env.PAYMENTS_FREE_TIER_DAILY_CAP_CREDITS = "abc";
-    const { loadFreeTierDailyCapCredits } = await import(
-      "@/payments/credits/config"
-    );
+    const { loadFreeTierDailyCapCredits } =
+      await import("@/payments/credits/config");
     expect(() => loadFreeTierDailyCapCredits()).toThrow(/must be an integer/);
   });
 });

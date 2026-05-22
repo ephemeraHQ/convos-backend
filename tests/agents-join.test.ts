@@ -1,5 +1,10 @@
 import type { Server } from "node:http";
 import type { AgentTemplate } from "@prisma/client";
+import express, {
+  type Response as ExpressResponse,
+  type NextFunction,
+  type Request,
+} from "express";
 import {
   afterAll,
   afterEach,
@@ -8,12 +13,7 @@ import {
   describe,
   expect,
   test,
-} from "bun:test";
-import express, {
-  type Response as ExpressResponse,
-  type NextFunction,
-  type Request,
-} from "express";
+} from "vitest";
 import { __setAssistantConfigOverridesForTests } from "@/api/v2/agents/handlers/assistant-config";
 import {
   __setTemplateFinderForTests,

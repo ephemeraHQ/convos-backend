@@ -14,14 +14,7 @@
  *   - SSE mode (Accept: text/event-stream) → terminal result frame
  */
 
-import {
-  afterAll,
-  afterEach,
-  beforeAll,
-  describe,
-  expect,
-  test,
-} from "bun:test";
+import { afterAll, afterEach, beforeAll, describe, expect, test } from "vitest";
 import {
   __resetGenerationExecutorForTests,
   __setExecutorTimeoutMsForTests,

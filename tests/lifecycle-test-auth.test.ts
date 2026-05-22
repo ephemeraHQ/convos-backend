@@ -1,4 +1,5 @@
 import type { Server } from "node:http";
+import express from "express";
 import {
   afterAll,
   beforeAll,
@@ -6,8 +7,7 @@ import {
   describe,
   expect,
   test,
-} from "bun:test";
-import express from "express";
+} from "vitest";
 import { jsonMiddleware } from "@/middleware/json";
 import { lifecycleTestAuthMiddleware } from "@/middleware/lifecycleTestAuth";
 import { pinoMiddleware } from "@/middleware/pino";

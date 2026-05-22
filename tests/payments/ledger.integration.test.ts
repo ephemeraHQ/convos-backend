@@ -1,5 +1,5 @@
 import { LedgerReason } from "@prisma/client";
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "vitest";
 import { IdempotencyMismatchError } from "@/payments/errors";
 import {
   applyDelta,
@@ -124,7 +124,7 @@ describe("payments/ledger/repository", () => {
       grantKindId: "manual",
     });
 
-    expect(
+    await expect(
       applyDelta({
         accountId,
         delta: 99n,
@@ -252,7 +252,7 @@ describe("payments/ledger/repository — floor + history", () => {
       note: "seed",
     });
 
-    expect(
+    await expect(
       applyDelta({
         accountId,
         delta: -1000n,

@@ -60,12 +60,12 @@ jobs:
           echo "- Triggered by: ${{ inputs.triggered_by || github.event.client_payload.triggered_by }}" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           ref: ${{ github.event_name == 'repository_dispatch' && github.event.client_payload.ref || github.event_name == 'workflow_dispatch' && inputs.environment || github.event_name == 'workflow_call' && inputs.ref || github.ref }}
 
       - name: Log in to the container registry
-        uses: docker/login-action@v3
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -73,7 +73,7 @@ jobs:
 
       - name: Extract metadata (tags, labels) for Docker
         id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5.10.0
         with:
           images: ghcr.io/${{ github.repository_owner }}/convos-backend
           tags: |
@@ -81,7 +81,7 @@ jobs:
             type=ref,event=pr
 
       - name: Build and push Docker image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
         id: push
         with:
           context: .
@@ -101,11 +101,11 @@ jobs:
     if: (inputs.ref == 'otr-dev') || (inputs.environment == 'otr-dev') || (github.ref == 'refs/heads/otr-dev' && !inputs.ref && !inputs.environment)
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           ref: ${{ github.event_name == 'repository_dispatch' && github.event.client_payload.ref || github.event_name == 'workflow_dispatch' && inputs.environment || github.event_name == 'workflow_call' && inputs.ref || github.ref }}
       - name: Deploy to OTR Dev Environment
-        uses: xmtp-labs/terraform-deployer@v1
+        uses: xmtp-labs/terraform-deployer@341a5be3ad29108abcbeaacbae90b11ef43409c1 # v1
         timeout-minutes: 20
         with:
           timeout: 20m
@@ -123,11 +123,11 @@ jobs:
     if: (inputs.ref == 'otr-prod') || (inputs.environment == 'otr-prod') || (github.ref == 'refs/heads/otr-prod' && !inputs.ref && !inputs.environment) || (github.event_name == 'repository_dispatch' && github.event.client_payload.ref == 'otr-prod')
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           ref: ${{ github.event_name == 'repository_dispatch' && github.event.client_payload.ref || github.event_name == 'workflow_dispatch' && inputs.environment || github.event_name == 'workflow_call' && inputs.ref || github.ref }}
       - name: Deploy to OTR Production Environment
-        uses: xmtp-labs/terraform-deployer@v1
+        uses: xmtp-labs/terraform-deployer@341a5be3ad29108abcbeaacbae90b11ef43409c1 # v1
         timeout-minutes: 20
         with:
           timeout: 20m

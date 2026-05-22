@@ -158,7 +158,10 @@ async function waitForTerminal(args: {
 // Handler
 // ---------------------------------------------------------------------------
 
-export async function generationsGetHandler(req: Request, res: Response) {
+export async function generationsGetHandler(
+  req: Request<{ generationId: string }>,
+  res: Response,
+) {
   const { generationId } = req.params;
 
   // Track client disconnect so long-poll can bail early.

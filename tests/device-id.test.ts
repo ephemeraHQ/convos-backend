@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "vitest";
 import { DEVICE_ID_MAX_LENGTH, deviceIdSchema } from "@/utils/device-id";
 
 describe("deviceIdSchema", () => {

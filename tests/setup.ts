@@ -1,6 +1,8 @@
-import { mock } from "bun:test";
+// vi.mock for firebase-admin lives in __mocks__/ + per-test-file vi.mock()
+// declarations.
 
-// Disable pino-pretty worker threads to prevent Bun segfaults during tests
+// Pin pino to JSON output during tests; pino-pretty starts a worker thread
+// that can race the Vitest test-file teardown when many files run.
 process.env.LOG_FORMAT = "json";
 
 // Set required environment variables for tests
@@ -64,47 +66,3 @@ process.env.PAYMENTS_GRANT_BUILDER_MONTHLY =
   process.env.PAYMENTS_GRANT_BUILDER_MONTHLY || "2500";
 process.env.PAYMENTS_GRANT_PRO_MONTHLY =
   process.env.PAYMENTS_GRANT_PRO_MONTHLY || "10000";
-
-// mock Firebase functions
-
-void mock.module("firebase-admin/app-check", () => ({
-  getAppCheck: () => ({
-    verifyToken: (token: string) => {
-      if (token === "valid-app-check-token") {
-        return Promise.resolve(true);
-      }
-      return Promise.reject(new Error("Invalid AppCheck token"));
-    },
-    createToken: (_appId: string) => {
-      return Promise.resolve({
-        token: "valid-app-check-token",
-      });
-    },
-  }),
-}));
-
-void mock.module("firebase-admin/app", () => ({
-  initializeApp: () => {},
-  cert: () => {},
-}));
-
-void mock.module("firebase-admin/messaging", () => ({
-  getMessaging: () => ({
-    send: (message: { token?: string }) => {
-      if (message.token === "valid-fcm-token") {
-        return Promise.resolve("mock-message-id");
-      }
-      if (message.token === "trigger-payload-size-limit") {
-        const error = new Error("Payload too large") as Error & {
-          code: string;
-        };
-        error.code = "messaging/payload-size-limit-exceeded";
-        return Promise.reject(error);
-      }
-      const error = new Error("Invalid registration token");
-      (error as Error & { code: string }).code =
-        "messaging/invalid-registration-token";
-      return Promise.reject(error);
-    },
-  }),
-}));
