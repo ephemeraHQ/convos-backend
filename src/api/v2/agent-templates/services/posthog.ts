@@ -13,8 +13,7 @@
  * singleton-override pattern used throughout the codebase.
  */
 
-/* eslint-disable @typescript-eslint/no-require-imports, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-explicit-any */
-
+import { PostHog } from "posthog-node";
 import { POSTHOG_HOST, POSTHOG_PROJECT_TOKEN } from "@/config";
 import logger from "@/utils/logger";
 import type { GenerationMetrics } from "./templateGen";
@@ -142,28 +141,20 @@ export function resolveActor(p: ActorSignals): ResolvedActor {
 // Lazy PostHog client singleton
 // ---------------------------------------------------------------------------
 
-let _posthogClient: any = null;
+let _posthogClient: PostHog | null = null;
 
 /**
  * Return the PostHog client if both env vars are set, otherwise `null`.
- * The client is created once and cached for the lifetime of the process.
- * Lazy-loads `posthog-node` so the import cost is only paid when the
- * feature is actually configured.
+ * Created once and cached for the lifetime of the process.
  *
- * Exported so the OpenRouter client (`openrouter-client.ts`) can hand the
- * SAME posthog-node instance to `@posthog/ai`'s wrapper — one client, one
- * flush on shutdown, shared event buffer.
+ * Exported so the OpenRouter client can hand the SAME instance to
+ * `@posthog/ai`'s wrapper — one client, one flush on shutdown.
  */
-export function getPostHogClient(): any {
+export function getPostHogClient(): PostHog | null {
   if (_posthogClient) return _posthogClient;
 
   if (!POSTHOG_PROJECT_TOKEN || !POSTHOG_HOST) return null;
 
-  // Dynamic import would require top-level await; use require() for
-  // synchronous lazy init at call time (matches mission constraint).
-  const { PostHog } = require("posthog-node") as {
-    PostHog: new (apiKey: string, opts: { host: string }) => any;
-  };
   _posthogClient = new PostHog(POSTHOG_PROJECT_TOKEN, { host: POSTHOG_HOST });
   // Surface async capture failures (auth 401s on a wrong token, wrong host,
   // network errors). capture() is fire-and-forget so these are otherwise
@@ -206,7 +197,9 @@ export function __resetPostHogForTests(
  * cache (`__resetOpenRouterClientForTests`) so the wrapper picks up the stub.
  */
 export function __setPostHogClientForTests(client: unknown): void {
-  _posthogClient = client;
+  // Tests inject a minimal stub (e.g. just a `capture` spy), not a real
+  // PostHog — cast through the public type so the seam stays loose.
+  _posthogClient = client as PostHog | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -214,7 +207,7 @@ export function __setPostHogClientForTests(client: unknown): void {
 // ---------------------------------------------------------------------------
 
 /**
- * Fire a `builder.template.generated` PostHog event.
+ * Fire a `builder.generation.completed` PostHog event.
  *
  * - When a test override is installed, delegates to the override.
  * - When `POSTHOG_PROJECT_TOKEN` is unset, returns immediately (no-op).
@@ -229,10 +222,9 @@ export function capturePostHog(properties: PostHogCaptureProperties): void {
 
   // Fire-and-forget: capture is buffered internally by the SDK.
   // No await — the route returns immediately. Wrap in try/catch so a
-  // synchronous SDK failure (serialization, internal state, or lazy
-  // `require("posthog-node")` / `new PostHog()` failure inside
-  // getPostHogClient) cannot bubble up and break the request that
-  // triggered this analytics call.
+  // synchronous SDK failure (serialization, internal state, or a
+  // `new PostHog()` failure inside getPostHogClient) cannot bubble up
+  // and break the request that triggered this analytics call.
   try {
     const client = getPostHogClient();
     if (!client) return; // silent no-op when env not set
