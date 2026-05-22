@@ -145,17 +145,10 @@ let _posthogClient: PostHog | null = null;
 
 /**
  * Return the PostHog client if both env vars are set, otherwise `null`.
- * The client is created once and cached for the lifetime of the process.
+ * Created once and cached for the lifetime of the process.
  *
- * `posthog-node` is imported statically (not via `require()`): the production
- * build bundles to ESM, where a surviving `require()` degrades to esbuild's
- * `__require` shim and throws "Dynamic require of posthog-node is not
- * supported" at call time. A static `import` also shares the one ESM entry
- * `@posthog/ai` already pulls in, so there's a single posthog-node instance.
- *
- * Exported so the OpenRouter client (`openrouter-client.ts`) can hand the
- * SAME posthog-node instance to `@posthog/ai`'s wrapper — one client, one
- * flush on shutdown, shared event buffer.
+ * Exported so the OpenRouter client can hand the SAME instance to
+ * `@posthog/ai`'s wrapper — one client, one flush on shutdown.
  */
 export function getPostHogClient(): PostHog | null {
   if (_posthogClient) return _posthogClient;
