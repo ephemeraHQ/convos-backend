@@ -47,13 +47,11 @@ jobs:
         with:
           node-version-file: ".nvmrc"
 
-      - name: Enable Corepack + activate pnpm
+      - name: Enable Corepack (pnpm version from package.json#packageManager)
         if: steps.secrets.outputs.present == 'true'
         env:
           COREPACK_ENABLE_DOWNLOAD_PROMPT: "0"
-        run: |
-          corepack enable
-          corepack prepare pnpm@10.33.4 --activate
+        run: corepack enable
 
       - run: pnpm install --frozen-lockfile
         if: steps.secrets.outputs.present == 'true'

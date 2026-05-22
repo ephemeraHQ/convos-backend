@@ -17,9 +17,10 @@ RUN apt-get update \
     openssl ca-certificates \
   && rm -rf /var/lib/apt/lists/*
 
-# Activate pnpm via Corepack matching the `packageManager` pin in package.json.
+# Activate pnpm via Corepack. The version is sourced from `packageManager`
+# in package.json (copied below) — single source of truth, no second pin here.
 ENV COREPACK_ENABLE_DOWNLOAD_PROMPT=0
-RUN corepack enable && corepack prepare pnpm@10.33.4 --activate
+RUN corepack enable
 
 # Cache the dep graph: copy lockfile + package.json first, then install.
 COPY package.json pnpm-lock.yaml .npmrc* ./
