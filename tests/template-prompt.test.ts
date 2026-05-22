@@ -5,12 +5,11 @@ import { beforeAll, describe, expect, test } from "bun:test";
 import { SYSTEM_PROMPT as LOADED_SYSTEM_PROMPT } from "@/api/v2/agent-templates/lib/system-prompt";
 
 const PROMPT_PATH = resolve("data/template-generator-prompt.txt");
-const POOL_PROMPT_PATH = resolve(
-  "../convos-pool/pool/data/skill-generator-prompt.txt",
-);
 
+// convos-backend is the source of truth for this prompt (pool decommissioned).
+// Pin the hash so any edit to the prompt is deliberate and surfaces in review.
 const KNOWN_SHA256 =
-  "82f95632ee7e1b47fcab7f080c2e41f8eec6c8f16702cf13dfea358ab4c17601";
+  "478059e23505c5a717cc734307445dbb7a4cecfe8ab782c4ed155ea31a9387dd";
 
 function sha256OfFile(filePath: string) {
   const content = readFileSync(filePath);
@@ -22,21 +21,12 @@ describe("template-generator-prompt.txt file fidelity", () => {
     expect(existsSync(PROMPT_PATH)).toBe(true);
   });
 
-  test("byte length is 47193", () => {
-    expect(statSync(PROMPT_PATH).size).toBe(47193);
+  test("byte length is 47088", () => {
+    expect(statSync(PROMPT_PATH).size).toBe(47088);
   });
 
-  test("SHA256 matches pool source", () => {
-    const localHash = sha256OfFile(PROMPT_PATH);
-    // Verify the pool file exists for comparison
-    if (existsSync(POOL_PROMPT_PATH)) {
-      const poolHash = sha256OfFile(POOL_PROMPT_PATH);
-      expect(localHash).toBe(poolHash);
-    } else {
-      // If pool is not accessible, verify against the known SHA256 captured
-      // during mission readiness
-      expect(localHash).toBe(KNOWN_SHA256);
-    }
+  test("SHA256 matches the pinned hash", () => {
+    expect(sha256OfFile(PROMPT_PATH)).toBe(KNOWN_SHA256);
   });
 
   test("line count is 363 (matches wc -l)", () => {
