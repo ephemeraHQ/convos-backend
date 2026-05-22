@@ -42,6 +42,14 @@ describe("payments/index — composed service", () => {
     expect(r.granted).toBe(100);
     expect(r.replayed).toBe(false);
     expect(await getBalance(accountId)).toBe(100n);
+    expect(r).toMatchObject({
+      granted: expect.any(Number),
+      replayed: false,
+      newBalance: expect.any(BigInt),
+      balanceAfter: expect.any(BigInt),
+      ledgerId: expect.any(String),
+    });
+    expect(r.newBalance).toEqual(r.balanceAfter);
 
     const rows = await prisma.creditLedger.findMany({ where: { accountId } });
     expect(rows[0].grantKindId).toBe("signup_bonus");
@@ -130,6 +138,14 @@ describe("payments/index — composed service", () => {
     expect(r.spent).toBe(4);
     expect(r.replayed).toBe(false);
     expect(await getBalance(accountId)).toBe(96n);
+    expect(r).toMatchObject({
+      spent: expect.any(Number),
+      replayed: false,
+      newBalance: expect.any(BigInt),
+      balanceAfter: expect.any(BigInt),
+      ledgerId: expect.any(String),
+    });
+    expect(r.newBalance).toEqual(r.balanceAfter);
 
     const row = await prisma.creditLedger.findFirst({
       where: { accountId, idempotencyKey: "c1" },
@@ -179,6 +195,15 @@ describe("payments/index — composed service", () => {
     expect(r.applied).toBe(true);
     expect(r.replayed).toBe(false);
     expect(await getBalance(accountId)).toBe(10n);
+    expect(r).toMatchObject({
+      applied: true,
+      replayed: false,
+      newBalance: expect.any(BigInt),
+      balanceAfter: expect.any(BigInt),
+      ledgerId: expect.any(String),
+    });
+    expect(r.newBalance).toEqual(r.balanceAfter);
+
     const row = await prisma.creditLedger.findFirst({
       where: { accountId, idempotencyKey: "a1" },
     });

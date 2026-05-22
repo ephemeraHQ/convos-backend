@@ -57,7 +57,8 @@ export const consume = async (args: {
       requestId: args.requestId,
       floorCheck: { minBalance: config.minBalance },
     });
-    return { spent: credits, replayed, newBalance };
+    // TODO(Task 5): populate balanceAfter + ledgerId from applyDelta result
+    return { spent: credits, replayed, newBalance } as ConsumeResult;
   } catch (err) {
     if (err instanceof LedgerFloorBreachError) {
       throw new InsufficientBalanceError(
@@ -117,7 +118,8 @@ export const grant = async (args: {
   if (prior) {
     validateReplayPayload(prior, ledgerInput);
     const newBalance = await ledgerGetBalance(args.accountId);
-    return { granted: args.credits, replayed: true, newBalance };
+    // TODO(Task 5): populate balanceAfter + ledgerId from prior row
+    return { granted: args.credits, replayed: true, newBalance } as GrantResult;
   }
 
   // 2. Active-kind check only applies on first grant, not on replay.
@@ -132,11 +134,12 @@ export const grant = async (args: {
       }
       return applyDeltaWithTx(tx, ledgerInput);
     });
+    // TODO(Task 5): populate balanceAfter + ledgerId from txResult
     return {
       granted: args.credits,
       replayed: false,
       newBalance: txResult.newBalance,
-    };
+    } as GrantResult;
   } catch (err) {
     if (
       err instanceof Prisma.PrismaClientKnownRequestError &&
@@ -151,7 +154,8 @@ export const grant = async (args: {
       if (racePrior) {
         validateReplayPayload(racePrior, ledgerInput);
         const newBalance = await ledgerGetBalance(args.accountId);
-        return { granted: args.credits, replayed: true, newBalance };
+        // TODO(Task 5): populate balanceAfter + ledgerId from racePrior row
+        return { granted: args.credits, replayed: true, newBalance } as GrantResult;
       }
     }
     throw err;
@@ -188,7 +192,8 @@ export const adjust = async (args: {
       note: args.note,
       ...opts,
     });
-    return { applied: true, replayed, newBalance };
+    // TODO(Task 5): populate balanceAfter + ledgerId from applyDelta result
+    return { applied: true, replayed, newBalance } as AdjustResult;
   } catch (err) {
     if (err instanceof LedgerFloorBreachError) {
       throw new InsufficientBalanceError(
