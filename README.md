@@ -71,7 +71,7 @@ pnpm install
 pnpm migrate:deploy
 
 # Generate Prisma client + zod schemas + protobufs
-pnpm prisma generate
+pnpm prisma:generate
 pnpm buf:generate
 
 # Run the app in watch mode
