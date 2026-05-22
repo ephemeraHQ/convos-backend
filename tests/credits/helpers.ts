@@ -1,6 +1,13 @@
 import { randomUUID } from "node:crypto";
-import express from "express";
-import { creditsRouter } from "@/api/v2/credits/credits.router";
+import express, { type Express } from "express";
+import supertest from "supertest";
+import { accountsByIdRouter } from "@/api/v2/accounts/accountsByIdRouter";
+import { meGuard } from "@/api/v2/accounts/middleware/meGuard";
+import { dailyRefillRouter } from "@/api/v2/credits/daily.router";
+import {
+  __setAgentAssetsApiKeyOverrideForTests,
+  agentApiKeyAuth,
+} from "@/middleware/agentAuth";
 import { errorHandlerMiddleware } from "@/middleware/errorHandler";
 import { jsonMiddleware } from "@/middleware/json";
 import { noRouteMiddleware } from "@/middleware/noRoute";
@@ -11,11 +18,25 @@ import { prisma } from "@/utils/prisma";
 export const TEST_AGENT_API_KEY =
   "test-agent-assets-api-key-that-is-at-least-32-characters";
 
+export const installAgentApiKeyOverride = (): void => {
+  __setAgentAssetsApiKeyOverrideForTests(TEST_AGENT_API_KEY);
+};
+
+export const clearAgentApiKeyOverride = (): void => {
+  __setAgentAssetsApiKeyOverrideForTests(undefined);
+};
+
 export const buildCreditsApp = (): express.Express => {
   const app = express();
   app.use(pinoMiddleware);
   app.use(jsonMiddleware);
-  app.use("/api/v2/credits", creditsRouter);
+  app.use(
+    "/v2/accounts/:accountId",
+    agentApiKeyAuth,
+    meGuard,
+    accountsByIdRouter,
+  );
+  app.use("/api/v2/credits", dailyRefillRouter);
   app.use(noRouteMiddleware);
   app.use(errorHandlerMiddleware);
   return app;
@@ -55,3 +76,14 @@ export const cleanupAccounts = async (accountIds: string[]): Promise<void> => {
     await prisma.account.deleteMany({ where: { id: accountId } });
   }
 };
+
+export const agentRequest = (app: Express) => ({
+  get: (path: string) =>
+    supertest(app).get(path).set("X-Agent-API-Key", TEST_AGENT_API_KEY),
+  post: (path: string, idempotencyKey: string, body: unknown) =>
+    supertest(app)
+      .post(path)
+      .set("X-Agent-API-Key", TEST_AGENT_API_KEY)
+      .set("Idempotency-Key", idempotencyKey)
+      .send(body as object),
+});

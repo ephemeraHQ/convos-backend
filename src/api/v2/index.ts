@@ -14,7 +14,9 @@ import {
   assetRenewalLimiter,
   inviteCodeRedeemLimiter,
 } from "@/middleware/rateLimit";
-import { accountsRouter } from "./accounts/accounts.router";
+import { accountsByIdRouter } from "./accounts/accountsByIdRouter";
+import { accountsMeRouter } from "./accounts/accountsMeRouter";
+import { meGuard } from "./accounts/middleware/meGuard";
 import { agentTemplatesRouter } from "./agent-templates/agent-templates.router";
 import { agentsRouter } from "./agents/agents.router";
 import { agentAssetsRouter } from "./agents/assets/agent-assets.router";
@@ -26,7 +28,7 @@ import { testLifecycleHandler } from "./assets/handlers/test-lifecycle";
 import { attachmentsRouter } from "./attachments/attachments.router";
 import { authRouter } from "./auth/auth.router";
 import { connectionsRouter } from "./connections/connections.router";
-import { creditsRouter } from "./credits/credits.router";
+import { dailyRefillRouter } from "./credits/daily.router";
 import { devRouter } from "./dev/dev.router";
 import { deviceRouter } from "./device/device.router";
 import {
@@ -58,11 +60,17 @@ v2Router.use(
 );
 v2Router.use("/auth", authRouter);
 // User-facing /accounts/me/* (credits, subscription, subscription/verify) —
-// JWT-authed. Agents read/write credits via /credits/{check,consume,grant}
-// below with X-Agent-API-Key; the two surfaces are deliberately separate by
+// JWT-authed. Agents read/write credits via /accounts/:accountId/credits/*
+// with X-Agent-API-Key; the two surfaces are deliberately separate by
 // audience, not by resource.
-v2Router.use("/accounts", authMiddleware, accountsRouter);
-v2Router.use("/credits", creditsRouter);
+v2Router.use("/accounts/me", authMiddleware, accountsMeRouter);
+v2Router.use(
+  "/accounts/:accountId",
+  agentApiKeyAuth,
+  meGuard,
+  accountsByIdRouter,
+);
+v2Router.use("/credits", dailyRefillRouter);
 v2Router.use("/device", appCheckOnlyMiddleware, deviceRouter);
 
 // Lifecycle test endpoints - protected by token auth, must be before authenticated /assets route

@@ -107,6 +107,13 @@ describe("POST /api/v2/credits/daily", () => {
     expect(typeof body.runAt).toBe("string");
     // Our seeded account has no balance, so it should be refilled
     expect(body.refilled as number).toBeGreaterThanOrEqual(1);
+
+    // Verify the inserted ledger row carries scope: "daily_refill"
+    const ledgerRow = await prisma.creditLedger.findFirst({
+      where: { accountId, grantKindId: "daily_refill" },
+      orderBy: { createdAt: "desc" },
+    });
+    expect(ledgerRow?.scope).toBe("daily_refill");
   });
 
   test("second call same UTC day → 200 skipped:true", async () => {

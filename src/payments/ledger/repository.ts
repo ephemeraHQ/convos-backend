@@ -1,20 +1,21 @@
 import { Prisma, type CreditLedger, type LedgerReason } from "@prisma/client";
 import { prisma } from "@/utils/prisma";
 import { IdempotencyMismatchError } from "../errors";
-import type { HistoryCursor } from "../types";
+import type { GrantKindId, HistoryCursor, LedgerScope } from "../types";
 
-interface ApplyDeltaInput {
+export interface ApplyDeltaInput {
   accountId: string;
   delta: bigint;
   reason: LedgerReason;
   idempotencyKey: string;
+  scope: LedgerScope; // mandatory — discriminator for idempotency lookup
   usdCostMicros?: bigint;
   markupRate?: Prisma.Decimal | string;
   creditsPerDollar?: bigint;
   model?: string;
   requestId?: string;
   note?: string;
-  grantKindId?: string;
+  grantKindId?: GrantKindId;
   floorCheck?: { minBalance: bigint };
 }
 
@@ -22,6 +23,7 @@ export interface ApplyDeltaResult {
   ledgerId: string;
   replayed: boolean;
   newBalance: bigint;
+  balanceAfter: bigint; // snapshot from the inserted/replayed ledger row
 }
 
 interface RawBalanceRow {
@@ -36,15 +38,24 @@ export const getBalance = async (accountId: string): Promise<bigint> => {
   return row?.balance ?? 0n;
 };
 
-export const findLedgerByIdempotencyKey = async (
-  accountId: string,
-  idempotencyKey: string,
-): Promise<CreditLedger | null> =>
-  prisma.creditLedger.findUnique({
-    where: {
-      accountId_idempotencyKey: { accountId, idempotencyKey },
-    },
-  });
+export const findLedgerByIdempotencyKey = async (args: {
+  accountId: string;
+  idempotencyKey: string;
+  scope: LedgerScope; // post-filtered below
+}): Promise<CreditLedger | null> =>
+  prisma.creditLedger
+    .findUnique({
+      where: {
+        // After Migration 2 this becomes accountId_idempotencyKey_scope.
+        // During PR-A the @@unique is still (accountId, idempotencyKey) so we
+        // post-filter on scope below.
+        accountId_idempotencyKey: {
+          accountId: args.accountId,
+          idempotencyKey: args.idempotencyKey,
+        },
+      },
+    })
+    .then((row) => (row && row.scope === args.scope ? row : null));
 
 /**
  * Stripe-style strict replay validation: every input field must match the
@@ -55,6 +66,9 @@ export const findLedgerByIdempotencyKey = async (
  * `delta` is the only field that affects balance state; mismatches on
  * other fields (model, requestId, note, ...) are detection of caller-side
  * bugs, not money safety.
+ *
+ * Note: `scope` is intentionally NOT compared here — it's the lookup discriminator
+ * in findLedgerByIdempotencyKey, so prior.scope === input.scope by construction.
  */
 export const validateReplayPayload = (
   prior: CreditLedger,
@@ -166,10 +180,17 @@ export const applyDeltaWithTx = async (
     );
   }
 
-  await tx.userCredits.update({
+  const updated = await tx.userCredits.update({
     where: { accountId: input.accountId },
     data: { balance: after },
   });
+  // Defensive: catches a future DB-side trigger/CHECK/RLS that silently rewrites
+  // the balance. Today this is a no-op verification — Prisma echoes back what we set.
+  if (updated.balance !== after) {
+    throw new Error(
+      `Ledger invariant violation: UserCredits.balance(${updated.balance}) !== computed after(${after})`,
+    );
+  }
 
   const created = await tx.creditLedger.create({
     data: {
@@ -177,6 +198,8 @@ export const applyDeltaWithTx = async (
       delta: input.delta,
       reason: input.reason,
       idempotencyKey: input.idempotencyKey,
+      scope: input.scope, // written on every row
+      balanceAfter: after, // written on every row
       usdCostMicros: input.usdCostMicros ?? null,
       markupRate:
         input.markupRate !== undefined
@@ -190,7 +213,12 @@ export const applyDeltaWithTx = async (
     },
   });
 
-  return { ledgerId: created.id, replayed: false, newBalance: after };
+  return {
+    ledgerId: created.id,
+    replayed: false,
+    newBalance: after,
+    balanceAfter: after,
+  };
 };
 
 export const applyDelta = async (
@@ -203,17 +231,25 @@ export const applyDelta = async (
       err instanceof Prisma.PrismaClientKnownRequestError &&
       err.code === "P2002"
     ) {
-      const prior = await findLedgerByIdempotencyKey(
-        input.accountId,
-        input.idempotencyKey,
-      );
+      const prior = await findLedgerByIdempotencyKey({
+        accountId: input.accountId,
+        idempotencyKey: input.idempotencyKey,
+        scope: input.scope,
+      });
       if (prior) {
         validateReplayPayload(prior, input);
-        // Replay path: read current balance post-fact. Not the lock-window
-        // exact value, but accurate at read time — same race window as any
-        // independent getBalance call.
-        const newBalance = await getBalance(input.accountId);
-        return { ledgerId: prior.id, replayed: true, newBalance };
+        // PR-A: balanceAfter column is nullable until Migration 2. Migration 1
+        // backfilled all pre-existing rows; new rows always write it. Defensive
+        // fallback covers the deploy-gap window where a row could exist with
+        // balanceAfter=NULL (e.g. daily-refill cron firing during deploy).
+        const balanceAfter =
+          prior.balanceAfter ?? (await getBalance(input.accountId));
+        return {
+          ledgerId: prior.id,
+          replayed: true,
+          newBalance: balanceAfter,
+          balanceAfter,
+        };
       }
     }
     throw err;

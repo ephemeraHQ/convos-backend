@@ -41,11 +41,16 @@ describe("payments/index — composed service", () => {
     });
     expect(r.granted).toBe(100);
     expect(r.replayed).toBe(false);
+    expect(r.balanceAfter).toBe(100n);
+    expect(r.newBalance).toBe(r.balanceAfter); // invariant
+    expect(typeof r.ledgerId).toBe("string");
     expect(await getBalance(accountId)).toBe(100n);
 
     const rows = await prisma.creditLedger.findMany({ where: { accountId } });
     expect(rows[0].grantKindId).toBe("signup_bonus");
     expect(rows[0].reason).toBe("grant");
+    expect(rows[0].id).toBe(r.ledgerId);
+    expect(rows[0].balanceAfter).toBe(100n);
   });
 
   test("grant returns post-tx newBalance on first call", async () => {
@@ -60,10 +65,13 @@ describe("payments/index — composed service", () => {
     });
 
     expect(r.newBalance).toBe(100n);
+    expect(r.balanceAfter).toBe(100n);
+    expect(r.newBalance).toBe(r.balanceAfter); // invariant
+    expect(typeof r.ledgerId).toBe("string");
     expect(r.newBalance).toBe(await getBalance(accountId));
   });
 
-  test("grant replay returns current newBalance, not stale grant-time value", async () => {
+  test("grant replay returns grant-time balanceAfter snapshot, not current balance", async () => {
     const accountId = await seedAccount();
     cleanupAccounts.push(accountId);
 
@@ -73,8 +81,8 @@ describe("payments/index — composed service", () => {
       idempotencyKey: "nb-grant-replay",
       kind: "signup_bonus",
     });
-    // Simulate concurrent burn after grant — replay must report current
-    // balance (70n), not the post-grant balance (100n).
+    // Simulate concurrent burn after grant — replay returns the grant-time
+    // balanceAfter snapshot (100n), not the current balance (70n after burn).
     await consume({
       accountId,
       usdCostMicros: 15000n, // 15000 micros × markup 2 × 1000 cpd / 1e6 = 30 credits
@@ -90,8 +98,11 @@ describe("payments/index — composed service", () => {
     });
 
     expect(replay.replayed).toBe(true);
-    expect(replay.newBalance).toBe(70n);
-    expect(replay.newBalance).toBe(await getBalance(accountId));
+    // Replay returns prior.balanceAfter (grant-time snapshot: 100n), not current (70n).
+    expect(replay.newBalance).toBe(100n);
+    expect(replay.balanceAfter).toBe(100n);
+    // Current live balance IS 70n (after the burn above).
+    expect(await getBalance(accountId)).toBe(70n);
   });
 
   test("grant rejects unknown kind", async () => {
@@ -129,11 +140,16 @@ describe("payments/index — composed service", () => {
 
     expect(r.spent).toBe(4);
     expect(r.replayed).toBe(false);
+    expect(r.balanceAfter).toBe(96n);
+    expect(r.newBalance).toBe(r.balanceAfter); // invariant
+    expect(typeof r.ledgerId).toBe("string");
     expect(await getBalance(accountId)).toBe(96n);
 
     const row = await prisma.creditLedger.findFirst({
       where: { accountId, idempotencyKey: "c1" },
     });
+    expect(row?.id).toBe(r.ledgerId);
+    expect(row?.balanceAfter).toBe(96n);
     expect(row?.usdCostMicros).toBe(2000n);
     expect(row?.creditsPerDollar).toBe(1000n);
     expect(Number(row?.markupRate)).toBe(2);
@@ -178,10 +194,15 @@ describe("payments/index — composed service", () => {
     });
     expect(r.applied).toBe(true);
     expect(r.replayed).toBe(false);
+    expect(r.balanceAfter).toBe(10n);
+    expect(r.newBalance).toBe(r.balanceAfter); // invariant
+    expect(typeof r.ledgerId).toBe("string");
     expect(await getBalance(accountId)).toBe(10n);
     const row = await prisma.creditLedger.findFirst({
       where: { accountId, idempotencyKey: "a1" },
     });
+    expect(row?.id).toBe(r.ledgerId);
+    expect(row?.balanceAfter).toBe(10n);
     expect(row?.note).toBe("support refund — call failed");
     expect(row?.reason).toBe("adjust");
   });
@@ -260,8 +281,14 @@ describe("payments/index — replay + concurrency", () => {
     }); // same key
 
     expect(first.replayed).toBe(false);
+    expect(first.balanceAfter).toBe(96n);
+    expect(typeof first.ledgerId).toBe("string");
     expect(replay.spent).toBe(first.spent);
     expect(replay.replayed).toBe(true);
+    // Replay returns the prior ledger row's id + balanceAfter snapshot — NOT current balance.
+    expect(replay.ledgerId).toBe(first.ledgerId);
+    expect(replay.balanceAfter).toBe(first.balanceAfter);
+    expect(replay.newBalance).toBe(replay.balanceAfter); // invariant on replay path
     expect(await getBalance(accountId)).toBe(146n); // unchanged by replay
 
     const rows = await prisma.creditLedger.findMany({
@@ -343,6 +370,9 @@ describe("payments/index — replay + concurrency", () => {
     expect(first.replayed).toBe(false);
     expect(replay.replayed).toBe(true);
     expect(replay.granted).toBe(first.granted);
+    expect(replay.ledgerId).toBe(first.ledgerId);
+    expect(replay.balanceAfter).toBe(first.balanceAfter);
+    expect(replay.newBalance).toBe(replay.balanceAfter); // invariant on replay path
     expect(await getBalance(accountId)).toBe(50n);
     const rows = await prisma.creditLedger.findMany({
       where: { accountId, idempotencyKey: "g1" },
@@ -368,6 +398,9 @@ describe("payments/index — replay + concurrency", () => {
     expect(first.replayed).toBe(false);
     expect(replay.replayed).toBe(true);
     expect(replay.applied).toBe(true);
+    expect(replay.ledgerId).toBe(first.ledgerId);
+    expect(replay.balanceAfter).toBe(first.balanceAfter);
+    expect(replay.newBalance).toBe(replay.balanceAfter); // invariant on replay path
     expect(await getBalance(accountId)).toBe(25n);
     const rows = await prisma.creditLedger.findMany({
       where: { accountId, idempotencyKey: "a1" },

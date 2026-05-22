@@ -1,5 +1,7 @@
-import { getBalance, grant } from "@/payments";
+import { LedgerReason } from "@prisma/client";
+import { getBalance } from "@/payments";
 import { config } from "@/payments/credits/config";
+import { applyDelta } from "@/payments/ledger";
 import logger from "@/utils/logger";
 import { prisma } from "@/utils/prisma";
 import { fanOutCreditsRefilled } from "./notify";
@@ -92,16 +94,18 @@ export async function runDailyRefill(opts?: {
       // headroom > 0n and cap is safe int, so headroom fits in Number
       const delta = Number(headroom);
 
-      const result = await grant({
+      const result = await applyDelta({
         accountId,
-        credits: delta,
-        kind: "daily_refill",
+        delta: BigInt(delta),
+        reason: LedgerReason.grant,
         idempotencyKey: `daily_refill:${accountId}:${dayKey}`,
+        scope: "daily_refill",
+        grantKindId: "daily_refill",
         note: `Daily refill to cap ${cap}`,
       });
       summary.refilled.push({
         accountId,
-        creditsAdded: result.granted,
+        creditsAdded: delta,
         newBalance: result.newBalance,
       });
     } catch (err) {
