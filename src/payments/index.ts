@@ -45,11 +45,12 @@ export const consume = async (args: {
 }): Promise<ConsumeResult> => {
   const credits = usdToCredits(args.usdCostMicros);
   try {
-    const { replayed, newBalance } = await applyDelta({
+    const { replayed, newBalance, balanceAfter, ledgerId } = await applyDelta({
       accountId: args.accountId,
       delta: BigInt(-credits),
       reason: LedgerReason.consume,
       idempotencyKey: args.idempotencyKey,
+      scope: "transaction",
       usdCostMicros: args.usdCostMicros,
       markupRate: config.markupRate,
       creditsPerDollar: config.creditsPerDollar,
@@ -57,8 +58,7 @@ export const consume = async (args: {
       requestId: args.requestId,
       floorCheck: { minBalance: config.minBalance },
     });
-    // TODO(Task 5): populate balanceAfter + ledgerId from applyDelta result
-    return { spent: credits, replayed, newBalance } as ConsumeResult;
+    return { spent: credits, replayed, newBalance, balanceAfter, ledgerId };
   } catch (err) {
     if (err instanceof LedgerFloorBreachError) {
       throw new InsufficientBalanceError(
@@ -103,6 +103,7 @@ export const grant = async (args: {
     delta: BigInt(args.credits),
     reason: LedgerReason.grant,
     idempotencyKey: args.idempotencyKey,
+    scope: "grant" as const,
     grantKindId: parsedKind,
     note: args.note,
     requestId: args.requestId,
@@ -111,15 +112,22 @@ export const grant = async (args: {
   // 1. Check for prior idempotent grant FIRST — before the active-kind check.
   //    If the kind was deactivated after the original grant, replaying the same
   //    idempotency key must still return the prior result, not GrantKindNotFoundError.
-  const prior = await findLedgerByIdempotencyKey(
-    args.accountId,
-    args.idempotencyKey,
-  );
+  const prior = await findLedgerByIdempotencyKey({
+    accountId: args.accountId,
+    idempotencyKey: args.idempotencyKey,
+    scope: "grant",
+  });
   if (prior) {
     validateReplayPayload(prior, ledgerInput);
-    const newBalance = await ledgerGetBalance(args.accountId);
-    // TODO(Task 5): populate balanceAfter + ledgerId from prior row
-    return { granted: args.credits, replayed: true, newBalance } as GrantResult;
+    const balanceAfter =
+      prior.balanceAfter ?? (await ledgerGetBalance(args.accountId));
+    return {
+      granted: args.credits,
+      replayed: true,
+      newBalance: balanceAfter,
+      balanceAfter,
+      ledgerId: prior.id,
+    };
   }
 
   // 2. Active-kind check only applies on first grant, not on replay.
@@ -134,12 +142,13 @@ export const grant = async (args: {
       }
       return applyDeltaWithTx(tx, ledgerInput);
     });
-    // TODO(Task 5): populate balanceAfter + ledgerId from txResult
     return {
       granted: args.credits,
       replayed: false,
       newBalance: txResult.newBalance,
-    } as GrantResult;
+      balanceAfter: txResult.balanceAfter,
+      ledgerId: txResult.ledgerId,
+    };
   } catch (err) {
     if (
       err instanceof Prisma.PrismaClientKnownRequestError &&
@@ -147,15 +156,22 @@ export const grant = async (args: {
     ) {
       // Race: another concurrent grant inserted the same key between our
       // pre-check and the transaction. Fall through to replay path.
-      const racePrior = await findLedgerByIdempotencyKey(
-        args.accountId,
-        args.idempotencyKey,
-      );
+      const racePrior = await findLedgerByIdempotencyKey({
+        accountId: args.accountId,
+        idempotencyKey: args.idempotencyKey,
+        scope: "grant",
+      });
       if (racePrior) {
         validateReplayPayload(racePrior, ledgerInput);
-        const newBalance = await ledgerGetBalance(args.accountId);
-        // TODO(Task 5): populate balanceAfter + ledgerId from racePrior row
-        return { granted: args.credits, replayed: true, newBalance } as GrantResult;
+        const balanceAfter =
+          racePrior.balanceAfter ?? (await ledgerGetBalance(args.accountId));
+        return {
+          granted: args.credits,
+          replayed: true,
+          newBalance: balanceAfter,
+          balanceAfter,
+          ledgerId: racePrior.id,
+        };
       }
     }
     throw err;
@@ -184,16 +200,16 @@ export const adjust = async (args: {
   const opts =
     args.delta < 0 ? { floorCheck: { minBalance: config.minBalance } } : {};
   try {
-    const { replayed, newBalance } = await applyDelta({
+    const { replayed, newBalance, balanceAfter, ledgerId } = await applyDelta({
       accountId: args.accountId,
       delta: BigInt(args.delta),
       reason: LedgerReason.adjust,
       idempotencyKey: args.idempotencyKey,
+      scope: "grant",
       note: args.note,
       ...opts,
     });
-    // TODO(Task 5): populate balanceAfter + ledgerId from applyDelta result
-    return { applied: true, replayed, newBalance } as AdjustResult;
+    return { applied: true, replayed, newBalance, balanceAfter, ledgerId };
   } catch (err) {
     if (err instanceof LedgerFloorBreachError) {
       throw new InsufficientBalanceError(
