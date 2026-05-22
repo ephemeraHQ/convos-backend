@@ -207,7 +207,7 @@ export function __setPostHogClientForTests(client: unknown): void {
 // ---------------------------------------------------------------------------
 
 /**
- * Fire a `builder.template.generated` PostHog event.
+ * Fire a `builder.generation.completed` PostHog event.
  *
  * - When a test override is installed, delegates to the override.
  * - When `POSTHOG_PROJECT_TOKEN` is unset, returns immediately (no-op).
