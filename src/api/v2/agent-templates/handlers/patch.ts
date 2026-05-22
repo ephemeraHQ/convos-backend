@@ -2,6 +2,7 @@ import type { Prisma, PublishStatus } from "@prisma/client";
 import type { Request, Response } from "express";
 import { z } from "zod";
 import { serializeAgentTemplate } from "@/api/v2/agent-templates/lib/serialize-agent-template";
+import { revalidateTemplate } from "@/api/v2/agent-templates/services/revalidate-dashboard";
 import { prisma } from "@/utils/prisma";
 import { validateSlug } from "@/utils/reserved-slugs";
 
@@ -243,6 +244,12 @@ export async function patchHandler(req: Request, res: Response) {
 
     const updated = await prisma.agentTemplate.findUniqueOrThrow({
       where: { id: template.id },
+    });
+
+    void revalidateTemplate({
+      id: updated.id,
+      slug: updated.slug,
+      log: req.log,
     });
 
     res.status(200).json(serializeAgentTemplate(updated));
