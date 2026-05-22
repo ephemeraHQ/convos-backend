@@ -167,6 +167,7 @@ describe("runDailyRefill — top-up math", () => {
       delta: 40n,
       idempotencyKey: `seed-40:${accountId}`,
       reason: LedgerReason.adjust,
+      scope: "grant",
     });
     const summary = await runDailyRefill({ now: NOW });
     const entry = summary.refilled.find((r) => r.accountId === accountId);
@@ -183,6 +184,7 @@ describe("runDailyRefill — top-up math", () => {
       delta: 100n,
       idempotencyKey: `seed-100:${accountId}`,
       reason: LedgerReason.adjust,
+      scope: "grant",
     });
     const before = await balanceOf(accountId);
     const summary = await runDailyRefill({ now: NOW });
@@ -198,6 +200,7 @@ describe("runDailyRefill — top-up math", () => {
       delta: 150n,
       idempotencyKey: `seed-150:${accountId}`,
       reason: LedgerReason.adjust,
+      scope: "grant",
     });
     const before = await balanceOf(accountId);
     const summary = await runDailyRefill({ now: NOW });
@@ -214,12 +217,14 @@ describe("runDailyRefill — top-up math", () => {
       delta: 10n,
       idempotencyKey: `seed-pos:${accountId}`,
       reason: LedgerReason.adjust,
+      scope: "grant",
     });
     await applyDelta({
       accountId,
       delta: -50n,
       idempotencyKey: `seed-neg:${accountId}`,
       reason: LedgerReason.adjust,
+      scope: "grant",
     });
     // balance is now -40n; positiveBalance clamps to 0n; headroom = cap = 100
     const summary = await runDailyRefill({ now: NOW });
@@ -305,6 +310,7 @@ describe("runDailyRefill — idempotency", () => {
       delta: -60n,
       idempotencyKey: `drain:${accountId}`,
       reason: LedgerReason.adjust,
+      scope: "grant",
     });
     expect(await balanceOf(accountId)).toBe(40n);
 

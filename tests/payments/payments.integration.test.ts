@@ -63,7 +63,7 @@ describe("payments/index — composed service", () => {
     expect(r.newBalance).toBe(await getBalance(accountId));
   });
 
-  test("grant replay returns current newBalance, not stale grant-time value", async () => {
+  test("grant replay returns grant-time balanceAfter snapshot, not current balance", async () => {
     const accountId = await seedAccount();
     cleanupAccounts.push(accountId);
 
@@ -73,8 +73,8 @@ describe("payments/index — composed service", () => {
       idempotencyKey: "nb-grant-replay",
       kind: "signup_bonus",
     });
-    // Simulate concurrent burn after grant — replay must report current
-    // balance (70n), not the post-grant balance (100n).
+    // Simulate concurrent burn after grant — replay returns the grant-time
+    // balanceAfter snapshot (100n), not the current balance (70n after burn).
     await consume({
       accountId,
       usdCostMicros: 15000n, // 15000 micros × markup 2 × 1000 cpd / 1e6 = 30 credits
@@ -90,8 +90,11 @@ describe("payments/index — composed service", () => {
     });
 
     expect(replay.replayed).toBe(true);
-    expect(replay.newBalance).toBe(70n);
-    expect(replay.newBalance).toBe(await getBalance(accountId));
+    // Replay returns prior.balanceAfter (grant-time snapshot: 100n), not current (70n).
+    expect(replay.newBalance).toBe(100n);
+    expect(replay.balanceAfter).toBe(100n);
+    // Current live balance IS 70n (after the burn above).
+    expect(await getBalance(accountId)).toBe(70n);
   });
 
   test("grant rejects unknown kind", async () => {
