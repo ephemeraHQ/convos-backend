@@ -114,6 +114,23 @@ export async function subscriptionVerifyHandler(req: Request, res: Response) {
     return;
   }
 
+  // JWS chain verified against Apple Root CA G2/G3 and signature is valid.
+  // Log the decoded transaction shape so sandbox testing can confirm what
+  // Apple is sending (no JWS / PII fields).
+  req.log.info(
+    {
+      accountId,
+      productId: decoded.productId,
+      originalTransactionId: decoded.originalTransactionId,
+      transactionId: decoded.transactionId,
+      environment: decoded.environment,
+      purchaseDate: decoded.purchaseDate,
+      expiresDate: decoded.expiresDate,
+      offerType: decoded.offerType,
+    },
+    "subscription.verify.jws_decoded",
+  );
+
   // appAccountToken comes from the verified JWS — iOS set it at purchase
   // time via StoreKit. Apple persists it; subsequent receipts echo it back.
   // Reject if Apple's payload doesn't carry one (would mean a misconfigured
@@ -165,6 +182,19 @@ export async function subscriptionVerifyHandler(req: Request, res: Response) {
     // + per-tier config at read time (see GET /v2/accounts/me/credits); we
     // intentionally do NOT write a grant() ledger row on verify. grant() is
     // reserved for additive credits — top-ups, NUX trial, manual ops, promo.
+    req.log.info(
+      {
+        accountId,
+        subscriptionId: subscription.id,
+        productId: subscription.productId,
+        tier: subscription.tier,
+        period: subscription.period,
+        status: subscription.status,
+        originalTransactionId: subscription.originalTransactionId,
+        environment: subscription.environment,
+      },
+      "subscription.verify.applied",
+    );
     res.status(200).json({
       subscription: serializeUserSubscription(subscription),
     });

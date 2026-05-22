@@ -148,6 +148,19 @@ export async function appleSsnHandler(req: Request, res: Response) {
     // GET /v2/accounts/me/credits). Renewal updates currentPeriodStart, which
     // resets monthlyGrantUsed on the next read. grant() is reserved for
     // additive credits (top-ups, NUX trial, manual ops, promo).
+    req.log.info(
+      {
+        notificationType: notification.notificationType,
+        notificationSubtype: notification.subtype,
+        notificationUUID,
+        originalTransactionId,
+        transactionId,
+        accountId: result.subscription.accountId,
+        subscriptionStatus: result.subscription.status,
+        replayed: result.kind === "replayed",
+      },
+      "subscription.ssn.applied",
+    );
     res.status(200).json({ ok: true, applied: result.kind === "applied" });
     return;
   } catch (error) {
