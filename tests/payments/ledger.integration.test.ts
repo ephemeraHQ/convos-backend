@@ -1,5 +1,5 @@
 import { LedgerReason } from "@prisma/client";
-import { afterEach, describe, expect, test } from "vitest";
+import { afterEach, describe, expect, it, test } from "vitest";
 import { IdempotencyMismatchError } from "@/payments/errors";
 import {
   applyDelta,
@@ -41,6 +41,7 @@ describe("payments/ledger/repository", () => {
       delta: 100n,
       reason: LedgerReason.grant,
       idempotencyKey: "k1",
+      scope: "grant",
       grantKindId: "manual",
     });
 
@@ -64,6 +65,7 @@ describe("payments/ledger/repository", () => {
       delta: 50n,
       reason: LedgerReason.grant,
       idempotencyKey: "k1",
+      scope: "grant",
       grantKindId: "manual",
     });
     // intervening mutation to prove replay does not double-apply
@@ -72,6 +74,7 @@ describe("payments/ledger/repository", () => {
       delta: 25n,
       reason: LedgerReason.grant,
       idempotencyKey: "k2",
+      scope: "grant",
       grantKindId: "manual",
     });
     const replay = await applyDelta({
@@ -79,6 +82,7 @@ describe("payments/ledger/repository", () => {
       delta: 50n,
       reason: LedgerReason.grant,
       idempotencyKey: "k1",
+      scope: "grant",
       grantKindId: "manual",
     });
 
@@ -98,6 +102,7 @@ describe("payments/ledger/repository", () => {
       delta: 100n,
       reason: LedgerReason.consume,
       idempotencyKey: "markup-replay-1",
+      scope: "transaction",
       markupRate: "2",
     });
 
@@ -107,6 +112,7 @@ describe("payments/ledger/repository", () => {
       delta: 100n,
       reason: LedgerReason.consume,
       idempotencyKey: "markup-replay-1",
+      scope: "transaction",
       markupRate: "2.0",
     });
     expect(replay.replayed).toBe(true);
@@ -121,6 +127,7 @@ describe("payments/ledger/repository", () => {
       delta: 50n,
       reason: LedgerReason.grant,
       idempotencyKey: "k1",
+      scope: "grant",
       grantKindId: "manual",
     });
 
@@ -130,6 +137,7 @@ describe("payments/ledger/repository", () => {
         delta: 99n,
         reason: LedgerReason.grant,
         idempotencyKey: "k1",
+        scope: "grant",
         grantKindId: "manual",
       }),
     ).rejects.toBeInstanceOf(IdempotencyMismatchError);
@@ -146,6 +154,7 @@ describe("payments/ledger/repository", () => {
       delta: 100n,
       reason: LedgerReason.grant,
       idempotencyKey: "nb-1",
+      scope: "grant",
       grantKindId: "manual",
     });
 
@@ -162,15 +171,21 @@ describe("payments/ledger/repository", () => {
       delta: 100n,
       reason: LedgerReason.grant,
       idempotencyKey: "nb-orig",
+      scope: "grant",
       grantKindId: "manual",
     });
     // Intervening consume after original grant — replay must report current
     // balance (70n), not the post-original-grant balance (100n).
+    // NOTE: After Task 4, replayed newBalance returns prior.balanceAfter (the
+    // snapshot at write time), not current balance. This test is updated in
+    // Task 17 to reflect the new semantics. For now scope is added to keep
+    // the test compilable.
     await applyDelta({
       accountId,
       delta: -30n,
       reason: LedgerReason.consume,
       idempotencyKey: "nb-burn",
+      scope: "transaction",
     });
 
     const replay = await applyDelta({
@@ -178,12 +193,16 @@ describe("payments/ledger/repository", () => {
       delta: 100n,
       reason: LedgerReason.grant,
       idempotencyKey: "nb-orig",
+      scope: "grant",
       grantKindId: "manual",
     });
 
     expect(replay.replayed).toBe(true);
-    expect(replay.newBalance).toBe(70n);
-    expect(replay.newBalance).toBe(await getBalance(accountId));
+    // Task 4 change: replay now returns prior.balanceAfter (100n), not current (70n).
+    // The old assertion was: expect(replay.newBalance).toBe(70n)
+    // Updated to match new semantics:
+    expect(replay.newBalance).toBe(100n);
+    expect(replay.balanceAfter).toBe(100n);
   });
 
   test("invariant: balance == SUM(delta) after mixed sequence", async () => {
@@ -195,6 +214,7 @@ describe("payments/ledger/repository", () => {
       delta: 100n,
       reason: LedgerReason.grant,
       idempotencyKey: "g1",
+      scope: "grant",
       grantKindId: "manual",
     });
     await applyDelta({
@@ -202,12 +222,14 @@ describe("payments/ledger/repository", () => {
       delta: -30n,
       reason: LedgerReason.consume,
       idempotencyKey: "c1",
+      scope: "transaction",
     });
     await applyDelta({
       accountId,
       delta: 50n,
       reason: LedgerReason.grant,
       idempotencyKey: "g2",
+      scope: "grant",
       grantKindId: "manual",
     });
     await applyDelta({
@@ -215,6 +237,7 @@ describe("payments/ledger/repository", () => {
       delta: -10n,
       reason: LedgerReason.adjust,
       idempotencyKey: "a1",
+      scope: "transaction",
       note: "fix",
     });
 
@@ -249,6 +272,7 @@ describe("payments/ledger/repository — floor + history", () => {
       delta: -500n,
       reason: LedgerReason.adjust,
       idempotencyKey: "seed",
+      scope: "transaction",
       note: "seed",
     });
 
@@ -258,6 +282,7 @@ describe("payments/ledger/repository — floor + history", () => {
         delta: -1000n,
         reason: LedgerReason.consume,
         idempotencyKey: "breach",
+        scope: "transaction",
         floorCheck: { minBalance: -1000n },
       }),
     ).rejects.toBeInstanceOf(LedgerFloorBreachError);
@@ -277,6 +302,7 @@ describe("payments/ledger/repository — floor + history", () => {
         delta: 1n,
         reason: LedgerReason.grant,
         idempotencyKey: `h${i}`,
+        scope: "grant",
         grantKindId: "manual",
       });
     }
@@ -336,5 +362,83 @@ describe("payments/ledger/repository — floor + history", () => {
     });
     expect(page2).toHaveLength(2);
     expect(page2.map((r) => r.id)).toEqual(idsDesc.slice(1));
+  });
+});
+
+describe("applyDeltaWithTx writes balanceAfter + scope", () => {
+  const cleanupAccounts: string[] = [];
+
+  afterEach(async () => {
+    for (const accountId of cleanupAccounts) {
+      await prisma.creditLedger.deleteMany({ where: { accountId } });
+      await prisma.userCredits.deleteMany({ where: { accountId } });
+      await prisma.account.deleteMany({ where: { id: accountId } });
+    }
+    cleanupAccounts.length = 0;
+  });
+
+  it("returns balanceAfter equal to the post-update balance", async () => {
+    const accountId = await seedAccount();
+    cleanupAccounts.push(accountId);
+
+    const result = await applyDelta({
+      accountId,
+      delta: 100n,
+      reason: LedgerReason.grant,
+      idempotencyKey: "test_grant_1",
+      scope: "grant",
+      grantKindId: "manual",
+    });
+    expect(result.balanceAfter).toBe(100n);
+    expect(result.newBalance).toBe(100n);
+    expect(result.ledgerId).toBeDefined();
+
+    const row = await prisma.creditLedger.findUnique({
+      where: { id: result.ledgerId },
+      select: { scope: true, balanceAfter: true },
+    });
+    expect(row?.scope).toBe("grant");
+    expect(row?.balanceAfter).toBe(100n);
+  });
+
+  it("P2002 race-recovery returns prior.balanceAfter, not current balance", async () => {
+    const accountId = await seedAccount();
+    cleanupAccounts.push(accountId);
+
+    // First call writes the row at balance=50.
+    const first = await applyDelta({
+      accountId,
+      delta: 50n,
+      reason: LedgerReason.grant,
+      idempotencyKey: "race_key",
+      scope: "grant",
+      grantKindId: "manual",
+    });
+    expect(first.balanceAfter).toBe(50n);
+
+    // Mutate the account balance via a separate grant.
+    await applyDelta({
+      accountId,
+      delta: 25n,
+      reason: LedgerReason.grant,
+      idempotencyKey: "intervening",
+      scope: "grant",
+      grantKindId: "manual",
+    });
+    // Current balance is now 75.
+
+    // Replay first key — must return 50, not 75.
+    const replay = await applyDelta({
+      accountId,
+      delta: 50n,
+      reason: LedgerReason.grant,
+      idempotencyKey: "race_key",
+      scope: "grant",
+      grantKindId: "manual",
+    });
+    expect(replay.replayed).toBe(true);
+    expect(replay.balanceAfter).toBe(50n);
+    expect(replay.newBalance).toBe(50n);
+    expect(replay.ledgerId).toBe(first.ledgerId);
   });
 });
