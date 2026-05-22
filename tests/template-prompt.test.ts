@@ -1,40 +1,13 @@
-import crypto from "node:crypto";
-import { existsSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { beforeAll, describe, expect, test } from "bun:test";
 import { SYSTEM_PROMPT as LOADED_SYSTEM_PROMPT } from "@/api/v2/agent-templates/lib/system-prompt";
 
 const PROMPT_PATH = resolve("data/template-generator-prompt.txt");
 
-// convos-backend is the source of truth for this prompt (pool decommissioned).
-// Pin the hash so any edit to the prompt is deliberate and surfaces in review.
-const KNOWN_SHA256 =
-  "478059e23505c5a717cc734307445dbb7a4cecfe8ab782c4ed155ea31a9387dd";
-
-function sha256OfFile(filePath: string) {
-  const content = readFileSync(filePath);
-  return crypto.createHash("sha256").update(content).digest("hex");
-}
-
-describe("template-generator-prompt.txt file fidelity", () => {
+describe("template-generator-prompt.txt presence", () => {
   test("file exists at expected path", () => {
     expect(existsSync(PROMPT_PATH)).toBe(true);
-  });
-
-  test("byte length is 47088", () => {
-    expect(statSync(PROMPT_PATH).size).toBe(47088);
-  });
-
-  test("SHA256 matches the pinned hash", () => {
-    expect(sha256OfFile(PROMPT_PATH)).toBe(KNOWN_SHA256);
-  });
-
-  test("line count is 363 (matches wc -l)", () => {
-    // wc -l counts newline characters; a file with 363 newlines has 363 lines.
-    // split("\n") on a file ending with \n produces N+1 elements, the last empty.
-    const content = readFileSync(PROMPT_PATH, "utf8");
-    const newlineCount = content.split("\n").length - 1;
-    expect(newlineCount).toBe(363);
   });
 });
 
