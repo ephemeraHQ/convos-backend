@@ -7,7 +7,7 @@ import express, { json } from "express";
 import { importPKCS8, SignJWT } from "jose";
 import request from "supertest";
 import { afterEach, beforeAll, describe, expect, test, vi } from "vitest";
-import { accountsRouter } from "@/api/v2/accounts/accounts.router";
+import { accountsMeRouter } from "@/api/v2/accounts/accountsMeRouter";
 import { authMiddleware } from "@/middleware/auth";
 import { pinoMiddleware } from "@/middleware/pino";
 import {
@@ -27,7 +27,7 @@ const makeApp = () => {
   const app = express();
   app.use(pinoMiddleware);
   app.use(json());
-  app.use("/v2/accounts", authMiddleware, accountsRouter);
+  app.use("/v2/accounts/me", authMiddleware, accountsMeRouter);
   return app;
 };
 

@@ -14,7 +14,7 @@ import {
   assetRenewalLimiter,
   inviteCodeRedeemLimiter,
 } from "@/middleware/rateLimit";
-import { accountsRouter } from "./accounts/accounts.router";
+import { accountsMeRouter } from "./accounts/accountsMeRouter";
 import { agentTemplatesRouter } from "./agent-templates/agent-templates.router";
 import { agentsRouter } from "./agents/agents.router";
 import { agentAssetsRouter } from "./agents/assets/agent-assets.router";
@@ -61,7 +61,7 @@ v2Router.use("/auth", authRouter);
 // JWT-authed. Agents read/write credits via /credits/{check,consume,grant}
 // below with X-Agent-API-Key; the two surfaces are deliberately separate by
 // audience, not by resource.
-v2Router.use("/accounts", authMiddleware, accountsRouter);
+v2Router.use("/accounts/me", authMiddleware, accountsMeRouter);
 v2Router.use("/credits", creditsRouter);
 v2Router.use("/device", appCheckOnlyMiddleware, deviceRouter);
 
