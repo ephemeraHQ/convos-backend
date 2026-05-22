@@ -11,6 +11,11 @@ const nonAdminAccountFilter = { id: { not: ADMIN_ACCOUNT_ID } };
 
 async function reset() {
   await prisma.authMethod.deleteMany();
+  // CreditLedger + UserCredits hang off Account via FK. Wipe them first so
+  // the subsequent Account.deleteMany() doesn't trip UserCredits_accountId_fkey
+  // when prior tests in the run left credit rows behind.
+  await prisma.creditLedger.deleteMany();
+  await prisma.userCredits.deleteMany();
   await prisma.account.deleteMany({ where: nonAdminAccountFilter });
 }
 

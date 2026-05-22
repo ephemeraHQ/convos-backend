@@ -38,6 +38,11 @@ async function buildSiwe(nonce: string, deviceId = "test-device-id") {
 async function reset() {
   await prisma.deviceRegistration.deleteMany();
   await prisma.authMethod.deleteMany();
+  // CreditLedger + UserCredits hang off Account via FK. Wipe them first so the
+  // subsequent Account.deleteMany() doesn't trip UserCredits_accountId_fkey
+  // when prior tests in the run left credit rows behind.
+  await prisma.creditLedger.deleteMany();
+  await prisma.userCredits.deleteMany();
   // Preserve the admin account seeded by migration; only wipe test-created rows.
   await prisma.account.deleteMany({ where: { id: { not: ADMIN_ACCOUNT_ID } } });
   await prisma.authNonce.deleteMany();
