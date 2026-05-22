@@ -162,7 +162,7 @@ describe("payments/ledger/repository", () => {
     expect(result.newBalance).toBe(await getBalance(accountId));
   });
 
-  test("applyDelta replay returns current newBalance, not stale grant-time value", async () => {
+  test("applyDelta replay returns prior.balanceAfter (the grant-time snapshot), not current balance", async () => {
     const accountId = await seedAccount();
     cleanupAccounts.push(accountId);
 
@@ -174,12 +174,8 @@ describe("payments/ledger/repository", () => {
       scope: "grant",
       grantKindId: "manual",
     });
-    // Intervening consume after original grant — replay must report current
-    // balance (70n), not the post-original-grant balance (100n).
-    // NOTE: After Task 4, replayed newBalance returns prior.balanceAfter (the
-    // snapshot at write time), not current balance. This test is updated in
-    // Task 17 to reflect the new semantics. For now scope is added to keep
-    // the test compilable.
+    // Intervening consume after original grant — replay returns balanceAfter
+    // (the grant-time snapshot, 100n), not current balance (70n).
     await applyDelta({
       accountId,
       delta: -30n,
@@ -198,9 +194,7 @@ describe("payments/ledger/repository", () => {
     });
 
     expect(replay.replayed).toBe(true);
-    // Task 4 change: replay now returns prior.balanceAfter (100n), not current (70n).
-    // The old assertion was: expect(replay.newBalance).toBe(70n)
-    // Updated to match new semantics:
+    // Replay returns prior.balanceAfter (grant-time snapshot: 100n), not current (70n).
     expect(replay.newBalance).toBe(100n);
     expect(replay.balanceAfter).toBe(100n);
   });
