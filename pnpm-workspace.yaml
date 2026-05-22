@@ -1,0 +1,14 @@
+onlyBuiltDependencies:
+  - "@bufbuild/buf"
+  - "@firebase/util"
+  - "@google/genai"
+  - "@prisma/client"
+  - "@prisma/engines"
+  - bufferutil
+  - esbuild
+  - keccak
+  - prisma
+  - protobufjs
+  - secp256k1
+  - sharp
+  - utf-8-validate
