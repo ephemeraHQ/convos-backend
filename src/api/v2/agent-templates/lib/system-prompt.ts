@@ -5,7 +5,9 @@ import { logError } from "@/utils/errors";
 
 /**
  * System prompt loaded once at module init.
- * The prompt file is a verbatim copy of pool/data/skill-generator-prompt.txt.
+ * convos-backend owns this prompt; it originated as a copy of pool's
+ * skill-generator-prompt.txt, but pool is decommissioned and this file is
+ * now the source of truth — edit it here.
  *
  * Path is resolved relative to THIS module via `import.meta.url` so the
  * lookup works regardless of the directory the Node process was started
