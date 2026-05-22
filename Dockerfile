@@ -63,7 +63,7 @@ FROM node:24-bookworm-slim AS release
 WORKDIR /app
 
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends openssl ca-certificates tini \
+  && apt-get install -y --no-install-recommends openssl ca-certificates tini curl \
   && rm -rf /var/lib/apt/lists/* \
   && useradd --system --create-home --uid 10001 appuser
 
