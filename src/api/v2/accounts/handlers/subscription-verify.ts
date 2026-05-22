@@ -106,8 +106,23 @@ export async function subscriptionVerifyHandler(req: Request, res: Response) {
   try {
     decoded = await verifyAndDecodeTransaction(parsed.data.jwsRepresentation);
   } catch (err) {
+    // VerificationException carries `.status` (enum), not `.message`.
+    // See apple-ssn.ts for the rationale.
     req.log.warn(
-      { err: err instanceof Error ? err.message : err, accountId },
+      {
+        accountId,
+        errName: err instanceof Error ? err.constructor.name : undefined,
+        errStatus: (err as { status?: number } | undefined)?.status,
+        errMessage: err instanceof Error ? err.message : String(err),
+        causeName:
+          err instanceof Error && err.cause instanceof Error
+            ? err.cause.constructor.name
+            : undefined,
+        causeMessage:
+          err instanceof Error && err.cause instanceof Error
+            ? err.cause.message
+            : undefined,
+      },
       "JWS transaction verification failed",
     );
     res.status(400).json({ error: "Invalid signed transaction" });
