@@ -8,7 +8,7 @@
  *   - revalidateTemplate emits templates + template:<id> + template:<urlSlug>
  */
 
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import {
   __setBaseUrlForTests,
   __setFetchForTests,
