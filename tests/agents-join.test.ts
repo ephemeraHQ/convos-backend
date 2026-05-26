@@ -359,7 +359,7 @@ describe("agents join (assistant API)", () => {
           const body = JSON.parse(init.body as string) as {
             options?: Record<string, unknown>;
           };
-          expect(body.options).toEqual({ onboarding: "assistant-builder" });
+          expect(body.options).toEqual({ onboarding: "agent-builder" });
           return Promise.resolve(jsonResponse(200, { instanceId: "inst-ob" }));
         }
         return Promise.resolve(
@@ -372,7 +372,7 @@ describe("agents join (assistant API)", () => {
 
       const res = await post({
         slug: "x",
-        options: { onboarding: "assistant-builder" },
+        options: { onboarding: "agent-builder" },
       });
       expect(res.status).toBe(200);
     });
@@ -385,7 +385,7 @@ describe("agents join (assistant API)", () => {
           };
           expect(body.options).toEqual({
             skipGreeting: false,
-            onboarding: "assistant-builder",
+            onboarding: "agent-builder",
           });
           return Promise.resolve(jsonResponse(200, { instanceId: "inst-bo" }));
         }
@@ -399,7 +399,7 @@ describe("agents join (assistant API)", () => {
 
       const res = await post({
         slug: "x",
-        options: { skipGreeting: false, onboarding: "assistant-builder" },
+        options: { skipGreeting: false, onboarding: "agent-builder" },
       });
       expect(res.status).toBe(200);
     });
@@ -711,13 +711,13 @@ describe("agents join (assistant API)", () => {
       expect(data.error).toBe("TEMPLATE_FORBIDDEN");
     });
 
-    test("rejects templateId + onboarding=assistant-builder (mutually exclusive)", async () => {
+    test("rejects templateId + onboarding=agent-builder (mutually exclusive)", async () => {
       // Validation happens before the template lookup, so no finder needed.
       const res = await post(
         {
           slug: "x",
           templateId: "33333333-3333-4333-8333-333333333333",
-          options: { onboarding: "assistant-builder" },
+          options: { onboarding: "agent-builder" },
         },
         { accountId: "user-1" },
       );
