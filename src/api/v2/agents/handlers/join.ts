@@ -11,10 +11,6 @@ import {
   getJoinWaitBudgetMs,
 } from "./assistant-config";
 
-// Wire value the iOS agent-builder flow sends to signal the in-conversation
-// builder onboarding. Forwarded verbatim to convos-assistants, which
-// normalizes it to the runtime's internal `"assistant-builder"` name (a
-// deferred bulk-rename — see xmtplabs/convos-assistants#1772).
 const AGENT_BUILDER_ONBOARDING = "agent-builder";
 
 type TemplateRow = Awaited<ReturnType<typeof prisma.agentTemplate.findUnique>>;
