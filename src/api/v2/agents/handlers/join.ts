@@ -11,7 +11,7 @@ import {
   getJoinWaitBudgetMs,
 } from "./assistant-config";
 
-const ASSISTANT_BUILDER_ONBOARDING = "assistant-builder";
+const AGENT_BUILDER_ONBOARDING = "agent-builder";
 
 type TemplateRow = Awaited<ReturnType<typeof prisma.agentTemplate.findUnique>>;
 type TemplateFinder = (id: string) => Promise<TemplateRow>;
@@ -309,13 +309,13 @@ export async function joinHandler(req: Request, res: Response) {
   // (e.g. `"first-impression"`) compose fine with `templateId`.
   if (
     templateId !== undefined &&
-    options?.onboarding === ASSISTANT_BUILDER_ONBOARDING
+    options?.onboarding === AGENT_BUILDER_ONBOARDING
   ) {
     res.status(400).json({
       success: false,
       error: "INVALID_REQUEST",
       message:
-        "templateId cannot be combined with options.onboarding=assistant-builder",
+        "templateId cannot be combined with options.onboarding=agent-builder",
     });
     return;
   }
