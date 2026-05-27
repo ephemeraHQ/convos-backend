@@ -12,7 +12,7 @@ import { buildJoinPayload } from "@/api/v2/agents/lib/build-join-payload";
 // writers must produce identical output for the same logical template
 // so the runtime reads consistent state regardless of which side wrote
 // it. The mirror fixture lives in convos-assistants at
-//   runtime/convos-platform/skills/assistant-builder/scripts/handlers/__fixtures__/template-snapshot.json
+//   runtime/convos-platform/skills/agent-builder/scripts/handlers/__fixtures__/template-snapshot.json
 // and is kept in sync manually — drift trips this test on either side.
 const fixturePath = path.join(
   path.dirname(fileURLToPath(import.meta.url)),

@@ -18,7 +18,7 @@ import {
 } from "./agent-templates.cross.helpers";
 
 // Owner-assertion coverage for POST /api/v2/agent-templates — mirrors the
-// generations POST endpoint's contract. The runtime's assistant-builder
+// generations POST endpoint's contract. The runtime's agent-builder
 // create-then-publish fallback relies on this: a template minted on behalf of
 // a joining user must land owned by that user, not the ADMIN seed account.
 
