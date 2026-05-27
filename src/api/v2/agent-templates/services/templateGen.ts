@@ -1026,8 +1026,8 @@ async function tryContentPassthrough(
   const template = wrapAsPassthroughTemplate(
     content,
     {
-      agentName: classification.agentName || "Assistant",
-      description: classification.description || "A Convos assistant.",
+      agentName: classification.agentName || "Agent",
+      description: classification.description || "A Convos agent.",
       category: classification.category || "Work",
       emoji: classification.emoji || "🤖",
     },
