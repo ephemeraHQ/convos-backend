@@ -12,6 +12,13 @@ export type ConnectionResponse = {
   status: string;
 };
 
+// Collapse REVOKED into EXPIRED on the wire. Both states require the user to
+// re-run the OAuth flow, and iOS already has reconnect UX for EXPIRED; keeping
+// the status set narrow avoids forcing every client version to learn REVOKED.
+function normalizeStatus(status: string): string {
+  return status === "REVOKED" ? "EXPIRED" : status;
+}
+
 export function mapComposioToResponse(
   conn: ConnectedAccountRetrieveResponse | ConnectedAccountListResponseItem,
   deviceId: string,
@@ -23,6 +30,6 @@ export function mapComposioToResponse(
     serviceName: slug,
     composioEntityId: deviceId,
     composioConnectionId: conn.id,
-    status: conn.status,
+    status: normalizeStatus(conn.status),
   };
 }
