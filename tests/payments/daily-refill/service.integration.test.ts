@@ -50,8 +50,8 @@ async function seedActiveSubscription(accountId: string): Promise<void> {
   await prisma.subscription.create({
     data: {
       accountId,
-      productId: "com.example.builder.monthly",
-      tier: "builder",
+      productId: "com.example.plus.monthly",
+      tier: "plus",
       period: "monthly",
       status: "active",
       originalTransactionId: `otx-${randomUUID()}`,
@@ -130,8 +130,8 @@ describe("runDailyRefill — eligibility", () => {
     await prisma.subscription.create({
       data: {
         accountId,
-        productId: "com.example.builder.monthly",
-        tier: "builder",
+        productId: "com.example.plus.monthly",
+        tier: "plus",
         period: "monthly",
         status: "revoked",
         originalTransactionId: `otx-${randomUUID()}`,
