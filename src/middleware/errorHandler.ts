@@ -2,6 +2,7 @@ import type express from "express";
 import { type NextFunction, type Request, type Response } from "express";
 import { ZodError } from "zod";
 import { IS_DEVELOPMENT } from "@/config";
+import logger from "@/utils/logger";
 import { AppError } from "../utils/errors";
 
 // Express requires error handling middleware to have exactly 4 parameters
@@ -12,8 +13,13 @@ function errorHandler(
   // Rename 'next' to '_next' to satisfy the linter while keeping the 4 params Express needs
   _next: NextFunction,
 ) {
-  // Log the error with request context
-  req.log.error(err);
+  // Log the error with request context. `req.log` is typed as always-present,
+  // but pino-http only attaches it once its middleware runs — errors thrown
+  // earlier (e.g. body-parser rejecting malformed JSON) reach this handler with
+  // `req.log` undefined. Fall back to the base logger so logging here can't
+  // itself throw and collapse the response into a raw HTML 500.
+  const log = (req as { log?: typeof logger }).log ?? logger;
+  log.error(err);
 
   // If response is already sent, just log the error and return
   if (res.headersSent) {
