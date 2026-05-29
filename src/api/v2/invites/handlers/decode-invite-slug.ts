@@ -2,7 +2,7 @@ import { createHash } from "crypto";
 import { inflateRawSync } from "zlib";
 import { fromBinary } from "@bufbuild/protobuf";
 import type { Request, Response } from "express";
-import * as secp256k1 from "secp256k1";
+import secp256k1 from "secp256k1";
 import { z } from "zod";
 import {
   InvitePayloadSchema,
