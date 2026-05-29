@@ -38,6 +38,7 @@ export async function subscribe(
 
     req.log.info(
       {
+        accountId: res.locals.accountId,
         deviceId: body.deviceId,
         clientId: body.clientId,
         topicCount: body.topics.length,
@@ -90,7 +91,11 @@ export async function subscribe(
     // Register installation with notification server (only if pushToken exists)
     if (!device.pushToken) {
       req.log.info(
-        { deviceId: body.deviceId, clientId: body.clientId },
+        {
+          accountId: res.locals.accountId,
+          deviceId: body.deviceId,
+          clientId: body.clientId,
+        },
         "Device has no push token yet - subscription will be activated once token is registered",
       );
     } else {
@@ -158,7 +163,11 @@ export async function subscribe(
     }
 
     req.log.info(
-      { deviceId: body.deviceId, clientId: body.clientId },
+      {
+        accountId: res.locals.accountId,
+        deviceId: body.deviceId,
+        clientId: body.clientId,
+      },
       "Subscribed successfully",
     );
     res.status(200).send();
