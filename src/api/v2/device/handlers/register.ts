@@ -30,10 +30,41 @@ async function performDeviceRegistration(
     pushTokenType?: PushTokenType;
     apnsEnv?: ApnsEnvironment | null;
     pushToken?: string | null;
+    disabled?: boolean;
+    pushFailures?: number;
   },
   logger: Request["log"],
 ) {
   await prisma.$transaction(async (tx) => {
+    // T13 / D17b: when a NEW push token arrives that differs from the stored
+    // one, reset disabled=false and pushFailures=0. An auto-disabled device
+    // (BadDeviceToken accumulation under the old token) gets a fresh chance
+    // to deliver pushes under the new token without anyone manually
+    // intervening. The reset is gated on pushToken being non-null AND
+    // different from the existing row — same-token registers don't trigger
+    // a reset (we'd lose the failure count that protects against repeatedly
+    // pushing to a known-bad token).
+    if (pushToken) {
+      const existing = await tx.deviceRegistration.findUnique({
+        where: { deviceId },
+        select: { pushToken: true, disabled: true, pushFailures: true },
+      });
+      if (existing && existing.pushToken !== pushToken) {
+        updateData.disabled = false;
+        updateData.pushFailures = 0;
+        if (existing.disabled || existing.pushFailures > 0) {
+          logger.info(
+            {
+              deviceId,
+              previousDisabled: existing.disabled,
+              previousPushFailures: existing.pushFailures,
+            },
+            "Resetting disabled + pushFailures on new push token (T13)",
+          );
+        }
+      }
+    }
+
     // Track old devices and their client identifiers for migration
     let oldDeviceIds: string[] = [];
     let clientIdsToMigrate: string[] = [];

@@ -117,7 +117,12 @@ v2Router.use("/agents", authMiddleware, agentsRouter);
 v2Router.use("/attachments", authMiddleware, attachmentsRouter);
 v2Router.use("/connections", authMiddleware, connectionsRouter);
 v2Router.use("/notifications/xmtp", webhookRouter);
-v2Router.use("/notifications", authMiddleware, notificationsRouter);
+// authMiddlewareAllowNSE (instead of authMiddleware) so the NSE-driven
+// orphan cleanup path can call DELETE /notifications/unregister/:clientId
+// with an NSE JWT (Stack 2 T14). The middleware's NSE allowlist gates
+// which sub-routes accept NSE tokens; subscribe/unsubscribe stay
+// regular-JWT-only because the allowlist doesn't include them.
+v2Router.use("/notifications", authMiddlewareAllowNSE, notificationsRouter);
 // No auth: Apple authenticates via JWS signature, verified inside the handler.
 v2Router.use("/webhooks/apple", appleWebhookRouter);
 

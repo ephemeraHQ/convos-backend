@@ -105,8 +105,29 @@ export const authMiddleware = async (
 };
 
 // Defense in depth: NSE tokens can only access these paths even if middleware is misapplied
-// Uses full path (baseUrl + path) to avoid matching relative paths on other mounts
-const NSE_ALLOWED_PATHS = ["/api/v2/auth-check"];
+// Uses full path (baseUrl + path) to avoid matching relative paths on other mounts.
+//
+// Patterns are anchored regular expressions (^/$). Exact-string paths in the
+// old design didn't accommodate param routes like /unregister/:clientId, so
+// the allowlist was upgraded to regex patterns when T14 added NSE-driven
+// orphan cleanup. Keep this list TIGHT — every entry is an NSE-callable
+// surface and needs to be justified as "what NSE legitimately needs from
+// backend during a push processing or cleanup pass".
+const NSE_ALLOWED_PATH_PATTERNS: RegExp[] = [
+  /^\/api\/v2\/auth-check$/,
+  // T14: NSE-driven orphan cleanup. When the NSE detects an installation
+  // mismatch (push arrived for an installationId the current keychain
+  // identity no longer owns), it calls DELETE /notifications/unregister/
+  // :clientId to remove the stale mapping. Reduced privilege: even though
+  // the path is reachable with NSE auth, the handler still uses
+  // verifyDeviceOwnership against res.locals.deviceId (set from the NSE
+  // JWT) so NSE can only delete clients belonging to its OWN device.
+  /^\/api\/v2\/notifications\/unregister\/[^/]+$/,
+];
+
+function isNseAllowedPath(fullPath: string): boolean {
+  return NSE_ALLOWED_PATH_PATTERNS.some((pattern) => pattern.test(fullPath));
+}
 
 /**
  * JWT authentication middleware that allows NSE tokens.
@@ -145,7 +166,7 @@ export const authMiddlewareAllowNSE = async (
     // Defense in depth: restrict NSE tokens to whitelisted paths
     if (isNotificationExtensionOnlyToken(payload)) {
       const fullPath = req.baseUrl + req.path;
-      if (!NSE_ALLOWED_PATHS.includes(fullPath)) {
+      if (!isNseAllowedPath(fullPath)) {
         req.log.warn(
           { deviceId: payload.deviceId, path: fullPath },
           "NSE token rejected - path not in allowlist",

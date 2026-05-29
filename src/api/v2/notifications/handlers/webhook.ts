@@ -82,6 +82,42 @@ export async function handleXmtpNotification(req: Request, res: Response) {
     });
 
     if (v2Client) {
+      // T15 / D15: refuse to deliver a push when the ClientIdentifier
+      // belongs to a different account than the DeviceRegistration. Same-
+      // device account switches accumulate orphan ClientIdentifier rows
+      // pointing at the device's deviceId (validated in production —
+      // 24 such rows on one device, 4-month accumulation). The XMTP
+      // notifications server keeps webhooking us for those orphans; this
+      // check drops the delivery before it leaves our boundary.
+      //
+      // NULL on either side is treated as "untrusted" — webhook drops it.
+      // This intentionally catches the historical rows backfilled with
+      // NULL accountId in T10 + any future rows where account membership
+      // can't be established. Stack 2's T20 migration will sweep those
+      // out once the change has baked.
+      const clientAccountId = v2Client.accountId;
+      const deviceAccountId = v2Client.device.accountId;
+      if (
+        clientAccountId === null ||
+        deviceAccountId === null ||
+        clientAccountId !== deviceAccountId
+      ) {
+        req.log.warn(
+          {
+            event: "client_account_mismatch",
+            clientId: notification.installation.id,
+            deviceId: v2Client.deviceId,
+            clientAccountId,
+            deviceAccountId,
+            contentTopic: notification.message.content_topic,
+            messageType: notification.message_context.message_type,
+          },
+          "Dropping push: ClientIdentifier.accountId does not match DeviceRegistration.accountId",
+        );
+        res.status(200).end();
+        return;
+      }
+
       const pushType = v2Client.device.pushTokenType; // 'fcm' | 'apns'
       const tag = pushType === "fcm" ? "[FCM]" : "[APNS]";
       req.log.info(
@@ -105,6 +141,23 @@ export async function handleXmtpNotification(req: Request, res: Response) {
       return;
     }
 
+    // T16: log structured warning when XMTP webhooks us for an installation
+    // we don't have a ClientIdentifier row for. Most commonly happens when
+    // an installation was registered before the NSE unregister path was
+    // working (Stack 2 T14) and is now orphaned upstream. Returning 200
+    // is intentional — we don't want XMTP to retry; the orphan stays put
+    // until T20's cleanup migration or a manual unregisterInstallation
+    // call sweeps it from the XMTP notifications server.
+    req.log.warn(
+      {
+        event: "unknown_installation",
+        installationId: notification.installation.id,
+        contentTopic: notification.message.content_topic,
+        messageType: notification.message_context.message_type,
+        timestampNs: notification.message.timestamp_ns,
+      },
+      "No ClientIdentifier for XMTP notification installation",
+    );
     res.status(200).end();
     return;
   } catch (error) {

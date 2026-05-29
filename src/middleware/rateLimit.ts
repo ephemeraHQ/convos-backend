@@ -1,3 +1,4 @@
+import type { Request } from "express";
 import { rateLimit } from "express-rate-limit";
 
 // General rate limit for API to 1000 requests per 5 minutes
@@ -6,6 +7,30 @@ export const rateLimitMiddleware = rateLimit({
   limit: 1000,
   legacyHeaders: false,
   standardHeaders: "draft-8",
+});
+
+// Stack 2 T12: debug-status endpoint is JWT-authenticated and meant for the
+// iOS debug screen's "Probe backend registration" button. Cap at 1
+// request/second per JWT (keyed by accountId+deviceId from JWT) so a
+// malicious or buggy client can't enumerate by hammering the endpoint.
+// Falls back to IP when accountId/deviceId aren't set (which would
+// already 401 out before reaching this, but defense in depth).
+export const debugStatusLimiter = rateLimit({
+  windowMs: 1_000,
+  limit: 1,
+  legacyHeaders: false,
+  standardHeaders: "draft-8",
+  keyGenerator: (req: Request) => {
+    const deviceId = req.res?.locals.deviceId;
+    const accountId = req.res?.locals.accountId;
+    if (deviceId && accountId) {
+      return `${accountId}|${deviceId}`;
+    }
+    return req.ip ?? "unknown";
+  },
+  message: {
+    error: "Too many debug-status requests, please slow down",
+  },
 });
 
 // Stricter rate limiting for auth endpoints (JWT generation)

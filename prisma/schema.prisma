@@ -53,10 +53,58 @@ model ClientIdentifier {
   id        String             @id
   deviceId  String
   device    DeviceRegistration @relation(fields: [deviceId], references: [deviceId], onDelete: Cascade)
+  // Set from JWT on subscribe; one-time backfill from the joined
+  // DeviceRegistration row when this column was added. Webhook delivery
+  // refuses to send when client.accountId != device.accountId so a stale
+  // ClientIdentifier from a previous account on the same device cannot
+  // wake the current account's device (Stack 2 D15).
+  accountId String?            @db.Uuid
   addedAt   DateTime           @default(now())
   updatedAt DateTime           @updatedAt
 
+  snapshots NotificationSubscriptionSnapshot[]
+
   @@index([deviceId])
+  @@index([accountId])
+}
+
+/// Last desired push topic subscription state per ClientIdentifier.
+/// Populated on a successful `/v2/notifications/subscribe` round trip
+/// where the XMTP notifications server actually applied the change
+/// (remoteApplied=true). Used by:
+///
+/// - the same handler's idempotency check, which compares the in-flight
+///   request's topicHash + the device's current pushTokenSha256 +
+///   apnsEnv against the at-apply snapshot fields and skips the XMTP
+///   wire call when nothing relevant changed (D11 = 10-minute TTL),
+/// - the new `/v2/notifications/debug/status` endpoint, which reports
+///   the snapshot as "last requested topic set" (NOT actual remote
+///   XMTP state — the upstream RPC doesn't exist).
+///
+/// `pushTokenSha256AtApply` + `apnsEnvAtApply` are correctness state,
+/// NOT redundancy: deriving them from the joined DeviceRegistration at
+/// read-time would let idempotency wrongly skip a re-apply after
+/// /v2/device/register rotates the token. The at-apply fields lock in
+/// the (token, env) tuple that the XMTP notifications server actually
+/// got, so the next subscribe knows whether to re-apply.
+model NotificationSubscriptionSnapshot {
+  clientId                 String           @id
+  client                   ClientIdentifier @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  accountId                String?          @db.Uuid
+  topicCount               Int
+  topicHash                String           @db.VarChar(64)
+  kindSummary              Json?
+  lastContext              String?
+  lastSubscribeAt          DateTime         @default(now())
+  lastRemoteApplySucceeded Boolean
+  lastRemoteApplyError     String?          @db.Text
+  pushTokenSha256AtApply   String           @db.VarChar(64)
+  apnsEnvAtApply           ApnsEnvironment?
+  createdAt                DateTime         @default(now())
+  updatedAt                DateTime         @updatedAt
+
+  @@index([accountId])
+  @@index([updatedAt])
 }
 
 model RuntimeConfig {
