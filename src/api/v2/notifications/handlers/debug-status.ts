@@ -64,11 +64,14 @@ interface DebugStatusResponse {
     exists: boolean;
     topicCount: number | null;
     topicHash: string | null;
-    kindSummary: unknown;
+    // Presence flags only - raw kindSummary and lastRemoteApplyError can
+    // carry attacker-controlled topic strings or upstream error text and
+    // would break this endpoint's hashes-only contract if returned verbatim.
+    hasKindSummary: boolean;
     lastContext: string | null;
     lastSubscribeAt: string | null;
     lastRemoteApplySucceeded: boolean | null;
-    lastRemoteApplyError: string | null;
+    hasLastRemoteApplyError: boolean;
     pushTokenMatchesAtApply: boolean | null;
     apnsEnvMatchesAtApply: boolean | null;
     isActualRemoteState: false;
@@ -95,6 +98,17 @@ export async function debugStatus(
       "Debug status probe",
     );
 
+    // The endpoint is scoped by JWT accountId + JWT deviceId. A device-only
+    // JWT (legacy /v2/auth/token without SIWE) must not get diagnostic state.
+    if (!jwtAccountId) {
+      req.log.warn(
+        { deviceId: body.deviceId },
+        "Debug status rejected - JWT has no accountId",
+      );
+      res.status(403).json({ error: "Account required" });
+      return;
+    }
+
     if (
       !verifyDeviceOwnership({
         req,
@@ -114,6 +128,24 @@ export async function debugStatus(
         where: { id: body.clientId },
       }),
     ]);
+
+    // Reject when the stored device row belongs to a different account than
+    // the JWT. A device row exists but with a different accountId means the
+    // device was re-paired to another account; we must not leak that account's
+    // diagnostic state. A NULL device.accountId is allowed - that covers
+    // pre-backfill device rows that the JWT account already owns.
+    if (device && device.accountId && device.accountId !== jwtAccountId) {
+      req.log.warn(
+        {
+          jwtAccountId,
+          deviceAccountId: device.accountId,
+          deviceId: body.deviceId,
+        },
+        "Debug status rejected - device account mismatch",
+      );
+      res.status(403).json({ error: "Forbidden" });
+      return;
+    }
 
     const snapshot = await prisma.notificationSubscriptionSnapshot.findUnique({
       where: { clientId: body.clientId },
@@ -154,22 +186,20 @@ export async function debugStatus(
         exists: client !== null,
         mappedDeviceId: client?.deviceId ?? null,
         deviceIdMatchesJwt: client ? client.deviceId === jwtDeviceId : null,
-        accountIdMatchesJwt: client
-          ? jwtAccountId !== undefined && client.accountId === jwtAccountId
-          : null,
+        accountIdMatchesJwt: client ? client.accountId === jwtAccountId : null,
         updatedAt: client ? client.updatedAt.toISOString() : null,
       },
       subscriptionSnapshot: {
         exists: snapshot !== null,
         topicCount: snapshot?.topicCount ?? null,
         topicHash: snapshot?.topicHash ?? null,
-        kindSummary: snapshot?.kindSummary ?? null,
+        hasKindSummary: snapshot?.kindSummary != null,
         lastContext: snapshot?.lastContext ?? null,
         lastSubscribeAt: snapshot
           ? snapshot.lastSubscribeAt.toISOString()
           : null,
         lastRemoteApplySucceeded: snapshot?.lastRemoteApplySucceeded ?? null,
-        lastRemoteApplyError: snapshot?.lastRemoteApplyError ?? null,
+        hasLastRemoteApplyError: snapshot?.lastRemoteApplyError != null,
         pushTokenMatchesAtApply:
           snapshot && device?.pushToken
             ? snapshot.pushTokenSha256AtApply === storedPushTokenSha

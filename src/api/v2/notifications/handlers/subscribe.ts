@@ -155,15 +155,33 @@ export async function subscribe(
     const currentTokenSha = hashApnsToken(device.pushToken);
     const now = new Date();
 
-    // Idempotency check (D11): if the last successful remote-apply matches
-    // every load-bearing field AND is within the TTL, skip the XMTP wire
-    // call. APNS token and apnsEnv changes ALWAYS re-apply (the at-apply
-    // fields are correctness state per D13 — backfilling from current
-    // DeviceRegistration would silently let drift through).
-    const existingSnapshot =
-      await prisma.notificationSubscriptionSnapshot.findUnique({
+    // Idempotency check: if the last successful remote-apply matches every
+    // load-bearing field AND is within the TTL, skip the XMTP wire call.
+    // APNS token and apnsEnv changes always re-apply - the at-apply fields
+    // are correctness state, and backfilling them from the current
+    // DeviceRegistration would silently let drift through.
+    //
+    // The ClientIdentifier row's (deviceId, accountId) binding is also
+    // load-bearing: the webhook delivery guard rejects pushes where
+    // client.accountId != device.accountId. If the stored binding is stale
+    // (NULL after migration backfill, or set to a previous account), we
+    // must not short-circuit; falling through to the full path runs the
+    // upsert that refreshes the binding. Legacy JWTs without accountId
+    // (older iOS builds) don't touch the field, so we skip the accountId
+    // check in that case.
+    const [existingSnapshot, existingClient] = await Promise.all([
+      prisma.notificationSubscriptionSnapshot.findUnique({
         where: { clientId: body.clientId },
-      });
+      }),
+      prisma.clientIdentifier.findUnique({
+        where: { id: body.clientId },
+      }),
+    ]);
+
+    const clientBindingCurrent =
+      existingClient !== null &&
+      existingClient.deviceId === body.deviceId &&
+      (accountId === undefined || existingClient.accountId === accountId);
 
     const idempotent =
       !body.force &&
@@ -172,6 +190,7 @@ export async function subscribe(
       existingSnapshot.topicHash === topicHash &&
       existingSnapshot.pushTokenSha256AtApply === currentTokenSha &&
       existingSnapshot.apnsEnvAtApply === device.apnsEnv &&
+      clientBindingCurrent &&
       now.getTime() - existingSnapshot.lastSubscribeAt.getTime() <
         IDEMPOTENCY_TTL_MS;
 
