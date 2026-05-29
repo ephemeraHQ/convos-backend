@@ -178,6 +178,14 @@ export async function subscribe(
       }),
     ]);
 
+    // When the stored binding is stale (existingClient.accountId is NULL from
+    // migration backfill, or set to a different account than the JWT),
+    // clientBindingCurrent evaluates to false, which forces the idempotency
+    // check below to false. We then fall through to the full path which runs
+    // the ClientIdentifier upsert and refreshes the binding. The idempotent
+    // early return at the bottom of this block CANNOT be reached with a stale
+    // binding by construction - that's the whole point of including this
+    // predicate term.
     const clientBindingCurrent =
       existingClient !== null &&
       existingClient.deviceId === body.deviceId &&
