@@ -44,6 +44,7 @@ export const requireCronApiKey = (
   const expectedKey = getCronApiKey();
 
   if (!expectedKey) {
+    req.log.error("cron_api_key.not_configured");
     res.status(503).json({ error: "Cron API key not configured" });
     return;
   }

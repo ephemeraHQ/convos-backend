@@ -37,12 +37,24 @@ export const creditsTransactionsPostHandler = async (
   const headerKey = req.get("Idempotency-Key") ?? "";
   const keyResult = idempotencyKeySchema.safeParse(headerKey);
   if (!keyResult.success) {
+    req.log.warn(
+      {
+        accountId,
+        keyLength: headerKey.length,
+        disallowedChars: [...new Set(headerKey.replace(/[A-Za-z0-9_-]/g, ""))],
+      },
+      "credits.transaction.invalid_idempotency_key",
+    );
     res.status(400).json({ code: "invalid_idempotency_key" });
     return;
   }
 
   const bodyResult = transactionRequestSchema.safeParse(req.body);
   if (!bodyResult.success) {
+    req.log.warn(
+      { accountId, issueCount: bodyResult.error.issues.length },
+      "credits.transaction.invalid_request",
+    );
     res
       .status(400)
       .json({ code: "invalid_request", issues: bodyResult.error.issues });
@@ -105,6 +117,7 @@ export const creditsTransactionsPostHandler = async (
         (err.code === "P2010" &&
           (err.meta as { code?: string } | undefined)?.code === "23503"))
     ) {
+      req.log.warn({ accountId }, "credits.transaction.account_not_found");
       res.status(404).json({ code: "account_not_found" });
       return;
     }
