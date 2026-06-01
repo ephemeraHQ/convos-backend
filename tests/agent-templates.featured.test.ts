@@ -6,6 +6,7 @@ import {
   expect,
   test,
 } from "vitest";
+import { __setAgentAssetsApiKeyOverrideForTests } from "@/middleware/agentAuth";
 import { ADMIN_ACCOUNT_ID } from "@/utils/constants";
 import { prisma } from "@/utils/prisma";
 import {
@@ -14,6 +15,7 @@ import {
   getTemplate,
   patchTemplate,
   startAgentTemplatesServer,
+  validAgentAssetsApiKey,
 } from "./agent-templates.cross.helpers";
 
 // `featured` is gallery-curation state. It can be set at create time, and —
@@ -36,6 +38,9 @@ const cleanup = () =>
 
 describe("Agent template featured toggle (admin PATCH)", () => {
   beforeAll(async () => {
+    // Register the agent API key so X-Agent-API-Key auth resolves to ADMIN
+    // instead of 503-ing (mirrors the other agent-key router tests).
+    __setAgentAssetsApiKeyOverrideForTests(validAgentAssetsApiKey);
     const server = await startAgentTemplatesServer(4091);
     baseURL = server.baseURL;
     closeServer = server.close;
@@ -44,6 +49,7 @@ describe("Agent template featured toggle (admin PATCH)", () => {
   afterAll(async () => {
     await cleanup();
     await closeServer();
+    __setAgentAssetsApiKeyOverrideForTests(undefined);
   });
 
   beforeEach(async () => {
