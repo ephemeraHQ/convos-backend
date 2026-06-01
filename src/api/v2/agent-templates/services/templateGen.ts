@@ -207,6 +207,11 @@ interface PassthroughTokens {
 
 interface PassthroughBundle {
   template: GeneratedTemplate;
+  /** Model that produced `tokens` — the selector (`getModel()`) for a GitHub
+   *  repo scan, or the classifier (`getClassifierModel()`) for pasted content
+   *  and direct GitHub file links. Carried so passthrough metrics attribute
+   *  cost to the model actually billed, not the main generation model. */
+  model: string;
   tokens: PassthroughTokens;
 }
 
@@ -871,7 +876,7 @@ async function tryGithubPassthrough(
 
   return {
     kind: "passthrough",
-    bundle: { template, tokens: selectorTokens },
+    bundle: { template, model: getModel(), tokens: selectorTokens },
   };
 }
 
@@ -1052,7 +1057,7 @@ async function tryContentPassthrough(
     classification.passthroughType,
   );
 
-  return { template, tokens: classifierTokens };
+  return { template, model: getClassifierModel(), tokens: classifierTokens };
 }
 
 /** Extract content via the configured upstream services. Twitter URLs go
@@ -1170,7 +1175,7 @@ export async function generateTemplate(
         return {
           template: bundle.template,
           metrics: {
-            model: getModel(),
+            model: bundle.model,
             promptTokens: bundle.tokens.promptTokens,
             completionTokens: bundle.tokens.completionTokens,
             latencyMs: Math.round(performance.now() - funcStart),
@@ -1199,7 +1204,7 @@ export async function generateTemplate(
       return {
         template: passthroughBundle.template,
         metrics: {
-          model: getModel(),
+          model: passthroughBundle.model,
           promptTokens: passthroughBundle.tokens.promptTokens,
           completionTokens: passthroughBundle.tokens.completionTokens,
           latencyMs: Math.round(performance.now() - funcStart),
