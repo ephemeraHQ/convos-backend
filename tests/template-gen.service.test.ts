@@ -10,6 +10,7 @@
 /* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-return, @typescript-eslint/no-explicit-any, @typescript-eslint/consistent-type-imports */
 
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import { BUILDER_CLASSIFIER_MODEL } from "@/config";
 
 // ---------------------------------------------------------------------------
 // Fetch interceptor — captures all outbound fetch calls so we can assert
@@ -732,6 +733,58 @@ describe("templateGen service — OpenRouter integration", () => {
     globalThis.fetch = originalMockFetch;
   });
 
+  test("content passthrough metrics report the classifier model + its tokens", async () => {
+    const mod = await import("@/api/v2/agent-templates/services/templateGen");
+    generateTemplate = mod.generateTemplate;
+
+    // >= 300 chars so the content classifier runs and returns passthrough. The
+    // classifier is the only LLM call on this path, so the metrics must report
+    // its model + tokens — not the main generation model.
+    const longText = "You are a test agent. ".repeat(20);
+
+    const originalMockFetch = globalThis.fetch;
+    globalThis.fetch = ((input: any, init?: any) => {
+      const url =
+        typeof input === "string"
+          ? input
+          : input instanceof URL
+            ? input.toString()
+            : input.url;
+      if (url === OPENROUTER_URL) {
+        return new Response(
+          JSON.stringify({
+            model: "@preset/assistants-pro",
+            choices: [
+              {
+                message: {
+                  content: JSON.stringify({
+                    isPassthrough: true,
+                    passthroughType: "skill-definition",
+                    agentName: "PassthroughBot",
+                    emoji: "🤖",
+                    description: "A passthrough bot",
+                    category: "Work",
+                  }),
+                },
+              },
+            ],
+            usage: { prompt_tokens: 100, completion_tokens: 50 },
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      }
+      return (originalMockFetch as any)(input, init);
+    }) as any;
+
+    const { metrics } = await generateTemplate({ text: longText });
+
+    expect(metrics.model).toBe(BUILDER_CLASSIFIER_MODEL);
+    expect(metrics.promptTokens).toBe(100);
+    expect(metrics.completionTokens).toBe(50);
+
+    globalThis.fetch = originalMockFetch;
+  });
+
   // -----------------------------------------------------------------------
   // Soft defaults: agentName is the only fatal-required parse field
   // -----------------------------------------------------------------------
@@ -1110,7 +1163,7 @@ describe("templateGen service — OpenRouter integration", () => {
   // -----------------------------------------------------------------------
   // Helper calls use same model + Authorization, temp 0.2, no response_format
   // -----------------------------------------------------------------------
-  test("content classifier helper call uses temp 0.2, no response_format, same model+auth", async () => {
+  test("content classifier helper call uses temp 0.2, no response_format, cheap classifier model + auth", async () => {
     const mod = await import("@/api/v2/agent-templates/services/templateGen");
     generateTemplate = mod.generateTemplate;
 
@@ -1194,7 +1247,7 @@ describe("templateGen service — OpenRouter integration", () => {
     const classifierReq = getOpenRouterRequests()[0];
     expect(classifierReq.body.temperature).toBe(0.2);
     expect(classifierReq.body.response_format).toBeUndefined();
-    expect(classifierReq.body.model).toBe("anthropic/claude-opus-4.7");
+    expect(classifierReq.body.model).toBe(BUILDER_CLASSIFIER_MODEL);
     expect(classifierReq.headers["authorization"]).toBe(
       `Bearer ${TEST_API_KEY}`,
     );
