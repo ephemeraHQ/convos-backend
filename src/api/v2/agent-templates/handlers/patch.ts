@@ -20,6 +20,7 @@ const bodySchema = z
     connections: z.array(z.string()).optional(),
     description: z.string().nullable().optional(),
     emoji: z.string().nullable().optional(),
+    featured: z.boolean().optional(),
     prompt: z
       .string()
       .max(50_000, {
@@ -85,6 +86,12 @@ const applyContentFields = (
   }
   if (body.emoji !== undefined) {
     data.emoji = body.emoji;
+  }
+  // Gallery curation: the admin templates dashboard toggles `featured` via
+  // PATCH (independent of publish state, so a draft can be featured and a
+  // published template un-featured without a status change).
+  if (body.featured !== undefined) {
+    data.featured = body.featured;
   }
   if (body.prompt !== undefined) {
     data.prompt = body.prompt;
