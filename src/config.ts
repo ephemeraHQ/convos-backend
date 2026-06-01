@@ -127,6 +127,10 @@ export const NONCE_HMAC_SECRET = process.env.NONCE_HMAC_SECRET;
 export const BUILDER_OPENROUTER_API_KEY =
   process.env.BUILDER_OPENROUTER_API_KEY?.trim() || "";
 export const BUILDER_MODEL = process.env.BUILDER_MODEL?.trim() || "";
+// Cheap model for the pre-generation passthrough classifier
+// (`classifyPastedContent`); concrete OpenRouter id so PostHog can price it.
+export const BUILDER_CLASSIFIER_MODEL =
+  process.env.BUILDER_CLASSIFIER_MODEL?.trim() || "minimax/minimax-m3";
 export const CONTENT_MODERATION_MODEL =
   process.env.CONTENT_MODERATION_MODEL?.trim() ||
   "google/gemini-3.1-flash-lite";

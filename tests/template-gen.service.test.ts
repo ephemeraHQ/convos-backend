@@ -10,6 +10,7 @@
 /* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-return, @typescript-eslint/no-explicit-any, @typescript-eslint/consistent-type-imports */
 
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import { BUILDER_CLASSIFIER_MODEL } from "@/config";
 
 // ---------------------------------------------------------------------------
 // Fetch interceptor — captures all outbound fetch calls so we can assert
@@ -1110,7 +1111,7 @@ describe("templateGen service — OpenRouter integration", () => {
   // -----------------------------------------------------------------------
   // Helper calls use same model + Authorization, temp 0.2, no response_format
   // -----------------------------------------------------------------------
-  test("content classifier helper call uses temp 0.2, no response_format, same model+auth", async () => {
+  test("content classifier helper call uses temp 0.2, no response_format, cheap classifier model + auth", async () => {
     const mod = await import("@/api/v2/agent-templates/services/templateGen");
     generateTemplate = mod.generateTemplate;
 
@@ -1194,7 +1195,7 @@ describe("templateGen service — OpenRouter integration", () => {
     const classifierReq = getOpenRouterRequests()[0];
     expect(classifierReq.body.temperature).toBe(0.2);
     expect(classifierReq.body.response_format).toBeUndefined();
-    expect(classifierReq.body.model).toBe("anthropic/claude-opus-4.7");
+    expect(classifierReq.body.model).toBe(BUILDER_CLASSIFIER_MODEL);
     expect(classifierReq.headers["authorization"]).toBe(
       `Bearer ${TEST_API_KEY}`,
     );

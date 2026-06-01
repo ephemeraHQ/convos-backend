@@ -10,8 +10,9 @@
  *
  * OpenRouter raw fetch to https://openrouter.ai/api/v1/chat/completions with
  * strict response_format json_schema, temp 0.7, no max_tokens.
- * Helper calls (GitHub-instructions selector, content-classifier) at temp 0.2
- * without response_format.
+ * Helper calls run at temp 0.2 without response_format: the GitHub-instructions
+ * selector uses the main model; the content-classifier uses the cheap
+ * BUILDER_CLASSIFIER_MODEL and leans toward passthrough.
  *
  * Soft defaults for non-name fields. Server-injects connections: [].
  */
@@ -20,6 +21,7 @@
 
 import { APIConnectionTimeoutError, APIError, APIUserAbortError } from "openai";
 import {
+  BUILDER_CLASSIFIER_MODEL,
   BUILDER_EXA_SERVICE_KEY,
   BUILDER_MODEL,
   BUILDER_OPENROUTER_API_KEY,
@@ -91,6 +93,7 @@ function describeLlmError(err: unknown): string {
 
 let _apiKeyOverride: string | null | undefined = undefined;
 let _builderModelOverride: string | null = null;
+let _classifierModelOverride: string | null = null;
 let _exaKeyOverride: string | null | undefined = undefined;
 let _systemPromptOverride: string | null = null;
 
@@ -122,6 +125,19 @@ export function __setBuilderApiKeyOverrideForTests(
 /** Override `BUILDER_MODEL` for tests. Pass `null` to clear. */
 export function __setBuilderModelOverrideForTests(model: string | null): void {
   _builderModelOverride = model;
+}
+
+/** Model for the passthrough classifier (`classifyPastedContent`) — a cheap
+ *  model separate from the main `getModel()`. Override `BUILDER_CLASSIFIER_MODEL`. */
+export function getClassifierModel(): string {
+  return _classifierModelOverride ?? BUILDER_CLASSIFIER_MODEL;
+}
+
+/** Override `BUILDER_CLASSIFIER_MODEL` for tests. Pass `null` to clear. */
+export function __setClassifierModelOverrideForTests(
+  model: string | null,
+): void {
+  _classifierModelOverride = model;
 }
 
 /** The system prompt actually used for generation — the loaded file unless an
@@ -896,21 +912,23 @@ Pasted content:
 ${truncated}
 ---
 
-Two kinds of content count as "passthrough" (use verbatim, do not re-generate):
+Choose PASSTHROUGH (use the text verbatim, do not re-generate) whenever the content is AGENT-SHAPED — i.e. it reads like instructions written FOR an AI agent rather than prose written for a human reader. Two common shapes:
 
 Type A — install-instructions: setup choreography addressed to an AI agent
 - Second-person language: "Read this, then follow the steps", "Ask the user for API keys"
 - Setup commands: git clone, npm install, bun install, export env vars
 - Agent workflow: clone → install → configure → adopt skills → report progress
-- Clearly addressed to an AI, not to a human developer
+- Addressed to an AI, not (only) to a human developer
 
-Type B — skill-definition: a complete system prompt already written for an agent
-- Often has YAML frontmatter with name: and description:
-- Direct instructions to an AI: "You are...", "You must...", "Your job is to..."
-- Section headers like BRAIN/SOUL/HEART, or THE HOOK, or rules/behavior definitions
-- A ready-to-use agent definition, not content ABOUT a topic
+Type B — skill-definition: a system prompt / agent definition already written for an agent
+- YAML frontmatter with name:/description:, or a title plus a role/identity line
+- Direct instructions to an AI: "You are...", "You must...", "Your job is to...", "Always/Never..."
+- A defined persona, voice, or behavioral rules; section headers like BRAIN/SOUL/HEART, THE HOOK, GUIDELINES, RULES, TONE, WELCOME MESSAGE
+- A ready-to-run agent definition — even a rough, partial, or unconventional one — rather than an article ABOUT a topic
 
-Anything else is "source material" — an article, essay, README-for-humans, product spec, book excerpt, etc. — and should NOT be passthrough. For those, return false.
+Lean PASSTHROUGH. If the text is structured as an agent persona, behavioral brief, or instruction set — even if it's imperfect, incomplete, or you would have written it differently — classify it as passthrough and preserve the author's wording. The author already wrote a prompt; respect it instead of rewriting it.
+
+Return false ONLY for genuine SOURCE MATERIAL — text written for humans that an agent would have to be DESIGNED from rather than run on directly: an article, essay, news story, README-for-humans, marketing/landing copy, product spec, or book/transcript excerpt, with no instructions addressed to an agent.
 
 If passthrough, also produce metadata:
 - agentName: memorable name derived from the content
@@ -931,8 +949,8 @@ Respond with ONLY a JSON object (no markdown fences, no explanation):
 
 Rules:
 - If isPassthrough is false, all other fields MUST be null.
-- When ambiguous, lean toward false. Better to over-generate than over-passthrough.
-- The content must be READY-TO-USE as an agent prompt on its own — if it's merely ABOUT agents or references them in passing, that's false.`;
+- When borderline between "agent-shaped" and "source material", lean toward TRUE (passthrough). Better to preserve a real prompt than to rewrite one.
+- Always pick a passthroughType when isPassthrough is true: install-instructions for setup choreography, skill-definition for a persona/system prompt. When both fit, prefer skill-definition.`;
 
   const t0 = performance.now();
   let data: any;
@@ -941,7 +959,7 @@ Rules:
       apiKey,
       stage: "classifier",
       body: {
-        model: getModel(),
+        model: getClassifierModel(),
         messages: [{ role: "user", content: classifierPrompt }],
         temperature: 0.2,
       },
