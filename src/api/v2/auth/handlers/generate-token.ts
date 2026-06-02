@@ -8,6 +8,8 @@ import {
   NONCE_COOKIE_NAME,
   readNonceFromCookie,
 } from "@/api/v2/auth/nonce-cookie";
+import { grant } from "@/payments";
+import { config } from "@/payments/credits/config";
 import { deviceIdSchema } from "@/utils/device-id";
 import { createJwtToken } from "@/utils/jwt";
 import { prisma } from "@/utils/prisma";
@@ -155,6 +157,21 @@ export async function generateToken(
         { err, deviceId: body.deviceId, accountId },
         "auth.device.account_backfill_failed",
       );
+    }
+
+    if (upserted.created && config.signupBonusCredits > 0) {
+      try {
+        await grant({
+          accountId,
+          credits: config.signupBonusCredits,
+          idempotencyKey: `signup_bonus:${accountId}`,
+          kind: "signup_bonus",
+          note: "Signup bonus",
+        });
+        req.log.info({ accountId }, "auth.account.signup_bonus_granted");
+      } catch (err) {
+        req.log.warn({ err, accountId }, "auth.account.signup_bonus_failed");
+      }
     }
   }
 

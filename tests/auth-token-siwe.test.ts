@@ -7,9 +7,11 @@ import { issueNonce } from "@/api/v2/auth/auth-nonce.repository";
 import { authRouter } from "@/api/v2/auth/auth.router";
 import { NONCE_COOKIE_NAME, signNonce } from "@/api/v2/auth/nonce-cookie";
 import { pinoMiddleware } from "@/middleware/pino";
+import { config } from "@/payments/credits/config";
 import { ADMIN_ACCOUNT_ID } from "@/utils/constants";
 import { verifyJwtToken } from "@/utils/jwt";
 import { prisma } from "@/utils/prisma";
+import { LedgerReason } from "@prisma/client";
 import { buildSiweMessage } from "./helpers/siwe";
 
 vi.mock("firebase-admin/app");
@@ -393,5 +395,85 @@ describe("POST /auth/token (legacy + SIWE)", () => {
       where: { deviceId },
     });
     expect(after?.accountId ?? null).toBe(seeded?.accountId ?? null);
+  });
+});
+
+describe("POST /auth/token signup bonus", () => {
+  beforeAll(reset);
+  afterEach(reset);
+
+  async function signupViaSiwe(deviceId: string, signerKey?: string) {
+    const nonce = await issueNonce();
+    const cookieValue = signNonce(nonce);
+    const { messageStr, signature, address } = await buildSiweMessage({
+      deviceId,
+      nonce,
+      signerKey,
+    });
+    const res = await request(makeApp())
+      .post("/auth/token")
+      .set(...APPCHECK)
+      .set("Cookie", `${NONCE_COOKIE_NAME}=${cookieValue}`)
+      .send({ deviceId, siwe: { message: messageStr, signature } });
+    return { res, address };
+  }
+
+  test("new account → one signup_bonus grant of configured amount", async () => {
+    expect(config.signupBonusCredits).toBeGreaterThan(0);
+    const { res, address } = await signupViaSiwe("dev-bonus-1");
+    expect(res.status).toBe(200);
+
+    const method = await prisma.authMethod.findFirst({
+      where: { externalKey: address },
+    });
+    const rows = await prisma.creditLedger.findMany({
+      where: { accountId: method!.accountId, grantKindId: "signup_bonus" },
+    });
+    expect(rows.length).toBe(1);
+    expect(rows[0].reason).toBe(LedgerReason.grant);
+    expect(rows[0].delta).toBe(BigInt(config.signupBonusCredits));
+    expect(rows[0].idempotencyKey).toBe(`signup_bonus:${method!.accountId}`);
+  });
+
+  test("second login same wallet → no second bonus", async () => {
+    const first = await signupViaSiwe("dev-bonus-2");
+    expect(first.res.status).toBe(200);
+    const second = await signupViaSiwe("dev-bonus-2");
+    expect(second.res.status).toBe(200);
+
+    const method = await prisma.authMethod.findFirst({
+      where: { externalKey: first.address },
+    });
+    const rows = await prisma.creditLedger.findMany({
+      where: { accountId: method!.accountId, grantKindId: "signup_bonus" },
+    });
+    expect(rows.length).toBe(1);
+  });
+
+  test("grant failure does not block token mint (best-effort)", async () => {
+    await prisma.grantKind.update({
+      where: { id: "signup_bonus" },
+      data: { active: false },
+    });
+    try {
+      const { res, address } = await signupViaSiwe("dev-bonus-3");
+      expect(res.status).toBe(200);
+      const body = res.body as { token: string };
+      const payload = await verifyJwtToken({ token: body.token });
+      expect(payload.accountId).toBeTruthy();
+
+      const method = await prisma.authMethod.findFirst({
+        where: { externalKey: address },
+      });
+      const rows = await prisma.creditLedger.findMany({
+        where: { accountId: method!.accountId, grantKindId: "signup_bonus" },
+      });
+      expect(rows.length).toBe(0);
+    } finally {
+      await prisma.grantKind.update({
+        where: { id: "signup_bonus" },
+        data: { active: true },
+      });
+    }
   });
 });
