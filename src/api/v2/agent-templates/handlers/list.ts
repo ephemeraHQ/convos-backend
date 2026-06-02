@@ -7,6 +7,10 @@ import { visibilityWhere } from "../lib/visibility";
 
 const DEFAULT_LIMIT = 20;
 const MAX_LIMIT = 100;
+// Upper bound on the free-text search term — far longer than any real name or
+// description query, but caps the LIKE pattern so a client can't push a
+// multi-megabyte string into the query / logs.
+const MAX_SEARCH_LENGTH = 200;
 
 const VALID_STATUS_FILTERS = [
   "draft",
@@ -29,7 +33,7 @@ const querySchema = z
     limit: z.string().optional(),
     order: z.enum(["asc", "desc"]).optional(),
     owner: z.string().optional(),
-    q: z.string().optional(),
+    q: z.string().max(MAX_SEARCH_LENGTH).optional(),
     sort: z.enum(SORT_FIELDS).optional(),
     status: z.string().optional(),
   })
@@ -38,8 +42,11 @@ const querySchema = z
 const cursorPayloadSchema = z
   .object({
     id: z.string().min(1),
-    // `s` = the sort field the cursor was built for; `v` = that field's value
-    // on the last row (ISO string for dates, the raw string for agentName).
+    // `s` = the sort field the cursor was built for; `o` = the order; `v` =
+    // the sort field's value on the last row (ISO string for dates, the raw
+    // string for agentName). Both `s` and `o` are validated against the
+    // active request so a cursor can't traverse from the wrong end.
+    o: z.enum(["asc", "desc"]),
     s: z.enum(SORT_FIELDS),
     v: z.string().min(1),
   })
@@ -50,6 +57,19 @@ const sendInvalidQuery = (res: Response, message: string) => {
     error: "Invalid request query",
     message,
   });
+};
+
+// Conjoin a filter onto `where.AND`, creating the array if needed. Status,
+// search, and cursor filters all narrow the same query, so they accumulate
+// here rather than each reaching for `where.AND` independently (which would
+// silently clobber whatever a sibling already set).
+const addAnd = (
+  where: Prisma.AgentTemplateWhereInput,
+  filter: Prisma.AgentTemplateWhereInput,
+) => {
+  where.AND = where.AND
+    ? [...(where.AND as Prisma.AgentTemplateWhereInput[]), filter]
+    : [filter];
 };
 
 const parseLimit = (value: string | undefined) => {
@@ -72,19 +92,30 @@ const parseLimit = (value: string | undefined) => {
 const cursorValue = (template: AgentTemplate, sort: SortField): string =>
   sort === "agentName" ? template.agentName : template[sort].toISOString();
 
-const encodeCursor = (template: AgentTemplate, sort: SortField) =>
+const encodeCursor = (
+  template: AgentTemplate,
+  sort: SortField,
+  order: "asc" | "desc",
+) =>
   Buffer.from(
     JSON.stringify({
       id: template.id,
+      o: order,
       s: sort,
       v: cursorValue(template, sort),
     }),
   ).toString("base64url");
 
 // Returns null when absent, undefined when malformed OR built for a different
-// sort than the active one (the latter forces a client that changed `sort`
-// mid-pagination to restart from the first page).
-const decodeCursor = (cursor: string | undefined, sort: SortField) => {
+// sort/order than the active one. A cursor encodes the comparator it was built
+// for (sort column + direction); reusing it under a different sort or order
+// would traverse from the wrong end of the dataset and skip/duplicate rows, so
+// a mismatch forces the client to restart from the first page.
+const decodeCursor = (
+  cursor: string | undefined,
+  sort: SortField,
+  order: "asc" | "desc",
+) => {
   if (cursor === undefined) {
     return null;
   }
@@ -99,7 +130,7 @@ const decodeCursor = (cursor: string | undefined, sort: SortField) => {
     );
     const parsed = cursorPayloadSchema.safeParse(decoded);
 
-    if (!parsed.success || parsed.data.s !== sort) {
+    if (!parsed.success || parsed.data.s !== sort || parsed.data.o !== order) {
       return undefined;
     }
 
@@ -164,7 +195,7 @@ export async function listHandler(req: Request, res: Response) {
   const sort: SortField = parsed.data.sort ?? "createdAt";
   const order: "asc" | "desc" = parsed.data.order ?? "desc";
 
-  const cursor = decodeCursor(parsed.data.cursor, sort);
+  const cursor = decodeCursor(parsed.data.cursor, sort, order);
   if (cursor === undefined) {
     sendInvalidQuery(res, "cursor is malformed");
     return;
@@ -188,10 +219,8 @@ export async function listHandler(req: Request, res: Response) {
       }
       where.status = "published";
     } else {
-      where.AND = [
-        { status: statusFilter as Prisma.EnumPublishStatusFilter },
-        { ownerAccountId: accountId },
-      ];
+      addAnd(where, { status: statusFilter as Prisma.EnumPublishStatusFilter });
+      addAnd(where, { ownerAccountId: accountId });
     }
   } else {
     // No status filter: the caller's full visible set (admin → everything,
@@ -242,9 +271,7 @@ export async function listHandler(req: Request, res: Response) {
         { description: { contains: q, mode: "insensitive" } },
       ],
     };
-    where.AND = where.AND
-      ? [...(where.AND as Prisma.AgentTemplateWhereInput[]), qFilter]
-      : [qFilter];
+    addAnd(where, qFilter);
   }
 
   // Keyset cursor pagination, generalized over the active sort column.
@@ -262,12 +289,7 @@ export async function listHandler(req: Request, res: Response) {
       ],
     };
 
-    if (where.AND) {
-      // Already have an AND clause from visibility/search — append cursor filter
-      (where.AND as Prisma.AgentTemplateWhereInput[]).push(cursorFilter);
-    } else {
-      where.AND = [cursorFilter];
-    }
+    addAnd(where, cursorFilter);
   }
 
   const orderBy: Prisma.AgentTemplateOrderByWithRelationInput[] = [
@@ -291,7 +313,7 @@ export async function listHandler(req: Request, res: Response) {
       hasMore,
       nextCursor:
         hasMore && lastTemplate !== undefined
-          ? encodeCursor(lastTemplate, sort)
+          ? encodeCursor(lastTemplate, sort, order)
           : null,
     });
   } catch (error) {

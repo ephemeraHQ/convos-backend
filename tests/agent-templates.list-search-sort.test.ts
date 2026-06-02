@@ -186,10 +186,12 @@ describe("Agent templates list — search / sort / counts", () => {
 
   test("a cursor built for a different sort is rejected with 400", async () => {
     const res = await fetch(
-      // a createdAt cursor shape used with sort=agentName → malformed
+      // a well-formed createdAt cursor (order matches the default desc) used
+      // with sort=agentName → sort mismatch → rejected.
       `${baseURL}/api/v2/agent-templates?sort=agentName&cursor=${Buffer.from(
         JSON.stringify({
           id: "x",
+          o: "desc",
           s: "createdAt",
           v: new Date().toISOString(),
         }),
@@ -197,6 +199,89 @@ describe("Agent templates list — search / sort / counts", () => {
       { headers: agentKeyHeaders() },
     );
     expect(res.status).toBe(400);
+  });
+
+  test("a cursor built for a different order is rejected with 400", async () => {
+    for (const name of ["Zsort Order A", "Zsort Order B"]) {
+      await createTemplate({
+        baseURL,
+        headers: agentKeyHeaders(),
+        body: {
+          agentName: name,
+          prompt: "p",
+          slug: `lss-${name.toLowerCase().replace(/\s+/g, "-")}`,
+          description: "zsortordermarker",
+        },
+      });
+    }
+
+    // A real cursor minted under order=desc...
+    const desc = await listTemplates({
+      baseURL,
+      query: "?q=zsortordermarker&sort=agentName&order=desc&limit=1",
+      headers: agentKeyHeaders(),
+    });
+    expect(desc.body.nextCursor).toEqual(expect.any(String));
+    const cursor = encodeURIComponent(desc.body.nextCursor as string);
+
+    // ...reused under order=asc would flip the keyset comparator (lt↔gt) and
+    // traverse from the opposite end → rejected.
+    const flipped = await fetch(
+      `${baseURL}/api/v2/agent-templates?q=zsortordermarker&sort=agentName&order=asc&limit=1&cursor=${cursor}`,
+      { headers: agentKeyHeaders() },
+    );
+    expect(flipped.status).toBe(400);
+
+    // ...but reused under the same order=desc still paginates fine.
+    const same = await listTemplates({
+      baseURL,
+      query: `?q=zsortordermarker&sort=agentName&order=desc&limit=1&cursor=${cursor}`,
+      headers: agentKeyHeaders(),
+    });
+    expect(same.response.status).toBe(200);
+  });
+
+  test("?q= and ?featured=true compose (AND of search OR-clause + featured)", async () => {
+    await createTemplate({
+      baseURL,
+      headers: agentKeyHeaders(),
+      body: {
+        agentName: "Zxq Combined Featured",
+        prompt: "p",
+        slug: "lss-combo-1",
+        description: "zxqcombomarker",
+        featured: true,
+      },
+    });
+    await createTemplate({
+      baseURL,
+      headers: agentKeyHeaders(),
+      body: {
+        agentName: "Zxq Combined Plain",
+        prompt: "p",
+        slug: "lss-combo-2",
+        description: "zxqcombomarker",
+        featured: false,
+      },
+    });
+
+    // q matches both rows...
+    const both = await listTemplates({
+      baseURL,
+      query: "?q=zxqcombomarker&limit=100",
+      headers: agentKeyHeaders(),
+    });
+    expect(both.body.data.length).toBe(2);
+
+    // ...featured=true narrows to the one featured match.
+    const featuredOnly = await listTemplates({
+      baseURL,
+      query: "?q=zxqcombomarker&featured=true&limit=100",
+      headers: agentKeyHeaders(),
+    });
+    expect(featuredOnly.body.data.map((t) => t.agentName as string)).toEqual([
+      "Zxq Combined Featured",
+    ]);
   });
 
   // ── Counts ──
