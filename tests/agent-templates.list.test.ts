@@ -30,8 +30,14 @@ const cleanupTemplates = () =>
     where: { ownerAccountId: ADMIN_ACCOUNT_ID },
   });
 
-const encodeCursor = (cursor: { id: string; createdAt: string }) =>
-  Buffer.from(JSON.stringify(cursor)).toString("base64url");
+// Mirrors the handler's cursor payload: `s` = sort field, `o` = order, `v` =
+// the sort field's value on the last row (plus `id` as the tiebreaker).
+const encodeCursor = (cursor: {
+  id: string;
+  s: string;
+  o: "asc" | "desc";
+  v: string;
+}) => Buffer.from(JSON.stringify(cursor)).toString("base64url");
 
 // Use a distinct, non-admin account so visibility semantics match the
 // pre-auth-required tests: the caller is NOT the template owner, so they
@@ -352,9 +358,11 @@ describe("Agent template list endpoint", () => {
     };
     const decodedDefaultCursor = JSON.parse(
       Buffer.from(defaultPage.body.nextCursor ?? "", "base64url").toString(),
-    ) as { id: string; createdAt: string };
+    ) as { id: string; s: string; o: string; v: string };
     expect(decodedDefaultCursor.id).toBe(lastDefaultRow.id);
-    expect(decodedDefaultCursor.createdAt).toBe(lastDefaultRow.createdAt);
+    expect(decodedDefaultCursor.s).toBe("createdAt");
+    expect(decodedDefaultCursor.o).toBe("desc");
+    expect(decodedDefaultCursor.v).toBe(lastDefaultRow.createdAt);
 
     const clamped = await readList("/api/v2/agent-templates?limit=200");
     expect(clamped.body.data).toHaveLength(100);
@@ -453,7 +461,9 @@ describe("Agent template list endpoint", () => {
 
     const pastEndCursor = encodeCursor({
       id: "ffffffff-ffff-4fff-8fff-ffffffffffff",
-      createdAt: "1970-01-01T00:00:00.000Z",
+      s: "createdAt",
+      o: "desc",
+      v: "1970-01-01T00:00:00.000Z",
     });
     const pastEnd = await readList(
       `/api/v2/agent-templates?cursor=${pastEndCursor}`,
