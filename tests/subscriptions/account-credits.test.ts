@@ -19,6 +19,25 @@ vi.mock("firebase-admin/app");
 vi.mock("firebase-admin/app-check");
 vi.mock("firebase-admin/messaging");
 
+const DAY_MS = 24 * 60 * 60 * 1000;
+const flooredToSecond = (ms: number): Date => {
+  const d = new Date(ms);
+  d.setUTCMilliseconds(0);
+  return d;
+};
+const NOW_MS = Date.now();
+const PERIOD_START = flooredToSecond(NOW_MS - 5 * DAY_MS);
+const PERIOD_END = flooredToSecond(NOW_MS + 25 * DAY_MS);
+const PLUS_ANNUAL_END = flooredToSecond(NOW_MS + 395 * DAY_MS);
+const WITHIN_PERIOD_A = flooredToSecond(NOW_MS - 1 * DAY_MS);
+const WITHIN_PERIOD_B = flooredToSecond(NOW_MS - 2 * DAY_MS);
+const BEFORE_PERIOD = flooredToSecond(NOW_MS - 10 * DAY_MS);
+const PERIOD_LABEL = new Intl.DateTimeFormat("en-US", {
+  month: "long",
+  year: "numeric",
+  timeZone: "UTC",
+}).format(PERIOD_START);
+
 const makeApp = () => {
   const app = express();
   app.use(pinoMiddleware);
@@ -74,9 +93,9 @@ const seedPlusMonthly = async (accountId: string) =>
     status: SubscriptionStatus.active,
     originalTransactionId: `otid-${accountId}`,
     transactionId: `tx-${accountId}`,
-    startedAt: new Date("2026-05-01T00:00:00.000Z"),
-    currentPeriodStart: new Date("2026-05-01T00:00:00.000Z"),
-    currentPeriodEnd: new Date("2026-06-01T00:00:00.000Z"),
+    startedAt: PERIOD_START,
+    currentPeriodStart: PERIOD_START,
+    currentPeriodEnd: PERIOD_END,
     willRenew: true,
     isInTrial: false,
     environment: AppleEnv.sandbox,
@@ -153,8 +172,8 @@ describe("GET /v2/accounts/me/credits", () => {
     expect(body.monthlyGrant).toBe(2500);
     expect(body.monthlyGrantUsed).toBe(0);
     expect(body.balance).toBe(2500);
-    expect(body.nextRefreshAt).toBe("2026-06-01T00:00:00.000Z");
-    expect(body.periodLabel).toBe("May 2026");
+    expect(body.nextRefreshAt).toBe(PERIOD_END.toISOString());
+    expect(body.periodLabel).toBe(PERIOD_LABEL);
   });
 
   // Expired and past-ended subscriptions now fall through to the free-tier
@@ -228,18 +247,8 @@ describe("GET /v2/accounts/me/credits", () => {
   test("consumes within current period count against monthlyGrantUsed", async () => {
     const accountId = await newAccount();
     await seedPlusMonthly(accountId);
-    await writeConsume(
-      accountId,
-      300,
-      new Date("2026-05-10T00:00:00.000Z"),
-      "c1",
-    );
-    await writeConsume(
-      accountId,
-      200,
-      new Date("2026-05-20T00:00:00.000Z"),
-      "c2",
-    );
+    await writeConsume(accountId, 300, WITHIN_PERIOD_A, "c1");
+    await writeConsume(accountId, 200, WITHIN_PERIOD_B, "c2");
     const token = await tokenFor(accountId);
     const res = await request(makeApp())
       .get("/v2/accounts/me/credits")
@@ -253,12 +262,7 @@ describe("GET /v2/accounts/me/credits", () => {
     const accountId = await newAccount();
     await seedPlusMonthly(accountId);
     // Burn in the prior period — should not affect this period's display.
-    await writeConsume(
-      accountId,
-      9999,
-      new Date("2026-04-15T00:00:00.000Z"),
-      "previous-period",
-    );
+    await writeConsume(accountId, 9999, BEFORE_PERIOD, "previous-period");
     const token = await tokenFor(accountId);
     const res = await request(makeApp())
       .get("/v2/accounts/me/credits")
@@ -271,12 +275,7 @@ describe("GET /v2/accounts/me/credits", () => {
   test("monthlyGrantUsed is capped at monthlyGrant (over-burn doesn't go negative)", async () => {
     const accountId = await newAccount();
     await seedPlusMonthly(accountId);
-    await writeConsume(
-      accountId,
-      9999,
-      new Date("2026-05-15T00:00:00.000Z"),
-      "huge",
-    );
+    await writeConsume(accountId, 9999, WITHIN_PERIOD_A, "huge");
     const token = await tokenFor(accountId);
     const res = await request(makeApp())
       .get("/v2/accounts/me/credits")
@@ -297,9 +296,9 @@ describe("GET /v2/accounts/me/credits", () => {
       status: SubscriptionStatus.active,
       originalTransactionId: "otid-plus-annual",
       transactionId: "tx-plus-annual",
-      startedAt: new Date("2026-05-01T00:00:00.000Z"),
-      currentPeriodStart: new Date("2026-05-01T00:00:00.000Z"),
-      currentPeriodEnd: new Date("2027-05-01T00:00:00.000Z"),
+      startedAt: PERIOD_START,
+      currentPeriodStart: PERIOD_START,
+      currentPeriodEnd: PLUS_ANNUAL_END,
       willRenew: true,
       isInTrial: false,
       environment: AppleEnv.sandbox,
@@ -312,7 +311,7 @@ describe("GET /v2/accounts/me/credits", () => {
     const body = res.body as BalanceBody;
     expect(body.monthlyGrant).toBe(2500 * 12);
     expect(body.balance).toBe(2500 * 12);
-    expect(body.nextRefreshAt).toBe("2027-05-01T00:00:00.000Z");
+    expect(body.nextRefreshAt).toBe(PLUS_ANNUAL_END.toISOString());
   });
 });
 
