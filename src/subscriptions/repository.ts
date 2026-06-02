@@ -5,20 +5,24 @@ import {
   type AppleReceipt,
   type Subscription,
   type SubscriptionPeriod,
-  type SubscriptionTier,
 } from "@prisma/client";
 import {
   effectiveSubscriptionStatus,
   ENTITLED_SUBSCRIPTION_STATUSES,
 } from "@/subscriptions/status";
+import {
+  requireSubscriptionTier,
+  SUBSCRIPTION_TIER_PLUS,
+  type SubscriptionTier,
+} from "@/subscriptions/tiers";
 import { prisma } from "@/utils/prisma";
 
-export type { Subscription, AppleReceipt };
+export type { Subscription, AppleReceipt, SubscriptionTier };
+export { SUBSCRIPTION_TIER_PLUS };
 export {
   AppleEnv,
   SubscriptionPeriod,
   SubscriptionStatus,
-  SubscriptionTier,
 } from "@prisma/client";
 
 /**
@@ -332,7 +336,7 @@ export const serializeUserSubscription = (
 ): UserSubscriptionDto => {
   const status = effectiveSubscriptionStatus(subscription);
   return {
-    tier: subscription.tier,
+    tier: requireSubscriptionTier(subscription.tier),
     period: subscription.period,
     status,
     productId: subscription.productId,

@@ -60,9 +60,7 @@ process.env.PAYMENTS_CRON_API_KEY =
   process.env.PAYMENTS_CRON_API_KEY ||
   "test-cron-api-key-that-is-at-least-32-characters-long";
 
-// Subscription tier credit allotments — placeholder values for tests.
-// Final numbers are set by ops via env in each deploy environment.
-process.env.PAYMENTS_GRANT_BUILDER_MONTHLY =
-  process.env.PAYMENTS_GRANT_BUILDER_MONTHLY || "2500";
-process.env.PAYMENTS_GRANT_PRO_MONTHLY =
-  process.env.PAYMENTS_GRANT_PRO_MONTHLY || "10000";
+// Subscription credit allotment — placeholder value for tests. Final
+// number is set by ops via env in each deploy environment.
+process.env.PAYMENTS_GRANT_PLUS_MONTHLY =
+  process.env.PAYMENTS_GRANT_PLUS_MONTHLY || "2500";

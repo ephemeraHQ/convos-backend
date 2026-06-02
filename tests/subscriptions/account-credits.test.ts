@@ -7,9 +7,9 @@ import { authMiddleware } from "@/middleware/auth";
 import { pinoMiddleware } from "@/middleware/pino";
 import {
   AppleEnv,
+  SUBSCRIPTION_TIER_PLUS,
   SubscriptionPeriod,
   SubscriptionStatus,
-  SubscriptionTier,
   upsertFromVerify,
 } from "@/subscriptions/repository";
 import { createJwtToken, validateJWTKeys } from "@/utils/jwt";
@@ -64,12 +64,12 @@ afterEach(async () => {
   await wipe();
 });
 
-const seedBuilderMonthly = async (accountId: string) =>
+const seedPlusMonthly = async (accountId: string) =>
   upsertFromVerify({
     accountId,
     appAccountToken: `${accountId.slice(0, 8)}-2222-3333-4444-555555555555`,
-    productId: "app.convos.subs.builder.monthly",
-    tier: SubscriptionTier.builder,
+    productId: "app.convos.subs.monthly",
+    tier: SUBSCRIPTION_TIER_PLUS,
     period: SubscriptionPeriod.monthly,
     status: SubscriptionStatus.active,
     originalTransactionId: `otid-${accountId}`,
@@ -143,7 +143,7 @@ describe("GET /v2/accounts/me/credits", () => {
 
   test("active Builder monthly with zero consumes: balance == monthlyGrant", async () => {
     const accountId = await newAccount();
-    await seedBuilderMonthly(accountId);
+    await seedPlusMonthly(accountId);
     const token = await tokenFor(accountId);
     const res = await request(makeApp())
       .get("/v2/accounts/me/credits")
@@ -167,8 +167,8 @@ describe("GET /v2/accounts/me/credits", () => {
     await upsertFromVerify({
       accountId,
       appAccountToken: "99999999-2222-3333-4444-555555555555",
-      productId: "app.convos.subs.builder.monthly",
-      tier: SubscriptionTier.builder,
+      productId: "app.convos.subs.monthly",
+      tier: SUBSCRIPTION_TIER_PLUS,
       period: SubscriptionPeriod.monthly,
       status: SubscriptionStatus.expired,
       originalTransactionId: `otid-expired-${accountId}`,
@@ -198,8 +198,8 @@ describe("GET /v2/accounts/me/credits", () => {
     await upsertFromVerify({
       accountId,
       appAccountToken: "88888888-2222-3333-4444-555555555555",
-      productId: "app.convos.subs.builder.monthly",
-      tier: SubscriptionTier.builder,
+      productId: "app.convos.subs.monthly",
+      tier: SUBSCRIPTION_TIER_PLUS,
       period: SubscriptionPeriod.monthly,
       status: SubscriptionStatus.active,
       originalTransactionId: `otid-past-active-${accountId}`,
@@ -227,7 +227,7 @@ describe("GET /v2/accounts/me/credits", () => {
 
   test("consumes within current period count against monthlyGrantUsed", async () => {
     const accountId = await newAccount();
-    await seedBuilderMonthly(accountId);
+    await seedPlusMonthly(accountId);
     await writeConsume(
       accountId,
       300,
@@ -251,7 +251,7 @@ describe("GET /v2/accounts/me/credits", () => {
 
   test("consumes before currentPeriodStart do NOT count (previous period burn)", async () => {
     const accountId = await newAccount();
-    await seedBuilderMonthly(accountId);
+    await seedPlusMonthly(accountId);
     // Burn in the prior period — should not affect this period's display.
     await writeConsume(
       accountId,
@@ -270,7 +270,7 @@ describe("GET /v2/accounts/me/credits", () => {
 
   test("monthlyGrantUsed is capped at monthlyGrant (over-burn doesn't go negative)", async () => {
     const accountId = await newAccount();
-    await seedBuilderMonthly(accountId);
+    await seedPlusMonthly(accountId);
     await writeConsume(
       accountId,
       9999,
@@ -286,17 +286,17 @@ describe("GET /v2/accounts/me/credits", () => {
     expect(body.balance).toBe(0);
   });
 
-  test("Pro annual: monthlyGrant = 12 × monthly amount", async () => {
+  test("Plus annual: monthlyGrant = 12 × monthly amount", async () => {
     const accountId = await newAccount();
     await upsertFromVerify({
       accountId,
       appAccountToken: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
-      productId: "app.convos.subs.pro.annual",
-      tier: SubscriptionTier.pro,
+      productId: "app.convos.subs.annual",
+      tier: SUBSCRIPTION_TIER_PLUS,
       period: SubscriptionPeriod.annual,
       status: SubscriptionStatus.active,
-      originalTransactionId: "otid-pro-annual",
-      transactionId: "tx-pro-annual",
+      originalTransactionId: "otid-plus-annual",
+      transactionId: "tx-plus-annual",
       startedAt: new Date("2026-05-01T00:00:00.000Z"),
       currentPeriodStart: new Date("2026-05-01T00:00:00.000Z"),
       currentPeriodEnd: new Date("2027-05-01T00:00:00.000Z"),
@@ -310,8 +310,8 @@ describe("GET /v2/accounts/me/credits", () => {
       .get("/v2/accounts/me/credits")
       .set("X-Convos-AuthToken", token);
     const body = res.body as BalanceBody;
-    expect(body.monthlyGrant).toBe(10000 * 12);
-    expect(body.balance).toBe(10000 * 12);
+    expect(body.monthlyGrant).toBe(2500 * 12);
+    expect(body.balance).toBe(2500 * 12);
     expect(body.nextRefreshAt).toBe("2027-05-01T00:00:00.000Z");
   });
 });
@@ -378,8 +378,8 @@ describe("GET /v2/accounts/me/credits — free-tier (no subscription)", () => {
     await prisma.subscription.create({
       data: {
         accountId,
-        productId: "app.convos.subs.builder.monthly",
-        tier: SubscriptionTier.builder,
+        productId: "app.convos.subs.monthly",
+        tier: SUBSCRIPTION_TIER_PLUS,
         period: SubscriptionPeriod.monthly,
         status: SubscriptionStatus.expired,
         originalTransactionId: `otx-expired-${accountId}`,

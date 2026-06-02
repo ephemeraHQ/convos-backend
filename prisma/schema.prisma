@@ -263,11 +263,6 @@ model CreditLedger {
   @@index([grantKindId])
 }
 
-enum SubscriptionTier {
-  builder
-  pro
-}
-
 enum SubscriptionPeriod {
   monthly
   annual
@@ -291,7 +286,11 @@ model Subscription {
   id                    String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   accountId             String             @db.Uuid
   productId             String
-  tier                  SubscriptionTier
+  // Plain string column (no Postgres enum). Application code defines
+  // the valid set in src/subscriptions/tiers.ts. Currently only `plus`
+  // is written; the previous `builder`/`pro` values were backfilled to
+  // `plus` in migration 20260529190000_drop_subscription_tier_enum.
+  tier                  String
   period                SubscriptionPeriod
   status                SubscriptionStatus
   // Apple's stable per-subscription-line identifier (constant across renewals

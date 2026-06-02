@@ -15,10 +15,11 @@ import {
 } from "@/subscriptions/jws-verifier";
 import {
   AppleEnv,
+  SUBSCRIPTION_TIER_PLUS,
   SubscriptionPeriod,
   SubscriptionStatus,
-  SubscriptionTier,
   upsertFromVerify,
+  type SubscriptionTier,
 } from "@/subscriptions/repository";
 import { prisma } from "@/utils/prisma";
 
@@ -94,7 +95,7 @@ const signTransaction = (overrides: Record<string, unknown>) =>
     transactionId: "3000000000000001",
     originalTransactionId: "1000000000000001",
     bundleId: TEST_BUNDLE_ID,
-    productId: "app.convos.subs.builder.monthly",
+    productId: "app.convos.subs.monthly",
     purchaseDate: new Date("2026-06-01T00:00:00.000Z").getTime(),
     originalPurchaseDate: new Date("2026-05-01T00:00:00.000Z").getTime(),
     expiresDate: new Date("2026-07-01T00:00:00.000Z").getTime(),
@@ -135,8 +136,8 @@ const seedSubscription = async (
   const { subscription } = await upsertFromVerify({
     accountId,
     appAccountToken: "00000000-0000-0000-0000-000000000001",
-    productId: "app.convos.subs.builder.monthly",
-    tier: overrides.tier ?? SubscriptionTier.builder,
+    productId: "app.convos.subs.monthly",
+    tier: overrides.tier ?? SUBSCRIPTION_TIER_PLUS,
     period: SubscriptionPeriod.monthly,
     status: SubscriptionStatus.active,
     originalTransactionId,
@@ -201,7 +202,7 @@ describe("POST /v2/webhooks/apple/ssn", () => {
     const transactionJws = await signTransaction({
       originalTransactionId: otid,
       transactionId: "3000000000000010",
-      productId: "app.convos.subs.builder.monthly",
+      productId: "app.convos.subs.monthly",
       purchaseDate: new Date("2026-06-01T00:00:00.000Z").getTime(),
       expiresDate: new Date("2026-07-01T00:00:00.000Z").getTime(),
     });
@@ -369,7 +370,7 @@ describe("POST /v2/webhooks/apple/ssn", () => {
     expect(updated?.status).toBe(SubscriptionStatus.active); // unchanged
   });
 
-  test("DID_CHANGE_RENEWAL_PREF: tier upgrade Builder → Pro", async () => {
+  test("DID_CHANGE_RENEWAL_PREF: period change monthly → annual updates productId", async () => {
     installLocalTestingVerifier();
     const otid = "1000000000000070";
     const { subscription } = await seedSubscription(otid);
@@ -380,7 +381,7 @@ describe("POST /v2/webhooks/apple/ssn", () => {
       signedTransactionInfo: await signTransaction({
         originalTransactionId: otid,
         transactionId: "3000000000000070",
-        productId: "app.convos.subs.pro.monthly",
+        productId: "app.convos.subs.annual",
       }),
     });
 
@@ -393,8 +394,8 @@ describe("POST /v2/webhooks/apple/ssn", () => {
     const updated = await prisma.subscription.findUnique({
       where: { id: subscription.id },
     });
-    expect(updated?.tier).toBe(SubscriptionTier.pro);
-    expect(updated?.productId).toBe("app.convos.subs.pro.monthly");
+    expect(updated?.tier).toBe(SUBSCRIPTION_TIER_PLUS);
+    expect(updated?.productId).toBe("app.convos.subs.annual");
   });
 
   test("unrecognized productId on DID_RENEW: acks 200, no crash, status still updates", async () => {

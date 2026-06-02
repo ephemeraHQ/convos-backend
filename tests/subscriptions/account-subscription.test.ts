@@ -99,7 +99,7 @@ const signTransaction = async (overrides: Record<string, unknown>) => {
     transactionId: "2000000000000001",
     originalTransactionId: "2000000000000001",
     bundleId: TEST_BUNDLE_ID,
-    productId: "app.convos.subs.builder.monthly",
+    productId: "app.convos.subs.monthly",
     purchaseDate: new Date("2026-05-01T00:00:00.000Z").getTime(),
     originalPurchaseDate: new Date("2026-05-01T00:00:00.000Z").getTime(),
     expiresDate: new Date("2026-06-01T00:00:00.000Z").getTime(),
@@ -153,10 +153,10 @@ describe("GET /v2/accounts/me/subscription", () => {
       .set("X-Convos-AuthToken", token);
     expect(res.status).toBe(200);
     expect(res.body).toEqual({
-      tier: "builder",
+      tier: "plus",
       period: "monthly",
       status: "active",
-      productId: "app.convos.subs.builder.monthly",
+      productId: "app.convos.subs.monthly",
       currentPeriodEnd: "2026-06-01T00:00:00.000Z",
       willRenew: true,
       isInTrial: false,
@@ -253,17 +253,17 @@ describe("POST /v2/accounts/me/subscription/verify", () => {
       .set("X-Convos-AuthToken", token)
       .send({
         jwsRepresentation: await signTransaction({
-          productId: "app.convos.subs.pro.annual",
+          productId: "app.convos.subs.annual",
           appAccountToken: "11111111-2222-3333-4444-555555555555",
         }),
       });
     expect(res.status).toBe(200);
     const body = res.body as VerifyBody;
     expect(body.subscription).toEqual({
-      tier: "pro",
+      tier: "plus",
       period: "annual",
       status: "active",
-      productId: "app.convos.subs.pro.annual",
+      productId: "app.convos.subs.annual",
       currentPeriodEnd: "2026-06-01T00:00:00.000Z",
       willRenew: true,
       isInTrial: false,
@@ -276,7 +276,7 @@ describe("POST /v2/accounts/me/subscription/verify", () => {
     expect(persisted?.appAccountToken).toBe(
       "11111111-2222-3333-4444-555555555555",
     );
-    expect(persisted?.tier).toBe("pro");
+    expect(persisted?.tier).toBe("plus");
   });
 
   test("introductory offer → status=trial, isInTrial=true", async () => {

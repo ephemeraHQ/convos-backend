@@ -6,6 +6,7 @@ import { startOfNextUtcDay } from "@/payments/daily-refill/utc";
 import { findCurrentByAccountId } from "@/subscriptions/repository";
 import { isEntitledSubscription } from "@/subscriptions/status";
 import { tierGrant } from "@/subscriptions/tier-config";
+import { requireSubscriptionTier } from "@/subscriptions/tiers";
 import { prisma } from "@/utils/prisma";
 
 const MONTH_LABEL_FORMATTER = new Intl.DateTimeFormat("en-US", {
@@ -76,7 +77,10 @@ export async function creditsGetHandler(req: Request, res: Response) {
       return;
     }
 
-    const grant = tierGrant(subscription.tier, subscription.period);
+    const grant = tierGrant(
+      requireSubscriptionTier(subscription.tier),
+      subscription.period,
+    );
     const rawUsed = await sumPeriodConsumes(
       accountId,
       subscription.currentPeriodStart,

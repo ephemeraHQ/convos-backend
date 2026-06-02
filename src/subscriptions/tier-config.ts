@@ -1,4 +1,5 @@
-import { SubscriptionPeriod, SubscriptionTier } from "@prisma/client";
+import { SubscriptionPeriod } from "@prisma/client";
+import type { SubscriptionTier } from "@/subscriptions/tiers";
 import { AppError } from "@/utils/errors";
 
 const parsePositiveInt = (key: string, raw: string | undefined): number => {
@@ -22,21 +23,22 @@ const parsePositiveInt = (key: string, raw: string | undefined): number => {
  * Annual subscriptions inherit the monthly amount per period; the renewal
  * cycle is just 12× longer. iOS displays `monthlyGrant` either way; the
  * `period` field distinguishes the billing cadence.
+ *
+ * We ship a single tier (Plus), so this collapses to one env var read.
+ * The `tier` parameter is preserved so call sites still document which
+ * tier they're asking about; when a second tier is added, the lookup
+ * branches on `tier` again.
  */
-const monthlyAmountForTier = (tier: SubscriptionTier): number => {
-  switch (tier) {
-    case SubscriptionTier.builder:
-      return parsePositiveInt(
-        "PAYMENTS_GRANT_BUILDER_MONTHLY",
-        process.env.PAYMENTS_GRANT_BUILDER_MONTHLY,
-      );
-    case SubscriptionTier.pro:
-      return parsePositiveInt(
-        "PAYMENTS_GRANT_PRO_MONTHLY",
-        process.env.PAYMENTS_GRANT_PRO_MONTHLY,
-      );
-  }
-};
+const monthlyAmount = (): number =>
+  // Falls back to the legacy `PAYMENTS_GRANT_BUILDER_MONTHLY` env var if
+  // the new `PAYMENTS_GRANT_PLUS_MONTHLY` isn't set, so deploys don't
+  // need to be coordinated with the env var rename. Drop the fallback
+  // once all environments set the new name.
+  parsePositiveInt(
+    "PAYMENTS_GRANT_PLUS_MONTHLY",
+    process.env.PAYMENTS_GRANT_PLUS_MONTHLY ??
+      process.env.PAYMENTS_GRANT_BUILDER_MONTHLY,
+  );
 
 export type TierGrant = {
   tier: SubscriptionTier;
@@ -55,7 +57,7 @@ export const tierGrant = (
   tier: SubscriptionTier,
   period: SubscriptionPeriod,
 ): TierGrant => {
-  const monthly = monthlyAmountForTier(tier);
+  const monthly = monthlyAmount();
   return {
     tier,
     period,

@@ -5,10 +5,10 @@ import {
   findCurrentByAccountId,
   findReceiptByTransactionId,
   serializeUserSubscription,
+  SUBSCRIPTION_TIER_PLUS,
   SubscriptionAccountMismatchError,
   SubscriptionPeriod,
   SubscriptionStatus,
-  SubscriptionTier,
   upsertFromVerify,
   type VerifyInput,
 } from "@/subscriptions/repository";
@@ -37,8 +37,8 @@ const verifyInput = (overrides: Partial<VerifyInput>): VerifyInput => ({
   accountId: overrides.accountId ?? "",
   appAccountToken:
     overrides.appAccountToken ?? "11111111-2222-3333-4444-555555555555",
-  productId: overrides.productId ?? "app.convos.subs.builder.monthly",
-  tier: overrides.tier ?? SubscriptionTier.builder,
+  productId: overrides.productId ?? "app.convos.subs.monthly",
+  tier: overrides.tier ?? SUBSCRIPTION_TIER_PLUS,
   period: overrides.period ?? SubscriptionPeriod.monthly,
   status: overrides.status ?? SubscriptionStatus.active,
   originalTransactionId:
@@ -82,7 +82,7 @@ describe("upsertFromVerify", () => {
       }),
     );
     expect(subscription.accountId).toBe(accountId);
-    expect(subscription.tier).toBe(SubscriptionTier.builder);
+    expect(subscription.tier).toBe(SUBSCRIPTION_TIER_PLUS);
     expect(subscription.status).toBe(SubscriptionStatus.active);
     expect(receiptCreated).toBe(true);
 
@@ -517,20 +517,20 @@ describe("serializeUserSubscription", () => {
         accountId,
         originalTransactionId: "otid-serialize",
         transactionId: "tx-serialize",
-        tier: SubscriptionTier.pro,
+        tier: SUBSCRIPTION_TIER_PLUS,
         period: SubscriptionPeriod.annual,
         status: SubscriptionStatus.trial,
-        productId: "app.convos.subs.pro.annual",
+        productId: "app.convos.subs.annual",
         isInTrial: true,
         willRenew: true,
         currentPeriodEnd: new Date("2027-05-01T00:00:00.000Z"),
       }),
     );
     expect(serializeUserSubscription(subscription)).toEqual({
-      tier: SubscriptionTier.pro,
+      tier: SUBSCRIPTION_TIER_PLUS,
       period: SubscriptionPeriod.annual,
       status: SubscriptionStatus.trial,
-      productId: "app.convos.subs.pro.annual",
+      productId: "app.convos.subs.annual",
       currentPeriodEnd: "2027-05-01T00:00:00.000Z",
       willRenew: true,
       isInTrial: true,
