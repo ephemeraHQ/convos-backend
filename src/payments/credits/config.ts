@@ -7,6 +7,7 @@ export interface PaymentsConfig {
   reservedMaxTurnCredits: bigint;
   minBalance: bigint;
   freeTierDailyCapCredits: number;
+  signupBonusCredits: number;
 }
 
 const requireFloat = (key: string, raw: string | undefined): number => {
@@ -127,12 +128,35 @@ export const loadFreeTierDailyCapCredits = (): number => {
   return Number(big);
 };
 
+// PAYMENTS_SIGNUP_BONUS_CREDITS
+//   One-time bonus granted on first account creation (SIWE upgrade).
+//   OPTIONAL by design: unset/empty/"0" => 0 => feature disabled (kill-switch).
+//   Any other value must be a non-negative safe integer. Do NOT convert this
+//   to a require* loader; "unset = off" is the intended contract.
+export const loadSignupBonusCredits = (): number => {
+  const raw = process.env.PAYMENTS_SIGNUP_BONUS_CREDITS;
+  if (raw === undefined || raw.trim() === "") {
+    return 0;
+  }
+  const trimmed = raw.trim();
+  if (
+    !/^\d+$/.test(trimmed) ||
+    BigInt(trimmed) > BigInt(Number.MAX_SAFE_INTEGER)
+  ) {
+    throw new ValidationError(
+      `PAYMENTS_SIGNUP_BONUS_CREDITS must be a non-negative safe integer, got: ${raw}`,
+    );
+  }
+  return Number(trimmed);
+};
+
 export const loadConfig = (): PaymentsConfig => ({
   ...loadMarkupRate(),
   creditsPerDollar: loadCreditsPerUsd(),
   reservedMaxTurnCredits: loadReservedMaxTurnCredits(),
   minBalance: loadMinBalanceCredits(),
   freeTierDailyCapCredits: loadFreeTierDailyCapCredits(),
+  signupBonusCredits: loadSignupBonusCredits(),
 });
 
 export const config: PaymentsConfig = loadConfig();
