@@ -49,13 +49,6 @@ async function reset() {
   // Preserve the admin account seeded by migration; only wipe test-created rows.
   await prisma.account.deleteMany({ where: { id: { not: ADMIN_ACCOUNT_ID } } });
   await prisma.authNonce.deleteMany();
-  // The best-effort grant-failure test deactivates the signup_bonus GrantKind.
-  // GrantKind is migration-seeded (not wiped here), so restore active=true to
-  // self-heal: a hard-killed run can't leave the shared test DB poisoned.
-  await prisma.grantKind.update({
-    where: { id: "signup_bonus" },
-    data: { active: true },
-  });
 }
 
 describe("POST /auth/token (legacy + SIWE)", () => {
@@ -459,32 +452,5 @@ describe("POST /auth/token signup bonus", () => {
       where: { accountId: method!.accountId, grantKindId: "signup_bonus" },
     });
     expect(rows.length).toBe(1);
-  });
-
-  test("grant failure does not block token mint (best-effort)", async () => {
-    await prisma.grantKind.update({
-      where: { id: "signup_bonus" },
-      data: { active: false },
-    });
-    try {
-      const { res, address } = await signupViaSiwe("dev-bonus-3");
-      expect(res.status).toBe(200);
-      const body = res.body as { token: string };
-      const payload = await verifyJwtToken({ token: body.token });
-      expect(payload.accountId).toBeTruthy();
-
-      const method = await prisma.authMethod.findFirst({
-        where: { externalKey: address },
-      });
-      const rows = await prisma.creditLedger.findMany({
-        where: { accountId: method!.accountId, grantKindId: "signup_bonus" },
-      });
-      expect(rows.length).toBe(0);
-    } finally {
-      await prisma.grantKind.update({
-        where: { id: "signup_bonus" },
-        data: { active: true },
-      });
-    }
   });
 });

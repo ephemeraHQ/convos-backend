@@ -8,8 +8,8 @@ import {
   NONCE_COOKIE_NAME,
   readNonceFromCookie,
 } from "@/api/v2/auth/nonce-cookie";
-import { grant } from "@/payments";
 import { config } from "@/payments/credits/config";
+import { grantSignupBonusWithTx } from "@/payments/signup-bonus";
 import { deviceIdSchema } from "@/utils/device-id";
 import { createJwtToken } from "@/utils/jwt";
 import { prisma } from "@/utils/prisma";
@@ -101,11 +101,30 @@ export async function generateToken(
       throw err;
     }
 
-    // 3d. Upsert Account + AuthMethod
-    const upserted = await upsertAuthMethodAndAccount({
-      type: "SIWE",
-      externalKey: address,
-    });
+    // 3d. Upsert Account + AuthMethod. On first creation, grant the signup
+    // bonus inside the same transaction (atomic) so a new account can never
+    // exist without its bonus. A failure rolls the account back and surfaces
+    // as a retryable 500 rather than silently dropping the bonus.
+    let upserted: { accountId: string; created: boolean };
+    try {
+      upserted = await upsertAuthMethodAndAccount({
+        type: "SIWE",
+        externalKey: address,
+        onCreate:
+          config.signupBonusCredits > 0
+            ? (tx, newAccountId) =>
+                grantSignupBonusWithTx(
+                  tx,
+                  newAccountId,
+                  config.signupBonusCredits,
+                )
+            : undefined,
+      });
+    } catch (err) {
+      req.log.error({ err }, "auth.account.create_failed");
+      res.status(500).json({ error: "Failed to create account" });
+      return;
+    }
     accountId = upserted.accountId;
 
     // Best-effort backfill of DeviceRegistration.accountId.
@@ -157,21 +176,6 @@ export async function generateToken(
         { err, deviceId: body.deviceId, accountId },
         "auth.device.account_backfill_failed",
       );
-    }
-
-    if (upserted.created && config.signupBonusCredits > 0) {
-      try {
-        await grant({
-          accountId,
-          credits: config.signupBonusCredits,
-          idempotencyKey: `signup_bonus_${accountId}`,
-          kind: "signup_bonus",
-          note: "Signup bonus",
-        });
-        req.log.info({ accountId }, "auth.account.signup_bonus_granted");
-      } catch (err) {
-        req.log.warn({ err, accountId }, "auth.account.signup_bonus_failed");
-      }
     }
   }
 
