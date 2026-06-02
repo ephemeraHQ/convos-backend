@@ -946,20 +946,22 @@ export function detectStructuredSkillDefinition(
     }
   }
 
-  // 2) A block of the all-caps section headers our skill format uses. Require
-  //    >= 2 distinct standalone header lines so one stray all-caps word in
-  //    prose can't trip the gate.
+  // 2) A block of the DISTINCTIVE all-caps section headers our skill format
+  //    uses. Require >= 2 distinct standalone header lines so one stray all-caps
+  //    word in prose can't trip the gate. Only headers that don't collide with
+  //    ordinary human documents qualify — generic words like RULES / TONE /
+  //    GUIDELINES / PERSONA / IDENTITY appear as all-caps headers in brand style
+  //    guides, HR docs, and wikis (verified: a TONE+RULES style guide tripped
+  //    the gate), so they are excluded here. A real skill-definition in our
+  //    format has BRAIN/SOUL/HEART/THE HOOK/WELCOME MESSAGE anyway; one that
+  //    only uses RULES/TONE still routes to the LLM, which classifies it
+  //    correctly as agent-addressed.
   const SECTIONS = new Set([
     "BRAIN",
     "SOUL",
     "HEART",
     "THE HOOK",
-    "GUIDELINES",
-    "RULES",
-    "TONE",
     "WELCOME MESSAGE",
-    "PERSONA",
-    "IDENTITY",
   ]);
   const hits = new Set<string>();
   for (const rawLine of content.split(/\r?\n/)) {

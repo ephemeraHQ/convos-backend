@@ -10,8 +10,14 @@
  * genuine agent-addressed prompts + install steps as expected=true) so we can
  * pick the approach empirically instead of guessing.
  *
- * Variants:
- *   legacy    — the #265 LLM prompt (frozen snapshot below) on BUILDER_CLASSIFIER_MODEL
+ * Variants (frozen prompt snapshots taken verbatim from git history):
+ *   pre265    — the classifier prompt BEFORE #265 ("Two kinds of content count
+ *               as passthrough" / "Anything else is source material → false").
+ *               The stricter version, no "Lean PASSTHROUGH" bias. From 5cd1529^.
+ *   post265   — the classifier prompt AFTER #265 ("Choose PASSTHROUGH … whenever
+ *               the content is AGENT-SHAPED" + "Lean PASSTHROUGH …"). The loosened
+ *               version that shipped the Caddie bug. Decision text is byte-identical
+ *               to what was live on otr-dev before this PR (verified).
  *   current   — the SHIPPED production path (classifyPastedContent): deterministic
  *               structure gate → passthrough, else the improved LLM prompt. This
  *               is the hybrid the PR ships; the `current` column is the real fix.
@@ -22,8 +28,8 @@
  * Usage:
  *   BRAINTRUST_API_KEY=...  BUILDER_OPENROUTER_API_KEY=...  \
  *   pnpm tsx tests/evals/classifier.ts \
- *     --variants legacy,current,heuristic \
- *     --model minimax/minimax-m3 --samples 3
+ *     --variants pre265,post265,current,heuristic \
+ *     --model minimax/minimax-m3 --samples 5
  *
  * BRAINTRUST_API_KEY is optional — without it, the console summary still prints
  * (Braintrust logging is skipped). At least one OpenRouter key is required for
@@ -52,7 +58,7 @@ const { values } = parseArgs({
   },
 });
 
-const ALL_VARIANTS = ["legacy", "current", "heuristic"] as const;
+const ALL_VARIANTS = ["pre265", "post265", "current", "heuristic"] as const;
 type Variant = (typeof ALL_VARIANTS)[number];
 
 const VARIANTS: Variant[] = (() => {
@@ -109,9 +115,46 @@ const OPENROUTER_KEY =
   "";
 
 // ---------------------------------------------------------------------------
-// #265 legacy classifier prompt (frozen snapshot, for A/B against `current`)
+// Frozen classifier-prompt snapshots from git history. Decision text is copied
+// verbatim; only the trailing JSON spec is trimmed to {isPassthrough} since the
+// eval scores the verdict, not the metadata extraction.
 // ---------------------------------------------------------------------------
-function legacyClassifierPrompt(content: string): string {
+
+// PRE-#265 — the stricter prompt (parent of 5cd1529). No "Lean PASSTHROUGH".
+function pre265ClassifierPrompt(content: string): string {
+  return `You are classifying pasted text to decide if it should be used VERBATIM as the prompt for a new AI agent, or treated as source material to design an agent from.
+
+Pasted content:
+---
+${content}
+---
+
+Two kinds of content count as "passthrough" (use verbatim, do not re-generate):
+
+Type A — install-instructions: setup choreography addressed to an AI agent
+- Second-person language: "Read this, then follow the steps", "Ask the user for API keys"
+- Setup commands: git clone, npm install, bun install, export env vars
+- Agent workflow: clone → install → configure → adopt skills → report progress
+- Clearly addressed to an AI, not to a human developer
+
+Type B — skill-definition: a complete system prompt already written for an agent
+- Often has YAML frontmatter with name: and description:
+- Direct instructions to an AI: "You are...", "You must...", "Your job is to..."
+- Section headers like BRAIN/SOUL/HEART, or THE HOOK, or rules/behavior definitions
+- A ready-to-use agent definition, not content ABOUT a topic
+
+Anything else is "source material" — an article, essay, README-for-humans, product spec, book excerpt, etc. — and should NOT be passthrough. For those, return false.
+
+Respond with ONLY a JSON object (no markdown fences, no explanation):
+
+{
+  "isPassthrough": true|false
+}`;
+}
+
+// POST-#265 — the loosened prompt that shipped the Caddie bug (5cd1529). The
+// decision text below is byte-identical to what was live on otr-dev pre-PR.
+function post265ClassifierPrompt(content: string): string {
   return `You are classifying pasted text to decide if it should be used VERBATIM as the prompt for a new AI agent, or treated as source material to design an agent from.
 
 Pasted content:
@@ -185,14 +228,14 @@ async function runCurrent(input: string): Promise<boolean | null> {
   return res ? Boolean(res.classification?.isPassthrough) : null;
 }
 
-async function runLegacy(input: string): Promise<boolean | null> {
+async function runLlmPrompt(prompt: string): Promise<boolean | null> {
   await loadDeps();
   const resp = await _client.openRouterChatCompletion({
     apiKey: OPENROUTER_KEY,
     stage: "classifier",
     body: {
       model: MODEL,
-      messages: [{ role: "user", content: legacyClassifierPrompt(input) }],
+      messages: [{ role: "user", content: prompt }],
       temperature: 0.2,
     },
   });
@@ -207,8 +250,10 @@ async function runHeuristic(input: string): Promise<boolean> {
 
 async function runVariant(v: Variant, input: string): Promise<boolean | null> {
   switch (v) {
-    case "legacy":
-      return runLegacy(input);
+    case "pre265":
+      return runLlmPrompt(pre265ClassifierPrompt(input));
+    case "post265":
+      return runLlmPrompt(post265ClassifierPrompt(input));
     case "current":
       return runCurrent(input);
     case "heuristic":

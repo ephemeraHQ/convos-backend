@@ -1420,6 +1420,48 @@ describe("templateGen service — OpenRouter integration", () => {
   });
 
   // -----------------------------------------------------------------------
+  // detectStructuredSkillDefinition — precision boundary of the gate. It must
+  // fire on our distinctive skill-format headers but NOT on ordinary human
+  // documents that happen to use all-caps section labels (brand guides, wikis).
+  // -----------------------------------------------------------------------
+  test("detectStructuredSkillDefinition: distinctive headers gate, generic all-caps labels do not", async () => {
+    const { detectStructuredSkillDefinition } =
+      await import("@/api/v2/agent-templates/services/templateGen");
+
+    // Frontmatter with a name: key → structured, name read straight from it.
+    expect(
+      detectStructuredSkillDefinition(
+        "---\nname: Sommelier\ndescription: Pairs wine\n---\nYou are a sommelier.",
+      ),
+    ).toEqual({ agentName: "Sommelier", description: "Pairs wine" });
+
+    // >= 2 distinctive skill-format headers → structured.
+    expect(
+      detectStructuredSkillDefinition("BRAIN\nThink first.\n\nSOUL\nBe warm."),
+    ).not.toBeNull();
+
+    // A brand style guide using all-caps TONE + RULES is SOURCE MATERIAL, not a
+    // skill-definition — those generic words must not trip the gate.
+    expect(
+      detectStructuredSkillDefinition(
+        "ACME STYLE GUIDE\n\nTONE\nWarm and direct.\n\nRULES\nNo exclamation points.",
+      ),
+    ).toBeNull();
+
+    // A single distinctive header isn't enough (needs >= 2).
+    expect(
+      detectStructuredSkillDefinition("SOUL\nBe warm and concise."),
+    ).toBeNull();
+
+    // Markdown headings alone (no frontmatter, no distinctive headers) → null.
+    expect(
+      detectStructuredSkillDefinition(
+        "# An Article\n\n## Background\nProse for a human reader.",
+      ),
+    ).toBeNull();
+  });
+
+  // -----------------------------------------------------------------------
   // looksLikeUrl helper exported and works correctly
   // -----------------------------------------------------------------------
   test("looksLikeUrl detects URL-shaped text", async () => {
