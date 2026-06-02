@@ -1,3 +1,4 @@
+import { LedgerReason } from "@prisma/client";
 import { afterEach, beforeAll, describe, expect, test } from "vitest";
 import { upsertAuthMethodAndAccount } from "@/accounts/repository";
 import { ADMIN_ACCOUNT_ID } from "@/utils/constants";
@@ -24,10 +25,11 @@ describe("upsertAuthMethodAndAccount", () => {
   afterEach(reset);
 
   test("first login: creates Account + AuthMethod, returns accountId", async () => {
-    const { accountId } = await upsertAuthMethodAndAccount({
+    const { accountId, created } = await upsertAuthMethodAndAccount({
       type: "SIWE",
       externalKey: ADDR_A,
     });
+    expect(created).toBe(true);
     const account = await prisma.account.findUnique({
       where: { id: accountId },
     });
@@ -47,6 +49,8 @@ describe("upsertAuthMethodAndAccount", () => {
       type: "SIWE",
       externalKey: ADDR_A,
     });
+    expect(first.created).toBe(true);
+    expect(second.created).toBe(false);
     expect(second.accountId).toBe(first.accountId);
     const accounts = await prisma.account.count({
       where: nonAdminAccountFilter,
@@ -84,6 +88,78 @@ describe("upsertAuthMethodAndAccount", () => {
       }),
     ]);
     expect(a.accountId).toBe(b.accountId);
+    expect([a.created, b.created].filter(Boolean).length).toBe(1);
+    expect(await prisma.account.count({ where: nonAdminAccountFilter })).toBe(
+      1,
+    );
+    expect(await prisma.authMethod.count()).toBe(1);
+  });
+
+  test("onCreate side-effect commits atomically with the account", async () => {
+    let seenAccountId: string | undefined;
+    const { accountId, created } = await upsertAuthMethodAndAccount({
+      type: "SIWE",
+      externalKey: ADDR_A,
+      onCreate: async (tx, id) => {
+        seenAccountId = id;
+        await tx.creditLedger.create({
+          data: {
+            accountId: id,
+            delta: 0n,
+            reason: LedgerReason.adjust,
+            idempotencyKey: `hook_${id}`,
+            scope: "grant",
+            balanceAfter: 0n,
+          },
+        });
+      },
+    });
+    expect(created).toBe(true);
+    expect(seenAccountId).toBe(accountId);
+    const rows = await prisma.creditLedger.findMany({ where: { accountId } });
+    expect(rows.length).toBe(1);
+  });
+
+  test("onCreate throws → atomic rollback, no account/authMethod committed", async () => {
+    await expect(
+      upsertAuthMethodAndAccount({
+        type: "SIWE",
+        externalKey: ADDR_A,
+        onCreate: () => Promise.reject(new Error("boom")),
+      }),
+    ).rejects.toThrow("boom");
+    expect(await prisma.account.count({ where: nonAdminAccountFilter })).toBe(
+      0,
+    );
+    expect(await prisma.authMethod.count()).toBe(0);
+  });
+
+  test("onCreate throws once then heals on retry (same wallet)", async () => {
+    let calls = 0;
+    const onCreate = () => {
+      calls++;
+      return calls === 1
+        ? Promise.reject(new Error("transient"))
+        : Promise.resolve();
+    };
+    await expect(
+      upsertAuthMethodAndAccount({
+        type: "SIWE",
+        externalKey: ADDR_A,
+        onCreate,
+      }),
+    ).rejects.toThrow("transient");
+    expect(await prisma.account.count({ where: nonAdminAccountFilter })).toBe(
+      0,
+    );
+    expect(await prisma.authMethod.count()).toBe(0);
+
+    const healed = await upsertAuthMethodAndAccount({
+      type: "SIWE",
+      externalKey: ADDR_A,
+      onCreate,
+    });
+    expect(healed.created).toBe(true);
     expect(await prisma.account.count({ where: nonAdminAccountFilter })).toBe(
       1,
     );
