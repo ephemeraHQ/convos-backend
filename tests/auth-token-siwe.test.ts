@@ -1,3 +1,4 @@
+import { LedgerReason } from "@prisma/client";
 import cookieParser from "cookie-parser";
 import { Wallet } from "ethers";
 import express from "express";
@@ -11,7 +12,6 @@ import { config } from "@/payments/credits/config";
 import { ADMIN_ACCOUNT_ID } from "@/utils/constants";
 import { verifyJwtToken } from "@/utils/jwt";
 import { prisma } from "@/utils/prisma";
-import { LedgerReason } from "@prisma/client";
 import { buildSiweMessage } from "./helpers/siwe";
 
 vi.mock("firebase-admin/app");
