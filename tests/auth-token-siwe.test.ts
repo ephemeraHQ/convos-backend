@@ -48,6 +48,13 @@ async function reset() {
   // Preserve the admin account seeded by migration; only wipe test-created rows.
   await prisma.account.deleteMany({ where: { id: { not: ADMIN_ACCOUNT_ID } } });
   await prisma.authNonce.deleteMany();
+  // The best-effort grant-failure test deactivates the signup_bonus GrantKind.
+  // GrantKind is migration-seeded (not wiped here), so restore active=true to
+  // self-heal: a hard-killed run can't leave the shared test DB poisoned.
+  await prisma.grantKind.update({
+    where: { id: "signup_bonus" },
+    data: { active: true },
+  });
 }
 
 describe("POST /auth/token (legacy + SIWE)", () => {
