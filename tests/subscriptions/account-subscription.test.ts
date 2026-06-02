@@ -23,6 +23,13 @@ vi.mock("firebase-admin/messaging");
 
 const TEST_BUNDLE_ID = "app.convos.test";
 
+const DAY_MS = 24 * 60 * 60 * 1000;
+const FUTURE_EXPIRES = (() => {
+  const d = new Date(Date.now() + 30 * DAY_MS);
+  d.setUTCMilliseconds(0);
+  return d;
+})();
+
 const makeApp = () => {
   const app = express();
   app.use(pinoMiddleware);
@@ -102,7 +109,7 @@ const signTransaction = async (overrides: Record<string, unknown>) => {
     productId: "app.convos.subs.monthly",
     purchaseDate: new Date("2026-05-01T00:00:00.000Z").getTime(),
     originalPurchaseDate: new Date("2026-05-01T00:00:00.000Z").getTime(),
-    expiresDate: new Date("2026-06-01T00:00:00.000Z").getTime(),
+    expiresDate: FUTURE_EXPIRES.getTime(),
     type: "Auto-Renewable Subscription",
     appAccountToken: "11111111-2222-3333-4444-555555555555",
     inAppOwnershipType: "PURCHASED",
@@ -157,7 +164,7 @@ describe("GET /v2/accounts/me/subscription", () => {
       period: "monthly",
       status: "active",
       productId: "app.convos.subs.monthly",
-      currentPeriodEnd: "2026-06-01T00:00:00.000Z",
+      currentPeriodEnd: FUTURE_EXPIRES.toISOString(),
       willRenew: true,
       isInTrial: false,
     });
@@ -264,7 +271,7 @@ describe("POST /v2/accounts/me/subscription/verify", () => {
       period: "annual",
       status: "active",
       productId: "app.convos.subs.annual",
-      currentPeriodEnd: "2026-06-01T00:00:00.000Z",
+      currentPeriodEnd: FUTURE_EXPIRES.toISOString(),
       willRenew: true,
       isInTrial: false,
     });
