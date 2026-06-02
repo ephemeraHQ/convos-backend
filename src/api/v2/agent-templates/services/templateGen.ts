@@ -12,7 +12,9 @@
  * strict response_format json_schema, temp 0.7, no max_tokens.
  * Helper calls run at temp 0.2 without response_format: the GitHub-instructions
  * selector uses the main model; the content-classifier uses the cheap
- * BUILDER_CLASSIFIER_MODEL and leans toward passthrough.
+ * BUILDER_CLASSIFIER_MODEL and passes content through only when it is ADDRESSED
+ * TO an agent (system prompt / install steps) — a third-person brief that merely
+ * describes the agent is source material to design from, not a prompt to run.
  *
  * Soft defaults for non-name fields. Server-injects connections: [].
  */
@@ -917,7 +919,7 @@ Pasted content:
 ${truncated}
 ---
 
-Choose PASSTHROUGH (use the text verbatim, do not re-generate) whenever the content is AGENT-SHAPED — i.e. it reads like instructions written FOR an AI agent rather than prose written for a human reader. Two common shapes:
+Choose PASSTHROUGH (use the text verbatim, do not re-generate) ONLY when the content is AGENT-SHAPED — written and ADDRESSED TO an AI agent — rather than prose ABOUT an agent written for a human reader. The decisive test is *who the text speaks to*, not whether it names a persona, a voice, or a feature list. Two passthrough shapes:
 
 Type A — install-instructions: setup choreography addressed to an AI agent
 - Second-person language: "Read this, then follow the steps", "Ask the user for API keys"
@@ -927,13 +929,14 @@ Type A — install-instructions: setup choreography addressed to an AI agent
 
 Type B — skill-definition: a system prompt / agent definition already written for an agent
 - YAML frontmatter with name:/description:, or a title plus a role/identity line
-- Direct instructions to an AI: "You are...", "You must...", "Your job is to...", "Always/Never..."
-- A defined persona, voice, or behavioral rules; section headers like BRAIN/SOUL/HEART, THE HOOK, GUIDELINES, RULES, TONE, WELCOME MESSAGE
-- A ready-to-run agent definition — even a rough, partial, or unconventional one — rather than an article ABOUT a topic
+- Direct instructions to the AI: "You are...", "You must...", "Your job is to...", "Always/Never..."
+- A persona AND behavioral rules addressed to the agent; section headers like BRAIN/SOUL/HEART, THE HOOK, GUIDELINES, RULES, TONE, WELCOME MESSAGE
+- A ready-to-run agent definition the agent could run on as-is — not an article or description ABOUT a topic
 
-Lean PASSTHROUGH. If the text is structured as an agent persona, behavioral brief, or instruction set — even if it's imperfect, incomplete, or you would have written it differently — classify it as passthrough and preserve the author's wording. The author already wrote a prompt; respect it instead of rewriting it.
+Return false — SOURCE MATERIAL to DESIGN an agent from — for anything written for a human reader, EVEN WHEN it precisely describes the exact agent the user wants. In particular, a THIRD-PERSON BRIEF — prose that DESCRIBES what the agent does or is ("Coordinates tee times…", "Helps the group…", "Tracks who's in…", "Sends reminders.", "Friendly, laid-back golf buddy personality.") — is source material, NOT a skill-definition. Naming a persona, voice, or feature list does not make prose a system prompt; only being addressed to the agent does. Also source material: articles, essays, news, README-for-humans, marketing/landing copy, product specs, and book/transcript excerpts.
 
-Return false ONLY for genuine SOURCE MATERIAL — text written for humans that an agent would have to be DESIGNED from rather than run on directly: an article, essay, news story, README-for-humans, marketing/landing copy, product spec, or book/transcript excerpt, with no instructions addressed to an agent.
+Example — SOURCE MATERIAL (isPassthrough false): "A friendly running coach that builds weekly training plans, tracks the runner's mileage, and sends a Monday check-in." (third-person description → design it).
+Example — PASSTHROUGH skill-definition (isPassthrough true): "You are Coach. Build the user a weekly training plan. Always open with a Monday check-in. Never shame a missed run." (addressed to the agent → run verbatim).
 
 If passthrough, also produce metadata:
 - agentName: memorable name derived from the content
@@ -954,7 +957,7 @@ Respond with ONLY a JSON object (no markdown fences, no explanation):
 
 Rules:
 - If isPassthrough is false, all other fields MUST be null.
-- When borderline between "agent-shaped" and "source material", lean toward TRUE (passthrough). Better to preserve a real prompt than to rewrite one.
+- The tie-breaker is WHO the text addresses: agent-addressed (second-person / imperative instructions to the AI, YAML frontmatter, section headers, or install steps) → true; third-person prose describing the agent → false. If there is no agent-addressed signal, return false (design it) — a real prompt written for the agent is unmistakable.
 - Always pick a passthroughType when isPassthrough is true: install-instructions for setup choreography, skill-definition for a persona/system prompt. When both fit, prefer skill-definition.`;
 
   const t0 = performance.now();

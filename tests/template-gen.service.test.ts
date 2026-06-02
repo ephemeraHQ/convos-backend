@@ -1261,6 +1261,108 @@ describe("templateGen service — OpenRouter integration", () => {
   });
 
   // -----------------------------------------------------------------------
+  // Classifier prompt carries the agent-addressed-vs-third-person discriminator
+  // (regression for the prod miss where a third-person brief — "Golf tee time
+  // coordinator … Friendly, laid-back golf buddy personality." — was tagged
+  // skill-definition and used verbatim, so no agent was designed and a
+  // can't-actually-do-it booking capability shipped). The LLM verdict can't be
+  // asserted under a mock, so we lock the decisive guidance into the prompt.
+  // -----------------------------------------------------------------------
+  test("content classifier prompt routes a third-person brief to design (source material)", async () => {
+    const mod = await import("@/api/v2/agent-templates/services/templateGen");
+    generateTemplate = mod.generateTemplate;
+
+    const brief =
+      "Golf tee time coordinator for a group of friends at Bounty Club. Helps " +
+      "coordinate availability among the crew, track who can play and when, poll " +
+      "members, manage RSVPs. Also books tee times directly using the user's " +
+      "account. Keeps a running schedule of upcoming rounds. Sends reminders. " +
+      "Friendly, laid-back golf buddy personality.";
+
+    let callCount = 0;
+    const originalMockFetch = globalThis.fetch;
+    globalThis.fetch = ((input: any, init?: any) => {
+      const url =
+        typeof input === "string"
+          ? input
+          : input instanceof URL
+            ? input.toString()
+            : input.url;
+      if (url === OPENROUTER_URL) {
+        callCount++;
+        const reqBody = JSON.parse(init?.body as string);
+        capturedRequests.push({
+          url,
+          method: init?.method || "POST",
+          headers: extractHeaders(init as RequestInit),
+          body: reqBody,
+        });
+        if (callCount === 1) {
+          // Classifier — a correct verdict for this brief is "design it".
+          return new Response(
+            JSON.stringify({
+              model: "@preset/assistants-pro",
+              choices: [
+                {
+                  message: {
+                    content: JSON.stringify({
+                      isPassthrough: false,
+                      passthroughType: null,
+                      agentName: null,
+                      emoji: null,
+                      description: null,
+                      category: null,
+                    }),
+                  },
+                },
+              ],
+              usage: { prompt_tokens: 100, completion_tokens: 50 },
+            }),
+            { status: 200, headers: { "Content-Type": "application/json" } },
+          );
+        }
+        // Production (design) call.
+        return new Response(
+          JSON.stringify({
+            model: "@preset/assistants-pro",
+            choices: [
+              {
+                message: {
+                  content: JSON.stringify({
+                    prompt: "designed prompt",
+                    agentName: "Caddie",
+                    emoji: "⛳",
+                    description: "A golf tee-time coordinator",
+                    category: "Sports & Rec",
+                    tools: [],
+                  }),
+                },
+              },
+            ],
+            usage: { prompt_tokens: 100, completion_tokens: 50 },
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      }
+      return (originalMockFetch as any)(input, init);
+    }) as any;
+
+    await generateTemplate({ text: brief });
+
+    const classifierPrompt = getOpenRouterRequests()[0].body.messages[0]
+      .content as string;
+    // The corrected discriminator must be present so it can't silently regress
+    // back to the "Lean PASSTHROUGH" wording that misclassified this brief.
+    expect(classifierPrompt).toContain("ADDRESSED TO");
+    expect(classifierPrompt).toContain("THIRD-PERSON BRIEF");
+    expect(classifierPrompt).toContain("source material");
+    // And the design path (a second production call) ran, not verbatim passthrough.
+    expect(callCount).toBe(2);
+
+    globalThis.fetch = originalMockFetch;
+  });
+
+  // -----------------------------------------------------------------------
   // looksLikeUrl helper exported and works correctly
   // -----------------------------------------------------------------------
   test("looksLikeUrl detects URL-shaped text", async () => {
