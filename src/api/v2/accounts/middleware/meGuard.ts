@@ -18,6 +18,10 @@ export const meGuard = (
 ): void => {
   const r = accountIdSchema.safeParse(req.params.accountId);
   if (!r.success) {
+    req.log.warn(
+      { accountIdParam: String(req.params.accountId).slice(0, 64) },
+      "accounts.invalid_account_id",
+    );
     res.status(400).json({ code: "invalid_account_id" });
     return;
   }

@@ -2,6 +2,7 @@ import { createHash, timingSafeEqual } from "crypto";
 import type { NextFunction, Request, Response } from "express";
 import { AGENT_ASSETS_API_KEY } from "@/config";
 import { ADMIN_ACCOUNT_ID } from "@/utils/constants";
+import { maskKeyPrefix } from "@/utils/mask";
 import { authMiddleware } from "./auth";
 
 export const AGENT_API_KEY_HEADER = "X-Agent-API-Key";
@@ -51,6 +52,7 @@ export const agentApiKeyAuth = (
   const expectedKey = getAgentAssetsApiKey();
 
   if (!expectedKey) {
+    req.log.error("agent_api_key.not_configured");
     res.status(503).json({ error: "Agent assets API key not configured" });
     return;
   }
@@ -69,12 +71,17 @@ export const agentApiKeyAuth = (
 
   const providedKey = req.header(AGENT_API_KEY_HEADER)?.trim() ?? "";
   if (!providedKey) {
+    req.log.warn({ reason: "missing" }, "agent_api_key.unauthorized");
     res.status(401).json({ error: "Invalid or missing agent API key" });
     return;
   }
 
   const valid = constantTimeSecretCompare(providedKey, expectedKey);
   if (!valid) {
+    req.log.warn(
+      { reason: "mismatch", providedPrefix: maskKeyPrefix(providedKey) },
+      "agent_api_key.unauthorized",
+    );
     res.status(401).json({ error: "Invalid or missing agent API key" });
     return;
   }

@@ -20,26 +20,40 @@ export const creditsByIdGetHandler = async (
 ): Promise<void> => {
   const accountId = req.params.accountId; // meGuard already validated UUID shape
 
-  // 404 if the Account row itself doesn't exist. Spec § 4.1 perf note: this
-  // adds one PK lookup per GET vs the prior check handler which skipped it.
-  const account = await prisma.account.findUnique({
-    where: { id: accountId },
-    select: { id: true },
-  });
-  if (!account) {
-    res.status(404).json({ code: "account_not_found" });
+  try {
+    // 404 if the Account row itself doesn't exist. Spec § 4.1 perf note: this
+    // adds one PK lookup per GET vs the prior check handler which skipped it.
+    const account = await prisma.account.findUnique({
+      where: { id: accountId },
+      select: { id: true },
+    });
+    if (!account) {
+      req.log.warn({ accountId }, "credits.read.account_not_found");
+      res.status(404).json({ code: "account_not_found" });
+      return;
+    }
+
+    const balance = await getBalance(accountId);
+    const allowed = isAllowedFromBalance(balance);
+    req.log.info(
+      { accountId, balance: balance.toString(), allowed },
+      "credits.read.served",
+    );
+    res.status(200).json({
+      accountId,
+      balance: balance.toString(),
+      allowed,
+    });
+  } catch (error) {
+    req.log.error(
+      {
+        error,
+        stack: error instanceof Error ? error.stack : undefined,
+        accountId,
+      },
+      "credits.read.failed",
+    );
+    res.status(500).json({ error: "Failed to read credits balance" });
     return;
   }
-
-  const balance = await getBalance(accountId);
-  const allowed = isAllowedFromBalance(balance);
-  req.log.info(
-    { accountId, balance: balance.toString(), allowed },
-    "credits.read.served",
-  );
-  res.status(200).json({
-    accountId,
-    balance: balance.toString(),
-    allowed,
-  });
 };

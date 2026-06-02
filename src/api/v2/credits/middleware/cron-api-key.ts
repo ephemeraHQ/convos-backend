@@ -1,5 +1,6 @@
 import { createHash, timingSafeEqual } from "crypto";
 import type { NextFunction, Request, Response } from "express";
+import { maskKeyPrefix } from "@/utils/mask";
 
 const MIN_CRON_API_KEY_LENGTH = 32;
 
@@ -31,11 +32,6 @@ function constantTimeSecretCompare(
   return timingSafeEqual(a, b);
 }
 
-function maskKeyPrefix(key: string): string {
-  if (key.length === 0) return "(empty)";
-  return `${key.slice(0, 4)}... (len=${key.length})`;
-}
-
 export const requireCronApiKey = (
   req: Request,
   res: Response,
@@ -44,6 +40,7 @@ export const requireCronApiKey = (
   const expectedKey = getCronApiKey();
 
   if (!expectedKey) {
+    req.log.error("cron_api_key.not_configured");
     res.status(503).json({ error: "Cron API key not configured" });
     return;
   }
