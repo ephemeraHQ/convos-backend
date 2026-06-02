@@ -1,14 +1,14 @@
 import type { Prisma } from "@prisma/client";
 
 /**
- * Base "what can this caller see" filter for agent templates, mirroring the
- * visibility rules in the list handler (minus the optional status / owner /
- * search narrowing):
+ * Base "what can this caller see" filter for agent templates:
  *   - API key listener (admin): everything.
  *   - Anonymous: published only.
  *   - Authenticated user: published from anyone + their own non-published.
  *
- * Shared by the list and counts handlers so the two never drift.
+ * The single source of truth for visibility — the list handler composes the
+ * optional status / category / owner / search narrowing on top of this, and
+ * the counts handler aggregates over it, so the two never drift.
  */
 export function visibilityWhere(
   accountId: string | undefined,

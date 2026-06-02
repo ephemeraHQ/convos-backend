@@ -3,6 +3,7 @@ import type { Request, Response } from "express";
 import { z } from "zod";
 import { prisma } from "@/utils/prisma";
 import { serializeAgentTemplate } from "../lib/serialize-agent-template";
+import { visibilityWhere } from "../lib/visibility";
 
 const DEFAULT_LIMIT = 20;
 const MAX_LIMIT = 100;
@@ -192,21 +193,11 @@ export async function listHandler(req: Request, res: Response) {
         { ownerAccountId: accountId },
       ];
     }
-  } else if (isApiKeyListener) {
-    // API key listener sees everything (admin-like access). No filter needed.
-  } else if (accountId === undefined) {
-    // Anonymous caller with no status filter: published-only view.
-    where.status = "published";
   } else {
-    // Regular authenticated user without status filter:
-    // Published templates from any owner + own drafts/unlisted/archived.
-    where.OR = [
-      { status: "published" },
-      {
-        status: { in: ["draft", "unlisted", "archived"] },
-        ownerAccountId: accountId,
-      },
-    ];
+    // No status filter: the caller's full visible set (admin → everything,
+    // anonymous → published, user → published + own). Shared with the counts
+    // handler via visibilityWhere so the two never drift.
+    Object.assign(where, visibilityWhere(accountId, isApiKeyListener));
   }
 
   if (parsed.data.category !== undefined) {
