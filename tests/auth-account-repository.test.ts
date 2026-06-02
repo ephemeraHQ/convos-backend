@@ -39,20 +39,6 @@ describe("upsertAuthMethodAndAccount", () => {
     expect(method?.externalKey).toBe(ADDR_A);
   });
 
-  test("second login same wallet: created=false", async () => {
-    const first = await upsertAuthMethodAndAccount({
-      type: "SIWE",
-      externalKey: ADDR_A,
-    });
-    expect(first.created).toBe(true);
-    const second = await upsertAuthMethodAndAccount({
-      type: "SIWE",
-      externalKey: ADDR_A,
-    });
-    expect(second.created).toBe(false);
-    expect(second.accountId).toBe(first.accountId);
-  });
-
   test("second login same wallet: returns same accountId, does not insert", async () => {
     const first = await upsertAuthMethodAndAccount({
       type: "SIWE",
@@ -62,6 +48,8 @@ describe("upsertAuthMethodAndAccount", () => {
       type: "SIWE",
       externalKey: ADDR_A,
     });
+    expect(first.created).toBe(true);
+    expect(second.created).toBe(false);
     expect(second.accountId).toBe(first.accountId);
     const accounts = await prisma.account.count({
       where: nonAdminAccountFilter,
@@ -99,6 +87,7 @@ describe("upsertAuthMethodAndAccount", () => {
       }),
     ]);
     expect(a.accountId).toBe(b.accountId);
+    expect([a.created, b.created].filter(Boolean).length).toBe(1);
     expect(await prisma.account.count({ where: nonAdminAccountFilter })).toBe(
       1,
     );
