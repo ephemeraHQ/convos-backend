@@ -1352,9 +1352,12 @@ describe("templateGen service — OpenRouter integration", () => {
     const classifierPrompt = getOpenRouterRequests()[0].body.messages[0]
       .content as string;
     // The corrected discriminator must be present so it can't silently regress
-    // back to the "Lean PASSTHROUGH" wording that misclassified this brief.
+    // back to the "Lean PASSTHROUGH" wording that misclassified this brief. The
+    // discriminator now turns on TWO axes — who the text addresses AND whether it
+    // is a complete spec vs a short brief — so lock phrases from both.
     expect(classifierPrompt).toContain("ADDRESSED TO");
-    expect(classifierPrompt).toContain("THIRD-PERSON BRIEF");
+    expect(classifierPrompt).toContain("COMPLETE AGENT SPECIFICATION");
+    expect(classifierPrompt).toContain("SHORT brief");
     expect(classifierPrompt).toContain("source material");
     // And the design path (a second production call) ran, not verbatim passthrough.
     expect(callCount).toBe(2);
