@@ -898,8 +898,86 @@ interface ContentPassthroughResult {
   category: string | null;
 }
 
-/** Classify pasted content: is it agent-ready, or source material to generate from? */
-async function classifyPastedContent(
+function cleanScalar(v: string): string | null {
+  const s = v
+    .trim()
+    .replace(/^["']|["']$/g, "")
+    .trim();
+  return s.length ? s : null;
+}
+
+/**
+ * High-precision structural detector for pasted content that is unmistakably a
+ * skill-definition — YAML frontmatter with a `name:` key, or a block of the
+ * all-caps section headers our skill format uses (BRAIN / SOUL / THE HOOK /
+ * WELCOME MESSAGE …). When present, the content is agent-shaped beyond doubt,
+ * so the caller classifies it passthrough deterministically and skips the LLM
+ * classifier (cheaper, and not at the mercy of a flaky model on the easy case).
+ *
+ * The bar is deliberately strict: a false positive here would use SOURCE
+ * MATERIAL verbatim as a system prompt — the exact failure we are guarding
+ * against — so loose signals (a lone markdown `#` heading, or an article that
+ * happens to contain the word "RULES") must NOT trigger it. Those defer to the
+ * LLM's addressed-to-vs-about judgment. Exported so the classifier eval's
+ * deterministic variant exercises this exact gate.
+ *
+ * Returns the metadata readable straight from the structure (name/description
+ * from frontmatter), or null when the content is not structured.
+ */
+export function detectStructuredSkillDefinition(
+  content: string,
+): { agentName: string | null; description: string | null } | null {
+  // 1) Leading YAML frontmatter block with a name: key.
+  const fm =
+    /^\uFEFF?\s*---[ \t]*\r?\n([\s\S]*?)\r?\n---[ \t]*(?:\r?\n|$)/.exec(
+      content,
+    );
+  if (fm) {
+    const block = fm[1];
+    const nameMatch = /^[ \t]*name[ \t]*:[ \t]*(.+?)[ \t]*$/m.exec(block);
+    if (nameMatch) {
+      const descMatch = /^[ \t]*description[ \t]*:[ \t]*(.+?)[ \t]*$/m.exec(
+        block,
+      );
+      return {
+        agentName: cleanScalar(nameMatch[1]),
+        description: descMatch ? cleanScalar(descMatch[1]) : null,
+      };
+    }
+  }
+
+  // 2) A block of the all-caps section headers our skill format uses. Require
+  //    >= 2 distinct standalone header lines so one stray all-caps word in
+  //    prose can't trip the gate.
+  const SECTIONS = new Set([
+    "BRAIN",
+    "SOUL",
+    "HEART",
+    "THE HOOK",
+    "GUIDELINES",
+    "RULES",
+    "TONE",
+    "WELCOME MESSAGE",
+    "PERSONA",
+    "IDENTITY",
+  ]);
+  const hits = new Set<string>();
+  for (const rawLine of content.split(/\r?\n/)) {
+    const line = rawLine
+      .replace(/^[#>\s*_]+/, "")
+      .replace(/[\s*_:#]+$/, "")
+      .trim();
+    if (line && SECTIONS.has(line)) hits.add(line);
+  }
+  if (hits.size >= 2) return { agentName: null, description: null };
+
+  return null;
+}
+
+/** Classify pasted content: is it agent-ready, or source material to generate from?
+ *  Exported so the Braintrust classifier eval (tests/evals/classifier.ts) drives
+ *  the exact production prompt + parse path on the real model. */
+export async function classifyPastedContent(
   content: string,
   externalSignal?: AbortSignal,
   trace?: TraceContext,
@@ -911,6 +989,26 @@ async function classifyPastedContent(
   if (!apiKey) return null;
 
   const truncated = content.slice(0, 8_000);
+
+  // Deterministic fast-path: unmistakably-structured skill definitions
+  // (frontmatter / our section headers) are passthrough without consulting the
+  // LLM — high precision, and it can't be flipped by a flaky classifier model.
+  // Everything unstructured (third-person briefs, install steps, imperative
+  // prose) falls through to the addressed-to-vs-about LLM judgment below.
+  const structured = detectStructuredSkillDefinition(truncated);
+  if (structured) {
+    return {
+      classification: {
+        isPassthrough: true,
+        passthroughType: "skill-definition",
+        agentName: structured.agentName,
+        emoji: null,
+        description: structured.description,
+        category: null,
+      },
+      tokens: { promptTokens: 0, completionTokens: 0 },
+    };
+  }
 
   const classifierPrompt = `You are classifying pasted text to decide if it should be used VERBATIM as the prompt for a new AI agent, or treated as source material to design an agent from.
 

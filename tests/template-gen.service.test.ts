@@ -1363,6 +1363,63 @@ describe("templateGen service — OpenRouter integration", () => {
   });
 
   // -----------------------------------------------------------------------
+  // Deterministic gate: unmistakably-structured skill definitions (YAML
+  // frontmatter / our all-caps section headers) pass through WITHOUT an LLM
+  // call. The hybrid's whole point is that the easy, structured case can't be
+  // flipped by a flaky classifier model — so assert zero OpenRouter calls and
+  // verbatim content, and that metadata is read straight from the frontmatter.
+  // -----------------------------------------------------------------------
+  test("deterministic gate: a frontmatter skill-definition passes through with no LLM call", async () => {
+    const mod = await import("@/api/v2/agent-templates/services/templateGen");
+    generateTemplate = mod.generateTemplate;
+
+    // >= 300 chars so tryContentPassthrough engages; leading YAML frontmatter
+    // with a name: key is the high-precision structural signal.
+    const skillDef = [
+      "---",
+      "name: Sommelier",
+      "description: Pairs wine with meals",
+      "---",
+      "You are a sommelier. Recommend a bottle for the user's meal and budget.",
+      "Always offer one safe pick and one adventurous pick, each with a one-line",
+      "reason grounded in the dish. Never recommend anything over the stated",
+      "budget, and keep every reply short, warm, and free of jargon the user",
+      "did not use first. Ask one clarifying question when the meal is unclear.",
+    ].join("\n");
+    expect(skillDef.length).toBeGreaterThanOrEqual(300);
+
+    let callCount = 0;
+    const originalMockFetch = globalThis.fetch;
+    globalThis.fetch = ((input: any, init?: any) => {
+      const url =
+        typeof input === "string"
+          ? input
+          : input instanceof URL
+            ? input.toString()
+            : input.url;
+      if (url === OPENROUTER_URL) {
+        callCount++;
+        return new Response("{}", {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      return (originalMockFetch as any)(input, init);
+    }) as any;
+
+    const { template } = await generateTemplate({ text: skillDef });
+
+    // The gate short-circuited: neither the classifier nor the generator ran.
+    expect(callCount).toBe(0);
+    // Content is used verbatim as the prompt (passthrough, not designed).
+    expect(template.prompt).toContain("You are a sommelier.");
+    // Name comes straight from the frontmatter, not a generic fallback.
+    expect(template.agentName).toBe("Sommelier");
+
+    globalThis.fetch = originalMockFetch;
+  });
+
+  // -----------------------------------------------------------------------
   // looksLikeUrl helper exported and works correctly
   // -----------------------------------------------------------------------
   test("looksLikeUrl detects URL-shaped text", async () => {
