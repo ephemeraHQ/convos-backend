@@ -60,6 +60,9 @@ import { prisma } from "@/utils/prisma";
 
 const MAX_TEXT_LEN = 50_000;
 const MAX_BASE64_LEN = 35_000_000;
+// Builder/system prompt override cap — generous (the canonical file prompt is
+// ~12k tokens) but bounds an obviously-abusive body.
+const MAX_BUILDER_PROMPT_LEN = 100_000;
 const MAX_BODY_BYTES = 40 * 1024 * 1024;
 const MAX_WAIT_MS = 45_000;
 const DEFAULT_SSE_KEEPALIVE_MS = 15_000;
@@ -210,6 +213,12 @@ const bodySchema = z
     prefill: TemplatePrefillSchema.optional().transform((v) =>
       v && Object.keys(v).length > 0 ? v : undefined,
     ),
+    // Custom builder/system prompt that overrides the canonical template-
+    // generator prompt for this generation. Privileged — gated to agent-API-key
+    // callers below (like twitterContext) — and persisted on the row so the
+    // fire-and-forget executor can feed it to the generator. The produced
+    // template still lands as a draft via the normal pipeline.
+    builderPrompt: z.string().min(1).max(MAX_BUILDER_PROMPT_LEN).optional(),
     // Asserted owner — honoured only when the caller is agent-key-auth'd;
     // ignored for JWT (JWT account always wins) and anonymous (falls
     // back to ADMIN). See the owner-resolution block below.
@@ -478,6 +487,7 @@ interface DedupeRow extends GenerationRow {
   inputs: unknown;
   twitterContext: unknown;
   prefill: unknown;
+  builderPrompt: string | null;
 }
 
 const dedupeSelect = {
@@ -486,6 +496,7 @@ const dedupeSelect = {
   inputs: true,
   twitterContext: true,
   prefill: true,
+  builderPrompt: true,
   status: true,
   templateId: true,
   reply: true,
@@ -506,12 +517,14 @@ function dedupeBodiesMatch(existing: DedupeRow, body: Body): boolean {
       inputs: existing.inputs,
       twitterContext: existing.twitterContext,
       prefill: existing.prefill,
+      builderPrompt: existing.builderPrompt,
     },
     {
       source: body.source,
       inputs: body.inputs,
       twitterContext: body.twitterContext ?? null,
       prefill: body.prefill ?? null,
+      builderPrompt: body.builderPrompt ?? null,
     },
   );
 }
@@ -714,6 +727,17 @@ export async function generationsPostHandler(req: Request, res: Response) {
     return;
   }
 
+  // 5c. builderPrompt overrides the canonical generator system prompt — an
+  //     abuse-prone surface (a free general-purpose LLM, or a way to strip the
+  //     design/moderation guardrails baked into the canonical prompt), so it's
+  //     restricted to agent-API-key callers (the admin dashboard).
+  if (body.builderPrompt && !isApiKeyListener) {
+    res.status(403).json({
+      error: "builderPrompt requires agent API key authentication",
+    });
+    return;
+  }
+
   // 6. Idempotency-Key required and MUST be a UUID (any RFC 4122 version).
   //    Both the agent API key path and anonymous submissions are owned by
   //    `ADMIN_ACCOUNT_ID`, so they share an idempotency namespace; using
@@ -837,6 +861,7 @@ export async function generationsPostHandler(req: Request, res: Response) {
         prefill: body.prefill
           ? (body.prefill as Prisma.InputJsonValue)
           : Prisma.JsonNull,
+        builderPrompt: body.builderPrompt ?? null,
         publishStatus: body.publishStatus,
         status: "pending",
       },

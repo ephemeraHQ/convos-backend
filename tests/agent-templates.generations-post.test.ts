@@ -389,6 +389,54 @@ describe("POST /generations — idempotency", () => {
   });
 });
 
+describe("POST /generations — builderPrompt (privileged override)", () => {
+  test("anonymous caller + builderPrompt → 403", async () => {
+    // builderPrompt overrides the canonical generator prompt, so like
+    // twitterContext it's restricted to agent-API-key callers.
+    const res = await post(
+      { ...sampleBody, builderPrompt: "You are a custom builder." },
+      {
+        headers: {
+          "Content-Type": "application/json",
+          "Idempotency-Key": stableUuid("builder-anon"),
+        },
+      },
+    );
+    expect(res.status).toBe(403);
+  });
+
+  test("agent-key + builderPrompt → 202 and persists on the row", async () => {
+    __resetGenerationExecutorForTests(() => Promise.resolve());
+    const res = await post(
+      { ...sampleBody, builderPrompt: "You are a custom builder." },
+      { headers: withKey("builder-ok") },
+    );
+    expect(res.status).toBe(202);
+    const body = (await res.json()) as { generationId: string };
+    const row = await prisma.agentTemplateGeneration.findUnique({
+      where: { id: body.generationId },
+    });
+    expect(row?.builderPrompt).toBe("You are a custom builder.");
+  });
+
+  test("same key + different builderPrompt → 409", async () => {
+    // builderPrompt influences the generator's output, so it's part of the
+    // idempotent contract — a reused key with a different prompt must 409.
+    __resetGenerationExecutorForTests(() => Promise.resolve());
+    const first = await post(
+      { ...sampleBody, builderPrompt: "Prompt A" },
+      { headers: withKey("idem-builder-diff") },
+    );
+    expect(first.status).toBe(202);
+
+    const second = await post(
+      { ...sampleBody, builderPrompt: "Prompt B" },
+      { headers: withKey("idem-builder-diff") },
+    );
+    expect(second.status).toBe(409);
+  });
+});
+
 describe("POST /generations — SSE mode", () => {
   test("Accept: text/event-stream emits terminal result frame", async () => {
     const res = await fetch(`${baseURL}/api/v2/agent-templates/generations`, {

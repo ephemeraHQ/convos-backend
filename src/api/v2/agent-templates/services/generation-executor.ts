@@ -481,6 +481,10 @@ async function _runPipeline(
   // onto the metadata at persist below.
   const prefill = generation.prefill as TemplatePrefill | null;
 
+  // Optional caller-supplied builder/system prompt override (admin dashboard).
+  // null for ordinary generations, where the canonical prompt is used.
+  const builderPrompt = generation.builderPrompt;
+
   // Actor-attribution fields shared by every capture site below, plus the
   // PostHog LLM Analytics trace id so the product event joins to the
   // `$ai_generation` spans the OpenRouter calls emit. Built once: the trace's
@@ -510,6 +514,7 @@ async function _runPipeline(
       signal,
       prefill,
       trace,
+      builderPrompt,
     );
   } catch (err) {
     // Meter error path
