@@ -4,6 +4,7 @@ import { Wallet } from "ethers";
 import express from "express";
 import request from "supertest";
 import { afterEach, beforeAll, describe, expect, test, vi } from "vitest";
+import { idempotencyKeySchema } from "@/api/v2/accounts/schemas/shared";
 import { issueNonce } from "@/api/v2/auth/auth-nonce.repository";
 import { authRouter } from "@/api/v2/auth/auth.router";
 import { NONCE_COOKIE_NAME, signNonce } from "@/api/v2/auth/nonce-cookie";
@@ -439,7 +440,10 @@ describe("POST /auth/token signup bonus", () => {
     expect(rows.length).toBe(1);
     expect(rows[0].reason).toBe(LedgerReason.grant);
     expect(rows[0].delta).toBe(BigInt(config.signupBonusCredits));
-    expect(rows[0].idempotencyKey).toBe(`signup_bonus:${method!.accountId}`);
+    expect(rows[0].idempotencyKey).toBe(`signup_bonus_${method!.accountId}`);
+    expect(idempotencyKeySchema.safeParse(rows[0].idempotencyKey).success).toBe(
+      true,
+    );
   });
 
   test("second login same wallet → no second bonus", async () => {

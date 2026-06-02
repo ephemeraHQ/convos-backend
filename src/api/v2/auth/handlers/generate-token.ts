@@ -164,7 +164,7 @@ export async function generateToken(
         await grant({
           accountId,
           credits: config.signupBonusCredits,
-          idempotencyKey: `signup_bonus:${accountId}`,
+          idempotencyKey: `signup_bonus_${accountId}`,
           kind: "signup_bonus",
           note: "Signup bonus",
         });
