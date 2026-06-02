@@ -5,7 +5,7 @@ import { prisma } from "@/utils/prisma";
 export async function upsertAuthMethodAndAccount(args: {
   type: AuthMethodType;
   externalKey: string;
-}): Promise<{ accountId: string }> {
+}): Promise<{ accountId: string; created: boolean }> {
   const findOrInsert = () =>
     prisma.$transaction(async (tx) => {
       const existing = await tx.authMethod.findUnique({
@@ -13,7 +13,7 @@ export async function upsertAuthMethodAndAccount(args: {
           type_externalKey: { type: args.type, externalKey: args.externalKey },
         },
       });
-      if (existing) return { accountId: existing.accountId };
+      if (existing) return { accountId: existing.accountId, created: false };
 
       const account = await tx.account.create({ data: {} });
       await tx.authMethod.create({
@@ -23,7 +23,7 @@ export async function upsertAuthMethodAndAccount(args: {
           externalKey: args.externalKey,
         },
       });
-      return { accountId: account.id };
+      return { accountId: account.id, created: true };
     });
 
   try {

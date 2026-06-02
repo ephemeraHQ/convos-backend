@@ -24,10 +24,11 @@ describe("upsertAuthMethodAndAccount", () => {
   afterEach(reset);
 
   test("first login: creates Account + AuthMethod, returns accountId", async () => {
-    const { accountId } = await upsertAuthMethodAndAccount({
+    const { accountId, created } = await upsertAuthMethodAndAccount({
       type: "SIWE",
       externalKey: ADDR_A,
     });
+    expect(created).toBe(true);
     const account = await prisma.account.findUnique({
       where: { id: accountId },
     });
@@ -36,6 +37,20 @@ describe("upsertAuthMethodAndAccount", () => {
       where: { accountId, type: "SIWE" },
     });
     expect(method?.externalKey).toBe(ADDR_A);
+  });
+
+  test("second login same wallet: created=false", async () => {
+    const first = await upsertAuthMethodAndAccount({
+      type: "SIWE",
+      externalKey: ADDR_A,
+    });
+    expect(first.created).toBe(true);
+    const second = await upsertAuthMethodAndAccount({
+      type: "SIWE",
+      externalKey: ADDR_A,
+    });
+    expect(second.created).toBe(false);
+    expect(second.accountId).toBe(first.accountId);
   });
 
   test("second login same wallet: returns same accountId, does not insert", async () => {
