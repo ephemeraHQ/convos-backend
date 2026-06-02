@@ -6,7 +6,15 @@ import {
 import express, { json } from "express";
 import { importPKCS8, SignJWT } from "jose";
 import request from "supertest";
-import { afterEach, beforeAll, describe, expect, test, vi } from "vitest";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  describe,
+  expect,
+  test,
+  vi,
+} from "vitest";
 import { accountsMeRouter } from "@/api/v2/accounts/accountsMeRouter";
 import { authMiddleware } from "@/middleware/auth";
 import { pinoMiddleware } from "@/middleware/pino";
@@ -66,7 +74,16 @@ const wipe = async () => {
   createdAccountIds.length = 0;
 };
 
+// The subscription fixtures throughout this file pin currentPeriodEnd /
+// expiresDate to 2026-06-01T00:00:00.000Z. Without a frozen system clock
+// every test silently flips from "active" to "expired" once real wall-clock
+// time crosses that fixture date. Pin the clock to a known point safely
+// before it so the assertions stay stable on every CI run.
+const FROZEN_NOW = new Date("2026-05-30T12:00:00.000Z");
+
 beforeAll(async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  vi.setSystemTime(FROZEN_NOW);
   await validateJWTKeys();
   const { privateKey } = generateKeyPairSync("ec", {
     namedCurve: "prime256v1",
@@ -74,6 +91,10 @@ beforeAll(async () => {
     publicKeyEncoding: { type: "spki", format: "pem" },
   });
   signingPrivateKey = privateKey;
+});
+
+afterAll(() => {
+  vi.useRealTimers();
 });
 
 afterEach(async () => {

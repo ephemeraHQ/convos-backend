@@ -1,7 +1,15 @@
 import { LedgerReason } from "@prisma/client";
 import express from "express";
 import request from "supertest";
-import { afterEach, beforeAll, describe, expect, test, vi } from "vitest";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  describe,
+  expect,
+  test,
+  vi,
+} from "vitest";
 import { accountsMeRouter } from "@/api/v2/accounts/accountsMeRouter";
 import { authMiddleware } from "@/middleware/auth";
 import { pinoMiddleware } from "@/middleware/pino";
@@ -56,8 +64,22 @@ const wipe = async () => {
   createdAccountIds.length = 0;
 };
 
+// Seeded subscriptions pin currentPeriodEnd to 2026-06-01T00:00:00.000Z.
+// Once real wall-clock time crosses that fixture date the seeded
+// subscription flips to "expired", the entitled-tier resolver falls back
+// to free, and every "active builder = 2500 credit grant" assertion in
+// this file fails. Pin the clock to a known point before the fixture so
+// the assertions stay stable on every CI run.
+const FROZEN_NOW = new Date("2026-05-30T12:00:00.000Z");
+
 beforeAll(async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  vi.setSystemTime(FROZEN_NOW);
   await validateJWTKeys();
+});
+
+afterAll(() => {
+  vi.useRealTimers();
 });
 
 afterEach(async () => {
