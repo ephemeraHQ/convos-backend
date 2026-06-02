@@ -58,7 +58,14 @@ const { values } = parseArgs({
   },
 });
 
-const ALL_VARIANTS = ["pre265", "post265", "current", "heuristic"] as const;
+const ALL_VARIANTS = [
+  "pre265",
+  "post265",
+  "addressed-only",
+  "completeness-only",
+  "current",
+  "heuristic",
+] as const;
 type Variant = (typeof ALL_VARIANTS)[number];
 
 const VARIANTS: Variant[] = (() => {
@@ -187,6 +194,42 @@ Respond with ONLY a JSON object (no markdown fences, no explanation):
 }`;
 }
 
+// ABLATION — addressed-to axis ONLY (no completeness route). Mirrors the first
+// version of this PR's fix. Expected to fail the Pickler (long third-person spec).
+function addressedOnlyClassifierPrompt(content: string): string {
+  return `You are classifying pasted text: use it VERBATIM as the agent's prompt (passthrough), or design an agent from it (design)?
+
+Pasted content:
+---
+${content}
+---
+
+PASSTHROUGH (isPassthrough true) — the text is ADDRESSED TO an AI agent: a system prompt or instructions written to the agent ("You are…", "You must…", "Always/Never…", YAML frontmatter), or install/setup steps addressed to an AI (git clone, npm install, "ask the user for API keys"). The decisive test is who the text speaks to.
+
+DESIGN (isPassthrough false) — anything written for a human reader, EVEN WHEN it precisely describes the agent: a third-person brief/description ("Coordinates…", "Helps…", "Sends reminders. Friendly personality."), or an article / essay / news / README / marketing / product-spec / book excerpt. Describing what the agent does is not the same as addressing the agent.
+
+Respond with ONLY a JSON object (no markdown fences): { "isPassthrough": true|false }`;
+}
+
+// ABLATION — completeness axis ONLY (no addressed-to route). Expected to fail the
+// short imperative skill-def and the install steps (neither is a multi-section spec).
+function completenessOnlyClassifierPrompt(content: string): string {
+  return `You are classifying pasted text: use it VERBATIM as the agent's prompt (passthrough), or design an agent from it (design)?
+
+Pasted content:
+---
+${content}
+---
+
+PASSTHROUGH (isPassthrough true) — the text is a COMPLETE, finished agent definition/specification: it fully lays out the agent — its objective/goal, concrete mechanics (state it tracks, triggers, the actions/loops it runs), behavior/rules, voice/persona, and scope — developed enough to run on as-is. Completeness is what matters; it may be written in any grammatical person.
+
+DESIGN (isPassthrough false) — raw material to design from:
+- A SHORT brief or idea: a few sentences or a feature list that names what the agent should do without fully specifying it.
+- Human prose not authored as an agent definition: article, essay, news, README-for-humans, marketing copy, product spec for people, or book/transcript excerpt — at any length.
+
+Respond with ONLY a JSON object (no markdown fences): { "isPassthrough": true|false }`;
+}
+
 // Robust isPassthrough extraction (mirrors classifyPastedContent's parse).
 function parseVerdict(raw: string | null | undefined): boolean | null {
   if (!raw) return null;
@@ -254,6 +297,10 @@ async function runVariant(v: Variant, input: string): Promise<boolean | null> {
       return runLlmPrompt(pre265ClassifierPrompt(input));
     case "post265":
       return runLlmPrompt(post265ClassifierPrompt(input));
+    case "addressed-only":
+      return runLlmPrompt(addressedOnlyClassifierPrompt(input));
+    case "completeness-only":
+      return runLlmPrompt(completenessOnlyClassifierPrompt(input));
     case "current":
       return runCurrent(input);
     case "heuristic":
