@@ -14,13 +14,22 @@ const VALID_STATUS_FILTERS = [
   "archived",
 ] as const;
 
+// Columns the list can be sorted by. `createdAt` desc is the default and
+// preserves prior behavior. Each is keyset-paginatable: the cursor encodes
+// the active column's value plus `id` as the tiebreaker.
+const SORT_FIELDS = ["createdAt", "updatedAt", "agentName"] as const;
+type SortField = (typeof SORT_FIELDS)[number];
+
 const querySchema = z
   .object({
     category: z.string().optional(),
     cursor: z.string().optional(),
     featured: z.string().optional(),
     limit: z.string().optional(),
+    order: z.enum(["asc", "desc"]).optional(),
     owner: z.string().optional(),
+    q: z.string().optional(),
+    sort: z.enum(SORT_FIELDS).optional(),
     status: z.string().optional(),
   })
   .passthrough();
@@ -28,7 +37,10 @@ const querySchema = z
 const cursorPayloadSchema = z
   .object({
     id: z.string().min(1),
-    createdAt: z.string().min(1),
+    // `s` = the sort field the cursor was built for; `v` = that field's value
+    // on the last row (ISO string for dates, the raw string for agentName).
+    s: z.enum(SORT_FIELDS),
+    v: z.string().min(1),
   })
   .strict();
 
@@ -56,15 +68,22 @@ const parseLimit = (value: string | undefined) => {
   return Math.min(parsed, MAX_LIMIT);
 };
 
-const encodeCursor = (template: AgentTemplate) =>
+const cursorValue = (template: AgentTemplate, sort: SortField): string =>
+  sort === "agentName" ? template.agentName : template[sort].toISOString();
+
+const encodeCursor = (template: AgentTemplate, sort: SortField) =>
   Buffer.from(
     JSON.stringify({
       id: template.id,
-      createdAt: template.createdAt.toISOString(),
+      s: sort,
+      v: cursorValue(template, sort),
     }),
   ).toString("base64url");
 
-const decodeCursor = (cursor: string | undefined) => {
+// Returns null when absent, undefined when malformed OR built for a different
+// sort than the active one (the latter forces a client that changed `sort`
+// mid-pagination to restart from the first page).
+const decodeCursor = (cursor: string | undefined, sort: SortField) => {
   if (cursor === undefined) {
     return null;
   }
@@ -79,19 +98,19 @@ const decodeCursor = (cursor: string | undefined) => {
     );
     const parsed = cursorPayloadSchema.safeParse(decoded);
 
-    if (!parsed.success) {
+    if (!parsed.success || parsed.data.s !== sort) {
       return undefined;
     }
 
-    const createdAt = new Date(parsed.data.createdAt);
-    if (Number.isNaN(createdAt.getTime())) {
+    // Date columns must round-trip to a valid Date.
+    if (
+      sort !== "agentName" &&
+      Number.isNaN(new Date(parsed.data.v).getTime())
+    ) {
       return undefined;
     }
 
-    return {
-      id: parsed.data.id,
-      createdAt,
-    };
+    return { id: parsed.data.id, value: parsed.data.v };
   } catch {
     return undefined;
   }
@@ -141,7 +160,10 @@ export async function listHandler(req: Request, res: Response) {
     return;
   }
 
-  const cursor = decodeCursor(parsed.data.cursor);
+  const sort: SortField = parsed.data.sort ?? "createdAt";
+  const order: "asc" | "desc" = parsed.data.order ?? "desc";
+
+  const cursor = decodeCursor(parsed.data.cursor, sort);
   if (cursor === undefined) {
     sendInvalidQuery(res, "cursor is malformed");
     return;
@@ -219,30 +241,53 @@ export async function listHandler(req: Request, res: Response) {
     where.featured = true;
   }
 
-  // Cursor pagination: compose with existing AND/OR clauses
-  if (cursor !== null) {
-    const cursorFilter = {
+  // Free-text search: case-insensitive match on agentName OR description.
+  // ANDed with the visibility/filter clauses so it narrows the visible set.
+  const q = parsed.data.q?.trim();
+  if (q) {
+    const qFilter: Prisma.AgentTemplateWhereInput = {
       OR: [
-        { createdAt: { lt: cursor.createdAt } },
+        { agentName: { contains: q, mode: "insensitive" } },
+        { description: { contains: q, mode: "insensitive" } },
+      ],
+    };
+    where.AND = where.AND
+      ? [...(where.AND as Prisma.AgentTemplateWhereInput[]), qFilter]
+      : [qFilter];
+  }
+
+  // Keyset cursor pagination, generalized over the active sort column.
+  if (cursor) {
+    const dir = order === "asc" ? "gt" : "lt";
+    const value: string | Date =
+      sort === "agentName" ? cursor.value : new Date(cursor.value);
+    const cursorFilter: Prisma.AgentTemplateWhereInput = {
+      OR: [
+        { [sort]: { [dir]: value } },
         {
-          createdAt: cursor.createdAt,
-          id: { lt: cursor.id },
+          [sort]: value,
+          id: { [dir]: cursor.id },
         },
       ],
     };
 
     if (where.AND) {
-      // Already have an AND clause from visibility rules — append cursor filter
+      // Already have an AND clause from visibility/search — append cursor filter
       (where.AND as Prisma.AgentTemplateWhereInput[]).push(cursorFilter);
     } else {
       where.AND = [cursorFilter];
     }
   }
 
+  const orderBy: Prisma.AgentTemplateOrderByWithRelationInput[] = [
+    { [sort]: order },
+    { id: order },
+  ];
+
   try {
     const templates = await prisma.agentTemplate.findMany({
       where,
-      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+      orderBy,
       take: limit + 1,
     });
 
@@ -255,7 +300,7 @@ export async function listHandler(req: Request, res: Response) {
       hasMore,
       nextCursor:
         hasMore && lastTemplate !== undefined
-          ? encodeCursor(lastTemplate)
+          ? encodeCursor(lastTemplate, sort)
           : null,
     });
   } catch (error) {

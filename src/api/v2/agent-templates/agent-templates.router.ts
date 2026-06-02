@@ -10,6 +10,7 @@ import { detailHandler } from "./handlers/detail";
 import { generationsGetHandler } from "./handlers/generations-get";
 import { generationsPostHandler } from "./handlers/generations-post";
 import { listHandler } from "./handlers/list";
+import { listCountsHandler } from "./handlers/list-counts";
 import { patchHandler } from "./handlers/patch";
 import { publishHandler } from "./handlers/publish";
 
@@ -41,6 +42,14 @@ agentTemplatesRouter.get(
   "/generations/:generationId",
   optionalAuthOrAgentApiKeyAuth,
   generationsGetHandler,
+);
+
+// Aggregate counts for the dashboard facet rail. Mounted before /:idOrUrlSlug
+// so the wildcard doesn't capture "counts" as a slug-or-id.
+agentTemplatesRouter.get(
+  "/counts",
+  optionalAuthOrAgentApiKeyAuth,
+  listCountsHandler,
 );
 
 agentTemplatesRouter.patch(
