@@ -12,7 +12,13 @@
  * strict response_format json_schema, temp 0.7, no max_tokens.
  * Helper calls run at temp 0.2 without response_format: the GitHub-instructions
  * selector uses the main model; the content-classifier uses the cheap
- * BUILDER_CLASSIFIER_MODEL and leans toward passthrough.
+ * BUILDER_CLASSIFIER_MODEL and passes content through on two routes: it is
+ * ADDRESSED TO an agent (system prompt / install steps), OR it is a complete
+ * multi-section agent specification (objective + mechanics + voice + scope), even
+ * in the third person. A SHORT third-person brief that merely names what the
+ * agent does, and human prose (article/essay/news) at any length, are source
+ * material to design from. A deterministic structure gate fast-paths frontmatter
+ * / distinctive section-header skill-defs ahead of the model.
  *
  * Soft defaults for non-name fields. Server-injects connections: [].
  */
@@ -20,6 +26,7 @@
 /* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-return, @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-argument */
 
 import { APIConnectionTimeoutError, APIError, APIUserAbortError } from "openai";
+import { z } from "zod";
 import {
   BUILDER_CLASSIFIER_MODEL,
   BUILDER_EXA_SERVICE_KEY,
@@ -896,8 +903,126 @@ interface ContentPassthroughResult {
   category: string | null;
 }
 
-/** Classify pasted content: is it agent-ready, or source material to generate from? */
-async function classifyPastedContent(
+// Strict validation of the classifier's JSON. A raw `as` cast would let a model
+// that returns isPassthrough: "false" (a STRING) slip through as truthy and route
+// a design case to verbatim passthrough — the exact bug class this PR fixes. So
+// validate the shape; on any mismatch the caller falls back to design (the safe
+// direction — never wrongly passthrough). isPassthrough must be a real boolean.
+const ContentPassthroughResultSchema = z.object({
+  isPassthrough: z.boolean(),
+  passthroughType: z
+    .enum(["install-instructions", "skill-definition"])
+    .nullish(),
+  agentName: z.string().nullish(),
+  emoji: z.string().nullish(),
+  description: z.string().nullish(),
+  category: z.string().nullish(),
+});
+
+/** Parse + validate the classifier's JSON, normalizing missing fields to null.
+ *  Returns null on parse error or schema mismatch (caller designs from source). */
+function parseClassifierResult(json: string): ContentPassthroughResult | null {
+  let raw: unknown;
+  try {
+    raw = JSON.parse(json);
+  } catch {
+    return null;
+  }
+  const parsed = ContentPassthroughResultSchema.safeParse(raw);
+  if (!parsed.success) return null;
+  const c = parsed.data;
+  return {
+    isPassthrough: c.isPassthrough,
+    passthroughType: c.passthroughType ?? null,
+    agentName: c.agentName ?? null,
+    emoji: c.emoji ?? null,
+    description: c.description ?? null,
+    category: c.category ?? null,
+  };
+}
+
+function cleanScalar(v: string): string | null {
+  const s = v
+    .trim()
+    .replace(/^["']|["']$/g, "")
+    .trim();
+  return s.length ? s : null;
+}
+
+/**
+ * High-precision structural detector for pasted content that is unmistakably a
+ * skill-definition — YAML frontmatter with a `name:` key, or a block of the
+ * all-caps section headers our skill format uses (BRAIN / SOUL / THE HOOK /
+ * WELCOME MESSAGE …). When present, the content is agent-shaped beyond doubt,
+ * so the caller classifies it passthrough deterministically and skips the LLM
+ * classifier (cheaper, and not at the mercy of a flaky model on the easy case).
+ *
+ * The bar is deliberately strict: a false positive here would use SOURCE
+ * MATERIAL verbatim as a system prompt — the exact failure we are guarding
+ * against — so loose signals (a lone markdown `#` heading, or an article that
+ * happens to contain the word "RULES") must NOT trigger it. Those defer to the
+ * LLM's addressed-to-vs-about judgment. Exported so the classifier eval's
+ * deterministic variant exercises this exact gate.
+ *
+ * Returns the metadata readable straight from the structure (name/description
+ * from frontmatter), or null when the content is not structured.
+ */
+export function detectStructuredSkillDefinition(
+  content: string,
+): { agentName: string | null; description: string | null } | null {
+  // 1) Leading YAML frontmatter block with a name: key.
+  const fm =
+    /^\uFEFF?\s*---[ \t]*\r?\n([\s\S]*?)\r?\n---[ \t]*(?:\r?\n|$)/.exec(
+      content,
+    );
+  if (fm) {
+    const block = fm[1];
+    const nameMatch = /^[ \t]*name[ \t]*:[ \t]*(.+?)[ \t]*$/m.exec(block);
+    if (nameMatch) {
+      const descMatch = /^[ \t]*description[ \t]*:[ \t]*(.+?)[ \t]*$/m.exec(
+        block,
+      );
+      return {
+        agentName: cleanScalar(nameMatch[1]),
+        description: descMatch ? cleanScalar(descMatch[1]) : null,
+      };
+    }
+  }
+
+  // 2) A block of the DISTINCTIVE all-caps section headers our skill format
+  //    uses. Require >= 2 distinct standalone header lines so one stray all-caps
+  //    word in prose can't trip the gate. Only headers that don't collide with
+  //    ordinary human documents qualify — generic words like RULES / TONE /
+  //    GUIDELINES / PERSONA / IDENTITY appear as all-caps headers in brand style
+  //    guides, HR docs, and wikis (verified: a TONE+RULES style guide tripped
+  //    the gate), so they are excluded here. A real skill-definition in our
+  //    format has BRAIN/SOUL/HEART/THE HOOK/WELCOME MESSAGE anyway; one that
+  //    only uses RULES/TONE still routes to the LLM, which classifies it
+  //    correctly as agent-addressed.
+  const SECTIONS = new Set([
+    "BRAIN",
+    "SOUL",
+    "HEART",
+    "THE HOOK",
+    "WELCOME MESSAGE",
+  ]);
+  const hits = new Set<string>();
+  for (const rawLine of content.split(/\r?\n/)) {
+    const line = rawLine
+      .replace(/^[#>\s*_]+/, "")
+      .replace(/[\s*_:#]+$/, "")
+      .trim();
+    if (line && SECTIONS.has(line)) hits.add(line);
+  }
+  if (hits.size >= 2) return { agentName: null, description: null };
+
+  return null;
+}
+
+/** Classify pasted content: is it agent-ready, or source material to generate from?
+ *  Exported so the Braintrust classifier eval (tests/evals/classifier.ts) drives
+ *  the exact production prompt + parse path on the real model. */
+export async function classifyPastedContent(
   content: string,
   externalSignal?: AbortSignal,
   trace?: TraceContext,
@@ -910,6 +1035,26 @@ async function classifyPastedContent(
 
   const truncated = content.slice(0, 8_000);
 
+  // Deterministic fast-path: unmistakably-structured skill definitions
+  // (frontmatter / our section headers) are passthrough without consulting the
+  // LLM — high precision, and it can't be flipped by a flaky classifier model.
+  // Everything unstructured (third-person briefs, install steps, imperative
+  // prose) falls through to the addressed-to-vs-about LLM judgment below.
+  const structured = detectStructuredSkillDefinition(truncated);
+  if (structured) {
+    return {
+      classification: {
+        isPassthrough: true,
+        passthroughType: "skill-definition",
+        agentName: structured.agentName,
+        emoji: null,
+        description: structured.description,
+        category: null,
+      },
+      tokens: { promptTokens: 0, completionTokens: 0 },
+    };
+  }
+
   const classifierPrompt = `You are classifying pasted text to decide if it should be used VERBATIM as the prompt for a new AI agent, or treated as source material to design an agent from.
 
 Pasted content:
@@ -917,23 +1062,26 @@ Pasted content:
 ${truncated}
 ---
 
-Choose PASSTHROUGH (use the text verbatim, do not re-generate) whenever the content is AGENT-SHAPED — i.e. it reads like instructions written FOR an AI agent rather than prose written for a human reader. Two common shapes:
+Decide whether the text is a FINISHED agent definition (use VERBATIM — passthrough) or RAW MATERIAL to design an agent from (re-generate). TWO different things make content passthrough:
 
-Type A — install-instructions: setup choreography addressed to an AI agent
-- Second-person language: "Read this, then follow the steps", "Ask the user for API keys"
-- Setup commands: git clone, npm install, bun install, export env vars
-- Agent workflow: clone → install → configure → adopt skills → report progress
-- Addressed to an AI, not (only) to a human developer
+PASSTHROUGH ROUTE 1 — AGENT-ADDRESSED: written and ADDRESSED TO an AI agent (any length).
+- Type A — install-instructions: setup choreography addressed to an AI — "Read this, then…", "Ask the user for API keys", git clone / npm install / export env, clone → configure → adopt skills → report progress.
+- Type B — skill-definition: a system prompt addressed to the agent — YAML frontmatter (name:/description:), "You are…", "You must…", "Always/Never…", a persona plus behavioral rules, section headers like BRAIN/SOUL/HEART, THE HOOK, WELCOME MESSAGE.
 
-Type B — skill-definition: a system prompt / agent definition already written for an agent
-- YAML frontmatter with name:/description:, or a title plus a role/identity line
-- Direct instructions to an AI: "You are...", "You must...", "Your job is to...", "Always/Never..."
-- A defined persona, voice, or behavioral rules; section headers like BRAIN/SOUL/HEART, THE HOOK, GUIDELINES, RULES, TONE, WELCOME MESSAGE
-- A ready-to-run agent definition — even a rough, partial, or unconventional one — rather than an article ABOUT a topic
+PASSTHROUGH ROUTE 2 — COMPLETE AGENT SPECIFICATION: a fully-developed document that SPECIFIES the whole agent across multiple sections — its objective/goal, concrete mechanics (the state it tracks, its triggers, the step-by-step actions/loops it runs), scheduled behavior, voice/persona, AND capability scope/limits. The bar is DEPTH, not breadth: the document must actually SPECIFY HOW each part works — the concrete rules, the exact triggers, the step-by-step loop, the named state — not merely NAME the capabilities. Naming five features in one clause each is breadth (a brief); spelling out how each one operates is depth (a specification). A document this developed was deliberately authored as the agent's definition; preserve it — EVEN WHEN it narrates in the third person ("the agent does X", "Player goal:…") or calls itself a "brief". Depth and completeness, not grammatical person, decide this route.
 
-Lean PASSTHROUGH. If the text is structured as an agent persona, behavioral brief, or instruction set — even if it's imperfect, incomplete, or you would have written it differently — classify it as passthrough and preserve the author's wording. The author already wrote a prompt; respect it instead of rewriting it.
+DESIGN (isPassthrough false) — RAW MATERIAL to design from:
+- A SHORT brief or idea: a few sentences or a feature LIST that NAMES what the agent should do without specifying HOW each part works — e.g. "Coordinates tee times, polls the group, manages RSVPs, sends reminders. Friendly, laid-back golf-buddy personality." This NAMES an objective, mechanics, and a persona, but it specifies none of them — that breadth-without-depth is a brief, NOT a definition. Naming a persona, a voice, or a feature list does not make it a specification.
+- Human prose not authored as an agent definition — an article, essay, news story, README-for-humans, marketing/landing copy, a product spec written for people, or a book/transcript excerpt — at ANY length (a long, sectioned article is still source material).
 
-Return false ONLY for genuine SOURCE MATERIAL — text written for humans that an agent would have to be DESIGNED from rather than run on directly: an article, essay, news story, README-for-humans, marketing/landing copy, product spec, or book/transcript excerpt, with no instructions addressed to an agent.
+Decisive cues:
+- Depth, not breadth: a feature list that NAMES the agent's objective, mechanics, and persona is still a brief (→ design) if it does not SPECIFY how each works. "Polls the group, manages RSVPs, sends reminders" names three features → brief. "Tuesday: DM the A-team first; once the lineup hits a multiple of 4, post to the group; on a bail, DM the top of the waitlist" specifies the mechanics → specification.
+- For third-person text, ask: does this SPECIFY the agent (the actual rules, triggers, and loops), or merely DESCRIBE/NAME what it would do? Specifies → passthrough; describes/names → design.
+- Human-prose genres (article/essay/news/marketing/book) are always design, however long or sectioned.
+
+Example — DESIGN (isPassthrough false): "A friendly running coach that builds weekly training plans, tracks the runner's mileage, and sends a Monday check-in." (a short third-person brief → design it).
+Example — PASSTHROUGH (isPassthrough true): "You are Coach. Build the user a weekly training plan. Always open with a Monday check-in. Never shame a missed run." (addressed to the agent).
+Example — PASSTHROUGH (isPassthrough true): a multi-section document laying out the agent's objective function, the state/triggers/actions it runs, its scheduled sends, its voice/persona, and its capability scope — even titled "…Builder Brief" and written about "the agent" (a complete specification → preserve it).
 
 If passthrough, also produce metadata:
 - agentName: memorable name derived from the content
@@ -954,7 +1102,7 @@ Respond with ONLY a JSON object (no markdown fences, no explanation):
 
 Rules:
 - If isPassthrough is false, all other fields MUST be null.
-- When borderline between "agent-shaped" and "source material", lean toward TRUE (passthrough). Better to preserve a real prompt than to rewrite one.
+- Two routes to passthrough: (1) the text is ADDRESSED TO the agent (second-person/imperative, YAML frontmatter, install steps), OR (2) it is a COMPLETE multi-section agent specification (objective + mechanics + voice + scope), even if written in the third person. A SHORT third-person brief/idea, or human-prose genres (article/essay/news/marketing/book) at any length, → false.
 - Always pick a passthroughType when isPassthrough is true: install-instructions for setup choreography, skill-definition for a persona/system prompt. When both fit, prefer skill-definition.`;
 
   const t0 = performance.now();
@@ -993,33 +1141,22 @@ Rules:
   const content_response = data?.choices?.[0]?.message?.content;
   if (!content_response) return null;
 
-  try {
-    const cleaned = content_response
-      .replace(/^```json?\s*/i, "")
-      .replace(/\s*```$/i, "")
-      .trim();
-    return {
-      classification: JSON.parse(cleaned) as ContentPassthroughResult,
-      tokens,
-    };
-  } catch {
-    const match = content_response.match(/\{[\s\S]*"isPassthrough"[\s\S]*\}/);
-    if (match) {
-      try {
-        return {
-          classification: JSON.parse(match[0]) as ContentPassthroughResult,
-          tokens,
-        };
-      } catch {
-        /* fall through */
-      }
-    }
+  const cleaned = content_response
+    .replace(/^```json?\s*/i, "")
+    .replace(/\s*```$/i, "")
+    .trim();
+  const match = content_response.match(/\{[\s\S]*"isPassthrough"[\s\S]*\}/);
+  const classification =
+    parseClassifierResult(cleaned) ??
+    (match ? parseClassifierResult(match[0]) : null);
+  if (!classification) {
     console.error(
-      "[templateGen] Failed to parse classifier response:",
+      "[templateGen] Failed to parse/validate classifier response:",
       content_response.slice(0, 300),
     );
     return null;
   }
+  return { classification, tokens };
 }
 
 /**
@@ -1033,7 +1170,16 @@ async function tryContentPassthrough(
   externalSignal?: AbortSignal,
   trace?: TraceContext,
 ): Promise<PassthroughBundle | null> {
-  if (content.length < PASSTHROUGH_MIN_LENGTH) return null;
+  // Short content normally isn't a prompt — but a short YAML-frontmatter /
+  // distinctive-header skill-definition still is, and the deterministic gate in
+  // classifyPastedContent should get to fast-path it. Only bail on length when
+  // there's no structural signal, so a 40-char "---\nname: Bot\n---\n…" still passes.
+  if (
+    content.length < PASSTHROUGH_MIN_LENGTH &&
+    !detectStructuredSkillDefinition(content)
+  ) {
+    return null;
+  }
 
   const classifierResult = await classifyPastedContent(
     content,

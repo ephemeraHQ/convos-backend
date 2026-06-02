@@ -1261,6 +1261,344 @@ describe("templateGen service — OpenRouter integration", () => {
   });
 
   // -----------------------------------------------------------------------
+  // Classifier prompt carries the agent-addressed-vs-third-person discriminator
+  // (regression for the prod miss where a third-person brief — "Golf tee time
+  // coordinator … Friendly, laid-back golf buddy personality." — was tagged
+  // skill-definition and used verbatim, so no agent was designed and a
+  // can't-actually-do-it booking capability shipped). The LLM verdict can't be
+  // asserted under a mock, so we lock the decisive guidance into the prompt.
+  // -----------------------------------------------------------------------
+  test("content classifier prompt routes a third-person brief to design (source material)", async () => {
+    const mod = await import("@/api/v2/agent-templates/services/templateGen");
+    generateTemplate = mod.generateTemplate;
+
+    const brief =
+      "Golf tee time coordinator for a group of friends at Bounty Club. Helps " +
+      "coordinate availability among the crew, track who can play and when, poll " +
+      "members, manage RSVPs. Also books tee times directly using the user's " +
+      "account. Keeps a running schedule of upcoming rounds. Sends reminders. " +
+      "Friendly, laid-back golf buddy personality.";
+
+    let callCount = 0;
+    const originalMockFetch = globalThis.fetch;
+    globalThis.fetch = ((input: any, init?: any) => {
+      const url =
+        typeof input === "string"
+          ? input
+          : input instanceof URL
+            ? input.toString()
+            : input.url;
+      if (url === OPENROUTER_URL) {
+        callCount++;
+        const reqBody = JSON.parse(init?.body as string);
+        capturedRequests.push({
+          url,
+          method: init?.method || "POST",
+          headers: extractHeaders(init as RequestInit),
+          body: reqBody,
+        });
+        if (callCount === 1) {
+          // Classifier — a correct verdict for this brief is "design it".
+          return new Response(
+            JSON.stringify({
+              model: "@preset/assistants-pro",
+              choices: [
+                {
+                  message: {
+                    content: JSON.stringify({
+                      isPassthrough: false,
+                      passthroughType: null,
+                      agentName: null,
+                      emoji: null,
+                      description: null,
+                      category: null,
+                    }),
+                  },
+                },
+              ],
+              usage: { prompt_tokens: 100, completion_tokens: 50 },
+            }),
+            { status: 200, headers: { "Content-Type": "application/json" } },
+          );
+        }
+        // Production (design) call.
+        return new Response(
+          JSON.stringify({
+            model: "@preset/assistants-pro",
+            choices: [
+              {
+                message: {
+                  content: JSON.stringify({
+                    prompt: "designed prompt",
+                    agentName: "Caddie",
+                    emoji: "⛳",
+                    description: "A golf tee-time coordinator",
+                    category: "Sports & Rec",
+                    tools: [],
+                  }),
+                },
+              },
+            ],
+            usage: { prompt_tokens: 100, completion_tokens: 50 },
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      }
+      return (originalMockFetch as any)(input, init);
+    }) as any;
+
+    try {
+      await generateTemplate({ text: brief });
+
+      const classifierPrompt = getOpenRouterRequests()[0].body.messages[0]
+        .content as string;
+      // The corrected discriminator must be present so it can't silently regress
+      // back to the "Lean PASSTHROUGH" wording that misclassified this brief. The
+      // discriminator now turns on TWO axes — who the text addresses AND whether
+      // it is a complete spec vs a short brief — so lock phrases from both.
+      expect(classifierPrompt).toContain("ADDRESSED TO");
+      expect(classifierPrompt).toContain("COMPLETE AGENT SPECIFICATION");
+      expect(classifierPrompt).toContain("SHORT brief");
+      expect(classifierPrompt).toContain("source material");
+      // And the design path (a second production call) ran, not passthrough.
+      expect(callCount).toBe(2);
+    } finally {
+      globalThis.fetch = originalMockFetch;
+    }
+  });
+
+  // -----------------------------------------------------------------------
+  // Deterministic gate: unmistakably-structured skill definitions (YAML
+  // frontmatter / our all-caps section headers) pass through WITHOUT an LLM
+  // call. The hybrid's whole point is that the easy, structured case can't be
+  // flipped by a flaky classifier model — so assert zero OpenRouter calls and
+  // verbatim content, and that metadata is read straight from the frontmatter.
+  // -----------------------------------------------------------------------
+  test("deterministic gate: a frontmatter skill-definition passes through with no LLM call", async () => {
+    const mod = await import("@/api/v2/agent-templates/services/templateGen");
+    generateTemplate = mod.generateTemplate;
+
+    // >= 300 chars so tryContentPassthrough engages; leading YAML frontmatter
+    // with a name: key is the high-precision structural signal.
+    const skillDef = [
+      "---",
+      "name: Sommelier",
+      "description: Pairs wine with meals",
+      "---",
+      "You are a sommelier. Recommend a bottle for the user's meal and budget.",
+      "Always offer one safe pick and one adventurous pick, each with a one-line",
+      "reason grounded in the dish. Never recommend anything over the stated",
+      "budget, and keep every reply short, warm, and free of jargon the user",
+      "did not use first. Ask one clarifying question when the meal is unclear.",
+    ].join("\n");
+    expect(skillDef.length).toBeGreaterThanOrEqual(300);
+
+    let callCount = 0;
+    const originalMockFetch = globalThis.fetch;
+    globalThis.fetch = ((input: any, init?: any) => {
+      const url =
+        typeof input === "string"
+          ? input
+          : input instanceof URL
+            ? input.toString()
+            : input.url;
+      if (url === OPENROUTER_URL) {
+        callCount++;
+        return new Response("{}", {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      return (originalMockFetch as any)(input, init);
+    }) as any;
+
+    try {
+      const { template } = await generateTemplate({ text: skillDef });
+
+      // The gate short-circuited: neither the classifier nor the generator ran.
+      expect(callCount).toBe(0);
+      // Content is used verbatim as the prompt (passthrough, not designed).
+      expect(template.prompt).toContain("You are a sommelier.");
+      // Name comes straight from the frontmatter, not a generic fallback.
+      expect(template.agentName).toBe("Sommelier");
+    } finally {
+      globalThis.fetch = originalMockFetch;
+    }
+  });
+
+  // -----------------------------------------------------------------------
+  // Length-guard bypass: a SHORT (<300 char) structured skill-definition must
+  // still reach the deterministic gate, not get filtered out by
+  // PASSTHROUGH_MIN_LENGTH before classifyPastedContent ever runs.
+  // -----------------------------------------------------------------------
+  test("deterministic gate fires for a short (<300 char) frontmatter skill-definition", async () => {
+    const mod = await import("@/api/v2/agent-templates/services/templateGen");
+    generateTemplate = mod.generateTemplate;
+
+    const shortSkill =
+      "---\nname: Bot\ndescription: A tiny helper\n---\nYou are Bot. Always be concise. Never use jargon.";
+    expect(shortSkill.length).toBeLessThan(300);
+
+    let callCount = 0;
+    const originalMockFetch = globalThis.fetch;
+    globalThis.fetch = ((input: any, init?: any) => {
+      const url =
+        typeof input === "string"
+          ? input
+          : input instanceof URL
+            ? input.toString()
+            : input.url;
+      if (url === OPENROUTER_URL) {
+        callCount++;
+        return new Response("{}", {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      return (originalMockFetch as any)(input, init);
+    }) as any;
+
+    try {
+      const { template } = await generateTemplate({ text: shortSkill });
+      // Below PASSTHROUGH_MIN_LENGTH, but the structure gate still fast-paths it
+      // — no classifier or generator LLM call, content used verbatim.
+      expect(callCount).toBe(0);
+      expect(template.prompt).toContain("You are Bot.");
+      expect(template.agentName).toBe("Bot");
+    } finally {
+      globalThis.fetch = originalMockFetch;
+    }
+  });
+
+  // -----------------------------------------------------------------------
+  // Classifier output is schema-validated: a non-boolean isPassthrough (type
+  // drift, e.g. the STRING "true") must NOT be treated as truthy and routed to
+  // verbatim passthrough — it falls back to design (the safe direction).
+  // -----------------------------------------------------------------------
+  test("classifier output is validated: a non-boolean isPassthrough falls back to design", async () => {
+    const mod = await import("@/api/v2/agent-templates/services/templateGen");
+    generateTemplate = mod.generateTemplate;
+
+    // >300 chars and unstructured (no frontmatter / distinctive headers) so the
+    // deterministic gate defers to the LLM classifier.
+    const longText =
+      "Coordinates a group's weekly plans and reminders. ".repeat(8);
+
+    let callCount = 0;
+    const originalMockFetch = globalThis.fetch;
+    globalThis.fetch = ((input: any, init?: any) => {
+      const url =
+        typeof input === "string"
+          ? input
+          : input instanceof URL
+            ? input.toString()
+            : input.url;
+      if (url === OPENROUTER_URL) {
+        callCount++;
+        if (callCount === 1) {
+          // Classifier returns isPassthrough as a STRING — type drift. A raw `as`
+          // cast would make "true" truthy and short-circuit to passthrough.
+          return new Response(
+            JSON.stringify({
+              model: "@preset/assistants-pro",
+              choices: [
+                {
+                  message: {
+                    content: JSON.stringify({
+                      isPassthrough: "true",
+                      passthroughType: "skill-definition",
+                      agentName: "X",
+                      emoji: "🤖",
+                      description: "d",
+                      category: "Work",
+                    }),
+                  },
+                },
+              ],
+              usage: { prompt_tokens: 10, completion_tokens: 5 },
+            }),
+            { status: 200, headers: { "Content-Type": "application/json" } },
+          );
+        }
+        // Design generation call (the safe fallback).
+        return new Response(
+          JSON.stringify({
+            model: "@preset/assistants-pro",
+            choices: [
+              {
+                message: {
+                  content: JSON.stringify({
+                    prompt: "designed",
+                    agentName: "X",
+                    emoji: "🤖",
+                    description: "d",
+                    category: "Work",
+                    tools: [],
+                  }),
+                },
+              },
+            ],
+            usage: { prompt_tokens: 10, completion_tokens: 5 },
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      }
+      return (originalMockFetch as any)(input, init);
+    }) as any;
+
+    try {
+      await generateTemplate({ text: longText });
+      // Validation rejects the string → not passthrough → the design path (a
+      // second production call) runs. A truthy-cast bug would stop at 1 call.
+      expect(callCount).toBe(2);
+    } finally {
+      globalThis.fetch = originalMockFetch;
+    }
+  });
+
+  // -----------------------------------------------------------------------
+  // detectStructuredSkillDefinition — precision boundary of the gate. It must
+  // fire on our distinctive skill-format headers but NOT on ordinary human
+  // documents that happen to use all-caps section labels (brand guides, wikis).
+  // -----------------------------------------------------------------------
+  test("detectStructuredSkillDefinition: distinctive headers gate, generic all-caps labels do not", async () => {
+    const { detectStructuredSkillDefinition } =
+      await import("@/api/v2/agent-templates/services/templateGen");
+
+    // Frontmatter with a name: key → structured, name read straight from it.
+    expect(
+      detectStructuredSkillDefinition(
+        "---\nname: Sommelier\ndescription: Pairs wine\n---\nYou are a sommelier.",
+      ),
+    ).toEqual({ agentName: "Sommelier", description: "Pairs wine" });
+
+    // >= 2 distinctive skill-format headers → structured.
+    expect(
+      detectStructuredSkillDefinition("BRAIN\nThink first.\n\nSOUL\nBe warm."),
+    ).not.toBeNull();
+
+    // A brand style guide using all-caps TONE + RULES is SOURCE MATERIAL, not a
+    // skill-definition — those generic words must not trip the gate.
+    expect(
+      detectStructuredSkillDefinition(
+        "ACME STYLE GUIDE\n\nTONE\nWarm and direct.\n\nRULES\nNo exclamation points.",
+      ),
+    ).toBeNull();
+
+    // A single distinctive header isn't enough (needs >= 2).
+    expect(
+      detectStructuredSkillDefinition("SOUL\nBe warm and concise."),
+    ).toBeNull();
+
+    // Markdown headings alone (no frontmatter, no distinctive headers) → null.
+    expect(
+      detectStructuredSkillDefinition(
+        "# An Article\n\n## Background\nProse for a human reader.",
+      ),
+    ).toBeNull();
+  });
+
+  // -----------------------------------------------------------------------
   // looksLikeUrl helper exported and works correctly
   // -----------------------------------------------------------------------
   test("looksLikeUrl detects URL-shaped text", async () => {
