@@ -334,9 +334,14 @@ async function main(): Promise<void> {
 
   // variant → caseId → correct-sample-count (for the summary table)
   const tally = new Map<Variant, Map<string, number>>();
+  // variant → caseId → non-null-verdict count. Without this, a case whose every
+  // sample errored (verdict=null, correct=0) would be reported as the OPPOSITE
+  // class — an infra failure masquerading as a genuine classifier miss.
+  const seen = new Map<Variant, Map<string, number>>();
 
   for (const variant of VARIANTS) {
     tally.set(variant, new Map());
+    seen.set(variant, new Map());
     const experiment = useBraintrust
       ? braintrust.init(PROJECT, {
           experiment: `classifier-${variant}-${MODEL.replace(/[^a-z0-9]+/gi, "-")}`,
@@ -364,6 +369,7 @@ async function main(): Promise<void> {
         tally
           .get(variant)!
           .set(c.id, (tally.get(variant)!.get(c.id) ?? 0) + correct);
+        seen.get(variant)!.set(c.id, (seen.get(variant)!.get(c.id) ?? 0) + 1);
       }
       experiment?.log({
         input: c.input,
@@ -381,12 +387,20 @@ async function main(): Promise<void> {
     }
   }
 
-  // Console summary: majority verdict per case, accuracy per variant.
+  // Console summary: majority verdict per case, accuracy per variant. A case is
+  // "correct" only when a MAJORITY of its NON-NULL verdicts match expected; a
+  // case with zero verdicts (all errored) is reported as "error", never as a miss.
+  const seenCount = (variant: Variant, c: ClassifierCase) =>
+    seen.get(variant)!.get(c.id) ?? 0;
+  const isCorrect = (variant: Variant, c: ClassifierCase) => {
+    const n = seenCount(variant, c);
+    return n > 0 && (tally.get(variant)!.get(c.id) ?? 0) * 2 >= n;
+  };
   const majority = (variant: Variant, c: ClassifierCase): string => {
-    const correctCount = tally.get(variant)!.get(c.id) ?? 0;
-    const verdictIsExpected = correctCount * 2 >= SAMPLES; // majority correct
-    const got = verdictIsExpected ? c.expected : !c.expected;
-    return `${got ? "passthrough" : "design"}${verdictIsExpected ? " ✓" : " ✗"}`;
+    if (seenCount(variant, c) === 0) return "error ⚠";
+    const correctMajority = isCorrect(variant, c);
+    const got = correctMajority ? c.expected : !c.expected;
+    return `${got ? "passthrough" : "design"}${correctMajority ? " ✓" : " ✗"}`;
   };
   console.log(`\n=== classifier eval — model=${MODEL}, samples=${SAMPLES} ===`);
   console.log(`case (expected)                 | ${VARIANTS.join(" | ")}`);
@@ -396,11 +410,10 @@ async function main(): Promise<void> {
     console.log(`${(c.id + " (" + exp + ")").padEnd(31)} | ${cols}`);
   }
   for (const v of VARIANTS) {
-    const correctCases = cases.filter((c) => {
-      const cc = tally.get(v)!.get(c.id) ?? 0;
-      return cc * 2 >= SAMPLES;
-    }).length;
-    console.log(`accuracy ${v}: ${correctCases}/${cases.length}`);
+    const correctCases = cases.filter((c) => isCorrect(v, c)).length;
+    const errored = cases.filter((c) => seenCount(v, c) === 0).length;
+    const errNote = errored ? ` (${errored} errored)` : "";
+    console.log(`accuracy ${v}: ${correctCases}/${cases.length}${errNote}`);
   }
 
   if (_tg) {

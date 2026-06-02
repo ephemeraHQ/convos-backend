@@ -26,6 +26,7 @@
 /* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-return, @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-argument */
 
 import { APIConnectionTimeoutError, APIError, APIUserAbortError } from "openai";
+import { z } from "zod";
 import {
   BUILDER_CLASSIFIER_MODEL,
   BUILDER_EXA_SERVICE_KEY,
@@ -902,6 +903,44 @@ interface ContentPassthroughResult {
   category: string | null;
 }
 
+// Strict validation of the classifier's JSON. A raw `as` cast would let a model
+// that returns isPassthrough: "false" (a STRING) slip through as truthy and route
+// a design case to verbatim passthrough — the exact bug class this PR fixes. So
+// validate the shape; on any mismatch the caller falls back to design (the safe
+// direction — never wrongly passthrough). isPassthrough must be a real boolean.
+const ContentPassthroughResultSchema = z.object({
+  isPassthrough: z.boolean(),
+  passthroughType: z
+    .enum(["install-instructions", "skill-definition"])
+    .nullish(),
+  agentName: z.string().nullish(),
+  emoji: z.string().nullish(),
+  description: z.string().nullish(),
+  category: z.string().nullish(),
+});
+
+/** Parse + validate the classifier's JSON, normalizing missing fields to null.
+ *  Returns null on parse error or schema mismatch (caller designs from source). */
+function parseClassifierResult(json: string): ContentPassthroughResult | null {
+  let raw: unknown;
+  try {
+    raw = JSON.parse(json);
+  } catch {
+    return null;
+  }
+  const parsed = ContentPassthroughResultSchema.safeParse(raw);
+  if (!parsed.success) return null;
+  const c = parsed.data;
+  return {
+    isPassthrough: c.isPassthrough,
+    passthroughType: c.passthroughType ?? null,
+    agentName: c.agentName ?? null,
+    emoji: c.emoji ?? null,
+    description: c.description ?? null,
+    category: c.category ?? null,
+  };
+}
+
 function cleanScalar(v: string): string | null {
   const s = v
     .trim()
@@ -1102,33 +1141,22 @@ Rules:
   const content_response = data?.choices?.[0]?.message?.content;
   if (!content_response) return null;
 
-  try {
-    const cleaned = content_response
-      .replace(/^```json?\s*/i, "")
-      .replace(/\s*```$/i, "")
-      .trim();
-    return {
-      classification: JSON.parse(cleaned) as ContentPassthroughResult,
-      tokens,
-    };
-  } catch {
-    const match = content_response.match(/\{[\s\S]*"isPassthrough"[\s\S]*\}/);
-    if (match) {
-      try {
-        return {
-          classification: JSON.parse(match[0]) as ContentPassthroughResult,
-          tokens,
-        };
-      } catch {
-        /* fall through */
-      }
-    }
+  const cleaned = content_response
+    .replace(/^```json?\s*/i, "")
+    .replace(/\s*```$/i, "")
+    .trim();
+  const match = content_response.match(/\{[\s\S]*"isPassthrough"[\s\S]*\}/);
+  const classification =
+    parseClassifierResult(cleaned) ??
+    (match ? parseClassifierResult(match[0]) : null);
+  if (!classification) {
     console.error(
-      "[templateGen] Failed to parse classifier response:",
+      "[templateGen] Failed to parse/validate classifier response:",
       content_response.slice(0, 300),
     );
     return null;
   }
+  return { classification, tokens };
 }
 
 /**
@@ -1142,7 +1170,16 @@ async function tryContentPassthrough(
   externalSignal?: AbortSignal,
   trace?: TraceContext,
 ): Promise<PassthroughBundle | null> {
-  if (content.length < PASSTHROUGH_MIN_LENGTH) return null;
+  // Short content normally isn't a prompt — but a short YAML-frontmatter /
+  // distinctive-header skill-definition still is, and the deterministic gate in
+  // classifyPastedContent should get to fast-path it. Only bail on length when
+  // there's no structural signal, so a 40-char "---\nname: Bot\n---\n…" still passes.
+  if (
+    content.length < PASSTHROUGH_MIN_LENGTH &&
+    !detectStructuredSkillDefinition(content)
+  ) {
+    return null;
+  }
 
   const classifierResult = await classifyPastedContent(
     content,

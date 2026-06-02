@@ -1347,22 +1347,24 @@ describe("templateGen service — OpenRouter integration", () => {
       return (originalMockFetch as any)(input, init);
     }) as any;
 
-    await generateTemplate({ text: brief });
+    try {
+      await generateTemplate({ text: brief });
 
-    const classifierPrompt = getOpenRouterRequests()[0].body.messages[0]
-      .content as string;
-    // The corrected discriminator must be present so it can't silently regress
-    // back to the "Lean PASSTHROUGH" wording that misclassified this brief. The
-    // discriminator now turns on TWO axes — who the text addresses AND whether it
-    // is a complete spec vs a short brief — so lock phrases from both.
-    expect(classifierPrompt).toContain("ADDRESSED TO");
-    expect(classifierPrompt).toContain("COMPLETE AGENT SPECIFICATION");
-    expect(classifierPrompt).toContain("SHORT brief");
-    expect(classifierPrompt).toContain("source material");
-    // And the design path (a second production call) ran, not verbatim passthrough.
-    expect(callCount).toBe(2);
-
-    globalThis.fetch = originalMockFetch;
+      const classifierPrompt = getOpenRouterRequests()[0].body.messages[0]
+        .content as string;
+      // The corrected discriminator must be present so it can't silently regress
+      // back to the "Lean PASSTHROUGH" wording that misclassified this brief. The
+      // discriminator now turns on TWO axes — who the text addresses AND whether
+      // it is a complete spec vs a short brief — so lock phrases from both.
+      expect(classifierPrompt).toContain("ADDRESSED TO");
+      expect(classifierPrompt).toContain("COMPLETE AGENT SPECIFICATION");
+      expect(classifierPrompt).toContain("SHORT brief");
+      expect(classifierPrompt).toContain("source material");
+      // And the design path (a second production call) ran, not passthrough.
+      expect(callCount).toBe(2);
+    } finally {
+      globalThis.fetch = originalMockFetch;
+    }
   });
 
   // -----------------------------------------------------------------------
@@ -1410,16 +1412,148 @@ describe("templateGen service — OpenRouter integration", () => {
       return (originalMockFetch as any)(input, init);
     }) as any;
 
-    const { template } = await generateTemplate({ text: skillDef });
+    try {
+      const { template } = await generateTemplate({ text: skillDef });
 
-    // The gate short-circuited: neither the classifier nor the generator ran.
-    expect(callCount).toBe(0);
-    // Content is used verbatim as the prompt (passthrough, not designed).
-    expect(template.prompt).toContain("You are a sommelier.");
-    // Name comes straight from the frontmatter, not a generic fallback.
-    expect(template.agentName).toBe("Sommelier");
+      // The gate short-circuited: neither the classifier nor the generator ran.
+      expect(callCount).toBe(0);
+      // Content is used verbatim as the prompt (passthrough, not designed).
+      expect(template.prompt).toContain("You are a sommelier.");
+      // Name comes straight from the frontmatter, not a generic fallback.
+      expect(template.agentName).toBe("Sommelier");
+    } finally {
+      globalThis.fetch = originalMockFetch;
+    }
+  });
 
-    globalThis.fetch = originalMockFetch;
+  // -----------------------------------------------------------------------
+  // Length-guard bypass: a SHORT (<300 char) structured skill-definition must
+  // still reach the deterministic gate, not get filtered out by
+  // PASSTHROUGH_MIN_LENGTH before classifyPastedContent ever runs.
+  // -----------------------------------------------------------------------
+  test("deterministic gate fires for a short (<300 char) frontmatter skill-definition", async () => {
+    const mod = await import("@/api/v2/agent-templates/services/templateGen");
+    generateTemplate = mod.generateTemplate;
+
+    const shortSkill =
+      "---\nname: Bot\ndescription: A tiny helper\n---\nYou are Bot. Always be concise. Never use jargon.";
+    expect(shortSkill.length).toBeLessThan(300);
+
+    let callCount = 0;
+    const originalMockFetch = globalThis.fetch;
+    globalThis.fetch = ((input: any, init?: any) => {
+      const url =
+        typeof input === "string"
+          ? input
+          : input instanceof URL
+            ? input.toString()
+            : input.url;
+      if (url === OPENROUTER_URL) {
+        callCount++;
+        return new Response("{}", {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      return (originalMockFetch as any)(input, init);
+    }) as any;
+
+    try {
+      const { template } = await generateTemplate({ text: shortSkill });
+      // Below PASSTHROUGH_MIN_LENGTH, but the structure gate still fast-paths it
+      // — no classifier or generator LLM call, content used verbatim.
+      expect(callCount).toBe(0);
+      expect(template.prompt).toContain("You are Bot.");
+      expect(template.agentName).toBe("Bot");
+    } finally {
+      globalThis.fetch = originalMockFetch;
+    }
+  });
+
+  // -----------------------------------------------------------------------
+  // Classifier output is schema-validated: a non-boolean isPassthrough (type
+  // drift, e.g. the STRING "true") must NOT be treated as truthy and routed to
+  // verbatim passthrough — it falls back to design (the safe direction).
+  // -----------------------------------------------------------------------
+  test("classifier output is validated: a non-boolean isPassthrough falls back to design", async () => {
+    const mod = await import("@/api/v2/agent-templates/services/templateGen");
+    generateTemplate = mod.generateTemplate;
+
+    // >300 chars and unstructured (no frontmatter / distinctive headers) so the
+    // deterministic gate defers to the LLM classifier.
+    const longText =
+      "Coordinates a group's weekly plans and reminders. ".repeat(8);
+
+    let callCount = 0;
+    const originalMockFetch = globalThis.fetch;
+    globalThis.fetch = ((input: any, init?: any) => {
+      const url =
+        typeof input === "string"
+          ? input
+          : input instanceof URL
+            ? input.toString()
+            : input.url;
+      if (url === OPENROUTER_URL) {
+        callCount++;
+        if (callCount === 1) {
+          // Classifier returns isPassthrough as a STRING — type drift. A raw `as`
+          // cast would make "true" truthy and short-circuit to passthrough.
+          return new Response(
+            JSON.stringify({
+              model: "@preset/assistants-pro",
+              choices: [
+                {
+                  message: {
+                    content: JSON.stringify({
+                      isPassthrough: "true",
+                      passthroughType: "skill-definition",
+                      agentName: "X",
+                      emoji: "🤖",
+                      description: "d",
+                      category: "Work",
+                    }),
+                  },
+                },
+              ],
+              usage: { prompt_tokens: 10, completion_tokens: 5 },
+            }),
+            { status: 200, headers: { "Content-Type": "application/json" } },
+          );
+        }
+        // Design generation call (the safe fallback).
+        return new Response(
+          JSON.stringify({
+            model: "@preset/assistants-pro",
+            choices: [
+              {
+                message: {
+                  content: JSON.stringify({
+                    prompt: "designed",
+                    agentName: "X",
+                    emoji: "🤖",
+                    description: "d",
+                    category: "Work",
+                    tools: [],
+                  }),
+                },
+              },
+            ],
+            usage: { prompt_tokens: 10, completion_tokens: 5 },
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      }
+      return (originalMockFetch as any)(input, init);
+    }) as any;
+
+    try {
+      await generateTemplate({ text: longText });
+      // Validation rejects the string → not passthrough → the design path (a
+      // second production call) runs. A truthy-cast bug would stop at 1 call.
+      expect(callCount).toBe(2);
+    } finally {
+      globalThis.fetch = originalMockFetch;
+    }
   });
 
   // -----------------------------------------------------------------------
