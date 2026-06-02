@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import { meGuard } from "@/api/v2/accounts/middleware/meGuard";
 
 const makeReq = (accountId: string): Request =>
-  ({ params: { accountId } }) as unknown as Request;
+  ({ params: { accountId }, log: { warn: vi.fn() } }) as unknown as Request;
 
 const makeRes = () => {
   const json = vi.fn();
