@@ -211,8 +211,10 @@ DESIGN (isPassthrough false) — anything written for a human reader, EVEN WHEN 
 Respond with ONLY a JSON object (no markdown fences): { "isPassthrough": true|false }`;
 }
 
-// ABLATION — completeness axis ONLY (no addressed-to route). Expected to fail the
-// short imperative skill-def and the install steps (neither is a multi-section spec).
+// ABLATION — completeness axis ONLY (no addressed-to route), HARDENED for depth
+// vs breadth. Tests whether a well-worded completeness signal alone can hold the
+// short-brief line (which the un-hardened version failed: it read a terse feature
+// list that NAMED every facet as "complete").
 function completenessOnlyClassifierPrompt(content: string): string {
   return `You are classifying pasted text: use it VERBATIM as the agent's prompt (passthrough), or design an agent from it (design)?
 
@@ -221,10 +223,10 @@ Pasted content:
 ${content}
 ---
 
-PASSTHROUGH (isPassthrough true) — the text is a COMPLETE, finished agent definition/specification: it fully lays out the agent — its objective/goal, concrete mechanics (state it tracks, triggers, the actions/loops it runs), behavior/rules, voice/persona, and scope — developed enough to run on as-is. Completeness is what matters; it may be written in any grammatical person.
+PASSTHROUGH (isPassthrough true) — the text is a COMPLETE agent specification: it SPECIFIES the agent across multiple sections — objective/goal, concrete mechanics (state it tracks, triggers, the step-by-step actions/loops it runs), behavior/rules, voice/persona, and scope — developed enough to run on as-is. The bar is DEPTH, not breadth: it must specify HOW each part works (the concrete rules, exact triggers, step-by-step loop), not merely NAME the capabilities. It may be written in any grammatical person.
 
 DESIGN (isPassthrough false) — raw material to design from:
-- A SHORT brief or idea: a few sentences or a feature list that names what the agent should do without fully specifying it.
+- A SHORT brief or idea: a few sentences or a feature LIST that NAMES what the agent should do without specifying HOW each part works. A terse line that names an objective, several features, and a persona is still a brief — naming every facet is breadth, not depth. ("Coordinates tee times, polls the group, manages RSVPs, sends reminders. Friendly golf-buddy personality." names five things and specifies none → design.)
 - Human prose not authored as an agent definition: article, essay, news, README-for-humans, marketing copy, product spec for people, or book/transcript excerpt — at any length.
 
 Respond with ONLY a JSON object (no markdown fences): { "isPassthrough": true|false }`;
