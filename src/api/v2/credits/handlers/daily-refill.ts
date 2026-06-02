@@ -4,7 +4,15 @@ import {
   type DailyRefillSummary,
 } from "@/payments/daily-refill/service";
 
-export async function dailyRefill(req: Request, res: Response): Promise<void> {
+/**
+ * POST /v2/credits/daily
+ *
+ * Cron-gated daily refill. Runs the top-up-to-cap job and returns a summary.
+ *   200  { skipped: true, reason, lastRunAt }                   — already ran this UTC day
+ *   200  { skipped: false, refilled, noOp, errors, runAt }      — ran
+ *   500  { error: "Daily refill failed" }                       — job threw
+ */
+export async function dailyRefill(req: Request, res: Response) {
   let summary: DailyRefillSummary;
   try {
     summary = await runDailyRefill();

@@ -1,5 +1,6 @@
 import { createHash, timingSafeEqual } from "crypto";
 import type { NextFunction, Request, Response } from "express";
+import { maskKeyPrefix } from "@/utils/mask";
 
 const MIN_CRON_API_KEY_LENGTH = 32;
 
@@ -29,11 +30,6 @@ function constantTimeSecretCompare(
   const a = createHash("sha256").update(provided, "utf8").digest();
   const b = createHash("sha256").update(expected, "utf8").digest();
   return timingSafeEqual(a, b);
-}
-
-function maskKeyPrefix(key: string): string {
-  if (key.length === 0) return "(empty)";
-  return `${key.slice(0, 4)}... (len=${key.length})`;
 }
 
 export const requireCronApiKey = (

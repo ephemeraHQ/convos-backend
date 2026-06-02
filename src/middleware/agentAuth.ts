@@ -2,6 +2,7 @@ import { createHash, timingSafeEqual } from "crypto";
 import type { NextFunction, Request, Response } from "express";
 import { AGENT_ASSETS_API_KEY } from "@/config";
 import { ADMIN_ACCOUNT_ID } from "@/utils/constants";
+import { maskKeyPrefix } from "@/utils/mask";
 import { authMiddleware } from "./auth";
 
 export const AGENT_API_KEY_HEADER = "X-Agent-API-Key";
@@ -41,11 +42,6 @@ function constantTimeSecretCompare(
   const providedDigest = createHash("sha256").update(provided, "utf8").digest();
   const expectedDigest = createHash("sha256").update(expected, "utf8").digest();
   return timingSafeEqual(providedDigest, expectedDigest);
-}
-
-function maskKeyPrefix(key: string): string {
-  if (key.length === 0) return "(empty)";
-  return `${key.slice(0, 4)}... (len=${key.length})`;
 }
 
 export const agentApiKeyAuth = (

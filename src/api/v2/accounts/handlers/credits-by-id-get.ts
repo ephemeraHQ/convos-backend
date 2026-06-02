@@ -54,5 +54,6 @@ export const creditsByIdGetHandler = async (
       "credits.read.failed",
     );
     res.status(500).json({ error: "Failed to read credits balance" });
+    return;
   }
 };
