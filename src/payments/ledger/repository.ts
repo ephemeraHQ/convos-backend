@@ -2,6 +2,7 @@ import { Prisma, type CreditLedger, type LedgerReason } from "@prisma/client";
 import { prisma } from "@/utils/prisma";
 import { IdempotencyMismatchError } from "../errors";
 import type { GrantKindId, HistoryCursor, LedgerScope } from "../types";
+import { assertIdempotencyKey } from "./idempotency-key";
 
 export interface ApplyDeltaInput {
   accountId: string;
@@ -169,6 +170,7 @@ export const applyDeltaWithTx = async (
   tx: TxClient,
   input: ApplyDeltaInput,
 ): Promise<ApplyDeltaResult> => {
+  assertIdempotencyKey(input.idempotencyKey);
   const before = await lockOrCreateBalance(tx, input.accountId);
   const after = before + input.delta;
 

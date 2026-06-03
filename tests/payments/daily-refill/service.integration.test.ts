@@ -4,6 +4,7 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 import { getBalance } from "@/payments";
 import { runDailyRefill } from "@/payments/daily-refill/service";
 import { ymdUtc } from "@/payments/daily-refill/utc";
+import { idempotencyKeySchema } from "@/payments/ledger/idempotency-key";
 import { applyDelta } from "@/payments/ledger/repository";
 import { prisma } from "@/utils/prisma";
 
@@ -80,7 +81,7 @@ async function seedRateLimitAnchor(
       accountId,
       delta: 100n,
       reason: LedgerReason.grant,
-      idempotencyKey: `daily_refill:${accountId}:${ymdUtc(createdAt)}-seed`,
+      idempotencyKey: `daily_refill_${accountId}_${ymdUtc(createdAt)}-seed`,
       grantKindId: "daily_refill",
       createdAt,
     },
@@ -165,7 +166,7 @@ describe("runDailyRefill — top-up math", () => {
     await applyDelta({
       accountId,
       delta: 40n,
-      idempotencyKey: `seed-40:${accountId}`,
+      idempotencyKey: `seed-40_${accountId}`,
       reason: LedgerReason.adjust,
       scope: "grant",
     });
@@ -177,12 +178,34 @@ describe("runDailyRefill — top-up math", () => {
     expect(entry!.newBalance).toBe(100n);
   });
 
+  test("emitted daily_refill key conforms to the idempotency charset", async () => {
+    const accountId = await seedAccount();
+    await applyDelta({
+      accountId,
+      delta: 40n,
+      idempotencyKey: `seed-conform_${accountId}`,
+      reason: LedgerReason.adjust,
+      scope: "grant",
+    });
+    await runDailyRefill({ now: NOW });
+    const row = await prisma.creditLedger.findFirst({
+      where: { accountId, grantKindId: "daily_refill" },
+    });
+    expect(row).not.toBeNull();
+    expect(row!.idempotencyKey).toBe(
+      `daily_refill_${accountId}_${ymdUtc(NOW)}`,
+    );
+    expect(idempotencyKeySchema.safeParse(row!.idempotencyKey).success).toBe(
+      true,
+    );
+  });
+
   test("balance at cap → noOp (no ledger row added)", async () => {
     const accountId = await seedAccount();
     await applyDelta({
       accountId,
       delta: 100n,
-      idempotencyKey: `seed-100:${accountId}`,
+      idempotencyKey: `seed-100_${accountId}`,
       reason: LedgerReason.adjust,
       scope: "grant",
     });
@@ -198,7 +221,7 @@ describe("runDailyRefill — top-up math", () => {
     await applyDelta({
       accountId,
       delta: 150n,
-      idempotencyKey: `seed-150:${accountId}`,
+      idempotencyKey: `seed-150_${accountId}`,
       reason: LedgerReason.adjust,
       scope: "grant",
     });
@@ -215,14 +238,14 @@ describe("runDailyRefill — top-up math", () => {
     await applyDelta({
       accountId,
       delta: 10n,
-      idempotencyKey: `seed-pos:${accountId}`,
+      idempotencyKey: `seed-pos_${accountId}`,
       reason: LedgerReason.adjust,
       scope: "grant",
     });
     await applyDelta({
       accountId,
       delta: -50n,
-      idempotencyKey: `seed-neg:${accountId}`,
+      idempotencyKey: `seed-neg_${accountId}`,
       reason: LedgerReason.adjust,
       scope: "grant",
     });
@@ -308,7 +331,7 @@ describe("runDailyRefill — idempotency", () => {
     await applyDelta({
       accountId,
       delta: -60n,
-      idempotencyKey: `drain:${accountId}`,
+      idempotencyKey: `drain_${accountId}`,
       reason: LedgerReason.adjust,
       scope: "grant",
     });
@@ -324,7 +347,7 @@ describe("runDailyRefill — idempotency", () => {
     });
 
     // Second run: sees balance=40n, headroom=60, calls
-    //   grant({ credits: 60, idempotencyKey: "daily_refill:<accountId>:2026-05-15" })
+    //   grant({ credits: 60, idempotencyKey: "daily_refill_<accountId>_2026-05-15" })
     // The stored row has delta=100 (from the first run). The mismatch between
     // requested delta (60) and stored delta (100) triggers IdempotencyMismatchError,
     // which the service catches and logs in errors[]. Balance stays at 40n.
@@ -355,10 +378,10 @@ describe("runDailyRefill — failure isolation", () => {
     // IMPORTANT: createdAt is set to yesterday so the global rate-limit
     // query (MAX createdAt WHERE grantKindId='daily_refill' >= startOfTodayUtc(NOW))
     // does NOT short-circuit the batch. The date-keyed idempotency key
-    // ('daily_refill:<accountId>:2026-05-15') still collides with what the
+    // ('daily_refill_<accountId>_2026-05-15') still collides with what the
     // service generates for today, triggering the mismatch error.
     const dayKey = ymdUtc(NOW);
-    const collidingKey = `daily_refill:${collidingAccountId}:${dayKey}`;
+    const collidingKey = `daily_refill_${collidingAccountId}_${dayKey}`;
     await prisma.creditLedger.create({
       data: {
         accountId: collidingAccountId,
