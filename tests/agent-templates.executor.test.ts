@@ -197,6 +197,47 @@ describe("generation-executor", () => {
     expect(capturedOverride).toBeNull();
   });
 
+  test("preserves the user's text intent alongside an attached file", async () => {
+    let capturedInput: unknown;
+    let capturedProps: PostHogCaptureProperties | undefined;
+    __resetGenerateTemplateForTests((input) => {
+      capturedInput = input;
+      return Promise.resolve({
+        template: fakeTemplate,
+        metrics: DEFAULT_TEST_METRICS,
+      });
+    });
+    __resetPostHogForTests((props) => {
+      capturedProps = props;
+    });
+    const gen = await prisma.agentTemplateGeneration.create({
+      data: {
+        ownerAccountId: ADMIN_ACCOUNT_ID,
+        source: TEST_SOURCE,
+        idempotencyKey: "file-plus-intent",
+        inputs: {
+          imageBase64: "AAAA",
+          mimeType: "image/png",
+          text: "make a cooking agent",
+        },
+        status: "pending",
+      },
+    });
+
+    await executeGeneration(gen.id);
+    __resetPostHogForTests(() => {}); // restore the no-op for later tests
+
+    // The directive must survive coalescing — generateTemplate uses it as the
+    // file's "User's intent:" rather than dropping it.
+    expect(capturedInput).toMatchObject({
+      imageBase64: "AAAA",
+      text: "make a cooking agent",
+    });
+    // ...and `text` now riding on the object must NOT flip the analytics
+    // classification: a file is still reported as imageBase64, not "text".
+    expect(capturedProps?.inputType).toBe("imageBase64");
+  });
+
   test("non-sluggable agentName falls back to a safe default slug", async () => {
     // deriveBaseSlug("🤖 ✨ 🚀") strips to "" — validateSlug rejects it, so
     // persistTemplate must fall back to a valid slug rather than persist an

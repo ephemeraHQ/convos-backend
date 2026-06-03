@@ -236,14 +236,10 @@ export type TemplatePrefill = z.infer<typeof TemplatePrefillSchema>;
 
 type CoalescedInput =
   | { kind: "text"; text: string }
-  | { kind: "pdfBase64"; pdfBase64: string }
-  | { kind: "imageBase64"; imageBase64: string };
+  | { kind: "pdfBase64"; pdfBase64: string; text?: string }
+  | { kind: "imageBase64"; imageBase64: string; text?: string };
 
 function coalesceInputs(inputs: Inputs): CoalescedInput | null {
-  if (inputs.pdfBase64)
-    return { kind: "pdfBase64", pdfBase64: inputs.pdfBase64 };
-  if (inputs.imageBase64)
-    return { kind: "imageBase64", imageBase64: inputs.imageBase64 };
   // Pick the first text-bearing field whose content is non-whitespace.
   // A naive `||` chain short-circuits on truthy-but-whitespace values
   // (`"   "` is truthy in JS), so a payload like
@@ -253,6 +249,21 @@ function coalesceInputs(inputs: Inputs): CoalescedInput | null {
     (value): value is string =>
       typeof value === "string" && value.trim().length > 0,
   );
+  // The text rides along on file paths too — it's the user's directive for the
+  // attached file — so carry it through for length validation, mirroring the
+  // executor's coalescing.
+  if (inputs.pdfBase64)
+    return {
+      kind: "pdfBase64",
+      pdfBase64: inputs.pdfBase64,
+      ...(text ? { text } : {}),
+    };
+  if (inputs.imageBase64)
+    return {
+      kind: "imageBase64",
+      imageBase64: inputs.imageBase64,
+      ...(text ? { text } : {}),
+    };
   if (text) return { kind: "text", text };
   return null;
 }
@@ -649,7 +660,9 @@ export async function generationsPostHandler(req: Request, res: Response) {
   }
 
   // 4. Length limits
-  if (coalesced.kind === "text" && coalesced.text.length > MAX_TEXT_LEN) {
+  // `coalesced.text` is set on the text path AND on file paths that carry an
+  // intent directive, so cap it regardless of kind.
+  if (coalesced.text !== undefined && coalesced.text.length > MAX_TEXT_LEN) {
     res.status(400).json({
       error: `Text exceeds maximum length of ${MAX_TEXT_LEN} characters`,
     });

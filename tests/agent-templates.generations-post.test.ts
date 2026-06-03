@@ -181,6 +181,17 @@ describe("POST /generations — validation", () => {
     expect(res.status).toBe(400);
   });
 
+  test("intent text exceeds 50_000 chars on a file path → 400", async () => {
+    // The intent text rides along with an attached file (the generator uses it
+    // as the file's directive), so it's length-capped on the file path too.
+    const tooLong = "a".repeat(50_001);
+    const res = await post(
+      { source: TEST_SOURCE, inputs: { imageBase64: "AAAA", text: tooLong } },
+      { headers: withKey("v4-file-intent") },
+    );
+    expect(res.status).toBe(400);
+  });
+
   test("missing Idempotency-Key → 400", async () => {
     const res = await post(sampleBody, { headers: baseHeaders() });
     expect(res.status).toBe(400);

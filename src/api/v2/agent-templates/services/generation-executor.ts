@@ -208,21 +208,31 @@ function postHogBase(args: {
 function coalesceInputs(
   inputs: GenerationInputs,
 ): GenerateTemplateInput | null {
+  // The user's typed text is their intent/directive for an attached file —
+  // generateTemplate appends it as "User's intent: …" on the pdf/image paths —
+  // so it must survive coalescing there too, not just on the text-only path.
+  // `.find` (not a `||` chain) so a truthy-but-whitespace field can't mask a
+  // real one behind it.
+  const text = [inputs.text, inputs.idea, inputs.content, inputs.url].find(
+    (value): value is string =>
+      typeof value === "string" && value.trim().length > 0,
+  );
   if (inputs.pdfBase64) {
     return {
       pdfBase64: inputs.pdfBase64,
       mimeType: inputs.mimeType || "application/pdf",
       filename: inputs.filename || "document.pdf",
+      ...(text ? { text } : {}),
     };
   }
   if (inputs.imageBase64) {
     return {
       imageBase64: inputs.imageBase64,
       mimeType: inputs.mimeType || "image/png",
+      ...(text ? { text } : {}),
     };
   }
-  const text = inputs.text || inputs.idea || inputs.content || inputs.url;
-  if (text && text.trim().length > 0) return { text };
+  if (text) return { text };
   return null;
 }
 
@@ -469,12 +479,15 @@ async function _runPipeline(
       "No usable input — provide one of text, idea, content, url, pdfBase64, or imageBase64",
     );
   }
+  // File presence determines the input type. `text` may now ALSO be present on
+  // the pdf/image paths (the user's intent directive), so it's checked LAST — a
+  // bare text submission is the only shape with no pdf/image key.
   const inputType: "text" | "pdfBase64" | "imageBase64" =
-    "text" in coalesced
-      ? "text"
-      : "pdfBase64" in coalesced
-        ? "pdfBase64"
-        : "imageBase64";
+    "pdfBase64" in coalesced
+      ? "pdfBase64"
+      : "imageBase64" in coalesced
+        ? "imageBase64"
+        : "text";
 
   // Caller-pinned prefill is read up front so it can be fed INTO the generator
   // (so the produced prompt + welcome use the pinned name), not just overlaid
