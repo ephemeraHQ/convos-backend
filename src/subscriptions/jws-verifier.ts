@@ -22,10 +22,27 @@ const CERT_DIR = path.join(
   "certs",
 );
 
-const loadAppleRootCerts = () => [
-  readFileSync(path.join(CERT_DIR, "AppleRootCA-G2.cer")),
-  readFileSync(path.join(CERT_DIR, "AppleRootCA-G3.cer")),
-];
+const CERT_FILES = ["AppleRootCA-G2.cer", "AppleRootCA-G3.cer"] as const;
+
+const loadAppleRootCert = (file: string): Buffer => {
+  try {
+    return readFileSync(path.join(CERT_DIR, file));
+  } catch (err) {
+    // The certs are copied into the bundle by tsup's onSuccess hook. If they're
+    // missing the verifier can't be built at all — fail loud with a config error
+    // instead of letting a raw ENOENT surface as a generic "Invalid signed
+    // transaction" 400, which is what masked this as a signature bug for weeks.
+    if ((err as NodeJS.ErrnoException)?.code === "ENOENT") {
+      throw new AppError(
+        500,
+        `Apple root CA cert missing from bundle: ${path.join(CERT_DIR, file)}`,
+      );
+    }
+    throw err;
+  }
+};
+
+const loadAppleRootCerts = () => CERT_FILES.map(loadAppleRootCert);
 
 const resolveEnvironment = () => {
   const raw = process.env.APPLE_ENV?.trim();
