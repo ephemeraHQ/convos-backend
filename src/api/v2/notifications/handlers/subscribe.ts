@@ -39,6 +39,10 @@ export async function subscribe(
     req.log.info(
       {
         accountId: res.locals.accountId,
+        // Explicit boolean so Datadog can count legacy-JWT subscribes
+        // without depending on whether the logger drops or renders null
+        // for an undefined accountId field.
+        hasAccountId: res.locals.accountId !== undefined,
         deviceId: body.deviceId,
         clientId: body.clientId,
         topicCount: body.topics.length,
