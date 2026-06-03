@@ -171,7 +171,7 @@ describe("templateGen service — OpenRouter integration", () => {
   // -----------------------------------------------------------------------
   // URL and Authorization header
   // -----------------------------------------------------------------------
-  test("production call uses literal OpenRouter URL with Bearer auth and Content-Type only", async () => {
+  test("production call uses literal OpenRouter URL with Bearer auth, Content-Type, and Convos app attribution headers", async () => {
     const mod = await import("@/api/v2/agent-templates/services/templateGen");
     generateTemplate = mod.generateTemplate;
 
@@ -201,9 +201,12 @@ describe("templateGen service — OpenRouter integration", () => {
     expect(req.headers["authorization"]).toBe(`Bearer ${TEST_API_KEY}`);
     expect(req.headers["content-type"]).toBe("application/json");
 
+    // App attribution: builder calls are attributed to the "Convos Agents"
+    // app in OpenRouter (OPENROUTER_ATTRIBUTION_HEADERS in openrouter-client).
+    expect(req.headers["http-referer"]).toBe("https://agents.convos.org");
+    expect(req.headers["x-title"]).toBe("Convos Agents");
+
     // Forbidden headers must NOT be present
-    expect(req.headers["http-referer"]).toBeUndefined();
-    expect(req.headers["x-title"]).toBeUndefined();
     expect(req.headers["openai-beta"]).toBeUndefined();
     // User-Agent should not be a custom Convos one (or absent entirely, which is fine)
     if (req.headers["user-agent"]) {
