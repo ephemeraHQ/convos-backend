@@ -400,6 +400,27 @@ describe("templateGen service — OpenRouter integration", () => {
       "Email",
       "Schedule",
     ]);
+
+    // `category` is likewise enum-constrained so a custom builder prompt (or
+    // temperature drift) can't invent an off-taxonomy category.
+    expect(schema.properties.category.enum).toEqual([
+      ...mod.TEMPLATE_CATEGORIES,
+    ]);
+    expect([...mod.TEMPLATE_CATEGORIES]).toEqual([
+      "Sports & Rec",
+      "Travel & Adventures",
+      "Food & Dining",
+      "Events & Occasions",
+      "Hobbies & Interests",
+      "Entertainment & Culture",
+      "Music & Creative",
+      "Kids & Family",
+      "Wellness & Fitness",
+      "Money & Investing",
+      "Work",
+      "Local",
+      "Superpowers",
+    ]);
   });
 
   // -----------------------------------------------------------------------
