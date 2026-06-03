@@ -98,7 +98,7 @@ export async function runDailyRefill(opts?: {
         accountId,
         delta: BigInt(delta),
         reason: LedgerReason.grant,
-        idempotencyKey: `daily_refill:${accountId}:${dayKey}`,
+        idempotencyKey: `daily_refill_${accountId}_${dayKey}`,
         scope: "daily_refill",
         grantKindId: "daily_refill",
         note: `Daily refill to cap ${cap}`,
