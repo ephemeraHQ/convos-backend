@@ -22,10 +22,39 @@ const CERT_DIR = path.join(
   "certs",
 );
 
-const loadAppleRootCerts = () => [
-  readFileSync(path.join(CERT_DIR, "AppleRootCA-G2.cer")),
-  readFileSync(path.join(CERT_DIR, "AppleRootCA-G3.cer")),
-];
+const CERT_FILES = ["AppleRootCA-G2.cer", "AppleRootCA-G3.cer"] as const;
+
+const loadAppleRootCert = (file: string): Buffer => {
+  try {
+    return readFileSync(path.join(CERT_DIR, file));
+  } catch (err) {
+    // The certs are copied into the bundle by tsup's onSuccess hook. If they're
+    // missing the verifier can't be built at all — fail loud with a config error
+    // instead of letting a raw ENOENT surface as a generic "Invalid signed
+    // transaction" 400, which is what masked this as a signature bug for weeks.
+    if ((err as NodeJS.ErrnoException | null)?.code === "ENOENT") {
+      throw new AppError(
+        500,
+        `Apple root CA cert missing from bundle: ${path.join(CERT_DIR, file)}`,
+      );
+    }
+    throw err;
+  }
+};
+
+const loadAppleRootCerts = () => CERT_FILES.map(loadAppleRootCert);
+
+/**
+ * Boot-time assertion that the Apple root CA certs shipped with the bundle.
+ * Called from startup so a broken asset pipeline (certs not copied into
+ * dist/certs) crashes the process before it accepts traffic — rather than
+ * letting the API come up "healthy" and 500 lazily on the first Apple verify
+ * / S2S request. Independent of Apple env config (bundle id etc.): this only
+ * checks the bundled assets, so it runs and means the same thing everywhere.
+ */
+export const assertAppleRootCertsPresent = (): void => {
+  loadAppleRootCerts();
+};
 
 const resolveEnvironment = () => {
   const raw = process.env.APPLE_ENV?.trim();
