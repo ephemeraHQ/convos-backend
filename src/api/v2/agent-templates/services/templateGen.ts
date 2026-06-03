@@ -177,6 +177,25 @@ const BREVITY_RAIL = `## Runtime Reminder
 
 Chat replies appear as push notifications on members' phones. Hard cap: 3 sentences, plain text — no markdown, bullets, headers, or links. When the answer is reference-worthy (plan, guide, comparison, itinerary, summary, rundown, breakdown), write a file to your workspace and send it with MEDIA:./filename.html — Convos artifacts are HTML, never .md, and you must run the \`artifact\` skill before writing any .html file (it owns the design system: DESIGN.md, Note vs Table, head-meta, light/dark). The 3-sentence cap applies to the short chat message next to the artifact, not the file itself. Default to a single short paragraph. If two thoughts truly need to land apart, separate them with a **blank line** (double line break, \`\\n\\n\`) — a single newline glues them into one bubble, which is almost never what you want.`;
 
+// Appended to a custom builder-prompt override (the admin tool) — never to the
+// canonical prompt, which already carries this guidance. The JSON *shape* is
+// enforced by the response schema regardless, so this rail only re-asserts the
+// field *quality* the schema can't check (a real name/emoji, no empties) — the
+// part a custom prompt is most likely to drop. Goes LAST so a long custom
+// prompt can't bury it (mirrors BREVITY_RAIL on the agent prompt).
+const BUILDER_CONTRACT_RAIL = `## Field Requirements (non-negotiable)
+
+The builder instructions above design the agent, and the output JSON shape is
+already enforced by the response schema. Regardless of those instructions, fill
+every field with a real, fitting value — never blank, placeholder, or "TODO":
+
+- agentName — a memorable 1–3 word handle that fits the agent's vibe. Never "Assistant", "Bot", "Helper", or a descriptive title.
+- emoji — exactly one glyph that fits the agent. Never blank.
+- description — one line (≤140 chars) on what the agent is for.
+- category — one sensible category.
+- tools — only the tools the agent actually needs.
+- prompt — the agent's full instructions; never empty.`;
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -1250,11 +1269,14 @@ export async function generateTemplate(
   if (!apiKey) {
     throw new Error("BUILDER_OPENROUTER_API_KEY not configured");
   }
-  // A per-request override (the admin preview tool A/B-ing a builder prompt)
-  // wins over the file/test-seam prompt; an empty/whitespace value falls
-  // through to the canonical prompt.
-  const systemPrompt = systemPromptOverride?.trim()
-    ? systemPromptOverride
+  // A per-request override (the admin tool's custom builder prompt) wins over
+  // the file/test-seam prompt; an empty/whitespace value falls through to the
+  // canonical prompt. The override replaces the canonical prompt's field-quality
+  // guidance, so append BUILDER_CONTRACT_RAIL to re-assert it (the response
+  // schema still enforces the JSON shape either way).
+  const trimmedOverride = systemPromptOverride?.trim();
+  const systemPrompt = trimmedOverride
+    ? `${trimmedOverride}\n\n---\n\n${BUILDER_CONTRACT_RAIL}`
     : getSystemPrompt();
   if (!systemPrompt) {
     throw new Error("Template generator system prompt not loaded");
@@ -1643,4 +1665,4 @@ export async function callGenerateTemplate(
   return generateTemplate(input, signal, prefill, trace, systemPromptOverride);
 }
 
-export { BREVITY_RAIL };
+export { BREVITY_RAIL, BUILDER_CONTRACT_RAIL };
