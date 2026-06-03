@@ -35,7 +35,6 @@
  * Auth: optionalAuthOrAgentApiKeyAuth. Anonymous submissions are accepted
  * and owned by ADMIN_ACCOUNT_ID; authenticated submissions are owned by
  * the JWT/API-key account.
- * Production guard: XMTP_ENV !== "production" (in v2/index.ts).
  * Body size: 40 MB (route-specific middleware).
  */
 
