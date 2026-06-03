@@ -4,10 +4,13 @@ import { fileURLToPath } from "node:url";
 import {
   Environment,
   SignedDataVerifier,
+  VerificationException,
+  VerificationStatus,
   type JWSTransactionDecodedPayload,
   type ResponseBodyV2DecodedPayload,
 } from "@apple/app-store-server-library";
 import { AppError } from "@/utils/errors";
+import logger from "@/utils/logger";
 
 // Read NODE_ENV dynamically (not from the cached `isProductionEnv()` config
 // constant) so the prod-only guard below stays testable. NODE_ENV doesn't
@@ -120,47 +123,109 @@ export type VerifierConfig = {
   appAppleId?: number;
 };
 
-export const buildVerifierConfig = (): VerifierConfig => {
-  const environment = resolveEnvironment();
-  return {
-    rootCertificates: loadAppleRootCerts(),
-    enableOnlineChecks: environment === Environment.PRODUCTION,
-    environment,
-    bundleId: resolveBundleId(),
-    appAppleId:
-      environment === Environment.SANDBOX ? undefined : resolveAppAppleId(),
-  };
-};
+const buildVerifierConfigForEnvironment = (
+  environment: Environment,
+): VerifierConfig => ({
+  rootCertificates: loadAppleRootCerts(),
+  // Online OCSP revocation checks only for Production. Sandbox/LocalTesting
+  // verify the chain offline against the signed date — Apple's sandbox OCSP
+  // responders are unreliable, and TestFlight receipts must verify without
+  // depending on them.
+  enableOnlineChecks: environment === Environment.PRODUCTION,
+  environment,
+  bundleId: resolveBundleId(),
+  // appAppleId is required to verify Production receipts but must be omitted
+  // for Sandbox (the library rejects a Sandbox receipt that carries one).
+  appAppleId:
+    environment === Environment.SANDBOX ? undefined : resolveAppAppleId(),
+});
 
-let cachedVerifier: SignedDataVerifier | null = null;
+export const buildVerifierConfig = (): VerifierConfig =>
+  buildVerifierConfigForEnvironment(resolveEnvironment());
 
-export const getVerifier = () => {
-  if (cachedVerifier) return cachedVerifier;
-  const cfg = buildVerifierConfig();
-  cachedVerifier = new SignedDataVerifier(
+// One cached verifier per Apple environment. We may need both: the configured
+// primary plus the opposite one for the fallback below.
+const verifierCache = new Map<Environment, SignedDataVerifier>();
+
+// Test override. When set, it's used directly with no environment fallback —
+// tests inject a single LOCAL_TESTING verifier and assert exact-environment
+// behavior, which the fallback would otherwise mask.
+let testVerifier: SignedDataVerifier | null = null;
+
+const getVerifierForEnvironment = (
+  environment: Environment,
+): SignedDataVerifier => {
+  const cached = verifierCache.get(environment);
+  if (cached) return cached;
+  const cfg = buildVerifierConfigForEnvironment(environment);
+  const verifier = new SignedDataVerifier(
     cfg.rootCertificates,
     cfg.enableOnlineChecks,
     cfg.environment,
     cfg.bundleId,
     cfg.appAppleId,
   );
-  return cachedVerifier;
+  verifierCache.set(environment, verifier);
+  return verifier;
 };
 
+export const getVerifier = (): SignedDataVerifier =>
+  testVerifier ?? getVerifierForEnvironment(resolveEnvironment());
+
 export const resetVerifierForTests = () => {
-  cachedVerifier = null;
+  testVerifier = null;
+  verifierCache.clear();
 };
 
 export const setVerifierForTests = (verifier: SignedDataVerifier) => {
-  cachedVerifier = verifier;
+  testVerifier = verifier;
 };
 
-export const verifyAndDecodeNotification = async (
+// Production receipts and Sandbox (TestFlight) receipts can both reach the same
+// backend: a real purchase is Production-signed, a TestFlight purchase is
+// Sandbox-signed. A verifier configured for one rejects the other with
+// INVALID_ENVIRONMENT *after* the cert chain verifies. So we try the configured
+// environment first and, only on INVALID_ENVIRONMENT, retry against the other —
+// Apple's recommended "verify with production, retry with sandbox" pattern.
+const FALLBACK_ENVIRONMENT: Partial<Record<Environment, Environment>> = {
+  [Environment.PRODUCTION]: Environment.SANDBOX,
+  [Environment.SANDBOX]: Environment.PRODUCTION,
+};
+
+const isInvalidEnvironment = (err: unknown): boolean =>
+  err instanceof VerificationException &&
+  err.status === VerificationStatus.INVALID_ENVIRONMENT;
+
+const verifyWithEnvironmentFallback = async <T>(
+  op: (verifier: SignedDataVerifier) => Promise<T>,
+): Promise<T> => {
+  // A test-injected verifier is an explicit override — no fallback.
+  if (testVerifier) return op(testVerifier);
+
+  const primary = resolveEnvironment();
+  try {
+    return await op(getVerifierForEnvironment(primary));
+  } catch (err) {
+    const alternate = FALLBACK_ENVIRONMENT[primary];
+    if (!alternate || !isInvalidEnvironment(err)) throw err;
+    logger.info(
+      { primary, alternate },
+      "apple.verify.environment_fallback — receipt signed for the alternate environment; retrying",
+    );
+    return op(getVerifierForEnvironment(alternate));
+  }
+};
+
+export const verifyAndDecodeNotification = (
   signedPayload: string,
 ): Promise<ResponseBodyV2DecodedPayload> =>
-  getVerifier().verifyAndDecodeNotification(signedPayload);
+  verifyWithEnvironmentFallback((verifier) =>
+    verifier.verifyAndDecodeNotification(signedPayload),
+  );
 
-export const verifyAndDecodeTransaction = async (
+export const verifyAndDecodeTransaction = (
   signedTransactionInfo: string,
 ): Promise<JWSTransactionDecodedPayload> =>
-  getVerifier().verifyAndDecodeTransaction(signedTransactionInfo);
+  verifyWithEnvironmentFallback((verifier) =>
+    verifier.verifyAndDecodeTransaction(signedTransactionInfo),
+  );

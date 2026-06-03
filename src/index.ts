@@ -9,7 +9,7 @@ import {
   stopTtlSweep as stopGenerationTtlSweep,
 } from "@/api/v2/agent-templates/services/ttl-sweep";
 import apiRouter from "./api";
-import { IS_DEVELOPMENT, XMTP_ENV } from "./config";
+import { IS_DEVELOPMENT } from "./config";
 import { errorHandlerMiddleware } from "./middleware/errorHandler";
 import { jsonMiddleware } from "./middleware/json";
 import { noRouteMiddleware } from "./middleware/noRoute";
@@ -100,11 +100,9 @@ validateJWTKeys()
         });
       }
 
-      // Generation pipeline sweep — only when the agent-templates router is
-      // mounted (gated on XMTP_ENV !== "production"; see src/api/v2/index.ts).
-      if (XMTP_ENV !== "production") {
-        startGenerationTtlSweep();
-      }
+      // Generation pipeline sweep — expires stale generation rows. Runs in
+      // every env now that the agent-templates router is mounted everywhere.
+      startGenerationTtlSweep();
     });
 
     // Wrap the async drain steps in a void-IIFE so the SIGTERM listener
@@ -116,7 +114,7 @@ validateJWTKeys()
         logger.info("SIGTERM signal received: closing Convos API service");
         // Stop the generation TTL sweep so its setInterval doesn't keep
         // dispatching DB queries against a closing pool during the drain
-        // window. No-op if the sweep was never started (production gate).
+        // window. No-op if the sweep was never started.
         stopGenerationTtlSweep();
         // Flush buffered PostHog events before the process exits. The SDK
         // buffers up to flushAt (default 20) or flushInterval (default 10s)
