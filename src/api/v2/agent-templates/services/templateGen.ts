@@ -58,6 +58,27 @@ export const TEMPLATE_TOOLS = [
   "Schedule",
 ] as const;
 
+/** The category taxonomy a generated template may use. Single in-repo source for
+ *  the json_schema enum below and the selector/classifier sub-stage prompts (and
+ *  it mirrors the field-requirements line in `data/template-generator-prompt.txt`);
+ *  the enum on the generate call enforces it at decode time so a custom builder
+ *  prompt — or temperature drift — can't invent an off-taxonomy category. */
+export const TEMPLATE_CATEGORIES = [
+  "Sports & Rec",
+  "Travel & Adventures",
+  "Food & Dining",
+  "Events & Occasions",
+  "Hobbies & Interests",
+  "Entertainment & Culture",
+  "Music & Creative",
+  "Kids & Family",
+  "Wellness & Fitness",
+  "Money & Investing",
+  "Work",
+  "Local",
+  "Superpowers",
+] as const;
+
 // Concrete OpenRouter model id (not an OpenRouter `@preset/...` alias) so
 // PostHog LLM Analytics can price `$ai_generation` events — `$ai_total_cost_usd`
 // resolves automatically. Override per-environment with `BUILDER_MODEL`.
@@ -698,7 +719,7 @@ If you find either kind, also produce metadata based on the README + repo:
 - agentName: a creative memorable name derived from the repo (e.g. "garrytan/gbrain" → "GBrain 🧠" style)
 - emoji: single emoji that fits
 - description: 1-2 sentence third-person description
-- category: one of: Sports & Rec, Travel & Adventures, Food & Dining, Events & Occasions, Hobbies & Interests, Entertainment & Culture, Music & Creative, Kids & Family, Wellness & Fitness, Money & Investing, Work, Local, Superpowers
+- category: one of: ${TEMPLATE_CATEGORIES.join(", ")}
 
 Respond with ONLY a JSON object (no markdown fences, no explanation):
 
@@ -1118,7 +1139,7 @@ If passthrough, also produce metadata:
 - agentName: memorable name derived from the content
 - emoji: single emoji that fits
 - description: 1-2 sentence third-person description
-- category: one of: Sports & Rec, Travel & Adventures, Food & Dining, Events & Occasions, Hobbies & Interests, Entertainment & Culture, Music & Creative, Kids & Family, Wellness & Fitness, Money & Investing, Work, Local, Superpowers
+- category: one of: ${TEMPLATE_CATEGORIES.join(", ")}
 
 Respond with ONLY a JSON object (no markdown fences, no explanation):
 
@@ -1477,7 +1498,7 @@ export async function generateTemplate(
             agentName: { type: "string" },
             emoji: { type: "string" },
             description: { type: "string" },
-            category: { type: "string" },
+            category: { type: "string", enum: [...TEMPLATE_CATEGORIES] },
             tools: {
               type: "array",
               items: { type: "string", enum: [...TEMPLATE_TOOLS] },
