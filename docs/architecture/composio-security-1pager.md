@@ -6,7 +6,7 @@
 
 ## TL;DR
 
-Convos Backend owns all Composio connections and exposes a narrow per-call API to agents. Retire the per-assistant Composio projects in the Assistants pool config. Per-user projects can come in v2; not blocking MVP.
+Convos Backend owns all Composio connections and exposes a narrow per-call API to agents. **The load-bearing security invariant: the agent must never hold the Composio project API key.** One project is safe as long as exactly one keyholder exists. Retire the per-assistant Composio projects in the Assistants pool config. Per-user projects can come in v2; not blocking MVP.
 
 ## The bug today
 
@@ -28,15 +28,46 @@ Agent → Backend.exec(user, toolkit, action, args)
 
 Per-call scope is `(user, toolkit, action, connectionId)` — the same tuple iOS already gates via the picker. Backend re-checks the capability grant before forwarding (defense-in-depth: a misbehaving agent can't escalate verbs).
 
+### Clipped-client model: what the agent has vs doesn't have
+
+What the agent holds:
+- Its own JWT (proves *which* agent it is).
+- `inboxId` of the conversation sender (already in the XMTP envelope).
+- Toolkit name, action name, args.
+
+What the agent does **not** hold:
+- The Composio project API key.
+- Any user's `userId` / `accountId` / `connectionId`.
+- Any other user's `inboxId`.
+
+A fully compromised agent can therefore only act on the inboxId it's in conversation with, only call actions the user actually granted, and only via Backend. There is no `userId` it can lie about because it never sees one.
+
+### Defense in depth
+
+Three layers stack inside the one-project model:
+
+1. **Backend grant re-check (must-have).** Every `exec` call looks up the iOS-issued capability grant for `(asker_inboxId, conversationId, provider, capability)`. No grant → 403.
+2. **Action-level allowlist on Backend.** Backend.exec only forwards action slugs explicitly mapped from a published bundle config. A new Composio action lands disabled-by-default until added to a bundle. Mitigates "agent discovers a powerful action you didn't realize the toolkit had."
+3. **Per-call scoped sessions (MVP-2).** When Composio's `tool_router/sessions` API matures, Backend issues a short-lived session token scoped to `(userId, toolkit, action)` and hands *that* to the agent for one call. Composio enforces per-call scope itself; Backend's hot-path cost drops.
+
 ## Phasing
 
 | Phase | Scope | Effort |
 |---|---|---|
-| **MVP-1** | Convos Backend exposes `POST /v2/composio/exec` (thin proxy for `tools/execute`) **plus identifier alignment** (see below). Agent call stack becomes `connections.mjs exec → Backend → Composio`. **Per-assistant Composio projects retired** — that's the source of the current bug. | one sprint |
+| **MVP-1** | Convos Backend exposes `POST /v2/composio/exec` with grant re-check, action allowlist, and identifier alignment (see below). Agent call stack becomes `connections.mjs exec → Backend → Composio`. **Per-assistant Composio projects retired** — that's the source of the current bug. | one sprint |
 | **MVP-2** | Replace proxy with Composio `tool_router/sessions` or scoped MCP URLs. Same agent contract, lower Backend hot-path cost. | when session APIs prove out |
 | **v2** | Project-per-user on Backend for stronger blast-radius isolation. | not blocking |
 
 The agent contract stays the same across phases — only Backend internals change.
+
+## Work breakdown by repo
+
+| Repo | Change | Notes |
+|---|---|---|
+| `convos-backend` | New `POST /v2/composio/exec` handler: grant lookup, action allowlist, `inboxId → accountId` resolution, Composio proxy. | All net-new code. |
+| `convos-assistants` | Swap `runtime/convos-platform/skills/connections/scripts/connections.mjs:544` Composio direct call → `Backend.exec` HTTP call. | Two runtimes to update: `convos-platform` and the mirrored `runtime/hermes/.hermes-dev/home/skills/connections/scripts/connections.mjs`. Easy to miss. |
+| `convos-assistants` | Retire per-assistant Composio project keys from the Assistants pool config. | Config-only change once `exec` is live. |
+| `convos-ios` | None. The picker UI, grant codecs, capability resolution, and `connection_event.revoked` flow are all framework-agnostic. | — |
 
 ## Identifier alignment (the missing link)
 
@@ -82,7 +113,7 @@ Both should land. They don't conflict.
 
 - **Single shared project, no Backend layer (status quo with the iOS-side bug):** every agent shares one project key. No isolation between agents at the Composio layer, and the OAuth-vs-execution split is exactly the bug we have today.
 - **Project per assistant (current Assistants pool config):** breaks sign-in-once. User would re-OAuth Google Calendar for every assistant they interact with. Product spec rules this out.
-- **Project per user:** needs an *org-level* key on Backend to programmatically create projects — back to "one key with the keys to the kingdom." Plus likely per-project Composio billing. Push to v2.
+- **Project per user:** needs an *org-level* key on Backend to programmatically create projects — back to "one key with the keys to the kingdom." Plus likely per-project Composio billing. Push to v2. MVP-1 closes the *agent-side* leak completely; v2 addresses *Backend-side* key exfiltration (one stolen Composio key → all users leak). Different threat, different cost.
 
 ## Open questions
 
@@ -96,7 +127,8 @@ Both should land. They don't conflict.
 
 1. Approve the Backend-mediated direction above.
 2. Approve retiring the per-assistant Composio projects in Assistants pool config.
-3. Assign owner for the MVP-1 Backend `exec` endpoint.
+3. Assign owner for the MVP-1 Backend `exec` endpoint (`convos-backend`).
+4. Assign owner for the agent-side swap to `Backend.exec` (`convos-assistants`, both runtimes).
 
 ## Why this aligns with what we already shipped
 
