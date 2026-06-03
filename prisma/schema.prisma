@@ -53,6 +53,11 @@ model ClientIdentifier {
   id        String             @id
   deviceId  String
   device    DeviceRegistration @relation(fields: [deviceId], references: [deviceId], onDelete: Cascade)
+  /// Set from JWT on subscribe. The webhook handler refuses push delivery
+  /// when this value does not match DeviceRegistration.accountId so a stale
+  /// ClientIdentifier from a previous account on the same device cannot
+  /// wake the current account's device.
+  accountId String?            @db.Uuid
   addedAt   DateTime           @default(now())
   updatedAt DateTime           @updatedAt
 

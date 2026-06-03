@@ -41,6 +41,53 @@ function isWelcomeMessage(args: {
 }
 
 /**
+ * Refuses to deliver a push when the ClientIdentifier belongs to a different
+ * account than the DeviceRegistration. Same-device account switches accumulate
+ * orphan ClientIdentifier rows pointing at the device's deviceId (validated in
+ * production: 24 such rows on one device, ~4-month accumulation). The XMTP
+ * notifications server keeps webhooking us for those orphans; this check drops
+ * the delivery before it leaves our boundary.
+ *
+ * NULL on either side is treated as "untrusted" - the webhook drops it. This
+ * intentionally catches historical rows backfilled with NULL accountId and any
+ * future rows where account membership can't be established. The orphan
+ * ClientIdentifier cleanup migration sweeps the historical garbage out
+ * separately.
+ *
+ * Exported for direct unit testing of the guard contract; the wider webhook
+ * handler covers it implicitly via integration tests.
+ */
+export function isAccountIdMismatch(args: {
+  client: ClientIdentifier & { device: DeviceRegistration };
+  notification: WebhookNotificationBody;
+  req: Request;
+}): boolean {
+  const { client, notification, req } = args;
+  const clientAccountId = client.accountId;
+  const deviceAccountId = client.device.accountId;
+  if (
+    clientAccountId === null ||
+    deviceAccountId === null ||
+    clientAccountId !== deviceAccountId
+  ) {
+    req.log.warn(
+      {
+        event: "client_account_mismatch",
+        clientId: notification.installation.id,
+        deviceId: client.deviceId,
+        clientAccountId,
+        deviceAccountId,
+        contentTopic: notification.message.content_topic,
+        messageType: notification.message_context.message_type,
+      },
+      "Dropping push: ClientIdentifier.accountId does not match DeviceRegistration.accountId",
+    );
+    return true;
+  }
+  return false;
+}
+
+/**
  * Notifications webhook handler
  *
  * Authentication is handled by webhookAuthMiddleware which validates the
@@ -82,6 +129,11 @@ export async function handleXmtpNotification(req: Request, res: Response) {
     });
 
     if (v2Client) {
+      if (isAccountIdMismatch({ client: v2Client, notification, req })) {
+        res.status(200).end();
+        return;
+      }
+
       const pushType = v2Client.device.pushTokenType; // 'fcm' | 'apns'
       const tag = pushType === "fcm" ? "[FCM]" : "[APNS]";
       req.log.info(

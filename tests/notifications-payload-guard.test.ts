@@ -188,6 +188,7 @@ function makeClient(pushType: "apns" | "fcm"): ClientIdentifier & {
   return {
     id: "client-1",
     deviceId: "dev-1",
+    accountId: null,
     addedAt: new Date(),
     updatedAt: new Date(),
     device: {
