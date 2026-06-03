@@ -32,7 +32,7 @@ const loadAppleRootCert = (file: string): Buffer => {
     // missing the verifier can't be built at all — fail loud with a config error
     // instead of letting a raw ENOENT surface as a generic "Invalid signed
     // transaction" 400, which is what masked this as a signature bug for weeks.
-    if ((err as NodeJS.ErrnoException)?.code === "ENOENT") {
+    if ((err as NodeJS.ErrnoException | null)?.code === "ENOENT") {
       throw new AppError(
         500,
         `Apple root CA cert missing from bundle: ${path.join(CERT_DIR, file)}`,
