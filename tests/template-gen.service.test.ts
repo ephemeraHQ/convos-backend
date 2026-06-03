@@ -212,6 +212,41 @@ describe("templateGen service — OpenRouter integration", () => {
   });
 
   // -----------------------------------------------------------------------
+  // Builder-prompt override + contract rail
+  // -----------------------------------------------------------------------
+  test("a builder-prompt override is sent verbatim with the contract rail appended", async () => {
+    const mod = await import("@/api/v2/agent-templates/services/templateGen");
+    generateTemplate = mod.generateTemplate;
+
+    const customPrompt = "You are a pirate-themed agent builder. Arr.";
+    await generateTemplate(
+      { text: "a trivia agent" },
+      undefined,
+      null,
+      undefined,
+      customPrompt,
+    );
+
+    const req = getLastOpenRouterRequest();
+    const systemMsg = req.body.messages[0].content[0].text as string;
+    // Override first (verbatim), rail appended last so a long custom prompt
+    // can't bury the field-quality requirements.
+    expect(systemMsg.startsWith(customPrompt)).toBe(true);
+    expect(systemMsg).toContain(mod.BUILDER_CONTRACT_RAIL);
+  });
+
+  test("no override → canonical prompt, contract rail NOT appended", async () => {
+    const mod = await import("@/api/v2/agent-templates/services/templateGen");
+    generateTemplate = mod.generateTemplate;
+
+    await generateTemplate({ text: "a trivia agent" });
+
+    const req = getLastOpenRouterRequest();
+    const systemMsg = req.body.messages[0].content[0].text as string;
+    expect(systemMsg).not.toContain(mod.BUILDER_CONTRACT_RAIL);
+  });
+
+  // -----------------------------------------------------------------------
   // Model defaults to anthropic/claude-opus-4.7
   // -----------------------------------------------------------------------
   test("model defaults to anthropic/claude-opus-4.7", async () => {
