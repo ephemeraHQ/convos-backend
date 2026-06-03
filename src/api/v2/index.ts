@@ -42,10 +42,12 @@ import { appleWebhookRouter } from "./subscriptions/apple-webhook.router";
 
 const v2Router = Router();
 
+// /dev is a non-production test surface; keep it gated.
 if (process.env.XMTP_ENV !== "production") {
   v2Router.use("/dev", devAuthMiddleware, devRouter);
-  v2Router.use("/agent-templates", agentTemplatesRouter);
 }
+
+v2Router.use("/agent-templates", agentTemplatesRouter);
 
 v2Router.use("/invites", invitesV2Router);
 

@@ -19,7 +19,6 @@
  *
  * Auth: optionalAuthOrAgentApiKeyAuth. Anonymous reads are permitted; the
  * generation ID is treated as a bearer secret.
- * Production guard: XMTP_ENV !== "production" (in v2/index.ts).
  */
 
 import type { Request, Response } from "express";
