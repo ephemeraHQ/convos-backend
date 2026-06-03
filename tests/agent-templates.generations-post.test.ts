@@ -122,6 +122,8 @@ afterAll(async () => {
   __resetGenerateTemplateForTests(null);
   __resetPostHogForTests(null);
   __resetModerationForTests(null);
+  // Restore the singleton agent-key override so it can't leak into other suites.
+  __setAgentAssetsApiKeyOverrideForTests(undefined);
   await prisma.account
     .delete({ where: { id: ASSERTED_ACCOUNT_ID } })
     .catch(() => {
