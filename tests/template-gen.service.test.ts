@@ -390,6 +390,16 @@ describe("templateGen service — OpenRouter integration", () => {
         "tools",
       ].sort(),
     );
+
+    // `tools` is enum-constrained so a custom builder prompt can't emit an
+    // unmappable tool — enforced at decode time, not just by the prompt.
+    expect(schema.properties.tools.items.enum).toEqual([...mod.TEMPLATE_TOOLS]);
+    expect([...mod.TEMPLATE_TOOLS]).toEqual([
+      "Search",
+      "Browse",
+      "Email",
+      "Schedule",
+    ]);
   });
 
   // -----------------------------------------------------------------------

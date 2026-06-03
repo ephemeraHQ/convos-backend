@@ -46,6 +46,18 @@ import {
 // ---------------------------------------------------------------------------
 
 const MAX_CONTENT_LENGTH = 10_000;
+
+/** The only tool values a generated template may use. Mirrors the SUPERPOWERS
+ *  table + field requirements in `data/template-generator-prompt.txt`; the
+ *  json_schema enum on the generate call enforces it at decode time so a custom
+ *  builder prompt can't emit an unmappable tool. */
+export const TEMPLATE_TOOLS = [
+  "Search",
+  "Browse",
+  "Email",
+  "Schedule",
+] as const;
+
 // Concrete OpenRouter model id (not an OpenRouter `@preset/...` alias) so
 // PostHog LLM Analytics can price `$ai_generation` events — `$ai_total_cost_usd`
 // resolves automatically. Override per-environment with `BUILDER_MODEL`.
@@ -1466,7 +1478,10 @@ export async function generateTemplate(
             emoji: { type: "string" },
             description: { type: "string" },
             category: { type: "string" },
-            tools: { type: "array", items: { type: "string" } },
+            tools: {
+              type: "array",
+              items: { type: "string", enum: [...TEMPLATE_TOOLS] },
+            },
           },
           required: [
             "prompt",
