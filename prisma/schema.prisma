@@ -173,6 +173,9 @@ model AgentTemplateGeneration {
   // Stored on the row because the executor is fire-and-forget and re-reads
   // the row; this is the simplest handoff channel.
   prefill         Json?
+  // Optional caller-supplied builder/system prompt override (admin dashboard);
+  // privileged (agent-API-key only) and fed to the generator by the executor.
+  builderPrompt   String?          @db.Text
   templateId      String?          @db.Uuid
   publishStatus   PublishStatus    @default(draft)
   reply           String?          @db.Text

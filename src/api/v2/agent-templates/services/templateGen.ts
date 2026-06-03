@@ -1240,6 +1240,7 @@ export async function generateTemplate(
   externalSignal?: AbortSignal,
   prefill?: GenerationPrefill | null,
   trace?: TraceContext,
+  systemPromptOverride?: string | null,
 ): Promise<GenerationResult> {
   // Backward compat: string input = text
   const opts: GenerateTemplateInput =
@@ -1249,7 +1250,12 @@ export async function generateTemplate(
   if (!apiKey) {
     throw new Error("BUILDER_OPENROUTER_API_KEY not configured");
   }
-  const systemPrompt = getSystemPrompt();
+  // A per-request override (the admin preview tool A/B-ing a builder prompt)
+  // wins over the file/test-seam prompt; an empty/whitespace value falls
+  // through to the canonical prompt.
+  const systemPrompt = systemPromptOverride?.trim()
+    ? systemPromptOverride
+    : getSystemPrompt();
   if (!systemPrompt) {
     throw new Error("Template generator system prompt not loaded");
   }
@@ -1400,9 +1406,12 @@ export async function generateTemplate(
       // 1.25x); reads are 0.1x either way. Net cheaper + faster whenever two
       // generations land within an hour. Supported per-block on Bedrock.
       //
-      // `systemPrompt` (not the raw SYSTEM_PROMPT import) so the eval harness's
-      // __setSystemPromptOverrideForTests seam still applies; in production
-      // there's no override, so the text stays byte-identical and caches.
+      // `systemPrompt` (not the raw SYSTEM_PROMPT import) so both the eval
+      // harness's __setSystemPromptOverrideForTests seam AND a per-request
+      // `systemPromptOverride` (the admin preview tool) still apply. In
+      // production neither is set, so the text stays byte-identical and
+      // caches; a preview override is intentionally a cache miss (low volume,
+      // dev/admin-only).
       {
         role: "system",
         content: [
@@ -1584,6 +1593,7 @@ let _generateTemplateOverride:
       signal?: AbortSignal,
       prefill?: GenerationPrefill | null,
       trace?: TraceContext,
+      systemPromptOverride?: string | null,
     ) => Promise<GenerationResult>)
   | null = null;
 
@@ -1595,6 +1605,7 @@ export function __resetGenerateTemplateForTests(
         signal?: AbortSignal,
         prefill?: GenerationPrefill | null,
         trace?: TraceContext,
+        systemPromptOverride?: string | null,
       ) => Promise<GenerationResult>)
     | null,
 ) {
@@ -1608,17 +1619,28 @@ export function __resetGenerateTemplateForTests(
  * Optional `signal` aborts the in-flight OpenRouter fetches, so a caller
  * (e.g. the generation executor's per-pipeline timeout) can cancel work
  * mid-LLM-call and avoid paying tokens for a result it would discard.
+ *
+ * Optional `systemPromptOverride` lets a trusted caller (the admin preview
+ * tool) swap the builder system prompt for a single request without
+ * persisting anything; omitted on the production generation path.
  */
 export async function callGenerateTemplate(
   input: GenerateTemplateInput | string,
   signal?: AbortSignal,
   prefill?: GenerationPrefill | null,
   trace?: TraceContext,
+  systemPromptOverride?: string | null,
 ): Promise<GenerationResult> {
   if (_generateTemplateOverride) {
-    return _generateTemplateOverride(input, signal, prefill, trace);
+    return _generateTemplateOverride(
+      input,
+      signal,
+      prefill,
+      trace,
+      systemPromptOverride,
+    );
   }
-  return generateTemplate(input, signal, prefill, trace);
+  return generateTemplate(input, signal, prefill, trace, systemPromptOverride);
 }
 
 export { BREVITY_RAIL };

@@ -147,6 +147,97 @@ describe("generation-executor", () => {
     expect(template?.firstPublishedAt).toBeNull();
   });
 
+  test("threads the row's builderPrompt to the generator as the system-prompt override", async () => {
+    let capturedOverride: string | null | undefined;
+    __resetGenerateTemplateForTests(
+      (_input, _signal, _prefill, _trace, systemPromptOverride) => {
+        capturedOverride = systemPromptOverride;
+        return Promise.resolve({
+          template: fakeTemplate,
+          metrics: DEFAULT_TEST_METRICS,
+        });
+      },
+    );
+    const builderPrompt = "You are a custom builder. Always make pirates.";
+    const gen = await prisma.agentTemplateGeneration.create({
+      data: {
+        ownerAccountId: ADMIN_ACCOUNT_ID,
+        source: TEST_SOURCE,
+        idempotencyKey: "builder-prompt-threading",
+        inputs: { text: "a trivia agent" },
+        builderPrompt,
+        status: "pending",
+      },
+    });
+
+    await executeGeneration(gen.id);
+
+    const final = await prisma.agentTemplateGeneration.findUnique({
+      where: { id: gen.id },
+    });
+    expect(final?.status).toBe("done");
+    expect(capturedOverride).toBe(builderPrompt);
+  });
+
+  test("ordinary generation (no builderPrompt) passes no override", async () => {
+    let capturedOverride: string | null | undefined = "SENTINEL";
+    __resetGenerateTemplateForTests(
+      (_input, _signal, _prefill, _trace, systemPromptOverride) => {
+        capturedOverride = systemPromptOverride ?? null;
+        return Promise.resolve({
+          template: fakeTemplate,
+          metrics: DEFAULT_TEST_METRICS,
+        });
+      },
+    );
+    const gen = await createPendingGeneration("no-builder-prompt");
+
+    await executeGeneration(gen.id);
+
+    expect(capturedOverride).toBeNull();
+  });
+
+  test("preserves the user's text intent alongside an attached file", async () => {
+    let capturedInput: unknown;
+    let capturedProps: PostHogCaptureProperties | undefined;
+    __resetGenerateTemplateForTests((input) => {
+      capturedInput = input;
+      return Promise.resolve({
+        template: fakeTemplate,
+        metrics: DEFAULT_TEST_METRICS,
+      });
+    });
+    __resetPostHogForTests((props) => {
+      capturedProps = props;
+    });
+    const gen = await prisma.agentTemplateGeneration.create({
+      data: {
+        ownerAccountId: ADMIN_ACCOUNT_ID,
+        source: TEST_SOURCE,
+        idempotencyKey: "file-plus-intent",
+        inputs: {
+          imageBase64: "AAAA",
+          mimeType: "image/png",
+          text: "make a cooking agent",
+        },
+        status: "pending",
+      },
+    });
+
+    await executeGeneration(gen.id);
+    __resetPostHogForTests(() => {}); // restore the no-op for later tests
+
+    // The directive must survive coalescing — generateTemplate uses it as the
+    // file's "User's intent:" rather than dropping it.
+    expect(capturedInput).toMatchObject({
+      imageBase64: "AAAA",
+      text: "make a cooking agent",
+    });
+    // ...and `text` now riding on the object must NOT flip the analytics
+    // classification: a file is still reported as imageBase64, not "text".
+    expect(capturedProps?.inputType).toBe("imageBase64");
+  });
+
   test("non-sluggable agentName falls back to a safe default slug", async () => {
     // deriveBaseSlug("🤖 ✨ 🚀") strips to "" — validateSlug rejects it, so
     // persistTemplate must fall back to a valid slug rather than persist an

@@ -122,6 +122,8 @@ afterAll(async () => {
   __resetGenerateTemplateForTests(null);
   __resetPostHogForTests(null);
   __resetModerationForTests(null);
+  // Restore the singleton agent-key override so it can't leak into other suites.
+  __setAgentAssetsApiKeyOverrideForTests(undefined);
   await prisma.account
     .delete({ where: { id: ASSERTED_ACCOUNT_ID } })
     .catch(() => {
@@ -177,6 +179,17 @@ describe("POST /generations — validation", () => {
     const res = await post(
       { source: TEST_SOURCE, inputs: { text: tooLong } },
       { headers: withKey("v4") },
+    );
+    expect(res.status).toBe(400);
+  });
+
+  test("intent text exceeds 50_000 chars on a file path → 400", async () => {
+    // The intent text rides along with an attached file (the generator uses it
+    // as the file's directive), so it's length-capped on the file path too.
+    const tooLong = "a".repeat(50_001);
+    const res = await post(
+      { source: TEST_SOURCE, inputs: { imageBase64: "AAAA", text: tooLong } },
+      { headers: withKey("v4-file-intent") },
     );
     expect(res.status).toBe(400);
   });
@@ -386,6 +399,54 @@ describe("POST /generations — idempotency", () => {
     expect(second.status).toBe(200);
     const body = (await second.json()) as { status: string };
     expect(body.status).toBe("done");
+  });
+});
+
+describe("POST /generations — builderPrompt (privileged override)", () => {
+  test("anonymous caller + builderPrompt → 403", async () => {
+    // builderPrompt overrides the canonical generator prompt, so like
+    // twitterContext it's restricted to agent-API-key callers.
+    const res = await post(
+      { ...sampleBody, builderPrompt: "You are a custom builder." },
+      {
+        headers: {
+          "Content-Type": "application/json",
+          "Idempotency-Key": stableUuid("builder-anon"),
+        },
+      },
+    );
+    expect(res.status).toBe(403);
+  });
+
+  test("agent-key + builderPrompt → 202 and persists on the row", async () => {
+    __resetGenerationExecutorForTests(() => Promise.resolve());
+    const res = await post(
+      { ...sampleBody, builderPrompt: "You are a custom builder." },
+      { headers: withKey("builder-ok") },
+    );
+    expect(res.status).toBe(202);
+    const body = (await res.json()) as { generationId: string };
+    const row = await prisma.agentTemplateGeneration.findUnique({
+      where: { id: body.generationId },
+    });
+    expect(row?.builderPrompt).toBe("You are a custom builder.");
+  });
+
+  test("same key + different builderPrompt → 409", async () => {
+    // builderPrompt influences the generator's output, so it's part of the
+    // idempotent contract — a reused key with a different prompt must 409.
+    __resetGenerationExecutorForTests(() => Promise.resolve());
+    const first = await post(
+      { ...sampleBody, builderPrompt: "Prompt A" },
+      { headers: withKey("idem-builder-diff") },
+    );
+    expect(first.status).toBe(202);
+
+    const second = await post(
+      { ...sampleBody, builderPrompt: "Prompt B" },
+      { headers: withKey("idem-builder-diff") },
+    );
+    expect(second.status).toBe(409);
   });
 });
 
