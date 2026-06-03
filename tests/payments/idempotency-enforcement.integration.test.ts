@@ -35,6 +35,10 @@ describe("idempotency-key enforcement at applyDelta", () => {
     ).rejects.toThrow(ValidationError);
     const rows = await prisma.creditLedger.findMany({ where: { accountId } });
     expect(rows.length).toBe(0);
+    const balanceRow = await prisma.userCredits.findUnique({
+      where: { accountId },
+    });
+    expect(balanceRow).toBeNull();
   });
 
   test("an underscore key writes successfully", async () => {

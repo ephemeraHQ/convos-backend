@@ -10,6 +10,9 @@ export const idempotencyKeySchema = z.string().regex(IDEMPOTENCY_KEY_REGEX, {
 
 export const assertIdempotencyKey = (key: string): void => {
   if (!IDEMPOTENCY_KEY_REGEX.test(key)) {
-    throw new ValidationError(`invalid_idempotency_key: ${key}`);
+    throw new ValidationError("invalid_idempotency_key", {
+      keyLength: key.length,
+      disallowedChars: [...new Set(key.replace(/[A-Za-z0-9_-]/g, ""))],
+    });
   }
 };
