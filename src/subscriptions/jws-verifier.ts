@@ -44,6 +44,18 @@ const loadAppleRootCert = (file: string): Buffer => {
 
 const loadAppleRootCerts = () => CERT_FILES.map(loadAppleRootCert);
 
+/**
+ * Boot-time assertion that the Apple root CA certs shipped with the bundle.
+ * Called from startup so a broken asset pipeline (certs not copied into
+ * dist/certs) crashes the process before it accepts traffic — rather than
+ * letting the API come up "healthy" and 500 lazily on the first Apple verify
+ * / S2S request. Independent of Apple env config (bundle id etc.): this only
+ * checks the bundled assets, so it runs and means the same thing everywhere.
+ */
+export const assertAppleRootCertsPresent = (): void => {
+  loadAppleRootCerts();
+};
+
 const resolveEnvironment = () => {
   const raw = process.env.APPLE_ENV?.trim();
   const isProd = isProductionEnv();

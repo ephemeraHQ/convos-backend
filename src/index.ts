@@ -17,6 +17,7 @@ import { pinoMiddleware } from "./middleware/pino";
 import { rateLimitMiddleware } from "./middleware/rateLimit";
 import healthcheckRouter from "./routes/healthcheck";
 import { wellKnownRouter } from "./routes/well-known";
+import { assertAppleRootCertsPresent } from "./subscriptions/jws-verifier";
 import { validateJWTKeys } from "./utils/jwt";
 import logger from "./utils/logger";
 
@@ -66,6 +67,22 @@ app.use(noRouteMiddleware);
 app.use(errorHandlerMiddleware);
 
 const port = process.env.PORT || 4000;
+
+// Fail fast at boot if the Apple root CA certs didn't ship with the bundle.
+// These are read from dist/certs at runtime (copied there by tsup's onSuccess
+// hook). If the asset pipeline regresses, refuse to start rather than coming
+// up "healthy" and 500ing lazily on the first Apple verify / S2S request —
+// which is what previously masked a missing-cert bug as a signature error.
+try {
+  assertAppleRootCertsPresent();
+  logger.info("Apple root CA certs present");
+} catch (error) {
+  logger.error(
+    { error },
+    "Apple root CA certs missing from bundle — refusing to start",
+  );
+  process.exit(1);
+}
 
 // Validate JWT keys at startup before starting the server
 validateJWTKeys()
