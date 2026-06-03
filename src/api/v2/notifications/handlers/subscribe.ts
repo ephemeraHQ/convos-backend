@@ -39,6 +39,10 @@ export async function subscribe(
     req.log.info(
       {
         accountId: res.locals.accountId,
+        // Explicit boolean so Datadog can count legacy-JWT subscribes
+        // without depending on whether the logger drops or renders null
+        // for an undefined accountId field.
+        hasAccountId: res.locals.accountId !== undefined,
         deviceId: body.deviceId,
         clientId: body.clientId,
         topicCount: body.topics.length,
@@ -134,16 +138,26 @@ export async function subscribe(
       }
     }
 
-    // Create or update client identifier record
+    // Create or update client identifier record. accountId is sourced
+    // from the JWT and is what the webhook delivery guard compares
+    // against the joined DeviceRegistration.accountId before sending a
+    // push. Older iOS builds that authenticate without SIWE produce a
+    // JWT with no accountId; leave the field untouched in that case so
+    // the migration backfill value (or a prior accountId from a SIWE
+    // authentication on the same row) is not clobbered.
+    const accountId = res.locals.accountId;
     try {
       await prisma.clientIdentifier.upsert({
         where: { id: body.clientId },
         create: {
           id: body.clientId,
           deviceId: body.deviceId,
+          accountId,
         },
-        // Refresh updatedAt by updating deviceId
-        update: { deviceId: body.deviceId },
+        update: {
+          deviceId: body.deviceId,
+          ...(accountId !== undefined ? { accountId } : {}),
+        },
       });
     } catch (dbErr) {
       // Compensate: delete installation to maintain consistency (only if we created one)
