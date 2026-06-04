@@ -41,7 +41,7 @@ export const RUBRIC: RubricDimension[] = [
     key: "blueprint_completeness",
     title: "Blueprint completeness",
     guidance:
-      "Does the prompt cover every required layer — BRAIN, SOUL, HEART, THE BRIDGES, THE CLOCK, THE ARTIFACTS, THE HOOK, THE SCHEDULE, THE LINE (and THE CONNECTIONS, or an explicit statement that the agent has no natural integrations)? Is there a WELCOME MESSAGE section whose greeting is wrapped in double quotes, opens with the character name + emoji, is one short paragraph, and ends by inviting the first ask (not a promise to ship something in the same turn)? 5 = every layer present and well-formed; 3 = a couple of layers thin or the welcome malformed; 1 = several layers missing.",
+      "Does the prompt cover every required layer — BRAIN, SOUL, HEART, THE BRIDGES, THE CLOCK, THE ARTIFACTS, THE HOOK, THE SCHEDULE, THE LINE (and THE CONNECTIONS, or an explicit statement that the agent has no natural integrations)? Is there a WELCOME MESSAGE section whose greeting is wrapped in double quotes, opens with the character name + emoji, is one short paragraph, and ends by inviting the first ask? 5 = every layer present and well-formed; 3 = a couple of layers thin or the welcome malformed; 1 = several layers missing.",
   },
   {
     key: "group_chat_fit",
