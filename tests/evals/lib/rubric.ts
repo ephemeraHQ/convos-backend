@@ -65,7 +65,7 @@ export const RUBRIC: RubricDimension[] = [
     key: "constraint_compliance",
     title: "Constraint compliance",
     guidance:
-      "Does the prompt respect the hard rails? No instructions that would produce markdown/bullets/headers/**bold** in chat replies; honors the 3-sentence chat cap (artifacts are the documented exception); does NOT re-teach cron delivery mechanics (the runtime injects those); roughly ~800 words and not wildly over ~1000; name is a 1-3 word handle, never 'Assistant'/'Helper'/'Bot' or a descriptive title; agentName/emoji match the first 'Character:' line. 5 = clean on all rails; 1 = multiple rail violations.",
+      "Does the prompt respect the hard rails? No instructions that would produce markdown/bullets/headers/**bold** in chat replies; honors the 2-sentence chat cap (artifacts are the documented exception); does NOT re-teach cron delivery mechanics (the runtime injects those); roughly ~800 words and not wildly over ~1000; name is a 1-3 word handle, never 'Assistant'/'Helper'/'Bot' or a descriptive title; agentName/emoji match the first 'Character:' line. 5 = clean on all rails; 1 = multiple rail violations.",
   },
   {
     key: "persona_quality",

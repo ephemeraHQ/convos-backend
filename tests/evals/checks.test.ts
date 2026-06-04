@@ -31,7 +31,7 @@ const GOOD: GeneratedTemplateLite = {
     "---",
     "",
     "## Runtime Reminder",
-    "Chat replies are push notifications. Hard cap: 3 sentences, plain text.",
+    "Chat replies are push notifications. Hard cap: 2 sentences, plain text.",
   ].join("\n"),
 };
 
