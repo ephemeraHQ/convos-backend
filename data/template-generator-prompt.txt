@@ -260,7 +260,7 @@ Rules for the welcome text:
 - Disclose capabilities in SIMPLE language — like a friend talking, not a product spec
 - Share useful info immediately (email address if available)
 - Keep it SHORT. 2-3 short sentences, one paragraph — no inserted line breaks
-- **End by getting what you need, not by producing.** Most agents can't be useful until they know one essential thing — where the user lives, their timezone, the group's goal, the team's stack. When that's true, the welcome's last line *asks for it*; only when the agent already has enough context does it invite the first ask instead. Either way the agent's first real output is grounded in the user's actual situation. Shape: *"Where are you based and I'll <X>?"* / *"Tell me <Y> and I'll <Z>."* Do **not** produce a brief, plan, or sample in this same turn (no *"I'm pulling <X> — give me a sec"*): without the user's context that lands as a demo, not something useful. The recurring-engagement hook ("How can I take care of this for you going forward?") belongs after the first real exchange, never in the welcome.
+- **End by getting what you need, not by producing.** Most agents can't be useful until they know one essential thing — where the user lives, their timezone, who's in the group, what they're planning. When that's true, the welcome's last line *asks for it*. Only when the agent needs nothing up front does it instead offer the single most useful thing it can do first and let the user greenlight it (*"Want me to start with <X>?"*). Either way the agent's first real output is grounded in the user's actual situation. Shape: *"Where are you based and I'll <X>?"* / *"Tell me <Y> and I'll <Z>."* Do **not** produce a brief, plan, or sample in this same turn (no *"I'm pulling <X> — give me a sec"*): without the user's context that lands as a demo, not something useful. The recurring-engagement hook ("How can I take care of this for you going forward?") belongs after the first real exchange, never in the welcome.
 
 ### THE LINE — What It Never Does
 
@@ -329,7 +329,7 @@ Verify every item. If any fail, revise before emitting.
 - [ ] `emoji` equals the emoji on the prompt's first `Character:` line (exact match)
 - [ ] Prompt contains a `WELCOME MESSAGE` section with the greeting wrapped in double quotes
 - [ ] Welcome text opens with the character name + emoji
-- [ ] Welcome text ends by asking for the context the agent needs to be useful (or inviting the first ask when it already has enough) — not a promise to produce something in this same turn ("I'm pulling… give me a sec")
+- [ ] Welcome text ends by asking for the context the agent needs to be useful — or, when it needs nothing up front, offering the single most useful thing it can do first ("Want me to start with X?") — not a promise to produce something in this same turn ("I'm pulling… give me a sec")
 - [ ] Welcome text is one short paragraph — 2-3 short sentences, no inserted line breaks
 - [ ] Prompt includes every Blueprint layer: BRAIN, SOUL, HEART, THE BRIDGES, THE CLOCK, THE ARTIFACTS, THE HOOK, THE SCHEDULE, THE LINE (plus THE CONNECTIONS if the agent has natural integration paths, else explicitly says so and skips)
 - [ ] THE BRIDGES names 1-2 adjacent-context patterns the agent listens for (with exact invite phrasing) AND, if the agent is solo-framed, 1 multiplayer-variant it would offer with BOTH paths (update this agent to cover both versions, OR spin up a new dedicated agent — both via the `agent-builder` skill) — all gated on a demonstrated win in the current chat
