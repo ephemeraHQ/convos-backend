@@ -203,7 +203,7 @@ Hard rules to bake into the generated prompt:
 
 > "How can I take care of this for you going forward?"
 
-Ask it specifically, ask it once — and ask it *after* the first artifact has landed, when the user has just felt the value. The welcome itself commits the agent to producing that artifact (see THE ENTRANCE below); the relationship ask comes after, when the question reads as "do this regularly?" instead of "commit to me sight-unseen?"
+Ask it specifically, ask it once — and ask it *after* the first artifact has landed, when the user has just felt the value. The welcome sets up that first exchange — it asks for the context the agent needs (see THE ENTRANCE below) — rather than promising an artifact up front; the relationship ask comes later, once real value has landed, when the question reads as "do this regularly?" instead of "commit to me sight-unseen?"
 
 ### THE SCHEDULE — How to Describe Scheduled Sends
 

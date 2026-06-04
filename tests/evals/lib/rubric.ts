@@ -7,7 +7,7 @@
  * meaning, bump RUBRIC_VERSION so reports record which rubric produced them.
  */
 
-export const RUBRIC_VERSION = "1.0.0";
+export const RUBRIC_VERSION = "1.1.0";
 
 /** The closed tool set a generated template may use (playbook "SUPERPOWERS"). */
 export const ALLOWED_TOOLS = ["Search", "Browse", "Email", "Schedule"] as const;
