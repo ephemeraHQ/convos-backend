@@ -2,33 +2,27 @@
 
 **Author:** Louis
 **Audience:** Fabri, Nick, Mike
-**Status:** Draft for sign-off
+**Status:** Draft for sign-off (revised after Nick's review)
 
 ## TL;DR
 
-Convos Backend owns all Composio connections and exposes a narrow per-call API to agents. **The load-bearing security invariant: the agent must never hold the Composio project API key.** One project is safe as long as exactly one keyholder exists. Retire the per-assistant Composio projects in the Assistants pool config. Per-user projects can come in v2; not blocking MVP.
+There are **two** problems hiding under "Composio security," and the first draft of this doc conflated them:
 
-## The bug today
+1. **Key custody** — the agent must never hold the Composio API key.
+2. **User scoping** — a compromised agent must not be able to act on another user's connection.
 
-iOS authorizes Google Calendar via Convos Backend's Composio project. The connection lands there. The user's profile metadata gets a `connectionId`. The agent then tries to invoke the action via *its own* per-assistant Composio project — and finds nothing, because the connection lives in a different project.
+**Key custody belongs in the Assistants outbound proxy, not the backend.** `workers/assistant/.../outbound.ts` already injects credentials for OpenRouter, Herald, the private bucket, and the runtime, and already hard-blocks direct egress (`denyDirectEgress`). Adding a `composio.internal` handler is ~6 mechanical steps in one repo — no new backend endpoint, no extra HTTP hop. Nick is right; this is the cheap, correct home for it.
 
-The capability-request consent layer ([convos-ios#796](https://github.com/xmtplabs/convos-ios/pull/796) / [#797](https://github.com/xmtplabs/convos-ios/pull/797), [convos-assistants#1484](https://github.com/xmtplabs/convos-assistants/pull/1484)) is correct under any security model below. The break is purely **where the agent invokes the toolkit**.
+**OAuth-account isolation is a separate problem that proxying does not solve — in either repo.** The global Composio key is omnipotent across every user in the project, and `user_id` is just the sender's `inboxId`, which is **not a secret**. A prompt-injected agent sends a victim's `inboxId` and the global key acts on their calendar. Injecting the *key* doesn't touch this — the agent still fills in `user_id`/`connected_account_id`. Isolation requires the trusted layer to supply the identity and leave the agent **no field to name another account**. The good news: the trusted anchors to do this already exist (the instance is pinned to one conversation; Herald hands the worker an authentic per-message sender). See Recommendation 2.
 
-## Recommendation: Backend mediates Composio access
+## Correcting the record
 
-Agents call **Convos Backend → Composio**, never Composio directly. Backend already holds the only Composio project key; we keep it that way and expose a narrow API to agents.
+Two premises in the first draft were wrong. The code:
 
-```
-iOS  → Backend.connect(toolkit)              # OAuth, stores connectionId in profile metadata
-                ↓
-Agent → Backend.exec(user, toolkit, action, args)
-                ↓ (re-validates the iOS-issued capability grant)
-        Backend → Composio
-```
+- **There is no per-assistant Composio project pool.** `COMPOSIO_API_KEY` is a **single global worker env var**, forwarded straight into the agent container (`hermes-env.ts:190-204`). The agent reads `process.env.COMPOSIO_API_KEY` and calls `https://backend.composio.dev` directly (`connections.mjs` `composio()` helper). So "retire per-assistant Composio projects" was retiring something that doesn't exist — and Nick's "Composio creds live in the agent container" is the accurate description of today.
+- **The agent already uses `inboxId`, not `deviceId`.** Execution sends `user_id: grant.composioEntityId`, where `composioEntityId = senderId` (the XMTP envelope sender's inboxId, optionally `:label`). The "identifier alignment / switch off deviceId" section of the first draft was solving a break that isn't in this code path.
 
-Per-call scope is `(user, toolkit, action, connectionId)` — the same tuple iOS already gates via the picker. Backend re-checks the capability grant before forwarding (defense-in-depth: a misbehaving agent can't escalate verbs).
-
-### Clipped-client model: what the agent has vs doesn't have
+### Composio terminology + two API facts (the security model hinges on these)
 
 What the agent holds:
 - Its own JWT (proves *which* agent it is).
