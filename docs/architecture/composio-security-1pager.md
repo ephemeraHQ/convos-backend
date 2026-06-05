@@ -49,32 +49,23 @@ This is the existing pattern, applied verbatim:
 | 5 | Stop forwarding the real key to the container in `buildHermesEnv` (set a placeholder); point `COMPOSIO_BASE_URL` at `http://composio.internal`. | OpenRouter key handling |
 | 6 | Swap the agent's `composio()` base URL to the internal host. Two runtimes: `convos-platform` and the mirrored `runtime/hermes/.hermes-dev/...`. | — |
 
-The agent contract stays the same across phases — only Backend internals change.
+**What this buys:** the load-bearing key-custody invariant, with code that already exists, in one repo, with zero backend dependency and no hot-path round trip. Ship this now.
 
-## Work breakdown by repo
+## Recommendation 2 (isolation): constrain `user_id` in the proxy, in two tiers
 
-| Repo | Change | Notes |
-|---|---|---|
-| `convos-backend` | New `POST /v2/composio/exec` handler: grant lookup, action allowlist, `inboxId → accountId` resolution, Composio proxy. | All net-new code. |
-| `convos-assistants` | Swap `runtime/convos-platform/skills/connections/scripts/connections.mjs:544` Composio direct call → `Backend.exec` HTTP call. | Two runtimes to update: `convos-platform` and the mirrored `runtime/hermes/.hermes-dev/home/skills/connections/scripts/connections.mjs`. Easy to miss. |
-| `convos-assistants` | Retire per-assistant Composio project keys from the Assistants pool config. | Config-only change once `exec` is live. |
-| `convos-ios` | None. The picker UI, grant codecs, capability resolution, and `connection_event.revoked` flow are all framework-agnostic. | — |
+The threat in one line: **`connected_account_id` is a bearer capability** (Composio doesn't check it against the account identifier), and the agent fills it in today. So the invariant isn't "constrain the identifier" — it's:
 
-## Identifier alignment (the missing link)
+> **The agent must never hold or name a `connected_account_id`.** A trusted layer resolves the connection from a trusted identity (the verified sender's `accountId`) via a grant store keyed by `accountId`, and injects it. The agent sends only `{ toolkit, action, args }`.
 
-Today there are four silos with no link between them:
-- **device/auth:** `deviceId` (iOS `identifierForVendor`, encoded in the JWT).
-- **messaging:** `inboxId` (XMTP — sender of conversations).
-- **Composio API:** `userId`, populated today with `deviceId`.
-- **payments foundations:** `inboxId`.
+Two trusted anchors the agent **cannot forge** make this enforceable:
 
-The agent only ever has `inboxId` (from the XMTP envelope sender); the Backend only ever has `deviceId` (from the JWT). There's no mapping anywhere — JWT has no inboxId field, no Backend table reconciles them. Today this works only because iOS handles both sides of its own flow; the moment an agent is the caller, the link breaks.
+**Anchor 1 — the conversation is pinned at init.** `Credentials.heraldConversationId` is set when the instance is created (`create-assistant-workflow.ts:539`) and is never agent-supplied.
 
-**Recommended fix: switch Composio's `userId` to `accountId` from the new auth API.**
+**Anchor 2 — Herald hands the worker an authentic per-message sender.** The Herald webhook carries `senderInboxId` as a top-level field in the **HMAC-signed** body — `herald.ts:94` verifies the signature, `operations.ts:356` already parses it, envelope shape at `deliver-notify-workflow.test.ts:53`. Herald decrypts XMTP server-side, so this sender is authentic; the worker just doesn't read the field yet. (Contrast `.convos-current-trigger.json`, which a compromised agent **can** forge — `connections.mjs:109`.)
 
-The new auth API ([Borja's design](https://xmtp-labs.slack.com/archives/C0ASWCMS0N9/), summarized below) introduces `accountId` as the unifying identifier across device/auth, messaging, payments, and Composio. SIWE / Google / Apple / X / mail auth methods all federate to one `accountId`; one `accountId` maps to N `inboxId` via an `XmtpInbox` object that proves ownership.
+### Tier 1 — conversation-boundary isolation (ship with the proxy)
 
-Why `accountId` beats the simpler "use `inboxId`" cut:
+The trusted layer resolves the connection only from the set of `accountId`s belonging to *this instance's* conversation members (Anchor 1 + the conversation-scoped Herald key, `/v1/conversation/{heraldConversationId}/profiles`). The agent names no connection.
 
 - **Multi-inbox per user.** Users will have multiple inboxes (work/personal, etc.); their connections shouldn't fragment across inboxes.
 - **Auth-method federation.** A Composio connection isn't tied to whichever auth method the user happened to sign in with.
