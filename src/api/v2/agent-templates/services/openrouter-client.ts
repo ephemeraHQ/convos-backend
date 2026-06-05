@@ -46,6 +46,15 @@ const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
 // the `upstream_provider` recorded on `builder.generation.llm_call`).
 const DEFAULT_PROVIDER_PREFERENCE = { order: ["amazon-bedrock"] };
 
+// OpenRouter app attribution — populates the "App" entry in the OpenRouter
+// dashboard. OpenRouter keys the app on HTTP-Referer and displays X-Title.
+// A distinct title keeps builder spend separate from the runtime's
+// "Hermes Agent" app (set by the Worker proxy in convos-assistants).
+const OPENROUTER_ATTRIBUTION_HEADERS = {
+  "HTTP-Referer": "https://agents.convos.org",
+  "X-Title": "Convos Agents",
+};
+
 /** PostHog event recording the upstream provider that served one LLM call.
  *  One per call, alongside the wrapper's `$ai_generation`. */
 export const LLM_CALL_EVENT = "builder.generation.llm_call";
@@ -80,6 +89,8 @@ function buildClient(apiKey: string): { client: OpenAI; wrapped: boolean } {
     // The raw-fetch code made a single attempt; keep that so error/timeout
     // tests don't see silent retries.
     maxRetries: 0,
+    // Attribute every builder call to the "Convos Agents" app in OpenRouter.
+    defaultHeaders: OPENROUTER_ATTRIBUTION_HEADERS,
     // Resolve the global fetch at call time so tests that reassign
     // `globalThis.fetch` still intercept the SDK's requests.
     fetch: (url: any, init?: any) => globalThis.fetch(url, init),

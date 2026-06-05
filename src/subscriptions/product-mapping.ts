@@ -15,11 +15,21 @@ export type ProductMapping = {
 //   - "app.convos.subs.<period>" (dev/preview ASC bundles — unprefixed,
 //     locked in because ASC product IDs are globally unique per
 //     developer account and prod claimed the `plus.*` ID)
+//   - "app.convos.subs.(builder|pro).<period>" (LEGACY) — the original
+//     two-tier SKUs. Apple bakes the productId into the signed JWS at the
+//     original purchase and keeps returning it on every renewal/upgrade for
+//     the life of that subscription, so existing subscribers (incl. early
+//     TestFlight / App Store testers) still send these. We dropped the
+//     Builder/Pro tiers in #263 and backfilled all rows to `plus`; we must
+//     keep *recognizing* these IDs or those subscribers' verify 400s forever
+//     (CON-386). iOS can't rewrite them client-side — that would break Apple's
+//     signature.
 // period is always monthly|annual. Anchored so trailing junk fails fast.
 //
-// We ship a single tier (Plus). Everything matched here decodes to
-// SUBSCRIPTION_TIER_PLUS.
-const PRODUCT_ID_PATTERN = /^app\.convos\.subs\.(?:plus\.)?(monthly|annual)$/;
+// We ship a single tier (Plus). Everything matched here — including the legacy
+// builder/pro SKUs — decodes to SUBSCRIPTION_TIER_PLUS.
+const PRODUCT_ID_PATTERN =
+  /^app\.convos\.subs\.(?:(?:builder|pro|plus)\.)?(monthly|annual)$/;
 
 /**
  * Decode a StoreKit product identifier into its tier + period.
@@ -34,7 +44,7 @@ export const productMapping = (productId: string): ProductMapping => {
   if (!match) {
     throw new AppError(
       400,
-      `Unrecognized productId: "${productId}". Expected app.convos.subs.<monthly|annual> (dev) or app.convos.subs.plus.<monthly|annual> (prod)`,
+      `Unrecognized productId: "${productId}". Expected app.convos.subs[.(builder|pro|plus)].<monthly|annual> — builder/pro are legacy SKUs mapped to plus`,
     );
   }
   const [, periodRaw] = match;

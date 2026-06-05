@@ -7,7 +7,7 @@
  * meaning, bump RUBRIC_VERSION so reports record which rubric produced them.
  */
 
-export const RUBRIC_VERSION = "1.0.0";
+export const RUBRIC_VERSION = "1.1.0";
 
 /** The closed tool set a generated template may use (playbook "SUPERPOWERS"). */
 export const ALLOWED_TOOLS = ["Search", "Browse", "Email", "Schedule"] as const;
@@ -41,7 +41,7 @@ export const RUBRIC: RubricDimension[] = [
     key: "blueprint_completeness",
     title: "Blueprint completeness",
     guidance:
-      "Does the prompt cover every required layer — BRAIN, SOUL, HEART, THE BRIDGES, THE CLOCK, THE ARTIFACTS, THE HOOK, THE SCHEDULE, THE LINE (and THE CONNECTIONS, or an explicit statement that the agent has no natural integrations)? Is there a WELCOME MESSAGE section whose greeting is wrapped in double quotes, opens with the character name + emoji, is one short paragraph, and ends with a commitment to ship a specific forward-able artifact in the next turn (not an open 'Want me to…?')? 5 = every layer present and well-formed; 3 = a couple of layers thin or the welcome malformed; 1 = several layers missing.",
+      "Does the prompt cover every required layer — BRAIN, SOUL, HEART, THE BRIDGES, THE CLOCK, THE ARTIFACTS, THE HOOK, THE SCHEDULE, THE LINE (and THE CONNECTIONS, or an explicit statement that the agent has no natural integrations)? Is there a WELCOME MESSAGE section whose greeting is wrapped in double quotes, opens with the character name + emoji, is one short paragraph, and ends by inviting the first ask? 5 = every layer present and well-formed; 3 = a couple of layers thin or the welcome malformed; 1 = several layers missing.",
   },
   {
     key: "group_chat_fit",
@@ -65,7 +65,7 @@ export const RUBRIC: RubricDimension[] = [
     key: "constraint_compliance",
     title: "Constraint compliance",
     guidance:
-      "Does the prompt respect the hard rails? No instructions that would produce markdown/bullets/headers/**bold** in chat replies; honors the 3-sentence chat cap (artifacts are the documented exception); does NOT re-teach cron delivery mechanics (the runtime injects those); roughly ~800 words and not wildly over ~1000; name is a 1-3 word handle, never 'Assistant'/'Helper'/'Bot' or a descriptive title; agentName/emoji match the first 'Character:' line. 5 = clean on all rails; 1 = multiple rail violations.",
+      "Does the prompt respect the hard rails? No instructions that would produce markdown/bullets/headers/**bold** in chat replies; honors the 2-sentence chat cap (artifacts are the documented exception); does NOT re-teach cron delivery mechanics (the runtime injects those); roughly ~800 words and not wildly over ~1000; name is a 1-3 word handle, never 'Assistant'/'Helper'/'Bot' or a descriptive title; agentName/emoji match the first 'Character:' line. 5 = clean on all rails; 1 = multiple rail violations.",
   },
   {
     key: "persona_quality",
