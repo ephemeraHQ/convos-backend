@@ -24,33 +24,30 @@ Two premises in the first draft were wrong. The code:
 
 ### Composio terminology + two API facts (the security model hinges on these)
 
-What the agent holds:
-- Its own JWT (proves *which* agent it is).
-- `inboxId` of the conversation sender (already in the XMTP envelope).
-- Toolkit name, action name, args.
+- **`user_id` is Composio's request field, not a Convos identifier.** Today Convos puts the **`inboxId`** in it; the target (per the auth API) is **`accountId`**. Don't read `user_id` as a Convos concept — it's just Composio's parameter name.
+- **`connected_account_id` is a bearer capability.** Composio does **not** cross-check that `connected_account_id` belongs to `user_id` (confirmed by Louis). So whoever passes a `connected_account_id` can use that connection *regardless of `user_id`*. Constraining the account identifier alone is **not** sufficient — the `connected_account_id` itself must never reach the agent.
+- **Does `tools/execute` resolve a connection from `user_id` + toolkit alone (no `connected_account_id`)?** Open — needed to confirm the agent can omit `connected_account_id` entirely (Decision Q).
 
-What the agent does **not** hold:
-- The Composio project API key.
-- Any user's `userId` / `accountId` / `connectionId`.
-- Any other user's `inboxId`.
+## The bug today
 
-A fully compromised agent can therefore only act on the inboxId it's in conversation with, only call actions the user actually granted, and only via Backend. There is no `userId` it can lie about because it never sees one.
+For OAuth toolkits the agent runs both `connect` and `execute` through the same global key, so those work. The break is on the **iOS-capability** path (calendar, fitness, etc., the `IOS_CAPABILITY_SERVICES` set): iOS creates the connection in *its* Composio project, drops a `connectionId` into profile metadata, and the agent then tries to execute against the *global agent* key — different project, connection not found.
 
-### Defense in depth
+The consent layer ([convos-ios#796](https://github.com/xmtplabs/convos-ios/pull/796)/[#797](https://github.com/xmtplabs/convos-ios/pull/797), [convos-assistants#1484](https://github.com/xmtplabs/convos-assistants/pull/1484)) is correct under any model below. The break is purely **which project the connection lives in vs. where the agent executes** — i.e. a key-custody/consolidation problem, which the proxy below also fixes by giving us one mediated path.
 
-Three layers stack inside the one-project model:
+## Recommendation 1 (key custody): proxy Composio in `outbound.ts`
 
-1. **Backend grant re-check (must-have).** Every `exec` call looks up the iOS-issued capability grant for `(asker_inboxId, conversationId, provider, capability)`. No grant → 403.
-2. **Action-level allowlist on Backend.** Backend.exec only forwards action slugs explicitly mapped from a published bundle config. A new Composio action lands disabled-by-default until added to a bundle. Mitigates "agent discovers a powerful action you didn't realize the toolkit had."
-3. **Per-call scoped sessions (MVP-2).** When Composio's `tool_router/sessions` API matures, Backend issues a short-lived session token scoped to `(userId, toolkit, action)` and hands *that* to the agent for one call. Composio enforces per-call scope itself; Backend's hot-path cost drops.
+Agents call `http://composio.internal/api/v3/...`; the outbound handler injects the key and forwards to `backend.composio.dev`. The agent never holds the key, and direct egress to Composio is blocked the same way `openrouter.ai` is.
 
-## Phasing
+This is the existing pattern, applied verbatim:
 
-| Phase | Scope | Effort |
+| Step | Change | Precedent |
 |---|---|---|
-| **MVP-1** | Convos Backend exposes `POST /v2/composio/exec` with grant re-check, action allowlist, and identifier alignment (see below). Agent call stack becomes `connections.mjs exec → Backend → Composio`. **Per-assistant Composio projects retired** — that's the source of the current bug. | one sprint |
-| **MVP-2** | Replace proxy with Composio `tool_router/sessions` or scoped MCP URLs. Same agent contract, lower Backend hot-path cost. | when session APIs prove out |
-| **v2** | Project-per-user on Backend for stronger blast-radius isolation. | not blocking |
+| 1 | Add `composioApiKey` to `CredentialsSchema` (`schemas.ts:182`). | `heraldApiKey` |
+| 2 | Define `COMPOSIO_OUTBOUND_HOST = "composio.internal"`. | `HERALD_OUTBOUND_HOST` |
+| 3 | Add `proxyComposio()` handler: inject `x-api-key`, forward to upstream. | `proxyHerald` |
+| 4 | Wire it in `buildOutboundOverrides` + `outboundByHost`, and add `"backend.composio.dev" → denyDirectEgress`. | OpenRouter + `denyDirectEgress` |
+| 5 | Stop forwarding the real key to the container in `buildHermesEnv` (set a placeholder); point `COMPOSIO_BASE_URL` at `http://composio.internal`. | OpenRouter key handling |
+| 6 | Swap the agent's `composio()` base URL to the internal host. Two runtimes: `convos-platform` and the mirrored `runtime/hermes/.hermes-dev/...`. | — |
 
 The agent contract stays the same across phases — only Backend internals change.
 
