@@ -51,13 +51,6 @@ const productSchema = z
       });
       return;
     }
-    if (mapped.tier !== p.tier) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ["tier"],
-        message: `tier "${p.tier}" disagrees with productId tier "${mapped.tier}"`,
-      });
-    }
     if (mapped.period !== p.period) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
