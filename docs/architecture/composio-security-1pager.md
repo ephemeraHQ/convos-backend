@@ -67,27 +67,28 @@ Two trusted anchors the agent **cannot forge** make this enforceable:
 
 The trusted layer resolves the connection only from the set of `accountId`s belonging to *this instance's* conversation members (Anchor 1 + the conversation-scoped Herald key, `/v1/conversation/{heraldConversationId}/profiles`). The agent names no connection.
 
-- **Multi-inbox per user.** Users will have multiple inboxes (work/personal, etc.); their connections shouldn't fragment across inboxes.
-- **Auth-method federation.** A Composio connection isn't tied to whichever auth method the user happened to sign in with.
-- **Multi-device for free.** Same human on two devices = one Composio user. The latent multi-device bug iOS has today goes away by construction.
+- **DM (the common case): exact per-user isolation** — one member, one possible connection, nothing to spoof.
+- **Group: blast radius bounded to conversation members** — never a stranger in another chat.
 
-Concretely:
-- Backend uses `accountId` (read from the JWT) as Composio's `userId` for all new OAuth flows.
-- Backend's `exec` endpoint accepts `inboxId` from the agent — same identifier the agent already has from the XMTP envelope — then resolves `inboxId → accountId` via `XmtpInbox` before forwarding to Composio. Agent contract stays simple ("here's whose inbox I'm acting on behalf of"), Backend does the resolution.
-- For existing connections keyed on `deviceId` in Composio, Backend falls back to `deviceId` lookup if `accountId` returns no result. Users migrate naturally on re-OAuth, no forced action.
+This closes the cross-conversation leak ("User A asks for User B" where A and B are in different chats) completely, with **no new trusted infrastructure** beyond the grant store.
 
-**Sequencing:** Composio MVP-1 should land **after** (or alongside) the new auth API, not before. Otherwise we'd cut over from `deviceId` to `inboxId` in MVP-1 and then to `accountId` once auth ships — two migrations for nothing. Gate MVP-1 on `accountId` being in JWTs first.
+### Tier 2 — per-sender isolation (closes intra-group escalation)
 
-**Open question for the auth API:** the agent → Backend.exec call hits `XmtpInbox` resolution on every invocation. Worth confirming that proof-of-ownership lookup is cheap per-call (or cacheable per-conversation).
+**This is the "group limit."** Under Tier 1, any member's connection is reachable during *any* turn — so in a group, member B can drive the agent into member A's calendar. The boundary is the conversation, not the person. Closing it needs the connection resolved from the **verified sender's `accountId`** (Anchor 2), default-denying every other member's connection. **Shared grants** (the existing `isShared` path) remain the explicit opt-in when A *wants* the group to use their calendar.
 
-**Alternative considered:** a `deviceId ↔ inboxId` mapping table on the Backend without going through `accountId`. Cheaper short-term but doesn't solve inbox recovery, multi-inbox, federation, or multi-device. The auth API gives us the right structural answer once.
+The hard part — and the real reason this is MVP-2: one agent instance serves the whole group with **interleaved** messages, so a mutable "current sender" flag is racy. The robust form is a **per-delivery capability**, not shared state:
 
-## Orthogonal: per-agent grant scoping ([convos-ios#812](https://github.com/xmtplabs/convos-ios/pull/812))
+- **(a) Per-delivery binding.** The worker resolves the connection for that delivery's verified `senderInboxId → accountId` and binds it to that delivery's work. New plumbing: today's egress context is static at init.
+- **(b) Composio scoped sessions** (`tool_router/sessions` / scoped MCP URLs). The worker mints a short-lived session for the verified sender per message; Composio enforces scope and the proxy stops being security-critical. Cleanest **if** sessions support action-level scope (open Decision Q).
 
-Per-agent gating lives at the messaging layer keyed on agent `inboxId` (which agent owns the grant in this conversation). Composio's `userId` is the data owner (`accountId`). Two independent axes:
+**Same rule on the OAuth `connect` path.** The `entity_id`/`accountId` at connect time must be the verified sender, not the trigger-file value — otherwise a malicious agent attaches a victim's connection under the wrong account.
 
-- **#812** — iOS resolver enforces "agent X's grant ≠ agent Y's grant" via `grantedToInboxId` on `CapabilityResolution`, `ConnectionEnablement`, `CloudConnectionGrant`, plus `askerInboxId` on `CapabilityRequest`.
-- **This doc** — Backend's `exec` endpoint forwards to Composio with `userId: accountId`, where `accountId` is the data owner.
+### Open fork: where the grant store + the Composio call live
+
+Two secrets, and they need not co-locate: the **Composio project key** (one global secret) and the **per-user `connected_account_id`s** (your backend grant store keyed by `accountId`). But *who calls Composio* is a real decision:
+
+- **(X) Proxy-resolves.** The `outbound.ts` proxy holds the project key (Nick's model) and, per call, resolves the connection from the backend grant store using the verified sender's `accountId`, then calls Composio. Keeps key custody in assistants; adds a backend lookup on the hot path.
+- **(Y) Backend-mediates.** Backend holds the key *and* the grants and makes the Composio call itself — the agent calls `Backend.exec(toolkit, action, args)` with no connection identifier. Simplest isolation story (the bearer capability never leaves backend), but it's the mediation layer Nick pushed back on for key custody.
 
 Both should land. They don't conflict.
 
