@@ -107,7 +107,7 @@ describe("POST /v2/accounts/me/subscription/verify — Google Play branch", () =
     expect(res.status).toBe(200);
     expect((res.body as VerifyBody).subscription).toEqual({
       provider: "googlePlay",
-      tier: "pro",
+      tier: "plus",
       period: "annual",
       status: "active",
       productId: "app.convos.subs.pro.annual",
