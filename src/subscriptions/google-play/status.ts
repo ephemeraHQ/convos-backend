@@ -57,9 +57,14 @@ export const deriveStatusFromPurchase = (
       return SubscriptionStatus.expired;
     case PlaySubscriptionState.cancelled: {
       const window = extractPeriodWindow(purchase);
-      return window.currentPeriodEnd.getTime() > now.getTime()
-        ? SubscriptionStatus.active
-        : SubscriptionStatus.expired;
+      if (window.currentPeriodEnd.getTime() <= now.getTime()) {
+        return SubscriptionStatus.expired;
+      }
+      // Cancelling auto-renew during a free trial should not strip the trial
+      // status for the remainder of the trial window.
+      return isTrialOffer(purchase)
+        ? SubscriptionStatus.trial
+        : SubscriptionStatus.active;
     }
     case PlaySubscriptionState.pending:
       throw new AppError(

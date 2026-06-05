@@ -66,6 +66,16 @@ describe("loadCatalogFromString", () => {
     expect(() => loadCatalogFromString(yaml)).toThrow(/billingPeriod/);
   });
 
+  test("rejects autoRenewingPlan: false", () => {
+    const yaml = validYaml.replace(
+      "autoRenewingPlan: true",
+      "autoRenewingPlan: false",
+    );
+    expect(() => loadCatalogFromString(yaml)).toThrow(
+      /autoRenewingPlan: false is not supported/,
+    );
+  });
+
   test("rejects duplicate productId", () => {
     const yaml = `
 subscriptionGroupReferenceName: convos_subscriptions

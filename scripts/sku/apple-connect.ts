@@ -1,5 +1,6 @@
 import { SubscriptionPeriod } from "@prisma/client";
 import { importPKCS8, SignJWT } from "jose";
+import { AppError } from "@/utils/errors";
 import type {
   DesiredProduct,
   DiffOp,
@@ -37,7 +38,8 @@ const requireCreds = (): Creds => {
     const missing = Object.entries(c)
       .filter(([, v]) => !v)
       .map(([k]) => k);
-    throw new Error(
+    throw new AppError(
+      400,
       `App Store Connect deploy creds missing: ${missing.join(", ")} (set APPLE_CONNECT_API_* or fall back to APPLE_API_*)`,
     );
   }
@@ -93,7 +95,8 @@ const apiFetch = async (
   }
   if (!res.ok) {
     const text = await res.text();
-    throw new Error(
+    throw new AppError(
+      500,
       `App Store Connect ${res.status} ${res.statusText} for ${init?.method ?? "GET"} ${path}: ${text}`,
     );
   }
@@ -120,15 +123,23 @@ const getAppId = async (): Promise<string> => {
   })) as { data: Array<{ id: string }> };
   const app = data.data.at(0);
   if (!app) {
-    throw new Error(`No App Store Connect app found for bundle id ${bundleId}`);
+    throw new AppError(
+      500,
+      `No App Store Connect app found for bundle id ${bundleId}`,
+    );
   }
   cachedAppId = app.id;
   return app.id;
 };
 
-export const findOrCreateSubscriptionGroup = async (
+/**
+ * Read-only lookup for an existing subscription group. Returns null when no
+ * group with the given referenceName exists. Used by the dry-run/diff path
+ * so it cannot write to App Store Connect.
+ */
+export const findSubscriptionGroup = async (
   referenceName: string,
-): Promise<string> => {
+): Promise<string | null> => {
   const appId = await getAppId();
   const list = (await apiFetch(`/v1/apps/${appId}/subscriptionGroups`)) as {
     data: Array<{ id: string; attributes: { referenceName: string } }>;
@@ -136,7 +147,15 @@ export const findOrCreateSubscriptionGroup = async (
   const existing = list.data.find(
     (g) => g.attributes.referenceName === referenceName,
   );
-  if (existing) return existing.id;
+  return existing?.id ?? null;
+};
+
+export const findOrCreateSubscriptionGroup = async (
+  referenceName: string,
+): Promise<string> => {
+  const existing = await findSubscriptionGroup(referenceName);
+  if (existing) return existing;
+  const appId = await getAppId();
   const created = (await apiFetch("/v1/subscriptionGroups", {
     method: "POST",
     body: {
@@ -272,7 +291,8 @@ const currencyToTerritory = (currency: string): string => {
     case "EUR":
       return "DEU"; // Anchor for EUR; Apple price points are per-territory
     default:
-      throw new Error(
+      throw new AppError(
+        500,
         `No currency→territory mapping defined for ${currency}; add it to scripts/sku/apple-connect.ts`,
       );
   }
@@ -405,7 +425,8 @@ export const apply = async (
   let subId: string;
   if (!remote) {
     if (!opts.allowCreate) {
-      throw new Error(
+      throw new AppError(
+        400,
         `Refusing to create Apple subscription ${desired.productId} without --allow-create. ` +
           `New Apple subscriptions require App Review submission before they activate.`,
       );
@@ -542,7 +563,8 @@ const resolvePricePoint = async (
     }
     next = res.links?.next ?? null;
   }
-  throw new Error(
+  throw new AppError(
+    500,
     `No Apple subscriptionPricePoint matches ${desiredMinor} minor units in territory ${territory} for subscription ${subId}`,
   );
 };

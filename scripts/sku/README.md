@@ -50,7 +50,7 @@ The script reuses runtime env vars but the underlying API roles must be
 Sign-in JWT for the App Store Connect REST API. Either elevate the runtime
 key to **App Manager** role, or provision a separate deploy-only key:
 
-```
+```env
 APPLE_CONNECT_API_KEY_ID=<10-char key id>
 APPLE_CONNECT_API_ISSUER_ID=<UUID>
 APPLE_CONNECT_API_SIGNING_KEY=<full .p8 PEM including BEGIN/END lines>
@@ -67,7 +67,7 @@ subscriptions"** (or a custom permission set including subscription product
 write). Either elevate the runtime service account or provision a separate
 one:
 
-```
+```env
 GOOGLE_PLAY_DEPLOY_SERVICE_ACCOUNT_JSON=<single-line JSON keyfile>
 ```
 

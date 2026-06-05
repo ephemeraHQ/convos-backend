@@ -25,18 +25,16 @@ export const diffProduct = async (
   let appleRemote: RemoteAppleProduct = null;
   let googleRemote: RemoteGoogleProduct = null;
 
-  if (opts.stores.apple) {
-    if (!subscriptionGroupId) {
-      throw new Error(
-        "diffProduct: subscriptionGroupId is required when Apple is enabled",
-      );
-    }
+  if (opts.stores.apple && subscriptionGroupId) {
     tasks.push(
       apple.fetchRemote(desired.productId, subscriptionGroupId).then((r) => {
         appleRemote = r;
       }),
     );
   }
+  // If subscriptionGroupId is null (read-only diff, group not yet created),
+  // appleRemote stays null and computeDiff emits a "create" op — exactly the
+  // signal apply needs to know it must materialize the group.
   if (opts.stores.google) {
     tasks.push(
       google.fetchRemote(desired.productId).then((r) => {
@@ -65,11 +63,10 @@ export const diffCatalog = async (
 }> => {
   // Apple needs the subscription group id resolved once up front. We do it
   // outside the per-product loop so we don't churn through the same API
-  // calls four times.
+  // calls four times. Read-only — apply.ts materializes the group when it
+  // commits.
   const subscriptionGroupId = opts.stores.apple
-    ? await apple.findOrCreateSubscriptionGroup(
-        catalog.subscriptionGroupReferenceName,
-      )
+    ? await apple.findSubscriptionGroup(catalog.subscriptionGroupReferenceName)
     : null;
 
   // Sequential to keep Apple ratelimits happy. Google could be parallel

@@ -14,6 +14,7 @@
  */
 import { exit } from "node:process";
 import pc from "picocolors";
+import { AppError } from "@/utils/errors";
 import * as apple from "./apple-connect";
 import { DEFAULT_CATALOG_PATH, loadCatalog } from "./catalog";
 import { diffCatalog, hasChanges } from "./diff";
@@ -28,6 +29,14 @@ type Args = {
   product: string | null;
   json: boolean;
   catalogPath: string;
+};
+
+const requireFlagValue = (argv: string[], index: number, flag: string) => {
+  const value: string | undefined = argv[index + 1];
+  if (!value || value.startsWith("--")) {
+    throw new AppError(400, `Missing value for ${flag}`);
+  }
+  return value;
 };
 
 const parseArgs = (argv: string[]): Args => {
@@ -59,15 +68,18 @@ const parseArgs = (argv: string[]): Args => {
         break;
       case "--allow-create":
         args.allowCreate = true;
+        args.apply = true;
         break;
       case "--json":
         args.json = true;
         break;
       case "--product":
-        args.product = argv[++i] ?? null;
+        args.product = requireFlagValue(argv, i, "--product");
+        i++;
         break;
       case "--catalog":
-        args.catalogPath = argv[++i] ?? DEFAULT_CATALOG_PATH;
+        args.catalogPath = requireFlagValue(argv, i, "--catalog");
+        i++;
         break;
       case "--help":
       case "-h":
@@ -75,7 +87,7 @@ const parseArgs = (argv: string[]): Args => {
         exit(0);
         break;
       default:
-        throw new Error(`Unknown flag: ${a}`);
+        throw new AppError(400, `Unknown flag: ${a}`);
     }
   }
   return args;
@@ -108,7 +120,7 @@ const filterCatalog = (catalog: Catalog, product: string | null): Catalog => {
   if (!product) return catalog;
   const filtered = catalog.products.filter((p) => p.productId === product);
   if (filtered.length === 0) {
-    throw new Error(`Product ${product} not found in catalog`);
+    throw new AppError(400, `Product ${product} not found in catalog`);
   }
   return { ...catalog, products: filtered };
 };
@@ -130,7 +142,8 @@ const applyAll = async (
 
     if (d.apple && d.apple.ops.length > 0) {
       if (!subscriptionGroupId) {
-        throw new Error(
+        throw new AppError(
+          500,
           "applyAll: subscriptionGroupId missing for Apple branch",
         );
       }
@@ -235,7 +248,18 @@ const main = async () => {
     exit(2);
   }
 
-  const results = await applyAll(catalog, diffs, subscriptionGroupId, args);
+  // Materialize the Apple subscription group now (the diff path is read-only
+  // and leaves this null when the group doesn't exist yet).
+  const hasAppleWork = diffs.some((d) => (d.apple?.ops.length ?? 0) > 0);
+  const resolvedGroupId =
+    subscriptionGroupId ??
+    (hasAppleWork && args.stores.apple
+      ? await apple.findOrCreateSubscriptionGroup(
+          catalog.subscriptionGroupReferenceName,
+        )
+      : null);
+
+  const results = await applyAll(catalog, diffs, resolvedGroupId, args);
   console.log("");
   console.log(renderApplyResults(results));
 

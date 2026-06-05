@@ -101,11 +101,15 @@ describe("POST /v2/webhooks/google-play/rtdn", () => {
 
   test("test notification acks 200 without touching DB", async () => {
     setPubsubVerifierForTests(() => undefined);
+    const subsBefore = await prisma.subscription.count();
+    const receiptsBefore = await prisma.billingReceipt.count();
     const res = await request(makeApp())
       .post("/v2/webhooks/google-play/rtdn")
       .send(envelope({ testNotification: { version: "1.0" } }));
     expect(res.status).toBe(200);
     expect(res.body).toMatchObject({ ok: true, kind: "test" });
+    expect(await prisma.subscription.count()).toBe(subsBefore);
+    expect(await prisma.billingReceipt.count()).toBe(receiptsBefore);
   });
 
   test("malformed envelope → 400", async () => {
@@ -118,13 +122,18 @@ describe("POST /v2/webhooks/google-play/rtdn", () => {
 
   test("malformed base64 RTDN payload → 400", async () => {
     setPubsubVerifierForTests(() => undefined);
+    // Send a fully-valid Pub/Sub envelope so the 400 only comes from the
+    // inner base64/JSON decode, not from envelope-shape validation (which
+    // the previous test already covers).
     const res = await request(makeApp())
       .post("/v2/webhooks/google-play/rtdn")
       .send({
         message: {
           messageId: "msg-1",
+          publishTime: new Date().toISOString(),
           data: Buffer.from("not-json").toString("base64"),
         },
+        subscription: "projects/x/subscriptions/y",
       });
     expect(res.status).toBe(400);
   });

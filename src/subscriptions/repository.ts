@@ -179,7 +179,7 @@ const providerSubscriptionId = (input: VerifyInput): string =>
     ? input.originalTransactionId
     : input.purchaseToken;
 
-const findExistingForVerify = (
+const findExistingForVerify = async (
   tx: Prisma.TransactionClient,
   input: VerifyInput,
 ): Promise<Subscription | null> => {
@@ -193,7 +193,7 @@ const findExistingForVerify = (
       },
     });
   }
-  return tx.subscription.findUnique({
+  const direct = await tx.subscription.findUnique({
     where: {
       subscription_play_token_unique: {
         provider: BillingProvider.googlePlay,
@@ -201,9 +201,22 @@ const findExistingForVerify = (
       },
     },
   });
+  if (direct || !input.linkedPurchaseToken) return direct;
+  // Play rotates purchaseToken on upgrade/downgrade. When the rotated row
+  // hasn't landed yet, the predecessor token still indexes the existing row.
+  return tx.subscription.findUnique({
+    where: {
+      subscription_play_token_unique: {
+        provider: BillingProvider.googlePlay,
+        purchaseToken: input.linkedPurchaseToken,
+      },
+    },
+  });
 };
 
-const reReadAfterRace = (input: VerifyInput): Promise<Subscription | null> => {
+const reReadAfterRace = async (
+  input: VerifyInput,
+): Promise<Subscription | null> => {
   if (input.provider === BillingProvider.apple) {
     return prisma.subscription.findUnique({
       where: {
@@ -214,11 +227,20 @@ const reReadAfterRace = (input: VerifyInput): Promise<Subscription | null> => {
       },
     });
   }
-  return prisma.subscription.findUnique({
+  const direct = await prisma.subscription.findUnique({
     where: {
       subscription_play_token_unique: {
         provider: BillingProvider.googlePlay,
         purchaseToken: input.purchaseToken,
+      },
+    },
+  });
+  if (direct || !input.linkedPurchaseToken) return direct;
+  return prisma.subscription.findUnique({
+    where: {
+      subscription_play_token_unique: {
+        provider: BillingProvider.googlePlay,
+        purchaseToken: input.linkedPurchaseToken,
       },
     },
   });

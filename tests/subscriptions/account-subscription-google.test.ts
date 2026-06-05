@@ -200,6 +200,69 @@ describe("POST /v2/accounts/me/subscription/verify — Google Play branch", () =
     );
   });
 
+  test("token rotation on upgrade: re-verify with new token + linkedPurchaseToken updates existing row instead of duplicating", async () => {
+    const accountId = await newAccount();
+    const token = await tokenFor(accountId);
+
+    setPlayApiFixtureForTests(() =>
+      fixturePurchase({
+        latestOrderId: "GPA.order-original",
+        lineItems: [
+          {
+            productId: "app.convos.subs.pro.annual",
+            expiryTime: "2027-05-01T00:00:00.000Z",
+            autoRenewingPlan: { autoRenewEnabled: true },
+          },
+        ],
+      }),
+    );
+    const firstRes = await request(makeApp())
+      .post("/v2/accounts/me/subscription/verify")
+      .set("X-Convos-AuthToken", token)
+      .send({
+        platform: "googlePlay",
+        purchaseToken: "ptok-old",
+        productId: "app.convos.subs.pro.annual",
+      });
+    expect(firstRes.status).toBe(200);
+
+    // Play upgrade: token rotates; new fetched purchase reports the rotation
+    // via linkedPurchaseToken pointing back at the old token. A new
+    // latestOrderId distinguishes this from a replay of the original verify.
+    setPlayApiFixtureForTests(() =>
+      fixturePurchase({
+        latestOrderId: "GPA.order-rotated",
+        linkedPurchaseToken: "ptok-old",
+        lineItems: [
+          {
+            productId: "app.convos.subs.pro.annual",
+            expiryTime: "2028-05-01T00:00:00.000Z",
+            autoRenewingPlan: { autoRenewEnabled: true },
+          },
+        ],
+      }),
+    );
+    const secondRes = await request(makeApp())
+      .post("/v2/accounts/me/subscription/verify")
+      .set("X-Convos-AuthToken", token)
+      .send({
+        platform: "googlePlay",
+        purchaseToken: "ptok-new",
+        productId: "app.convos.subs.pro.annual",
+      });
+    expect(secondRes.status).toBe(200);
+
+    const rows = await prisma.subscription.findMany({
+      where: { accountId, provider: BillingProvider.googlePlay },
+    });
+    expect(rows).toHaveLength(1);
+    expect(rows[0].purchaseToken).toBe("ptok-new");
+    expect(rows[0].linkedPurchaseToken).toBe("ptok-old");
+    expect(rows[0].currentPeriodEnd.toISOString()).toBe(
+      "2028-05-01T00:00:00.000Z",
+    );
+  });
+
   test("rejects extra body fields (discriminated body is strict)", async () => {
     setPlayApiFixtureForTests(() => fixturePurchase({}));
     const accountId = await newAccount();

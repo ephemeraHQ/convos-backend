@@ -97,6 +97,24 @@ describe("deriveStatusFromPurchase", () => {
     ).toBe(SubscriptionStatus.active);
   });
 
+  test("CANCELED mid-trial + expiryTime in future → trial (preserves trial flag)", () => {
+    const future = new Date(Date.now() + 86_400_000).toISOString();
+    expect(
+      deriveStatusFromPurchase(
+        purchase({
+          subscriptionState: PlaySubscriptionState.cancelled,
+          lineItems: [
+            {
+              productId: "app.convos.subs.builder.monthly",
+              expiryTime: future,
+              offerDetails: { offerTags: ["free_trial"] },
+            },
+          ],
+        }),
+      ),
+    ).toBe(SubscriptionStatus.trial);
+  });
+
   test("CANCELED + expiryTime in past → expired", () => {
     const past = new Date(Date.now() - 86_400_000).toISOString();
     expect(

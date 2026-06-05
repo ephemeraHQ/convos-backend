@@ -20,7 +20,16 @@ const googleSchema = z
     billingPeriod: z.string().regex(/^P\d+[DWMY]$/, {
       message: "billingPeriod must be ISO-8601 duration like P1M or P1Y",
     }),
-    autoRenewingPlan: z.boolean(),
+    // The Android Publisher API requires exactly one of
+    // autoRenewingBasePlanType / prepaidBasePlanType / installmentsBasePlanType
+    // on a BasePlan. We only emit autoRenewingBasePlanType, so reject
+    // autoRenewingPlan: false until prepaid/installments support is added.
+    autoRenewingPlan: z.literal(true, {
+      errorMap: () => ({
+        message:
+          "autoRenewingPlan: false is not supported. Add prepaid/installments BasePlan payload generation to scripts/sku/google-play-catalog.ts first.",
+      }),
+    }),
   })
   .strict();
 
