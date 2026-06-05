@@ -90,32 +90,35 @@ Two secrets, and they need not co-locate: the **Composio project key** (one glob
 - **(X) Proxy-resolves.** The `outbound.ts` proxy holds the project key (Nick's model) and, per call, resolves the connection from the backend grant store using the verified sender's `accountId`, then calls Composio. Keeps key custody in assistants; adds a backend lookup on the hot path.
 - **(Y) Backend-mediates.** Backend holds the key *and* the grants and makes the Composio call itself — the agent calls `Backend.exec(toolkit, action, args)` with no connection identifier. Simplest isolation story (the bearer capability never leaves backend), but it's the mediation layer Nick pushed back on for key custody.
 
-Both should land. They don't conflict.
+Louis's "store credentials in convos-backend" leans (Y); the earlier "OK for key custody in the proxy" leans (X). **Pick one** — it changes which repo owns the Composio call. Note both keep `connected_account_id` out of the agent; they differ only on where the key lives.
 
-## Why not the alternatives
+## Identifier alignment / `accountId` — demoted to v2
 
-- **Single shared project, no Backend layer (status quo with the iOS-side bug):** every agent shares one project key. No isolation between agents at the Composio layer, and the OAuth-vs-execution split is exactly the bug we have today.
-- **Project per assistant (current Assistants pool config):** breaks sign-in-once. User would re-OAuth Google Calendar for every assistant they interact with. Product spec rules this out.
-- **Project per user:** needs an *org-level* key on Backend to programmatically create projects — back to "one key with the keys to the kingdom." Plus likely per-project Composio billing. Push to v2. MVP-1 closes the *agent-side* leak completely; v2 addresses *Backend-side* key exfiltration (one stolen Composio key → all users leak). Different threat, different cost.
+Because the agent already uses `inboxId` as `user_id`, there's no `deviceId → inboxId` break to fix for MVP. The `accountId` federation story (multi-inbox per user, multi-device, auth-method federation) from Borja's new auth API is still the right long-term unifier, but it's **gated on that API shipping and is not blocking** this work. Moved to v2: when auth lands, switch Composio's `user_id` from `inboxId` to `accountId` and resolve `inboxId → accountId` at the proxy.
 
-## Open questions
+## Orthogonal: per-agent grant scoping ([convos-ios#812](https://github.com/xmtplabs/convos-ios/pull/812))
 
-@Nick
+Unchanged from the first draft and still composes cleanly. Per-agent gating lives at the messaging layer keyed on agent `inboxId` (`grantedToInboxId`/`askerInboxId`); the runtime already drops `connection_event`s scoped to another agent (`sdk-client.ts`). That's a different axis from key custody and user scoping; all three land independently.
 
-1. Does Composio's `tool_router/sessions` or scoped MCP URLs accept **action-level** scope (`GOOGLECALENDAR_EVENTS_LIST` only, not the whole toolkit)? If toolkit-only, MVP-1's proxy stays the long-term path.
-2. Session TTL semantics — short-lived (minutes) preferred. Longer-lived would need revocation hooks tied to the iOS `connection_event.revoked` we already plumb.
-3. Pricing — does the single-project model with high call volume cost less than project-per-user?
+## Phasing
+
+| Phase | Scope | Effort |
+|---|---|---|
+| **MVP-1** | `composio.internal` proxy (Rec 1) **+ Tier 1 conversation-boundary isolation** (Rec 2). Key leaves the container; global key becomes per-conversation-scoped; cross-conversation leak closed; DMs get exact per-user isolation. Agent sends only `{toolkit, action, args}`. | one repo, ~one sprint |
+| **MVP-2** | **Tier 2 per-sender isolation** (Rec 2, option a or b) — closes intra-group escalation using the worker's verified `senderInboxId`. | scoped after Composio session Q |
+| **v2** | `accountId` federation, gated on the new auth API. | not blocking |
 
 ## Decision needed
 
-1. Approve the Backend-mediated direction above.
-2. Approve retiring the per-assistant Composio projects in Assistants pool config.
-3. Assign owner for the MVP-1 Backend `exec` endpoint (`convos-backend`).
-4. Assign owner for the agent-side swap to `Backend.exec` (`convos-assistants`, both runtimes).
+1. **Pick the call path — fork (X) proxy-resolves vs (Y) backend-mediates** (see Recommendation 2). This decides which repo owns the Composio call and whether key custody stays in the proxy. Everything else follows from it.
+2. Approve **Tier 1 conversation-boundary isolation** as the MVP (closes the cross-conversation leak; DMs get exact per-user isolation). Owner for the grant store keyed by `accountId` + the agent contract (`{toolkit, action, args}`, no `connected_account_id`).
+3. **Resolved (Louis):** Composio does **not** cross-validate `connected_account_id` against the account — so it's a bearer capability and must never reach the agent. The agent contract carries no connection identifier regardless of fork.
+4. **Still open — for Nick:**
+   - Can `tools/execute` resolve the connection from the account identifier + toolkit alone (so we omit `connected_account_id` entirely)?
+   - Do `tool_router/sessions` / scoped MCP URLs support **action-level** scope (`GOOGLECALENDAR_EVENTS_LIST`, not the whole toolkit)? Decides Tier 2 option (a) vs (b).
 
 ## Why this aligns with what we already shipped
 
-- iOS PRs (`#796`, `#797`) already issue grants tagged with `(provider, capability, conversationId)` and post `connection_event` revocations. These are the inputs the Backend re-checks before any tool execution.
-- iOS PR `#812` adds per-agent grant scoping (`grantedToInboxId`, `askerInboxId`). Composes naturally with this doc: per-agent gating at the messaging layer, per-account data scoping at Composio.
-- `convos-assistants#1484` already relays `connection_event.revoked` into the model as a system message. When the Backend rejects an `exec` because a grant was just revoked, the model already has the context to explain why.
-- No iOS changes needed regardless of the model chosen. The picker UI and the consent semantics are framework-agnostic.
+- iOS PRs (`#796`, `#797`) issue grants tagged `(provider, capability, conversationId)` and post `connection_event` revocations; the runtime already relays revocations into the model (`#1484`). The consent semantics are framework-agnostic and survive this change.
+- iOS `#812` (per-agent grant scoping) is an independent axis and lands alongside.
+- **No iOS or backend changes for MVP-1.** This is the correction from the first draft: the work is entirely in `convos-assistants`, reusing a proxy pattern that already ships in production for four other upstreams.
