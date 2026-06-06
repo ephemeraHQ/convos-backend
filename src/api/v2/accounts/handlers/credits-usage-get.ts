@@ -11,12 +11,16 @@ import { prisma } from "@/utils/prisma";
  * Agent-key-gated credit-consumption time series for a specific accountId,
  * coalesced into UTC `day` / `week` / `month` buckets and zero-filled across the
  * window so the caller gets one point per bucket (oldest first). The window is
- * the last `days` days; for week/month buckets the first/last bucket may extend
- * past that range to whole-bucket boundaries. :accountId is pre-validated as a
- * UUID by meGuard.
+ * the last `days` days; for week/month buckets the first/last bucket extends to
+ * whole-bucket boundaries, so the returned span can exceed `days` (e.g.
+ * days=30 on Jan 31 with bucket=month returns a single Jan 1–31 bucket).
+ * :accountId is pre-validated as a UUID by meGuard.
  *
  * Response shape:
- *   200  { accountId, days, bucket, series: [{ date: "YYYY-MM-DD", consumed }] }
+ *   200  {
+ *          accountId, days, bucket,
+ *          series: [{ date: "2026-05-08", consumed: 150 }, ...]
+ *        }
  *   400  { code: "invalid_request", issues } — bad days/bucket query param
  *   404  { code: "account_not_found" }       — UUID is valid but no Account row
  */
@@ -61,6 +65,8 @@ export const creditsUsageGetHandler = async (
     const series: Array<{ date: string; consumed: number }> = [];
     for (let cur = since; cur <= today; cur = nextUtcBucket(cur, bucket)) {
       const date = ymdUtc(cur);
+      // A single bucket's consumption stays well within Number.MAX_SAFE_INTEGER
+      // (same assumption as sumPeriodConsumes), so the BigInt→number is lossless.
       series.push({ date, consumed: Number(consumedByBucket.get(date) ?? 0n) });
     }
 

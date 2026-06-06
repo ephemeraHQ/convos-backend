@@ -156,6 +156,32 @@ describe("GET /v2/accounts/:accountId/credits/usage", () => {
     expect(recentTotal).toBe(125);
   });
 
+  it("month buckets: coalesces into 1st-of-month-aligned buckets", async () => {
+    const accountId = await seedAccount();
+    tracker.push(accountId);
+    // today (this month) and one 40 days back (always a prior month, since no
+    // month exceeds 31 days).
+    await seedLedger(accountId, 100, LedgerReason.consume, dayNoon(0));
+    await seedLedger(accountId, 50, LedgerReason.consume, dayNoon(-40));
+
+    const res = await agentRequest(app).get(
+      `/v2/accounts/${accountId}/credits/usage?days=60&bucket=month`,
+    );
+    expect(res.status).toBe(200);
+    const body = res.body as { bucket: string; series: SeriesPoint[] };
+    expect(body.bucket).toBe("month");
+    // Every bucket key is the 1st of a month (UTC).
+    for (const p of body.series) {
+      expect(new Date(`${p.date}T00:00:00Z`).getUTCDate()).toBe(1);
+    }
+    expect(sumConsumed(body.series)).toBe(150);
+    const byDate = Object.fromEntries(
+      body.series.map((p) => [p.date, p.consumed]),
+    );
+    expect(byDate[ymdUtc(truncUtcBucket(TODAY, "month"))]).toBe(100);
+    expect(byDate[ymdUtc(truncUtcBucket(dayMidnight(-40), "month"))]).toBe(50);
+  });
+
   it("returns all-zero series for an account with no consumption", async () => {
     const accountId = await seedAccount();
     tracker.push(accountId);
