@@ -182,6 +182,45 @@ describe("GET /v2/accounts/:accountId/credits/usage", () => {
     expect(byDate[ymdUtc(truncUtcBucket(dayMidnight(-40), "month"))]).toBe(50);
   });
 
+  it("month buckets: a 90-day window spans 3+ months", async () => {
+    const accountId = await seedAccount();
+    tracker.push(accountId);
+    // Three seeds 35 days apart land in three distinct months (no month exceeds
+    // 31 days), with any intervening month zero-filled.
+    await seedLedger(accountId, 100, LedgerReason.consume, dayNoon(0));
+    await seedLedger(accountId, 50, LedgerReason.consume, dayNoon(-35));
+    await seedLedger(accountId, 25, LedgerReason.consume, dayNoon(-70));
+
+    const res = await agentRequest(app).get(
+      `/v2/accounts/${accountId}/credits/usage?days=90&bucket=month`,
+    );
+    expect(res.status).toBe(200);
+    const body = res.body as { bucket: string; series: SeriesPoint[] };
+    expect(body.bucket).toBe("month");
+    expect(body.series.length).toBeGreaterThanOrEqual(3);
+    for (const p of body.series) {
+      expect(new Date(`${p.date}T00:00:00Z`).getUTCDate()).toBe(1);
+    }
+    expect(sumConsumed(body.series)).toBe(175);
+    const byDate = Object.fromEntries(
+      body.series.map((p) => [p.date, p.consumed]),
+    );
+    expect(byDate[ymdUtc(truncUtcBucket(TODAY, "month"))]).toBe(100);
+    expect(byDate[ymdUtc(truncUtcBucket(dayMidnight(-35), "month"))]).toBe(50);
+    expect(byDate[ymdUtc(truncUtcBucket(dayMidnight(-70), "month"))]).toBe(25);
+  });
+
+  it("returns 400 invalid_request for a non-integer days param", async () => {
+    const accountId = await seedAccount();
+    tracker.push(accountId);
+    // z.coerce.number().int() parses "30.5" then rejects the non-integer.
+    const res = await agentRequest(app).get(
+      `/v2/accounts/${accountId}/credits/usage?days=30.5`,
+    );
+    expect(res.status).toBe(400);
+    expect((res.body as { code: string }).code).toBe("invalid_request");
+  });
+
   it("returns all-zero series for an account with no consumption", async () => {
     const accountId = await seedAccount();
     tracker.push(accountId);
