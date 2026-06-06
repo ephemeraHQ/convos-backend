@@ -24,6 +24,16 @@ import {
 
 // One synchronous generation, kept under typical edge/proxy request ceilings.
 const EPHEMERAL_TIMEOUT_MS = 90_000;
+
+// Test seam: shrink the timeout so the 504 path is exercisable without waiting.
+let _timeoutMsOverride: number | null = null;
+export function __setEphemeralTimeoutMsForTests(ms: number | null): void {
+  _timeoutMsOverride = ms;
+}
+function getTimeoutMs(): number {
+  return _timeoutMsOverride ?? EPHEMERAL_TIMEOUT_MS;
+}
+
 const MAX_TEXT_LEN = 50_000;
 const MAX_BASE64_LEN = 35_000_000;
 const MAX_BUILDER_PROMPT_LEN = 100_000;
@@ -129,7 +139,7 @@ export async function generationsEphemeralPostHandler(
 
   // Held in a variable so the catch can distinguish a timeout (signal.aborted)
   // from a generation error without parsing the wrapped error message.
-  const signal = AbortSignal.timeout(EPHEMERAL_TIMEOUT_MS);
+  const signal = AbortSignal.timeout(getTimeoutMs());
   try {
     const { template, metrics } = await callGenerateTemplate(
       coalesced,
