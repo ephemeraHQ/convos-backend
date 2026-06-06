@@ -127,18 +127,29 @@ export async function generationsEphemeralPostHandler(
   const prefill: GenerationPrefill | null = parsed.data.prefill ?? null;
   const builderPrompt = parsed.data.builderPrompt ?? null;
 
+  // Held in a variable so the catch can distinguish a timeout (signal.aborted)
+  // from a generation error without parsing the wrapped error message.
+  const signal = AbortSignal.timeout(EPHEMERAL_TIMEOUT_MS);
   try {
     const { template, metrics } = await callGenerateTemplate(
       coalesced,
-      AbortSignal.timeout(EPHEMERAL_TIMEOUT_MS),
+      signal,
       prefill,
       undefined,
       builderPrompt,
     );
     res.status(200).json({ template, metrics });
+    return;
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
+    if (signal.aborted) {
+      req.log.warn({ err }, "[ephemeral-generation] generation timed out");
+      res.status(504).json({ error: "Generation timed out" });
+      return;
+    }
+    // Keep the specifics in logs; return a stable, generic message to the
+    // client (matches the other agent-templates handlers).
     req.log.error({ err }, "[ephemeral-generation] generation failed");
-    res.status(500).json({ error: `Generation failed: ${message}` });
+    res.status(500).json({ error: "Generation failed" });
+    return;
   }
 }
