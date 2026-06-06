@@ -2,6 +2,7 @@ import { Router } from "express";
 import { creditsByIdGetHandler } from "./handlers/credits-by-id-get";
 import { creditsGrantsPostHandler } from "./handlers/credits-grants-post";
 import { creditsTransactionsPostHandler } from "./handlers/credits-transactions-post";
+import { creditsUsageGetHandler } from "./handlers/credits-usage-get";
 
 /**
  * Agent-key-authenticated /v2/accounts/:accountId/* surface. Mounted under
@@ -19,6 +20,7 @@ import { creditsTransactionsPostHandler } from "./handlers/credits-transactions-
 export const accountsByIdRouter = Router({ mergeParams: true });
 
 accountsByIdRouter.get("/credits", creditsByIdGetHandler);
+accountsByIdRouter.get("/credits/usage", creditsUsageGetHandler);
 accountsByIdRouter.post(
   "/credits/transactions",
   creditsTransactionsPostHandler,

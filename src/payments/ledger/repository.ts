@@ -279,3 +279,34 @@ export const getHistory = async (
     take: limit,
   });
 };
+
+export interface ConsumptionBucketRow {
+  bucketStart: string; // UTC bucket start, "YYYY-MM-DD"
+  consumed: bigint; // positive credits consumed in that bucket
+}
+
+/**
+ * Consumed credits for an account on/after `since`, bucketed by UTC `day`,
+ * `week`, or `month`. Sums the negated `consume` deltas (deltas are stored
+ * negative), so each `consumed` is a positive total. Only buckets with
+ * consumption are returned, ascending — callers zero-fill the window.
+ *
+ * `bucket` is a fixed `date_trunc` unit; it's bound as the text first arg of
+ * `date_trunc` (not string-interpolated), so it's injection-safe. The bucket
+ * start is formatted in SQL to sidestep timestamp-without-tz Date hydration.
+ */
+export const getBucketedConsumption = async (
+  accountId: string,
+  since: Date,
+  bucket: "day" | "week" | "month",
+): Promise<ConsumptionBucketRow[]> =>
+  prisma.$queryRaw<ConsumptionBucketRow[]>`
+    SELECT to_char(date_trunc(${bucket}::text, "createdAt"), 'YYYY-MM-DD') AS "bucketStart",
+           SUM(-"delta")::bigint AS consumed
+    FROM "CreditLedger"
+    WHERE "accountId" = ${accountId}::uuid
+      AND "reason" = 'consume'
+      AND "createdAt" >= ${since}
+    GROUP BY 1
+    ORDER BY 1 ASC
+  `;

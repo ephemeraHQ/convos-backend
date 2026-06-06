@@ -1,0 +1,81 @@
+import type { Request, Response } from "express";
+import { usageQuerySchema } from "@/api/v2/accounts/schemas/credits-by-id";
+import { getBucketedConsumption } from "@/payments";
+import { nextUtcBucket, truncUtcBucket } from "@/payments/credits/usage-window";
+import { startOfTodayUtc, ymdUtc } from "@/payments/daily-refill/utc";
+import { prisma } from "@/utils/prisma";
+
+/**
+ * GET /v2/accounts/:accountId/credits/usage?days=30&bucket=day
+ *
+ * Agent-key-gated credit-consumption time series for a specific accountId,
+ * coalesced into UTC `day` / `week` / `month` buckets and zero-filled across the
+ * window so the caller gets one point per bucket (oldest first). The window is
+ * the last `days` days; for week/month buckets the first/last bucket may extend
+ * past that range to whole-bucket boundaries. :accountId is pre-validated as a
+ * UUID by meGuard.
+ *
+ * Response shape:
+ *   200  { accountId, days, bucket, series: [{ date: "YYYY-MM-DD", consumed }] }
+ *   400  { code: "invalid_request", issues } — bad days/bucket query param
+ *   404  { code: "account_not_found" }       — UUID is valid but no Account row
+ */
+export const creditsUsageGetHandler = async (
+  req: Request<{ accountId: string }>,
+  res: Response,
+): Promise<void> => {
+  const accountId = req.params.accountId; // meGuard already validated UUID shape
+
+  const parsed = usageQuerySchema.safeParse(req.query);
+  if (!parsed.success) {
+    res
+      .status(400)
+      .json({ code: "invalid_request", issues: parsed.error.issues });
+    return;
+  }
+  const { days, bucket } = parsed.data;
+
+  try {
+    const account = await prisma.account.findUnique({
+      where: { id: accountId },
+      select: { id: true },
+    });
+    if (!account) {
+      req.log.warn({ accountId }, "credits.usage.account_not_found");
+      res.status(404).json({ code: "account_not_found" });
+      return;
+    }
+
+    // Window is the last `days` days; align the start down to a whole bucket so
+    // the first (possibly partial) bucket's total is complete.
+    const today = startOfTodayUtc(new Date());
+    const windowStart = new Date(today);
+    windowStart.setUTCDate(windowStart.getUTCDate() - (days - 1));
+    const since = truncUtcBucket(windowStart, bucket);
+
+    const rows = await getBucketedConsumption(accountId, since, bucket);
+    const consumedByBucket = new Map(
+      rows.map((r) => [r.bucketStart, r.consumed]),
+    );
+
+    const series: Array<{ date: string; consumed: number }> = [];
+    for (let cur = since; cur <= today; cur = nextUtcBucket(cur, bucket)) {
+      const date = ymdUtc(cur);
+      series.push({ date, consumed: Number(consumedByBucket.get(date) ?? 0n) });
+    }
+
+    req.log.info({ accountId, days, bucket }, "credits.usage.served");
+    res.status(200).json({ accountId, days, bucket, series });
+  } catch (error) {
+    req.log.error(
+      {
+        error,
+        stack: error instanceof Error ? error.stack : undefined,
+        accountId,
+      },
+      "credits.usage.failed",
+    );
+    res.status(500).json({ error: "Failed to read credit usage" });
+    return;
+  }
+};

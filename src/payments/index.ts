@@ -10,6 +10,7 @@ import {
   findLedgerByIdempotencyKey,
   LedgerFloorBreachError,
   getBalance as ledgerGetBalance,
+  getBucketedConsumption as ledgerGetBucketedConsumption,
   getHistory as ledgerGetHistory,
   validateReplayPayload,
 } from "./ledger";
@@ -238,3 +239,12 @@ export const getHistory = async (
   limit?: number,
   cursor?: HistoryCursor,
 ) => ledgerGetHistory(accountId, limit, cursor);
+
+export type { ConsumptionBucketRow } from "./ledger/repository";
+
+/** Consumed credits for an account on/after `since`, in UTC day/week/month buckets. */
+export const getBucketedConsumption = async (
+  accountId: string,
+  since: Date,
+  bucket: "day" | "week" | "month",
+) => ledgerGetBucketedConsumption(accountId, since, bucket);
