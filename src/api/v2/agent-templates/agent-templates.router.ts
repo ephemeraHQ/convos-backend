@@ -7,6 +7,7 @@ import { requireAccount } from "@/middleware/auth";
 import { createHandler } from "./handlers/create";
 import { deleteHandler } from "./handlers/delete";
 import { detailHandler } from "./handlers/detail";
+import { generationsEphemeralPostHandler } from "./handlers/generations-ephemeral-post";
 import { generationsGetHandler } from "./handlers/generations-get";
 import { generationsPostHandler } from "./handlers/generations-post";
 import { listHandler } from "./handlers/list";
@@ -37,6 +38,14 @@ agentTemplatesRouter.post(
   "/generations",
   optionalAuthOrAgentApiKeyAuth,
   generationsPostHandler,
+);
+// Synchronous, non-persisting generation for the admin compare tool. Mounted
+// before /generations/:generationId so the wildcard doesn't capture
+// "ephemeral" as a generation id. Admin-only (enforced in the handler).
+agentTemplatesRouter.post(
+  "/generations/ephemeral",
+  optionalAuthOrAgentApiKeyAuth,
+  generationsEphemeralPostHandler,
 );
 agentTemplatesRouter.get(
   "/generations/:generationId",
