@@ -3,6 +3,7 @@ import { ValidationError } from "@/utils/errors";
 import { prisma } from "@/utils/prisma";
 import { config, usdToCredits } from "./credits";
 import { isAllowedFromBalance } from "./credits/policy";
+import type { UsageBucket } from "./credits/usage-window";
 import { GrantKindNotFoundError, InsufficientBalanceError } from "./errors";
 import {
   applyDelta,
@@ -10,6 +11,7 @@ import {
   findLedgerByIdempotencyKey,
   LedgerFloorBreachError,
   getBalance as ledgerGetBalance,
+  getBucketedConsumption as ledgerGetBucketedConsumption,
   getHistory as ledgerGetHistory,
   validateReplayPayload,
 } from "./ledger";
@@ -238,3 +240,12 @@ export const getHistory = async (
   limit?: number,
   cursor?: HistoryCursor,
 ) => ledgerGetHistory(accountId, limit, cursor);
+
+export type { ConsumptionBucketRow } from "./ledger/repository";
+
+/** Consumed credits for an account on/after `since`, in UTC day/week/month buckets. */
+export const getBucketedConsumption = async (
+  accountId: string,
+  since: Date,
+  bucket: UsageBucket,
+) => ledgerGetBucketedConsumption(accountId, since, bucket);

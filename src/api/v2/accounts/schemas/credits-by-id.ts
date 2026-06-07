@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { USAGE_BUCKETS } from "@/payments/credits/usage-window";
 import {
   bigintStringOrNumber,
   MAX_GRANT_CREDITS,
@@ -32,3 +33,16 @@ export const grantRequestSchema = z.object({
   reason: z.string().trim().max(256).optional(),
 });
 export type GrantRequest = z.infer<typeof grantRequestSchema>;
+
+// Widest usage window. A year bounds the zero-fill loop + query scan and is
+// plenty for a spend chart at any bucket granularity.
+export const MAX_USAGE_DAYS = 365;
+
+// GET /v2/accounts/:accountId/credits/usage?days=N&bucket=day|week|month query
+// params. Both arrive as strings; coerce + default to a 30-day, day-bucketed
+// window.
+export const usageQuerySchema = z.object({
+  days: z.coerce.number().int().min(1).max(MAX_USAGE_DAYS).default(30),
+  bucket: z.enum(USAGE_BUCKETS).default("day"),
+});
+export type UsageQuery = z.infer<typeof usageQuerySchema>;
