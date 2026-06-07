@@ -3,6 +3,7 @@ import { ValidationError } from "@/utils/errors";
 import { prisma } from "@/utils/prisma";
 import { config, usdToCredits } from "./credits";
 import { isAllowedFromBalance } from "./credits/policy";
+import type { UsageBucket } from "./credits/usage-window";
 import { GrantKindNotFoundError, InsufficientBalanceError } from "./errors";
 import {
   applyDelta,
@@ -246,5 +247,5 @@ export type { ConsumptionBucketRow } from "./ledger/repository";
 export const getBucketedConsumption = async (
   accountId: string,
   since: Date,
-  bucket: "day" | "week" | "month",
+  bucket: UsageBucket,
 ) => ledgerGetBucketedConsumption(accountId, since, bucket);

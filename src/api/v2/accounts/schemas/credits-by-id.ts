@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { USAGE_BUCKETS } from "@/payments/credits/usage-window";
 import {
   bigintStringOrNumber,
   MAX_GRANT_CREDITS,
@@ -42,6 +43,6 @@ export const MAX_USAGE_DAYS = 365;
 // window.
 export const usageQuerySchema = z.object({
   days: z.coerce.number().int().min(1).max(MAX_USAGE_DAYS).default(30),
-  bucket: z.enum(["day", "week", "month"]).default("day"),
+  bucket: z.enum(USAGE_BUCKETS).default("day"),
 });
 export type UsageQuery = z.infer<typeof usageQuerySchema>;

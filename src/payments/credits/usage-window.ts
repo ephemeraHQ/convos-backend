@@ -1,4 +1,7 @@
-export type UsageBucket = "day" | "week" | "month";
+// Single source of truth for the bucket granularities — the request schema
+// builds its enum from this so the two can't drift.
+export const USAGE_BUCKETS = ["day", "week", "month"] as const;
+export type UsageBucket = (typeof USAGE_BUCKETS)[number];
 
 /**
  * Truncate a date down to the start of its bucket, in UTC. Mirrors Postgres

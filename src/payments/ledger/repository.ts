@@ -1,5 +1,6 @@
 import { Prisma, type CreditLedger, type LedgerReason } from "@prisma/client";
 import { prisma } from "@/utils/prisma";
+import type { UsageBucket } from "../credits/usage-window";
 import { IdempotencyMismatchError } from "../errors";
 import type { GrantKindId, HistoryCursor, LedgerScope } from "../types";
 import { assertIdempotencyKey } from "./idempotency-key";
@@ -298,7 +299,7 @@ export interface ConsumptionBucketRow {
 export const getBucketedConsumption = async (
   accountId: string,
   since: Date,
-  bucket: "day" | "week" | "month",
+  bucket: UsageBucket,
 ): Promise<ConsumptionBucketRow[]> =>
   prisma.$queryRaw<ConsumptionBucketRow[]>`
     SELECT to_char(date_trunc(${bucket}::text, "createdAt"), 'YYYY-MM-DD') AS "bucketStart",

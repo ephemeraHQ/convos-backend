@@ -11,9 +11,10 @@ import { prisma } from "@/utils/prisma";
  * Agent-key-gated credit-consumption time series for a specific accountId,
  * coalesced into UTC `day` / `week` / `month` buckets and zero-filled across the
  * window so the caller gets one point per bucket (oldest first). The window is
- * the last `days` days; for week/month buckets the first/last bucket extends to
- * whole-bucket boundaries, so the returned span can exceed `days` (e.g.
- * days=30 on Jan 31 with bucket=month returns a single Jan 1–31 bucket).
+ * the last `days` days including today as the final, in-progress bucket (so
+ * days=7 = today + 6 prior days). For week/month buckets the first/last bucket
+ * extends to whole-bucket boundaries, so the returned span can exceed `days`
+ * (e.g. days=30 on Jan 31 with bucket=month returns a single Jan 1–31 bucket).
  * :accountId is pre-validated as a UUID by meGuard.
  *
  * Response shape:
@@ -50,8 +51,11 @@ export const creditsUsageGetHandler = async (
       return;
     }
 
-    // Window is the last `days` days; align the start down to a whole bucket so
-    // the first (possibly partial) bucket's total is complete.
+    // Rolling window: the last `days` days INCLUDING today as the final,
+    // in-progress day — so days=7 is today + the 6 prior days (7 points), the
+    // standard "last N days" convention for live dashboards. Align the start
+    // down to a whole bucket so the first (possibly partial) bucket's total is
+    // complete.
     const today = startOfTodayUtc(new Date());
     const windowStart = new Date(today);
     windowStart.setUTCDate(windowStart.getUTCDate() - (days - 1));
@@ -62,6 +66,8 @@ export const creditsUsageGetHandler = async (
       rows.map((r) => [r.bucketStart, r.consumed]),
     );
 
+    // `since` is bucket-aligned, so iterating bucket-by-bucket while cur <= today
+    // always emits the bucket containing today as the last point.
     const series: Array<{ date: string; consumed: number }> = [];
     for (let cur = since; cur <= today; cur = nextUtcBucket(cur, bucket)) {
       const date = ymdUtc(cur);

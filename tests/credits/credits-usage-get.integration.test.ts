@@ -252,6 +252,16 @@ describe("GET /v2/accounts/:accountId/credits/usage", () => {
     expect((res.body as { code: string }).code).toBe("invalid_request");
   });
 
+  it("returns 400 invalid_request for days above the max (366)", async () => {
+    const accountId = await seedAccount();
+    tracker.push(accountId);
+    const res = await agentRequest(app).get(
+      `/v2/accounts/${accountId}/credits/usage?days=366`,
+    );
+    expect(res.status).toBe(400);
+    expect((res.body as { code: string }).code).toBe("invalid_request");
+  });
+
   it("returns 400 invalid_request for an unknown bucket", async () => {
     const accountId = await seedAccount();
     tracker.push(accountId);
