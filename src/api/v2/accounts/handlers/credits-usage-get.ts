@@ -1,6 +1,7 @@
 import type { Request, Response } from "express";
 import { usageQuerySchema } from "@/api/v2/accounts/schemas/credits-by-id";
 import { getBucketedConsumption } from "@/payments";
+import { bigintToSafeNumber } from "@/payments/credits/safe-number";
 import { nextUtcBucket, truncUtcBucket } from "@/payments/credits/usage-window";
 import { startOfTodayUtc, ymdUtc } from "@/payments/daily-refill/utc";
 import { prisma } from "@/utils/prisma";
@@ -67,14 +68,17 @@ export const creditsUsageGetHandler = async (
     );
 
     // `since` is bucket-aligned, so iterating bucket-by-bucket while cur <= today
-    // always emits the bucket containing today as the last point.
+    // always emits the bucket containing today as the last point. Guard the
+    // BigInt→number cast (a bucket total realistically never exceeds the safe
+    // range, but bigintToSafeNumber enforces it instead of trusting a comment).
     const series: Array<{ date: string; consumed: number }> = [];
     for (let cur = since; cur <= today; cur = nextUtcBucket(cur, bucket)) {
       const date = ymdUtc(cur);
-      // A single bucket's consume total stays well within Number.MAX_SAFE_INTEGER
-      // (same basis as sumPeriodConsumes, which exposes monthlyGrantUsed as a
-      // number), so the BigInt→number conversion is lossless.
-      series.push({ date, consumed: Number(consumedByBucket.get(date) ?? 0n) });
+      const consumed = consumedByBucket.get(date) ?? 0n;
+      series.push({
+        date,
+        consumed: bigintToSafeNumber(consumed, "usage consumed"),
+      });
     }
 
     req.log.info({ accountId, days, bucket }, "credits.usage.served");
