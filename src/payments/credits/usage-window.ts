@@ -23,9 +23,13 @@ export const truncUtcBucket = (d: Date, bucket: UsageBucket): Date => {
   return x;
 };
 
-/** Start of the bucket immediately after `d`'s bucket, in UTC. */
+/**
+ * Start of the bucket immediately after `d`'s bucket, in UTC. Truncates `d` to
+ * its bucket first, so it's correct for any input — e.g. a month-end date won't
+ * overflow (Jan 31 → Feb 1, not the Feb-31→Mar rollover of a naive +1 month).
+ */
 export const nextUtcBucket = (d: Date, bucket: UsageBucket): Date => {
-  const x = new Date(d);
+  const x = truncUtcBucket(d, bucket);
   if (bucket === "month") x.setUTCMonth(x.getUTCMonth() + 1);
   else x.setUTCDate(x.getUTCDate() + (bucket === "week" ? 7 : 1));
   return x;
