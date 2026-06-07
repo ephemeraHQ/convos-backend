@@ -17,11 +17,10 @@ import { prisma } from "@/utils/prisma";
  * (e.g. days=30 on Jan 31 with bucket=month returns a single Jan 1–31 bucket).
  * :accountId is pre-validated as a UUID by meGuard.
  *
- * Response shape (`consumed` is a BigInt-safe string, matching balance/delta on
- * the rest of this surface):
+ * Response shape:
  *   200  {
  *          accountId, days, bucket,
- *          series: [{ date: "2026-05-08", consumed: "150" }, ...]
+ *          series: [{ date: "2026-05-08", consumed: 150 }, ...]
  *        }
  *   400  { code: "invalid_request", issues } — bad days/bucket query param
  *   404  { code: "account_not_found" }       — UUID is valid but no Account row
@@ -68,16 +67,14 @@ export const creditsUsageGetHandler = async (
     );
 
     // `since` is bucket-aligned, so iterating bucket-by-bucket while cur <= today
-    // always emits the bucket containing today as the last point. `consumed` is
-    // serialized as a string (BigInt-safe), matching balance/delta elsewhere on
-    // this surface — no precision is lost regardless of magnitude.
-    const series: Array<{ date: string; consumed: string }> = [];
+    // always emits the bucket containing today as the last point.
+    const series: Array<{ date: string; consumed: number }> = [];
     for (let cur = since; cur <= today; cur = nextUtcBucket(cur, bucket)) {
       const date = ymdUtc(cur);
-      series.push({
-        date,
-        consumed: (consumedByBucket.get(date) ?? 0n).toString(),
-      });
+      // A single bucket's consume total stays well within Number.MAX_SAFE_INTEGER
+      // (same basis as sumPeriodConsumes, which exposes monthlyGrantUsed as a
+      // number), so the BigInt→number conversion is lossless.
+      series.push({ date, consumed: Number(consumedByBucket.get(date) ?? 0n) });
     }
 
     req.log.info({ accountId, days, bucket }, "credits.usage.served");

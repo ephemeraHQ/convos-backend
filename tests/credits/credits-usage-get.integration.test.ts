@@ -52,9 +52,9 @@ const seedLedger = async (
   });
 };
 
-type SeriesPoint = { date: string; consumed: string };
+type SeriesPoint = { date: string; consumed: number };
 const sumConsumed = (series: SeriesPoint[]): number =>
-  series.reduce((sum, p) => sum + Number(p.consumed), 0);
+  series.reduce((sum, p) => sum + p.consumed, 0);
 
 beforeAll(() => {
   installAgentApiKeyOverride();
@@ -93,7 +93,7 @@ describe("GET /v2/accounts/:accountId/credits/usage", () => {
     expect(body.series[6].date).toBe(ymdUtc(today()));
 
     const byDate = Object.fromEntries(
-      body.series.map((p) => [p.date, Number(p.consumed)]),
+      body.series.map((p) => [p.date, p.consumed]),
     );
     expect(byDate[ymdUtc(today())]).toBe(100);
     expect(byDate[ymdUtc(dayMidnight(-2))]).toBe(50);
@@ -142,7 +142,7 @@ describe("GET /v2/accounts/:accountId/credits/usage", () => {
     expect(sumConsumed(body.series)).toBe(195);
 
     const byDate = Object.fromEntries(
-      body.series.map((p) => [p.date, Number(p.consumed)]),
+      body.series.map((p) => [p.date, p.consumed]),
     );
     // 3. the isolated -14 seed sits alone in its week.
     expect(byDate[ymdUtc(truncUtcBucket(dayMidnight(-14), "week"))]).toBe(70);
@@ -178,7 +178,7 @@ describe("GET /v2/accounts/:accountId/credits/usage", () => {
     }
     expect(sumConsumed(body.series)).toBe(150);
     const byDate = Object.fromEntries(
-      body.series.map((p) => [p.date, Number(p.consumed)]),
+      body.series.map((p) => [p.date, p.consumed]),
     );
     expect(byDate[ymdUtc(truncUtcBucket(today(), "month"))]).toBe(100);
     expect(byDate[ymdUtc(truncUtcBucket(dayMidnight(-40), "month"))]).toBe(50);
@@ -205,7 +205,7 @@ describe("GET /v2/accounts/:accountId/credits/usage", () => {
     }
     expect(sumConsumed(body.series)).toBe(175);
     const byDate = Object.fromEntries(
-      body.series.map((p) => [p.date, Number(p.consumed)]),
+      body.series.map((p) => [p.date, p.consumed]),
     );
     expect(byDate[ymdUtc(truncUtcBucket(today(), "month"))]).toBe(100);
     expect(byDate[ymdUtc(truncUtcBucket(dayMidnight(-35), "month"))]).toBe(50);
@@ -232,7 +232,7 @@ describe("GET /v2/accounts/:accountId/credits/usage", () => {
     expect(res.status).toBe(200);
     const body = res.body as { series: SeriesPoint[] };
     expect(body.series).toHaveLength(5);
-    expect(body.series.every((p) => Number(p.consumed) === 0)).toBe(true);
+    expect(body.series.every((p) => p.consumed === 0)).toBe(true);
   });
 
   it("returns 404 account_not_found for a UUID with no Account", async () => {
