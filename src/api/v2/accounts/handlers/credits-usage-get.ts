@@ -1,9 +1,9 @@
 import type { Request, Response } from "express";
 import { usageQuerySchema } from "@/api/v2/accounts/schemas/credits-by-id";
 import { getBucketedConsumption } from "@/payments";
-import { bigintToSafeNumber } from "@/payments/credits/safe-number";
 import { nextUtcBucket, truncUtcBucket } from "@/payments/credits/usage-window";
 import { startOfTodayUtc, ymdUtc } from "@/payments/daily-refill/utc";
+import { ValidationError } from "@/utils/errors";
 import { prisma } from "@/utils/prisma";
 
 /**
@@ -69,16 +69,19 @@ export const creditsUsageGetHandler = async (
 
     // `since` is bucket-aligned, so iterating bucket-by-bucket while cur <= today
     // always emits the bucket containing today as the last point. Guard the
-    // BigInt→number cast (a bucket total realistically never exceeds the safe
-    // range, but bigintToSafeNumber enforces it instead of trusting a comment).
+    // BigInt→number cast the same way pricing.ts/config.ts do — a bucket total
+    // realistically never exceeds the safe range, but enforce it, don't assume.
+    const maxSafeCredits = BigInt(Number.MAX_SAFE_INTEGER);
     const series: Array<{ date: string; consumed: number }> = [];
     for (let cur = since; cur <= today; cur = nextUtcBucket(cur, bucket)) {
       const date = ymdUtc(cur);
       const consumed = consumedByBucket.get(date) ?? 0n;
-      series.push({
-        date,
-        consumed: bigintToSafeNumber(consumed, "usage consumed"),
-      });
+      if (consumed > maxSafeCredits) {
+        throw new ValidationError(
+          `usage bucket consumed exceeds safe integer range: ${consumed}`,
+        );
+      }
+      series.push({ date, consumed: Number(consumed) });
     }
 
     req.log.info({ accountId, days, bucket }, "credits.usage.served");
