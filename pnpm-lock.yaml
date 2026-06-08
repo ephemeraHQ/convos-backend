@@ -20,8 +20,8 @@ importers:
         specifier: ^2.2.3
         version: 2.12.0
       "@composio/core":
-        specifier: ^0.6.10
-        version: 0.6.11(ws@8.20.1(bufferutil@4.1.0)(utf-8-validate@5.0.10))(zod@3.25.76)
+        specifier: ^0.10.0
+        version: 0.10.0(ws@8.20.1(bufferutil@4.1.0)(utf-8-validate@5.0.10))(zod@3.25.76)
       "@connectrpc/connect":
         specifier: ^2.0.1
         version: 2.1.1(@bufbuild/protobuf@2.12.0)
@@ -725,16 +725,16 @@ packages:
       }
     engines: { node: ">=0.1.90" }
 
-  "@composio/client@0.1.0-alpha.66":
+  "@composio/client@0.1.0-alpha.72":
     resolution:
       {
-        integrity: sha512-SDHcTWzz2dgdYAew/gQsRpjHpEzHKm6sW7KM4wCoJWNJuuMuey9Ahje91ZucNjfaqpI8CFW+pXY4nWkZf5LD7Q==,
+        integrity: sha512-2WYXgdlMvhoaJCsaSfyMAYGQ2tS5l2Fqdh2cMRqNi8NybIoOkFZy2ApBJJOoQwqfpUr41VymMW6FtiNQm7JavQ==,
       }
 
-  "@composio/core@0.6.11":
+  "@composio/core@0.10.0":
     resolution:
       {
-        integrity: sha512-0uNA1DhHF0l3d51GVRw4CA8oYgqsps+aGMW6J4jA6Ut53HfBHwHJ4JAa9HU/2Psho8tCoprM6NR5DxWGD50H+A==,
+        integrity: sha512-dG2BKF4NRiE8HHDzWLLgjMMo3FU4NJ6SxR961EpdLWWEKhkl+yP/mZlIN7p/4WnCR/fuDBKH1Qh+7kBdcHmEHA==,
       }
     peerDependencies:
       zod: ^3.25 || ^4
@@ -11822,11 +11822,11 @@ snapshots:
   "@colors/colors@1.5.0":
     optional: true
 
-  "@composio/client@0.1.0-alpha.66": {}
+  "@composio/client@0.1.0-alpha.72": {}
 
-  "@composio/core@0.6.11(ws@8.20.1(bufferutil@4.1.0)(utf-8-validate@5.0.10))(zod@3.25.76)":
+  "@composio/core@0.10.0(ws@8.20.1(bufferutil@4.1.0)(utf-8-validate@5.0.10))(zod@3.25.76)":
     dependencies:
-      "@composio/client": 0.1.0-alpha.66
+      "@composio/client": 0.1.0-alpha.72
       "@composio/json-schema-to-zod": 0.1.20(zod@3.25.76)
       "@types/json-schema": 7.0.15
       chalk: 4.1.2
