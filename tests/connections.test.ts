@@ -56,6 +56,16 @@ const AUTH_CONFIG_ID = "ac_test_google_calendar";
 // Connections are scoped to the stable accountId; the JWT carries it and
 // requireAccount enforces its presence.
 const ACCOUNT_ID = "11111111-1111-4111-8111-111111111111";
+const DEVICE_ID = "device-abc";
+
+// Mint an auth token for the standard test device. Omit accountId to exercise
+// the requireAccount gate (device authenticated but not bound to an account).
+function makeToken(opts: { accountId?: string } = {}) {
+  return createJwtToken({
+    deviceId: DEVICE_ID,
+    ...(opts.accountId ? { accountId: opts.accountId } : {}),
+  });
+}
 
 const app = express();
 app.use(pinoMiddleware);
@@ -265,7 +275,7 @@ describe("Connections API", () => {
       const { stub, calls } = makeStub();
       installStub(stub);
       // Authenticated device but not bound to an account → requireAccount blocks.
-      const token = await createJwtToken({ deviceId: "device-abc" });
+      const token = await makeToken();
       const res = await fetch(`${baseURL}/api/v2/connections/initiate`, {
         method: "POST",
         headers: {
@@ -283,10 +293,7 @@ describe("Connections API", () => {
     test("initiate forwards accountId as userId and maps serviceId to authConfigId", async () => {
       const { stub, calls } = makeStub();
       installStub(stub);
-      const token = await createJwtToken({
-        deviceId: "device-abc",
-        accountId: ACCOUNT_ID,
-      });
+      const token = await makeToken({ accountId: ACCOUNT_ID });
 
       const res = await fetch(`${baseURL}/api/v2/connections/initiate`, {
         method: "POST",
@@ -315,10 +322,7 @@ describe("Connections API", () => {
     test("initiate forwards per-request redirectUri to Composio", async () => {
       const { stub, calls } = makeStub();
       installStub(stub);
-      const token = await createJwtToken({
-        deviceId: "device-abc",
-        accountId: ACCOUNT_ID,
-      });
+      const token = await makeToken({ accountId: ACCOUNT_ID });
 
       const res = await fetch(`${baseURL}/api/v2/connections/initiate`, {
         method: "POST",
@@ -341,10 +345,7 @@ describe("Connections API", () => {
     test("initiate rejects malformed redirectUri", async () => {
       const { stub } = makeStub();
       installStub(stub);
-      const token = await createJwtToken({
-        deviceId: "device-abc",
-        accountId: ACCOUNT_ID,
-      });
+      const token = await makeToken({ accountId: ACCOUNT_ID });
 
       const res = await fetch(`${baseURL}/api/v2/connections/initiate`, {
         method: "POST",
@@ -379,10 +380,7 @@ describe("Connections API", () => {
         createdAt: "2026-01-01T00:00:00Z",
         updatedAt: "2026-01-01T00:00:00Z",
       });
-      const token = await createJwtToken({
-        deviceId: "device-abc",
-        accountId: ACCOUNT_ID,
-      });
+      const token = await makeToken({ accountId: ACCOUNT_ID });
 
       const res = await fetch(`${baseURL}/api/v2/connections/complete`, {
         method: "POST",
@@ -439,10 +437,7 @@ describe("Connections API", () => {
         createdAt: "2026-01-01T00:00:00Z",
         updatedAt: "2026-01-01T00:00:00Z",
       });
-      const token = await createJwtToken({
-        deviceId: "device-abc",
-        accountId: ACCOUNT_ID,
-      });
+      const token = await makeToken({ accountId: ACCOUNT_ID });
 
       const res = await fetch(`${baseURL}/api/v2/connections`, {
         method: "GET",
@@ -474,10 +469,7 @@ describe("Connections API", () => {
         createdAt: "2026-01-01T00:00:00Z",
         updatedAt: "2026-01-01T00:00:00Z",
       });
-      const token = await createJwtToken({
-        deviceId: "device-abc",
-        accountId: ACCOUNT_ID,
-      });
+      const token = await makeToken({ accountId: ACCOUNT_ID });
 
       const res = await fetch(`${baseURL}/api/v2/connections/conn_owned`, {
         method: "DELETE",
@@ -508,10 +500,7 @@ describe("Connections API", () => {
         createdAt: "2026-01-01T00:00:00Z",
         updatedAt: "2026-01-01T00:00:00Z",
       });
-      const token = await createJwtToken({
-        deviceId: "device-abc",
-        accountId: ACCOUNT_ID,
-      });
+      const token = await makeToken({ accountId: ACCOUNT_ID });
 
       const res = await fetch(`${baseURL}/api/v2/connections/complete`, {
         method: "POST",
@@ -543,10 +532,7 @@ describe("Connections API", () => {
         createdAt: "2026-01-01T00:00:00Z",
         updatedAt: "2026-01-01T00:00:00Z",
       });
-      const token = await createJwtToken({
-        deviceId: "device-abc",
-        accountId: ACCOUNT_ID,
-      });
+      const token = await makeToken({ accountId: ACCOUNT_ID });
 
       const res = await fetch(`${baseURL}/api/v2/connections/conn_other`, {
         method: "DELETE",
@@ -567,10 +553,7 @@ describe("Connections API", () => {
         },
       });
       installStub(stub);
-      const token = await createJwtToken({
-        deviceId: "device-abc",
-        accountId: ACCOUNT_ID,
-      });
+      const token = await makeToken({ accountId: ACCOUNT_ID });
       const res = await fetch(`${baseURL}/api/v2/connections/initiate`, {
         method: "POST",
         headers: {

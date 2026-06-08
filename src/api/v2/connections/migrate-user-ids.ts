@@ -1,7 +1,4 @@
-import {
-  Composio,
-  ComposioLegacyConnectedAccountsEndpointRetiredError,
-} from "@composio/core";
+import { Composio } from "@composio/core";
 import type { PrismaClient } from "@prisma/client";
 import type { Logger } from "pino";
 import { COMPOSIO_API_KEY } from "@/config";
@@ -37,7 +34,11 @@ export const COMPOSIO_USER_ID_MIGRATION_KEY = "composio_user_id_migration_v1";
 // instances booting at once can't both run it (and create duplicates).
 const ADVISORY_LOCK_KEY = 728_193_641;
 
-// Credential fields that indicate the move can actually carry auth over.
+// Credential fields whose presence means the move can actually carry auth over.
+// Best-effort list spanning Composio's auth schemes (OAuth2/OAuth1, API key,
+// basic, bearer, service account); presence of any one is enough. May need
+// extending if Composio introduces new credential field names — a connection
+// with none readable is treated as "needs re-auth" rather than silently dropped.
 const SECRET_KEYS = [
   "access_token",
   "refresh_token",
@@ -55,7 +56,12 @@ export type MigrationCounts = {
   scanned: number;
   alreadyMigrated: number;
   moved: number;
+  // Credentials unreadable (redacted/absent) or the legacy create endpoint is
+  // retired for the auth config — the user must reconnect. Not retryable.
   needsReauth: number;
+  // Transient API errors (retrieve/create/delete) — left in place, retried on
+  // the next run. Distinct from needsReauth so operators can tell them apart.
+  failed: number;
   orphaned: number;
   skippedNoAccount: number;
 };
@@ -81,7 +87,7 @@ export async function migrateComposioConnectionsToAccountId(opts: {
   apply: boolean;
   log: Logger;
   db?: MigrationDb;
-}): Promise<MigrationCounts> {
+}) {
   const { apply, log } = opts;
   const db = opts.db ?? prisma;
 
@@ -124,6 +130,7 @@ export async function migrateComposioConnectionsToAccountId(opts: {
     alreadyMigrated: 0,
     moved: 0,
     needsReauth: 0,
+    failed: 0,
     orphaned: 0,
     skippedNoAccount: 0,
   };
@@ -198,7 +205,43 @@ export async function migrateComposioConnectionsToAccountId(opts: {
             state: detail.state,
           },
         });
-        await client.connectedAccounts.delete(item.id);
+
+        // Create succeeded — now delete the original. If THIS fails we must roll
+        // back the new connection, otherwise a retry would skip the new one as
+        // alreadyMigrated, re-process the still-present old one, and create a
+        // duplicate (then a triplicate, ...).
+        try {
+          await client.connectedAccounts.delete(item.id);
+        } catch (deleteError) {
+          counts.failed += 1;
+          let rolledBack = false;
+          try {
+            await client.connectedAccounts.delete(created.id);
+            rolledBack = true;
+          } catch (rollbackError) {
+            // Both deletes failed: old + new now coexist. Flag loudly — a retry
+            // could duplicate again, so this needs manual cleanup in Composio.
+            log.error(
+              {
+                connection: label,
+                newConnection: created.id,
+                error: rollbackError,
+              },
+              "[composio-migration] CRITICAL: old delete failed AND new rollback failed; manual cleanup required (duplicate connection)",
+            );
+          }
+          log.error(
+            {
+              connection: label,
+              newConnection: created.id,
+              rolledBack,
+              error: deleteError,
+            },
+            "[composio-migration] delete of old connection failed; rolled back new to keep retry idempotent",
+          );
+          continue;
+        }
+
         counts.moved += 1;
         log.info(
           {
@@ -210,18 +253,25 @@ export async function migrateComposioConnectionsToAccountId(opts: {
           "[composio-migration] moved",
         );
       } catch (error) {
-        counts.needsReauth += 1;
-        if (
-          error instanceof ComposioLegacyConnectedAccountsEndpointRetiredError
-        ) {
+        // retrieve or create failed. Legacy-retired is a permanent re-auth case;
+        // anything else is a (possibly transient) API failure we can retry.
+        // Detect the legacy-retired error by name rather than importing the
+        // class, so this compiles across @composio/core versions regardless of
+        // whether they export it.
+        const isLegacyRetired =
+          error instanceof Error &&
+          error.name === "ComposioLegacyConnectedAccountsEndpointRetiredError";
+        if (isLegacyRetired) {
+          counts.needsReauth += 1;
           log.warn(
             { connection: label },
             "[composio-migration] needs-reauth: legacy create endpoint retired for this auth config",
           );
         } else {
+          counts.failed += 1;
           log.error(
             { connection: label, error },
-            "[composio-migration] needs-reauth: move failed",
+            "[composio-migration] failed: retrieve/create errored (retried next run)",
           );
         }
       }
@@ -244,7 +294,7 @@ export async function migrateComposioConnectionsToAccountId(opts: {
  *   - never throws — a failure just leaves the marker unset so the next boot
  *     retries.
  */
-export async function runComposioUserIdMigrationOnce(): Promise<void> {
+export async function runComposioUserIdMigrationOnce() {
   if (!COMPOSIO_API_KEY) return;
 
   try {

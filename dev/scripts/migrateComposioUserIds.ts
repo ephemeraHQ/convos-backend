@@ -11,22 +11,47 @@
  * Usage (dry-run is the default — it mutates nothing):
  *   pnpm tsx --env-file=.env dev/scripts/migrateComposioUserIds.ts
  *   pnpm tsx --env-file=.env dev/scripts/migrateComposioUserIds.ts --apply
+ *   pnpm tsx --env-file=.env dev/scripts/migrateComposioUserIds.ts --apply --force
+ *
+ * --apply is a no-op if the environment's ledger already says "done"; pass
+ * --force to apply again anyway (the move stays idempotent). Dry-run always runs.
  */
-import { migrateComposioConnectionsToAccountId } from "@/api/v2/connections/migrate-user-ids";
+import {
+  COMPOSIO_USER_ID_MIGRATION_KEY,
+  migrateComposioConnectionsToAccountId,
+} from "@/api/v2/connections/migrate-user-ids";
 import logger from "@/utils/logger";
 import { prisma } from "@/utils/prisma";
 
 const APPLY = process.argv.includes("--apply");
+const FORCE = process.argv.includes("--force");
 
-migrateComposioConnectionsToAccountId({ apply: APPLY, log: logger })
-  .then((counts) => {
-    logger.info({ counts }, "[composio-migration] CLI finished");
-    if (!APPLY) {
+async function main() {
+  if (APPLY && !FORCE) {
+    const marker = await prisma.runtimeConfig.findUnique({
+      where: { key: COMPOSIO_USER_ID_MIGRATION_KEY },
+    });
+    if (marker?.value === "done") {
       logger.info(
-        "[composio-migration] dry-run only — re-run with --apply to perform the move",
+        "[composio-migration] already marked done for this environment; pass --force to apply again (dry-run always runs)",
       );
+      return;
     }
-  })
+  }
+
+  const counts = await migrateComposioConnectionsToAccountId({
+    apply: APPLY,
+    log: logger,
+  });
+  logger.info({ counts }, "[composio-migration] CLI finished");
+  if (!APPLY) {
+    logger.info(
+      "[composio-migration] dry-run only — re-run with --apply to perform the move",
+    );
+  }
+}
+
+main()
   .catch((error: unknown) => {
     logger.error({ error }, "[composio-migration] CLI failed");
     process.exitCode = 1;
