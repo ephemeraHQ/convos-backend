@@ -21,14 +21,14 @@ function normalizeStatus(status: string): string {
 
 export function mapComposioToResponse(
   conn: ConnectedAccountRetrieveResponse | ConnectedAccountListResponseItem,
-  deviceId: string,
+  accountId: string,
 ): ConnectionResponse {
   const slug = conn.toolkit.slug;
   return {
     connectionId: conn.id,
     serviceId: slug,
     serviceName: slug,
-    composioEntityId: deviceId,
+    composioEntityId: accountId,
     composioConnectionId: conn.id,
     status: normalizeStatus(conn.status),
   };

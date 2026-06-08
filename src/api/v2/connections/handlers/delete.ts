@@ -5,8 +5,8 @@ export async function deleteHandler(
   req: Request<{ id: string }>,
   res: Response,
 ) {
-  const deviceId = res.locals.deviceId;
-  if (!deviceId) {
+  const accountId = res.locals.accountId;
+  if (!accountId) {
     res.status(401).json({ error: "Unauthorized" });
     return;
   }
@@ -26,10 +26,10 @@ export async function deleteHandler(
   try {
     const owned = await service.getIfOwned({
       connectionId,
-      userId: deviceId,
+      userId: accountId,
     });
     if (!owned) {
-      res.status(403).json({ error: "Connection not owned by this device" });
+      res.status(403).json({ error: "Connection not owned by this account" });
       return;
     }
     await service.delete(connectionId);
@@ -37,7 +37,7 @@ export async function deleteHandler(
     return;
   } catch (error) {
     req.log.error(
-      { error, deviceId, connectionId },
+      { error, accountId, connectionId },
       "[Composio] delete failed",
     );
     res.status(502).json({ error: "Failed to delete connection" });

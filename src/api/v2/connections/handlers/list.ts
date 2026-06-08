@@ -4,8 +4,8 @@ import { createComposioService } from "../composio.service";
 import { mapComposioToResponse } from "../types";
 
 export async function listHandler(req: Request, res: Response) {
-  const deviceId = res.locals.deviceId;
-  if (!deviceId) {
+  const accountId = res.locals.accountId;
+  if (!accountId) {
     res.status(401).json({ error: "Unauthorized" });
     return;
   }
@@ -17,14 +17,14 @@ export async function listHandler(req: Request, res: Response) {
   }
 
   try {
-    const list = await service.listForUser(deviceId);
+    const list = await service.listForUser(accountId);
     const items: ConnectedAccountListResponseItem[] = list.items;
     res.status(200).json({
-      connections: items.map((item) => mapComposioToResponse(item, deviceId)),
+      connections: items.map((item) => mapComposioToResponse(item, accountId)),
     });
     return;
   } catch (error) {
-    req.log.error({ error, deviceId }, "[Composio] list failed");
+    req.log.error({ error, accountId }, "[Composio] list failed");
     res.status(502).json({ error: "Failed to list connections" });
     return;
   }
