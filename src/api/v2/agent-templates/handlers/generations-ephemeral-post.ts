@@ -125,17 +125,25 @@ function coalesce(
 // ---------------------------------------------------------------------------
 
 /** Outcome of one ephemeral generation, classified once so the JSON and SSE
- *  response paths can render it without re-inspecting the error. */
+ *  response paths can render it without re-inspecting the error.
+ *  `aborted` = the client disconnected mid-flight; there's no one to respond
+ *  to, so callers bail without writing. */
 type Outcome =
   | { kind: "ok"; result: GenerationResult }
   | { kind: "timeout" }
+  | { kind: "aborted" }
   | { kind: "error" };
 
 async function runGeneration(
   log: Request["log"],
   args: {
     input: GenerateTemplateInput;
+    /** Composed signal handed to the generator — aborts on timeout OR client
+     *  disconnect, so the upstream OpenRouter call is cancelled either way. */
     signal: AbortSignal;
+    /** The 90s ceiling alone, kept separate so a disconnect-driven abort isn't
+     *  misclassified (and logged) as a timeout. */
+    timeoutSignal: AbortSignal;
     prefill: GenerationPrefill | null;
     builderPrompt: string | null;
     builderModel: string | null;
@@ -152,11 +160,18 @@ async function runGeneration(
     );
     return { kind: "ok", result };
   } catch (err) {
-    // signal.aborted distinguishes a timeout from a generation error without
-    // parsing the wrapped error message.
-    if (args.signal.aborted) {
+    // The 90s ceiling is the only abort we surface as a timeout.
+    if (args.timeoutSignal.aborted) {
       log.warn({ err }, "[ephemeral-generation] generation timed out");
       return { kind: "timeout" };
+    }
+    // Composed signal aborted but not the timeout → the client hung up. The
+    // result is discarded anyway, so this is expected, not an error.
+    if (args.signal.aborted) {
+      log.info(
+        "[ephemeral-generation] client disconnected; generation aborted",
+      );
+      return { kind: "aborted" };
     }
     // Keep the specifics in logs; callers surface a stable, generic message
     // (matches the other agent-templates handlers).
@@ -219,10 +234,28 @@ export async function generationsEphemeralPostHandler(
     return;
   }
 
-  const signal = AbortSignal.timeout(getTimeoutMs());
+  // Abort the upstream generation on the 90s ceiling OR a client disconnect.
+  // Unlike the async endpoint (whose executor runs to completion to persist a
+  // result), an ephemeral result is discarded the moment the client hangs up,
+  // so finishing it would just burn model capacity. The timeout signal is kept
+  // separate so a disconnect isn't misclassified as a timeout.
+  const timeoutSignal = AbortSignal.timeout(getTimeoutMs());
+  const abort = new AbortController();
+  timeoutSignal.addEventListener(
+    "abort",
+    () => {
+      abort.abort();
+    },
+    { once: true },
+  );
+  res.on("close", () => {
+    abort.abort();
+  });
+
   const generationArgs = {
     input: coalesced,
-    signal,
+    signal: abort.signal,
+    timeoutSignal,
     prefill,
     builderPrompt,
     builderModel,
@@ -232,21 +265,14 @@ export async function generationsEphemeralPostHandler(
   // frame. Mirrors the async endpoint's contract so a long generation never
   // holds a silent connection.
   if ((req.headers.accept || "").includes("text/event-stream")) {
-    // Read the disconnect flag through a function so it's observed at call
-    // time (a direct boolean read would be narrowed to its initial value).
-    let closed = false;
-    res.on("close", () => {
-      closed = true;
-    });
-    const isClosed = () => closed;
-
     const keepalive = startSseStream(res);
     const outcome = await runGeneration(req.log, generationArgs);
     clearInterval(keepalive);
 
-    // Client hung up mid-generation — the keep-alive is already cleared and
-    // there's no persisted result to deliver, so just bail.
-    if (isClosed() || res.writableEnded || res.destroyed) return;
+    // Client hung up mid-generation — its result was discarded and the stream
+    // is gone, so there's nothing to write.
+    if (outcome.kind === "aborted" || res.writableEnded || res.destroyed)
+      return;
 
     // The client can still drop between the check above and the write below;
     // a write on a closed socket throws, so swallow it (nobody's listening).
@@ -269,6 +295,7 @@ export async function generationsEphemeralPostHandler(
 
   // JSON mode: hold the connection and return the template inline.
   const outcome = await runGeneration(req.log, generationArgs);
+  if (outcome.kind === "aborted" || res.writableEnded || res.destroyed) return;
   if (outcome.kind === "ok") {
     res.status(200).json({
       template: outcome.result.template,

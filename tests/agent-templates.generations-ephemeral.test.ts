@@ -299,4 +299,45 @@ describe("POST /generations/ephemeral — SSE mode", () => {
     expect(keepaliveIdx).toBeGreaterThanOrEqual(0);
     expect(keepaliveIdx).toBeLessThan(resultIdx);
   });
+
+  test("client disconnect aborts the upstream generation", async () => {
+    let sawCall = false;
+    let abortedDuringGeneration = false;
+    // Hang until the signal aborts, recording that the abort propagated to the
+    // generator (i.e. the upstream OpenRouter call would be cancelled).
+    __resetGenerateTemplateForTests(
+      (_input, signal) =>
+        new Promise((_resolve, reject) => {
+          sawCall = true;
+          signal?.addEventListener("abort", () => {
+            abortedDuringGeneration = true;
+            reject(new Error("aborted"));
+          });
+        }),
+    );
+    __setSseKeepaliveMsForTests(50);
+
+    const controller = new AbortController();
+    const pending = fetch(
+      `${baseURL}/api/v2/agent-templates/generations/ephemeral`,
+      {
+        method: "POST",
+        headers: sseApiKeyHeaders,
+        body: JSON.stringify({ inputs: { idea: "x" } }),
+        signal: controller.signal,
+      },
+    );
+
+    // Let the server start the generation, then drop the connection.
+    await new Promise((r) => setTimeout(r, 100));
+    controller.abort();
+    await pending.catch(() => {
+      /* expected — client aborted */
+    });
+
+    // Give the server a tick to observe res `close` and propagate the abort.
+    await new Promise((r) => setTimeout(r, 100));
+    expect(sawCall).toBe(true);
+    expect(abortedDuringGeneration).toBe(true);
+  });
 });
