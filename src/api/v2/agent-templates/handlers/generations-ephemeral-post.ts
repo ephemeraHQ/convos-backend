@@ -186,9 +186,9 @@ export async function generationsEphemeralPostHandler(
 ) {
   const isApiKeyListener = res.locals.isApiKeyListener ?? false;
   if (!isApiKeyListener) {
-    res
-      .status(403)
-      .json({ error: "ephemeral generation requires agent API key auth" });
+    res.status(403).json({
+      error: "ephemeral generation requires agent API key authentication",
+    });
     return;
   }
 
@@ -204,19 +204,26 @@ export async function generationsEphemeralPostHandler(
   if (!coalesced) {
     res.status(400).json({
       error:
-        "No usable input — provide one of text, idea, content, url, pdfBase64, or imageBase64",
+        "inputs must include one of text, idea, content, url, pdfBase64, or imageBase64",
     });
     return;
   }
   if (coalesced.text && coalesced.text.length > MAX_TEXT_LEN) {
-    res.status(400).json({ error: `text exceeds ${MAX_TEXT_LEN} characters` });
+    res.status(400).json({
+      error: `Text exceeds maximum length of ${MAX_TEXT_LEN} characters`,
+    });
     return;
   }
-  if (
-    (coalesced.pdfBase64 && coalesced.pdfBase64.length > MAX_BASE64_LEN) ||
-    (coalesced.imageBase64 && coalesced.imageBase64.length > MAX_BASE64_LEN)
-  ) {
-    res.status(400).json({ error: "attached file exceeds the size limit" });
+  if (coalesced.pdfBase64 && coalesced.pdfBase64.length > MAX_BASE64_LEN) {
+    res.status(400).json({
+      error: `PDF base64 exceeds maximum length of ${MAX_BASE64_LEN} characters`,
+    });
+    return;
+  }
+  if (coalesced.imageBase64 && coalesced.imageBase64.length > MAX_BASE64_LEN) {
+    res.status(400).json({
+      error: `Image base64 exceeds maximum length of ${MAX_BASE64_LEN} characters`,
+    });
     return;
   }
 
