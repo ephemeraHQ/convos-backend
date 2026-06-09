@@ -62,6 +62,9 @@ const MAX_BASE64_LEN = 35_000_000;
 // Builder/system prompt override cap — generous (the canonical file prompt is
 // ~12k tokens) but bounds an obviously-abusive body.
 const MAX_BUILDER_PROMPT_LEN = 100_000;
+// Model-override cap — OpenRouter model ids are short slugs; this just bounds
+// an obviously-abusive value (matches the column's VARCHAR(256)).
+const MAX_BUILDER_MODEL_LEN = 256;
 const MAX_BODY_BYTES = 40 * 1024 * 1024;
 const MAX_WAIT_MS = 45_000;
 const DEFAULT_SSE_KEEPALIVE_MS = 15_000;
@@ -218,6 +221,11 @@ const bodySchema = z
     // fire-and-forget executor can feed it to the generator. The produced
     // template still lands as a draft via the normal pipeline.
     builderPrompt: z.string().min(1).max(MAX_BUILDER_PROMPT_LEN).optional(),
+    // Custom model that overrides the default builder model for this
+    // generation's main call. Privileged — gated to agent-API-key callers
+    // below (like builderPrompt) — and persisted on the row so the
+    // fire-and-forget executor can hand it to the generator.
+    builderModel: z.string().min(1).max(MAX_BUILDER_MODEL_LEN).optional(),
     // Asserted owner — honoured only when the caller is agent-key-auth'd;
     // ignored for JWT (JWT account always wins) and anonymous (falls
     // back to ADMIN). See the owner-resolution block below.
@@ -498,6 +506,7 @@ interface DedupeRow extends GenerationRow {
   twitterContext: unknown;
   prefill: unknown;
   builderPrompt: string | null;
+  builderModel: string | null;
 }
 
 const dedupeSelect = {
@@ -507,6 +516,7 @@ const dedupeSelect = {
   twitterContext: true,
   prefill: true,
   builderPrompt: true,
+  builderModel: true,
   status: true,
   templateId: true,
   reply: true,
@@ -528,6 +538,7 @@ function dedupeBodiesMatch(existing: DedupeRow, body: Body): boolean {
       twitterContext: existing.twitterContext,
       prefill: existing.prefill,
       builderPrompt: existing.builderPrompt,
+      builderModel: existing.builderModel,
     },
     {
       source: body.source,
@@ -535,6 +546,7 @@ function dedupeBodiesMatch(existing: DedupeRow, body: Body): boolean {
       twitterContext: body.twitterContext ?? null,
       prefill: body.prefill ?? null,
       builderPrompt: body.builderPrompt ?? null,
+      builderModel: body.builderModel ?? null,
     },
   );
 }
@@ -750,6 +762,16 @@ export async function generationsPostHandler(req: Request, res: Response) {
     return;
   }
 
+  // 5d. builderModel swaps the default builder model — same abuse surface
+  //     (an arbitrary, potentially unguardrailed model), so it's restricted
+  //     to agent-API-key callers like builderPrompt.
+  if (body.builderModel && !isApiKeyListener) {
+    res.status(403).json({
+      error: "builderModel requires agent API key authentication",
+    });
+    return;
+  }
+
   // 6. Idempotency-Key required and MUST be a UUID (any RFC 4122 version).
   //    Both the agent API key path and anonymous submissions are owned by
   //    `ADMIN_ACCOUNT_ID`, so they share an idempotency namespace; using
@@ -874,6 +896,7 @@ export async function generationsPostHandler(req: Request, res: Response) {
           ? (body.prefill as Prisma.InputJsonValue)
           : Prisma.JsonNull,
         builderPrompt: body.builderPrompt ?? null,
+        builderModel: body.builderModel ?? null,
         publishStatus: body.publishStatus,
         status: "pending",
       },

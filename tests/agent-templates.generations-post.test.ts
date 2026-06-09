@@ -450,6 +450,54 @@ describe("POST /generations — builderPrompt (privileged override)", () => {
   });
 });
 
+describe("POST /generations — builderModel (privileged override)", () => {
+  test("anonymous caller + builderModel → 403", async () => {
+    // builderModel swaps the default builder model, so like builderPrompt
+    // it's restricted to agent-API-key callers.
+    const res = await post(
+      { ...sampleBody, builderModel: "anthropic/claude-opus-4.8" },
+      {
+        headers: {
+          "Content-Type": "application/json",
+          "Idempotency-Key": stableUuid("builder-model-anon"),
+        },
+      },
+    );
+    expect(res.status).toBe(403);
+  });
+
+  test("agent-key + builderModel → 202 and persists on the row", async () => {
+    __resetGenerationExecutorForTests(() => Promise.resolve());
+    const res = await post(
+      { ...sampleBody, builderModel: "anthropic/claude-opus-4.8" },
+      { headers: withKey("builder-model-ok") },
+    );
+    expect(res.status).toBe(202);
+    const body = (await res.json()) as { generationId: string };
+    const row = await prisma.agentTemplateGeneration.findUnique({
+      where: { id: body.generationId },
+    });
+    expect(row?.builderModel).toBe("anthropic/claude-opus-4.8");
+  });
+
+  test("same key + different builderModel → 409", async () => {
+    // builderModel influences the generator's output, so it's part of the
+    // idempotent contract — a reused key with a different model must 409.
+    __resetGenerationExecutorForTests(() => Promise.resolve());
+    const first = await post(
+      { ...sampleBody, builderModel: "anthropic/claude-opus-4.8" },
+      { headers: withKey("idem-builder-model-diff") },
+    );
+    expect(first.status).toBe(202);
+
+    const second = await post(
+      { ...sampleBody, builderModel: "anthropic/claude-opus-4.7" },
+      { headers: withKey("idem-builder-model-diff") },
+    );
+    expect(second.status).toBe(409);
+  });
+});
+
 describe("POST /generations — SSE mode", () => {
   test("Accept: text/event-stream emits terminal result frame", async () => {
     const res = await fetch(`${baseURL}/api/v2/agent-templates/generations`, {
