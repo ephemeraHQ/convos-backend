@@ -82,7 +82,7 @@ describe("openRouterChatCompletion + PostHog tracing", () => {
       apiKey: "test-or-key",
       stage: "generate",
       body: {
-        model: "anthropic/claude-opus-4.7",
+        model: "anthropic/claude-opus-4.8-fast",
         messages: [{ role: "user", content: "make me an agent" }],
         temperature: 0.7,
       },
@@ -118,7 +118,7 @@ describe("openRouterChatCompletion + PostHog tracing", () => {
       k.startsWith("posthog"),
     );
     expect(leaked).toEqual([]);
-    expect(lastSentBody.model).toBe("anthropic/claude-opus-4.7");
+    expect(lastSentBody.model).toBe("anthropic/claude-opus-4.8-fast");
     // Provider routing prefers Bedrock (fallbacks left on by default).
     expect(lastSentBody.provider).toEqual({ order: ["amazon-bedrock"] });
   });
@@ -135,7 +135,7 @@ describe("openRouterChatCompletion + PostHog tracing", () => {
       apiKey: "test-or-key",
       stage: "generate",
       body: {
-        model: "anthropic/claude-opus-4.7",
+        model: "anthropic/claude-opus-4.8-fast",
         messages: [{ role: "user", content: "go" }],
       },
       trace: {
@@ -151,7 +151,7 @@ describe("openRouterChatCompletion + PostHog tracing", () => {
     expect(calls[0].distinctId).toBe("acct-1");
     expect(p.upstream_provider).toBe("Amazon Bedrock"); // from OpenRouter response
     expect(p.ai_stage).toBe("generate");
-    expect(p.requested_model).toBe("anthropic/claude-opus-4.7");
+    expect(p.requested_model).toBe("anthropic/claude-opus-4.8-fast");
     expect(p.served_model).toBe("anthropic/claude-sonnet-4.5"); // mock response.model
     expect(p.$ai_trace_id).toBe("gen-bedrock");
     expect(typeof p.latency_ms).toBe("number");
@@ -165,7 +165,7 @@ describe("openRouterChatCompletion + PostHog tracing", () => {
       apiKey: "test-or-key",
       stage: "classifier",
       body: {
-        model: "anthropic/claude-opus-4.7",
+        model: "anthropic/claude-opus-4.8-fast",
         messages: [{ role: "user", content: "classify" }],
       },
       trace: {
@@ -198,7 +198,7 @@ describe("openRouterChatCompletion + PostHog tracing", () => {
         apiKey: "test-or-key",
         stage,
         body: {
-          model: "anthropic/claude-opus-4.7",
+          model: "anthropic/claude-opus-4.8-fast",
           messages: [{ role: "user", content: stage }],
         },
         trace: { traceId: "gen-shared", distinctId: "acct-1" },

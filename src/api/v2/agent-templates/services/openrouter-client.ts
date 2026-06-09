@@ -22,7 +22,7 @@
  *
  * Model attribution note: the wrapper records the *requested* model as
  * `$ai_model` (`openAIParams.model ?? result.model`). The default model is a
- * concrete OpenRouter id (`anthropic/claude-opus-4.7`, see `DEFAULT_MODEL` in
+ * concrete OpenRouter id (`anthropic/claude-opus-4.8-fast`, see `DEFAULT_MODEL` in
  * templateGen.ts), so PostHog prices `$ai_total_cost_usd` automatically. A
  * `BUILDER_MODEL` override should also be a concrete id (not an OpenRouter
  * `@preset/...` alias, which PostHog can't price) to keep cost resolving.

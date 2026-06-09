@@ -250,9 +250,9 @@ describe("templateGen service — OpenRouter integration", () => {
   });
 
   // -----------------------------------------------------------------------
-  // Model defaults to anthropic/claude-opus-4.7
+  // Model defaults to anthropic/claude-opus-4.8-fast
   // -----------------------------------------------------------------------
-  test("model defaults to anthropic/claude-opus-4.7", async () => {
+  test("model defaults to anthropic/claude-opus-4.8-fast", async () => {
     const mod = await import("@/api/v2/agent-templates/services/templateGen");
     generateTemplate = mod.generateTemplate;
 
@@ -278,7 +278,7 @@ describe("templateGen service — OpenRouter integration", () => {
     await generateTemplate({ text: "Build me a helper" });
 
     const req = getLastOpenRouterRequest();
-    expect(req.body.model).toBe("anthropic/claude-opus-4.7");
+    expect(req.body.model).toBe("anthropic/claude-opus-4.8-fast");
   });
 
   test("BUILDER_MODEL env override works", async () => {
@@ -591,7 +591,7 @@ describe("templateGen service — OpenRouter integration", () => {
     expect(selectorReq).toBeDefined();
     expect(selectorReq.body.temperature).toBe(0.2);
     expect(selectorReq.body.response_format).toBeUndefined();
-    expect(selectorReq.body.model).toBe("anthropic/claude-opus-4.7");
+    expect(selectorReq.body.model).toBe("anthropic/claude-opus-4.8-fast");
     expect(selectorReq.headers["authorization"]).toBe(`Bearer ${TEST_API_KEY}`);
 
     globalThis.fetch = originalMockFetch;
