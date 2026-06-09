@@ -46,6 +46,11 @@ import { randomUUID } from "node:crypto";
 import { Prisma } from "@prisma/client";
 import type { Request, Response } from "express";
 import { z } from "zod";
+import {
+  startSseStream,
+  writeSseEvent,
+  writeSseHeaders,
+} from "@/api/v2/agent-templates/lib/sse";
 import { executeGeneration } from "@/api/v2/agent-templates/services/generation-executor";
 import {
   checkContent,
@@ -72,7 +77,6 @@ const MAX_BUILDER_PROMPT_LEN = 100_000;
 const MAX_BUILDER_MODEL_LEN = 256;
 const MAX_BODY_BYTES = 40 * 1024 * 1024;
 const MAX_WAIT_MS = 45_000;
-const DEFAULT_SSE_KEEPALIVE_MS = 15_000;
 
 // RFC 4122 UUID format. Version digit is any 1-5 (accepts v4 random,
 // v5 namespaced, etc.); variant nibble is 8/9/a/b.
@@ -95,24 +99,6 @@ function nextPollIntervalMs(attempt: number): number {
   if (attempt < 8) return 500;
   if (attempt < 16) return 1000;
   return 2000;
-}
-
-// ---------------------------------------------------------------------------
-// Test seams
-// ---------------------------------------------------------------------------
-
-let _sseKeepaliveMsOverride: number | null = null;
-
-/**
- * Override the SSE keep-alive interval for tests.
- * Pass `null` to restore the default 15 000 ms.
- */
-export function __setSseKeepaliveMsForTests(ms: number | null): void {
-  _sseKeepaliveMsOverride = ms;
-}
-
-function getSseKeepaliveMs(): number {
-  return _sseKeepaliveMsOverride ?? DEFAULT_SSE_KEEPALIVE_MS;
 }
 
 // ---------------------------------------------------------------------------
@@ -402,28 +388,6 @@ function parseWaitMs(raw: unknown): number {
 // SSE mode helpers
 // ---------------------------------------------------------------------------
 
-function startSseStream(res: Response): ReturnType<typeof setInterval> {
-  res.status(200);
-  res.setHeader("Content-Type", "text/event-stream");
-  res.setHeader("Cache-Control", "no-cache");
-  res.setHeader("Connection", "keep-alive");
-  res.flushHeaders();
-
-  const keepalive = setInterval(() => {
-    try {
-      res.write(":\n\n");
-    } catch {
-      // Client gone — swallow
-    }
-  }, getSseKeepaliveMs());
-
-  res.on("close", () => {
-    clearInterval(keepalive);
-  });
-
-  return keepalive;
-}
-
 async function streamUntilTerminal(args: {
   res: Response;
   keepalive: ReturnType<typeof setInterval>;
@@ -451,23 +415,18 @@ async function streamUntilTerminal(args: {
       firstIteration = false;
 
       if (!row) {
-        const data = JSON.stringify({ error: "Generation not found" });
-        res.write(`event: error\ndata: ${data}\n\n`);
-        res.end();
+        writeSseEvent(res, "error", { error: "Generation not found" });
         return;
       }
       if (isTerminal(row.status)) {
         if (row.status === "done") {
-          const data = JSON.stringify(toResponse(row));
-          res.write(`event: result\ndata: ${data}\n\n`);
+          writeSseEvent(res, "result", toResponse(row));
         } else {
-          const data = JSON.stringify({
+          writeSseEvent(res, "error", {
             error: row.error || "Generation failed",
             ...toResponse(row),
           });
-          res.write(`event: error\ndata: ${data}\n\n`);
         }
-        res.end();
         return;
       }
 
@@ -481,11 +440,9 @@ async function streamUntilTerminal(args: {
     // error frame if the stream is still live; otherwise just clean up.
     if (!res.writableEnded && !res.destroyed) {
       try {
-        const data = JSON.stringify({
+        writeSseEvent(res, "error", {
           error: err instanceof Error ? err.message : "Stream failed",
         });
-        res.write(`event: error\ndata: ${data}\n\n`);
-        res.end();
       } catch {
         // Swallow write-after-close
       }
@@ -576,22 +533,15 @@ async function respondPerMode(args: {
   if (accept.includes("text/event-stream")) {
     // Terminal already? Skip the keepalive setup and just emit the terminal frame.
     if (isTerminal(row.status)) {
-      res.status(200);
-      res.setHeader("Content-Type", "text/event-stream");
-      res.setHeader("Cache-Control", "no-cache");
-      res.setHeader("Connection", "keep-alive");
-      res.flushHeaders();
+      writeSseHeaders(res);
       if (row.status === "done") {
-        const data = JSON.stringify(toResponse(row));
-        res.write(`event: result\ndata: ${data}\n\n`);
+        writeSseEvent(res, "result", toResponse(row));
       } else {
-        const data = JSON.stringify({
+        writeSseEvent(res, "error", {
           error: row.error || "Generation failed",
           ...toResponse(row),
         });
-        res.write(`event: error\ndata: ${data}\n\n`);
       }
-      res.end();
       return;
     }
 

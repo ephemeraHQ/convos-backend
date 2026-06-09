@@ -1,13 +1,26 @@
 /**
  * Handler for POST /api/v2/agent-templates/generations/ephemeral
  *
- * Synchronous, NON-persisting generation. Runs the real generator and returns
- * the produced template inline — it never writes an AgentTemplate or an
- * AgentTemplateGeneration row. Built for the admin compare tool, which generates
- * throwaway candidates (varying the builderPrompt and/or builderModel override)
- * purely to judge prompt quality across one or more ideas; nothing should land
- * in the catalog until an admin explicitly keeps one (via the normal create
- * endpoint).
+ * NON-persisting generation. Runs the real generator and hands back the
+ * produced template inline — it never writes an AgentTemplate or an
+ * AgentTemplateGeneration row. Built for the admin compare tool, which
+ * generates throwaway candidates (varying the builderPrompt and/or builderModel
+ * override) purely to judge prompt quality across one or more ideas; nothing
+ * should land in the catalog until an admin explicitly keeps one (via the
+ * normal create endpoint).
+ *
+ * Response modes (content-negotiated, mirroring the async endpoint):
+ *   - SSE (Accept: text/event-stream): emits a keep-alive every 15s while the
+ *     generation runs, then closes with `event: result` carrying
+ *     { template, metrics } or `event: error` on timeout/failure. HTTP status
+ *     is always 200 in SSE mode. This is the path that honours the
+ *     "never hold an idle connection" contract — a generation can run close to
+ *     the 90s ceiling, well past where an intermediary would drop a silent
+ *     connection.
+ *   - JSON (default): holds the connection and returns { template, metrics }
+ *     (200), 504 on timeout, or 500 on failure. Simpler, but with no heartbeat
+ *     a long generation risks an intermediary timeout, so SSE is preferred for
+ *     anything but the fastest calls.
  *
  * Admin-only: gated to agent-API-key callers (isApiKeyListener), like the
  * privileged builderPrompt/builderModel fields on the async endpoint. Because
@@ -19,11 +32,16 @@
 
 import type { Request, Response } from "express";
 import { z } from "zod";
+import {
+  startSseStream,
+  writeSseEvent,
+} from "@/api/v2/agent-templates/lib/sse";
 import { isKnownOpenRouterModel } from "@/api/v2/agent-templates/services/openrouter-models";
 import {
   callGenerateTemplate,
   type GenerateTemplateInput,
   type GenerationPrefill,
+  type GenerationResult,
 } from "@/api/v2/agent-templates/services/templateGen";
 
 // One synchronous generation, kept under typical edge/proxy request ceilings.
@@ -102,15 +120,75 @@ function coalesce(
   return null;
 }
 
+// ---------------------------------------------------------------------------
+// Generation
+// ---------------------------------------------------------------------------
+
+/** Outcome of one ephemeral generation, classified once so the JSON and SSE
+ *  response paths can render it without re-inspecting the error.
+ *  `aborted` = the client disconnected mid-flight; there's no one to respond
+ *  to, so callers bail without writing. */
+type Outcome =
+  | { kind: "ok"; result: GenerationResult }
+  | { kind: "timeout" }
+  | { kind: "aborted" }
+  | { kind: "error" };
+
+async function runGeneration(
+  log: Request["log"],
+  args: {
+    input: GenerateTemplateInput;
+    /** Composed signal handed to the generator — aborts on timeout OR client
+     *  disconnect, so the upstream OpenRouter call is cancelled either way. */
+    signal: AbortSignal;
+    /** The 90s ceiling alone, kept separate so a disconnect-driven abort isn't
+     *  misclassified (and logged) as a timeout. */
+    timeoutSignal: AbortSignal;
+    prefill: GenerationPrefill | null;
+    builderPrompt: string | null;
+    builderModel: string | null;
+  },
+): Promise<Outcome> {
+  try {
+    const result = await callGenerateTemplate(
+      args.input,
+      args.signal,
+      args.prefill,
+      undefined,
+      args.builderPrompt,
+      args.builderModel,
+    );
+    return { kind: "ok", result };
+  } catch (err) {
+    // The 90s ceiling is the only abort we surface as a timeout.
+    if (args.timeoutSignal.aborted) {
+      log.warn({ err }, "[ephemeral-generation] generation timed out");
+      return { kind: "timeout" };
+    }
+    // Composed signal aborted but not the timeout → the client hung up. The
+    // result is discarded anyway, so this is expected, not an error.
+    if (args.signal.aborted) {
+      log.info(
+        "[ephemeral-generation] client disconnected; generation aborted",
+      );
+      return { kind: "aborted" };
+    }
+    // Keep the specifics in logs; callers surface a stable, generic message
+    // (matches the other agent-templates handlers).
+    log.error({ err }, "[ephemeral-generation] generation failed");
+    return { kind: "error" };
+  }
+}
+
 export async function generationsEphemeralPostHandler(
   req: Request,
   res: Response,
 ) {
   const isApiKeyListener = res.locals.isApiKeyListener ?? false;
   if (!isApiKeyListener) {
-    res
-      .status(403)
-      .json({ error: "ephemeral generation requires agent API key auth" });
+    res.status(403).json({
+      error: "ephemeral generation requires agent API key authentication",
+    });
     return;
   }
 
@@ -126,19 +204,26 @@ export async function generationsEphemeralPostHandler(
   if (!coalesced) {
     res.status(400).json({
       error:
-        "No usable input — provide one of text, idea, content, url, pdfBase64, or imageBase64",
+        "inputs must include one of text, idea, content, url, pdfBase64, or imageBase64",
     });
     return;
   }
   if (coalesced.text && coalesced.text.length > MAX_TEXT_LEN) {
-    res.status(400).json({ error: `text exceeds ${MAX_TEXT_LEN} characters` });
+    res.status(400).json({
+      error: `Text exceeds maximum length of ${MAX_TEXT_LEN} characters`,
+    });
     return;
   }
-  if (
-    (coalesced.pdfBase64 && coalesced.pdfBase64.length > MAX_BASE64_LEN) ||
-    (coalesced.imageBase64 && coalesced.imageBase64.length > MAX_BASE64_LEN)
-  ) {
-    res.status(400).json({ error: "attached file exceeds the size limit" });
+  if (coalesced.pdfBase64 && coalesced.pdfBase64.length > MAX_BASE64_LEN) {
+    res.status(400).json({
+      error: `PDF base64 exceeds maximum length of ${MAX_BASE64_LEN} characters`,
+    });
+    return;
+  }
+  if (coalesced.imageBase64 && coalesced.imageBase64.length > MAX_BASE64_LEN) {
+    res.status(400).json({
+      error: `Image base64 exceeds maximum length of ${MAX_BASE64_LEN} characters`,
+    });
     return;
   }
 
@@ -156,30 +241,78 @@ export async function generationsEphemeralPostHandler(
     return;
   }
 
-  // Held in a variable so the catch can distinguish a timeout (signal.aborted)
-  // from a generation error without parsing the wrapped error message.
-  const signal = AbortSignal.timeout(getTimeoutMs());
-  try {
-    const { template, metrics } = await callGenerateTemplate(
-      coalesced,
-      signal,
-      prefill,
-      undefined,
-      builderPrompt,
-      builderModel,
-    );
-    res.status(200).json({ template, metrics });
-    return;
-  } catch (err) {
-    if (signal.aborted) {
-      req.log.warn({ err }, "[ephemeral-generation] generation timed out");
-      res.status(504).json({ error: "Generation timed out" });
+  // Abort the upstream generation on the 90s ceiling OR a client disconnect.
+  // Unlike the async endpoint (whose executor runs to completion to persist a
+  // result), an ephemeral result is discarded the moment the client hangs up,
+  // so finishing it would just burn model capacity. The timeout signal is kept
+  // separate so a disconnect isn't misclassified as a timeout.
+  const timeoutSignal = AbortSignal.timeout(getTimeoutMs());
+  const abort = new AbortController();
+  timeoutSignal.addEventListener(
+    "abort",
+    () => {
+      abort.abort();
+    },
+    { once: true },
+  );
+  res.on("close", () => {
+    abort.abort();
+  });
+
+  const generationArgs = {
+    input: coalesced,
+    signal: abort.signal,
+    timeoutSignal,
+    prefill,
+    builderPrompt,
+    builderModel,
+  };
+
+  // SSE mode: heartbeat while the generation runs, then a single terminal
+  // frame. Mirrors the async endpoint's contract so a long generation never
+  // holds a silent connection.
+  if ((req.headers.accept || "").includes("text/event-stream")) {
+    const keepalive = startSseStream(res);
+    const outcome = await runGeneration(req.log, generationArgs);
+    clearInterval(keepalive);
+
+    // Client hung up mid-generation — its result was discarded and the stream
+    // is gone, so there's nothing to write.
+    if (outcome.kind === "aborted" || res.writableEnded || res.destroyed)
       return;
+
+    // The client can still drop between the check above and the write below;
+    // a write on a closed socket throws, so swallow it (nobody's listening).
+    try {
+      if (outcome.kind === "ok") {
+        writeSseEvent(res, "result", {
+          template: outcome.result.template,
+          metrics: outcome.result.metrics,
+        });
+      } else if (outcome.kind === "timeout") {
+        writeSseEvent(res, "error", { error: "Generation timed out" });
+      } else {
+        writeSseEvent(res, "error", { error: "Generation failed" });
+      }
+    } catch {
+      // Client disconnected mid-write — swallow.
     }
-    // Keep the specifics in logs; return a stable, generic message to the
-    // client (matches the other agent-templates handlers).
-    req.log.error({ err }, "[ephemeral-generation] generation failed");
-    res.status(500).json({ error: "Generation failed" });
     return;
   }
+
+  // JSON mode: hold the connection and return the template inline.
+  const outcome = await runGeneration(req.log, generationArgs);
+  if (outcome.kind === "aborted" || res.writableEnded || res.destroyed) return;
+  if (outcome.kind === "ok") {
+    res.status(200).json({
+      template: outcome.result.template,
+      metrics: outcome.result.metrics,
+    });
+    return;
+  }
+  if (outcome.kind === "timeout") {
+    res.status(504).json({ error: "Generation timed out" });
+    return;
+  }
+  res.status(500).json({ error: "Generation failed" });
 }
