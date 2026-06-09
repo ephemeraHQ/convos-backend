@@ -4,18 +4,22 @@
  * Synchronous, NON-persisting generation. Runs the real generator and returns
  * the produced template inline — it never writes an AgentTemplate or an
  * AgentTemplateGeneration row. Built for the admin compare tool, which generates
- * throwaway candidates (with and without a builderPrompt override) purely to
- * judge prompt quality across one or more ideas; nothing should land in the
- * catalog until an admin explicitly keeps one (via the normal create endpoint).
+ * throwaway candidates (varying the builderPrompt and/or builderModel override)
+ * purely to judge prompt quality across one or more ideas; nothing should land
+ * in the catalog until an admin explicitly keeps one (via the normal create
+ * endpoint).
  *
  * Admin-only: gated to agent-API-key callers (isApiKeyListener), like the
- * privileged builderPrompt field on the async endpoint. Skips the async job
- * machinery (idempotency, status row, TTL) and content moderation — the caller
- * is trusted and nothing generated here is persisted or published.
+ * privileged builderPrompt/builderModel fields on the async endpoint. Because
+ * the whole endpoint already requires an agent API key, those overrides need no
+ * extra per-field auth gate here. Skips the async job machinery (idempotency,
+ * status row, TTL) and content moderation — the caller is trusted and nothing
+ * generated here is persisted or published.
  */
 
 import type { Request, Response } from "express";
 import { z } from "zod";
+import { isKnownOpenRouterModel } from "@/api/v2/agent-templates/services/openrouter-models";
 import {
   callGenerateTemplate,
   type GenerateTemplateInput,
@@ -37,6 +41,9 @@ function getTimeoutMs(): number {
 const MAX_TEXT_LEN = 50_000;
 const MAX_BASE64_LEN = 35_000_000;
 const MAX_BUILDER_PROMPT_LEN = 100_000;
+// Model-override cap — OpenRouter model ids are short slugs; this just bounds
+// an obviously-abusive value (matches the async endpoint's builderModel cap).
+const MAX_BUILDER_MODEL_LEN = 256;
 
 const inputsSchema = z
   .object({
@@ -63,6 +70,7 @@ const bodySchema = z
   .object({
     inputs: inputsSchema,
     builderPrompt: z.string().min(1).max(MAX_BUILDER_PROMPT_LEN).optional(),
+    builderModel: z.string().min(1).max(MAX_BUILDER_MODEL_LEN).optional(),
     prefill: prefillSchema.optional(),
   })
   .strict();
@@ -136,6 +144,17 @@ export async function generationsEphemeralPostHandler(
 
   const prefill: GenerationPrefill | null = parsed.data.prefill ?? null;
   const builderPrompt = parsed.data.builderPrompt ?? null;
+  const builderModel = parsed.data.builderModel ?? null;
+
+  // Validate builderModel against OpenRouter's catalog so an unknown id fails
+  // fast here instead of surfacing as a generic upstream error mid-generation.
+  // Best-effort: the lookup fails open if the catalog is unreachable.
+  if (builderModel && !(await isKnownOpenRouterModel(builderModel))) {
+    res.status(400).json({
+      error: `builderModel '${builderModel}' is not a valid OpenRouter model`,
+    });
+    return;
+  }
 
   // Held in a variable so the catch can distinguish a timeout (signal.aborted)
   // from a generation error without parsing the wrapped error message.
@@ -147,6 +166,7 @@ export async function generationsEphemeralPostHandler(
       prefill,
       undefined,
       builderPrompt,
+      builderModel,
     );
     res.status(200).json({ template, metrics });
     return;

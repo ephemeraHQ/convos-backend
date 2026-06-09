@@ -6,6 +6,8 @@
  *   - Validation: missing/empty inputs                          → 400
  *   - Happy path: returns { template } inline, builderPrompt
  *     forwarded, and NOTHING persisted                          → 200
+ *   - builderModel: valid id forwarded as the model override     → 200
+ *   - builderModel: unknown to OpenRouter's catalog              → 400
  *   - Generator error: stable generic message (no leak)         → 500
  *   - Timeout: AbortSignal fires                                → 504
  */
@@ -20,6 +22,7 @@ import {
   test,
 } from "vitest";
 import { __setEphemeralTimeoutMsForTests } from "@/api/v2/agent-templates/handlers/generations-ephemeral-post";
+import { __setOpenRouterModelsForTests } from "@/api/v2/agent-templates/services/openrouter-models";
 import {
   __resetGenerateTemplateForTests,
   DEFAULT_TEST_METRICS,
@@ -46,8 +49,12 @@ const apiKeyHeaders = {
 const noKeyHeaders = { "Content-Type": "application/json" };
 
 // Records the args the generator was called with, so a test can assert the
-// builderPrompt override is forwarded (the 5th param, systemPromptOverride).
-let lastCall: { systemPromptOverride?: string | null } | null = null;
+// overrides are forwarded: builderPrompt as the 5th param (systemPromptOverride)
+// and builderModel as the 6th (modelOverride).
+let lastCall: {
+  systemPromptOverride?: string | null;
+  modelOverride?: string | null;
+} | null = null;
 
 let baseURL: string;
 let closeServer: () => Promise<void>;
@@ -61,6 +68,11 @@ const post = (body: unknown, headers: Record<string, string> = apiKeyHeaders) =>
 
 beforeAll(async () => {
   __setAgentAssetsApiKeyOverrideForTests(validAgentAssetsApiKey);
+  // Fixed model catalog so builderModel validation is hermetic (no network).
+  __setOpenRouterModelsForTests([
+    "anthropic/claude-opus-4.8",
+    "anthropic/claude-opus-4.7",
+  ]);
   const server = await startAgentTemplatesServer(TEST_PORT);
   baseURL = server.baseURL;
   closeServer = server.close;
@@ -69,10 +81,17 @@ beforeAll(async () => {
 beforeEach(() => {
   lastCall = null;
   __setEphemeralTimeoutMsForTests(null);
-  // Default: a fast, successful generation that records its override arg.
+  // Default: a fast, successful generation that records its override args.
   __resetGenerateTemplateForTests(
-    (_input, _signal, _prefill, _trace, systemPromptOverride) => {
-      lastCall = { systemPromptOverride };
+    (
+      _input,
+      _signal,
+      _prefill,
+      _trace,
+      systemPromptOverride,
+      modelOverride,
+    ) => {
+      lastCall = { systemPromptOverride, modelOverride };
       return Promise.resolve({
         template: fakeTemplate,
         metrics: DEFAULT_TEST_METRICS,
@@ -87,6 +106,7 @@ afterEach(() => {
 
 afterAll(async () => {
   __resetGenerateTemplateForTests(null);
+  __setOpenRouterModelsForTests(null);
   __setAgentAssetsApiKeyOverrideForTests(undefined);
   await closeServer();
 });
@@ -137,6 +157,28 @@ describe("POST /generations/ephemeral — happy path", () => {
       where: { agentName: fakeTemplate.agentName },
     });
     expect(after).toBe(before);
+  });
+});
+
+describe("POST /generations/ephemeral — builderModel (privileged override)", () => {
+  test("valid id is forwarded to the generator as the model override", async () => {
+    const res = await post({
+      inputs: { idea: "a wine club sommelier" },
+      builderModel: "anthropic/claude-opus-4.8",
+    });
+    expect(res.status).toBe(200);
+    // The override reaches the generator as the 6th param (modelOverride).
+    expect(lastCall?.modelOverride).toBe("anthropic/claude-opus-4.8");
+  });
+
+  test("unknown id (not in OpenRouter's catalog) → 400", async () => {
+    const res = await post({
+      inputs: { idea: "x" },
+      builderModel: "anthropic/claude-opus-9.9-imaginary",
+    });
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toContain("is not a valid OpenRouter model");
   });
 });
 
