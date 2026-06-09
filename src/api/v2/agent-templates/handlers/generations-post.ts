@@ -20,7 +20,7 @@
  *   3. Coalesced inputs present                                 → 400
  *   4. Input length limits (text ≤ 50k, base64 ≤ 35M)           → 400
  *   5. Owner resolution (auth account or admin fallback)
- *   5b. twitterContext / builderPrompt / builderModel — agent-key only → 403
+ *   5b-5d. twitterContext / builderPrompt / builderModel — agent-key only → 403
  *   5e. builderModel unknown to OpenRouter's catalog             → 400
  *   6. Idempotency-Key header present                           → 400
  *   7. Idempotency lookup → existing { source, inputs } match   → respondPerMode
