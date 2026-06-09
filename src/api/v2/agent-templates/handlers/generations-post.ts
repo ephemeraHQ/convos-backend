@@ -20,6 +20,8 @@
  *   3. Coalesced inputs present                                 → 400
  *   4. Input length limits (text ≤ 50k, base64 ≤ 35M)           → 400
  *   5. Owner resolution (auth account or admin fallback)
+ *   5b. twitterContext / builderPrompt / builderModel — agent-key only → 403
+ *   5e. builderModel unknown to OpenRouter's catalog             → 400
  *   6. Idempotency-Key header present                           → 400
  *   7. Idempotency lookup → existing { source, inputs } match   → respondPerMode
  *   8.                  → existing different body              → 409
@@ -48,6 +50,7 @@ import {
   checkTwitterIntent,
 } from "@/api/v2/agent-templates/services/moderation";
 import { type TraceContext } from "@/api/v2/agent-templates/services/openrouter-client";
+import { isKnownOpenRouterModel } from "@/api/v2/agent-templates/services/openrouter-models";
 import { resolveActor } from "@/api/v2/agent-templates/services/posthog";
 import { getEffectiveOwnerId } from "@/utils/auth-helpers";
 import { ADMIN_ACCOUNT_ID } from "@/utils/constants";
@@ -768,6 +771,17 @@ export async function generationsPostHandler(req: Request, res: Response) {
   if (body.builderModel && !isApiKeyListener) {
     res.status(403).json({
       error: "builderModel requires agent API key authentication",
+    });
+    return;
+  }
+
+  // 5e. Validate builderModel against OpenRouter's catalog so an unknown id
+  //     fails fast here instead of surfacing as a terminal `failed` generation
+  //     (which only reports a generic upstream error). Best-effort: the lookup
+  //     fails open if the catalog is unreachable.
+  if (body.builderModel && !(await isKnownOpenRouterModel(body.builderModel))) {
+    res.status(400).json({
+      error: `builderModel '${body.builderModel}' is not a valid OpenRouter model`,
     });
     return;
   }

@@ -20,6 +20,7 @@ import {
   __setExecutorTimeoutMsForTests,
 } from "@/api/v2/agent-templates/services/generation-executor";
 import { __resetModerationForTests } from "@/api/v2/agent-templates/services/moderation";
+import { __setOpenRouterModelsForTests } from "@/api/v2/agent-templates/services/openrouter-models";
 import { __resetPostHogForTests } from "@/api/v2/agent-templates/services/posthog";
 import {
   __resetGenerateTemplateForTests,
@@ -92,6 +93,11 @@ beforeAll(async () => {
   __setAgentAssetsApiKeyOverrideForTests(validAgentAssetsApiKey);
   __resetPostHogForTests(() => {});
   __resetModerationForTests(() => Promise.resolve({ allowed: true }));
+  // Fixed model catalog so builderModel validation is hermetic (no network).
+  __setOpenRouterModelsForTests([
+    "anthropic/claude-opus-4.8",
+    "anthropic/claude-opus-4.7",
+  ]);
   __resetGenerateTemplateForTests(() =>
     Promise.resolve({
       template: fakeTemplate,
@@ -122,6 +128,7 @@ afterAll(async () => {
   __resetGenerateTemplateForTests(null);
   __resetPostHogForTests(null);
   __resetModerationForTests(null);
+  __setOpenRouterModelsForTests(null);
   // Restore the singleton agent-key override so it can't leak into other suites.
   __setAgentAssetsApiKeyOverrideForTests(undefined);
   await prisma.account
@@ -478,6 +485,19 @@ describe("POST /generations — builderModel (privileged override)", () => {
       where: { id: body.generationId },
     });
     expect(row?.builderModel).toBe("anthropic/claude-opus-4.8");
+  });
+
+  test("agent-key + builderModel unknown to OpenRouter → 400", async () => {
+    // Submit-time catalog validation fails fast rather than letting the bad
+    // model surface later as a terminal `failed` generation.
+    __resetGenerationExecutorForTests(() => Promise.resolve());
+    const res = await post(
+      { ...sampleBody, builderModel: "anthropic/claude-opus-9.9-imaginary" },
+      { headers: withKey("builder-model-unknown") },
+    );
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toContain("is not a valid OpenRouter model");
   });
 
   test("same key + different builderModel → 409", async () => {
