@@ -15,19 +15,21 @@
  *     `event: error` (failed). HTTP status is always 200 in SSE mode.
  *
  * Submit-time validation order (each check returns and short-circuits):
- *   1. Body shape (zod)                                         → 400
- *   2. Content-Length > 40 MB                                   → 413
+ *   1. Content-Length > 40 MB                                   → 413
+ *   2. Body shape (zod)                                         → 400
  *   3. Coalesced inputs present                                 → 400
  *   4. Input length limits (text ≤ 50k, base64 ≤ 35M)           → 400
  *   5. Owner resolution (auth account or admin fallback)
- *   5b-5d. twitterContext / builderPrompt / builderModel — agent-key only → 403
- *   5e. builderModel unknown to OpenRouter's catalog             → 400
- *   6. Idempotency-Key header present                           → 400
- *   7. Idempotency lookup → existing { source, inputs } match   → respondPerMode
- *   8.                  → existing different body              → 409
- *   9. Content moderation (universal)                           → 422 (content)
- *   9b. Twitter intent moderation (when twitterContext present)  → 422 (intent)
- *  10. Persist row + fire executor + respondPerMode
+ *   6. twitterContext — agent-key only                          → 403
+ *   7. builderPrompt — agent-key only                           → 403
+ *   8. builderModel — agent-key only                            → 403
+ *   9. builderModel unknown to OpenRouter's catalog             → 400
+ *  10. Idempotency-Key header present                           → 400
+ *  11. Idempotency lookup → existing { source, inputs } match   → respondPerMode
+ *  12.                  → existing different body               → 409
+ *  13. Content moderation (universal)                           → 422 (content)
+ *  14. Twitter intent moderation (when twitterContext present)  → 422 (intent)
+ *  15. Persist row + fire executor + respondPerMode
  *
  * Idempotent replays go through the SAME respondPerMode path as the original
  * submit, so a retry with `Accept: text/event-stream` or `?wait_ms=` honours
@@ -743,7 +745,7 @@ export async function generationsPostHandler(req: Request, res: Response) {
     ownerAccountId = getEffectiveOwnerId(res) ?? ADMIN_ACCOUNT_ID;
   }
 
-  // 5b. twitterContext is privileged — it ends up attributed to a real
+  // 6. twitterContext is privileged — it ends up attributed to a real
   //     twitter handle. Only the bot (agent API key) is in a position to
   //     verify handle ownership against the tweet author, so reject the
   //     field for anonymous and JWT-only callers.
@@ -754,7 +756,7 @@ export async function generationsPostHandler(req: Request, res: Response) {
     return;
   }
 
-  // 5c. builderPrompt overrides the canonical generator system prompt — an
+  // 7. builderPrompt overrides the canonical generator system prompt — an
   //     abuse-prone surface (a free general-purpose LLM, or a way to strip the
   //     design/moderation guardrails baked into the canonical prompt), so it's
   //     restricted to agent-API-key callers (the admin dashboard).
@@ -765,7 +767,7 @@ export async function generationsPostHandler(req: Request, res: Response) {
     return;
   }
 
-  // 5d. builderModel swaps the default builder model — same abuse surface
+  // 8. builderModel swaps the default builder model — same abuse surface
   //     (an arbitrary, potentially unguardrailed model), so it's restricted
   //     to agent-API-key callers like builderPrompt.
   if (body.builderModel && !isApiKeyListener) {
@@ -775,7 +777,7 @@ export async function generationsPostHandler(req: Request, res: Response) {
     return;
   }
 
-  // 5e. Validate builderModel against OpenRouter's catalog so an unknown id
+  // 9. Validate builderModel against OpenRouter's catalog so an unknown id
   //     fails fast here instead of surfacing as a terminal `failed` generation
   //     (which only reports a generic upstream error). Best-effort: the lookup
   //     fails open if the catalog is unreachable.
@@ -786,7 +788,7 @@ export async function generationsPostHandler(req: Request, res: Response) {
     return;
   }
 
-  // 6. Idempotency-Key required and MUST be a UUID (any RFC 4122 version).
+  // 10. Idempotency-Key required and MUST be a UUID (any RFC 4122 version).
   //    Both the agent API key path and anonymous submissions are owned by
   //    `ADMIN_ACCOUNT_ID`, so they share an idempotency namespace; using
   //    UUIDs (122 bits of entropy) keeps that shared namespace safe from
@@ -808,7 +810,7 @@ export async function generationsPostHandler(req: Request, res: Response) {
     return;
   }
 
-  // 7+8. Idempotency dedupe lookup. Compare the FULL body (source + inputs);
+  // 11+12. Idempotency dedupe lookup. Compare the FULL body (source + inputs);
   // same key with a different source is a 409, matching the docstring contract.
   const existing = await prisma.agentTemplateGeneration.findUnique({
     where: {
@@ -856,7 +858,7 @@ export async function generationsPostHandler(req: Request, res: Response) {
     },
   };
 
-  // 9. Content moderation gate (universal)
+  // 13. Content moderation gate (universal)
   const moderationInput =
     coalesced.kind === "text"
       ? coalesced.text
@@ -870,7 +872,7 @@ export async function generationsPostHandler(req: Request, res: Response) {
     return;
   }
 
-  // 9b. Twitter intent gate — only when twitterContext is present
+  // 14. Twitter intent gate — only when twitterContext is present
   if (body.twitterContext) {
     const intentInput =
       body.twitterContext.idea ??
@@ -892,7 +894,7 @@ export async function generationsPostHandler(req: Request, res: Response) {
     }
   }
 
-  // 10. Persist + fire executor
+  // 15. Persist + fire executor
   let created: GenerationRow;
   try {
     created = await prisma.agentTemplateGeneration.create({
@@ -977,6 +979,6 @@ export async function generationsPostHandler(req: Request, res: Response) {
     );
   });
 
-  // 11. Response mode (fresh submit, status=pending)
+  // 16. Response mode (fresh submit, status=pending)
   await respondPerMode({ req, res, ownerAccountId, row: created, isClosed });
 }
