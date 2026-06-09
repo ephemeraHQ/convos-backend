@@ -22,6 +22,7 @@ import {
   test,
 } from "vitest";
 import { __setEphemeralTimeoutMsForTests } from "@/api/v2/agent-templates/handlers/generations-ephemeral-post";
+import { __setSseKeepaliveMsForTests } from "@/api/v2/agent-templates/lib/sse";
 import { __setOpenRouterModelsForTests } from "@/api/v2/agent-templates/services/openrouter-models";
 import {
   __resetGenerateTemplateForTests,
@@ -45,6 +46,10 @@ const fakeTemplate = makeFakeTemplate({
 const apiKeyHeaders = {
   "Content-Type": "application/json",
   "X-Agent-API-Key": validAgentAssetsApiKey,
+};
+const sseApiKeyHeaders = {
+  ...apiKeyHeaders,
+  Accept: "text/event-stream",
 };
 const noKeyHeaders = { "Content-Type": "application/json" };
 
@@ -102,6 +107,7 @@ beforeEach(() => {
 
 afterEach(() => {
   __setEphemeralTimeoutMsForTests(null);
+  __setSseKeepaliveMsForTests(null);
 });
 
 afterAll(async () => {
@@ -209,5 +215,88 @@ describe("POST /generations/ephemeral — error mapping", () => {
     expect(res.status).toBe(504);
     const body = (await res.json()) as { error: string };
     expect(body.error.toLowerCase()).toContain("timed out");
+  });
+});
+
+describe("POST /generations/ephemeral — SSE mode", () => {
+  test("emits `event: result` carrying the template, forwards builderPrompt", async () => {
+    const res = await post(
+      {
+        inputs: { idea: "a wine club sommelier" },
+        builderPrompt: "CUSTOM BUILDER PROMPT",
+      },
+      sseApiKeyHeaders,
+    );
+
+    // HTTP status is always 200 in SSE mode; the payload rides in the frame.
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toContain("text/event-stream");
+
+    const text = await res.text();
+    expect(text).toContain("event: result");
+    expect(text).not.toContain("event: error");
+    expect(text).toContain(fakeTemplate.agentName);
+    expect(text).toContain('"metrics":');
+
+    // The override still reaches the generator on the streaming path.
+    expect(lastCall?.systemPromptOverride).toBe("CUSTOM BUILDER PROMPT");
+  });
+
+  test("emits `event: error` on generator failure (no leak)", async () => {
+    __resetGenerateTemplateForTests(() =>
+      Promise.reject(new Error("boom: internal secret detail")),
+    );
+    const res = await post({ inputs: { idea: "x" } }, sseApiKeyHeaders);
+
+    expect(res.status).toBe(200);
+    const text = await res.text();
+    expect(text).toContain("event: error");
+    expect(text).not.toContain("event: result");
+    expect(text).toContain("Generation failed");
+    expect(text).not.toContain("secret");
+  });
+
+  test("emits `event: error` on timeout", async () => {
+    __setEphemeralTimeoutMsForTests(20);
+    __resetGenerateTemplateForTests(
+      (_input, signal) =>
+        new Promise((_resolve, reject) => {
+          signal?.addEventListener("abort", () => {
+            reject(new Error("aborted"));
+          });
+        }),
+    );
+    const res = await post({ inputs: { idea: "x" } }, sseApiKeyHeaders);
+
+    expect(res.status).toBe(200);
+    const text = await res.text();
+    expect(text).toContain("event: error");
+    expect(text.toLowerCase()).toContain("timed out");
+  });
+
+  test("emits keep-alive frames before the terminal result", async () => {
+    // Slow the generation so the keep-alive interval fires before it resolves.
+    __resetGenerateTemplateForTests(
+      () =>
+        new Promise((resolve) => {
+          setTimeout(() => {
+            resolve({ template: fakeTemplate, metrics: DEFAULT_TEST_METRICS });
+          }, 300);
+        }),
+    );
+    __setSseKeepaliveMsForTests(50);
+
+    const res = await post({ inputs: { idea: "x" } }, sseApiKeyHeaders);
+    expect(res.status).toBe(200);
+
+    const text = await res.text();
+    expect(text).toContain(":\n\n");
+    expect(text).toContain("event: result");
+
+    // Keep-alive comment frames must precede the terminal frame.
+    const keepaliveIdx = text.indexOf(":\n\n");
+    const resultIdx = text.indexOf("event: result");
+    expect(keepaliveIdx).toBeGreaterThanOrEqual(0);
+    expect(keepaliveIdx).toBeLessThan(resultIdx);
   });
 });

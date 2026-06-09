@@ -13,7 +13,7 @@
  */
 
 import { afterAll, afterEach, beforeAll, describe, expect, test } from "vitest";
-import { __setSseKeepaliveMsForTests } from "@/api/v2/agent-templates/handlers/generations-post";
+import { __setSseKeepaliveMsForTests } from "@/api/v2/agent-templates/lib/sse";
 import {
   __resetGenerationExecutorForTests,
   __setExecutorTimeoutMsForTests,
