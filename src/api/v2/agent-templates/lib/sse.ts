@@ -67,7 +67,8 @@ export function startSseStream(res: Response): ReturnType<typeof setInterval> {
 }
 
 /** Write a terminal SSE frame (`event: <name>\ndata: <json>\n\n`) and end the
- *  stream. Caller clears any keep-alive interval. */
+ *  stream. The caller clears any keep-alive interval before calling this;
+ *  `startSseStream`'s close handler is the backstop if it doesn't. */
 export function writeSseEvent(
   res: Response,
   event: "result" | "error",

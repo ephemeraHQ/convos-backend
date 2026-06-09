@@ -152,6 +152,48 @@ describe("SSE mode — terminal frames", () => {
     expect(text).toContain('"status":"failed"');
     expect(text).toContain("OpenRouter request timed out");
   });
+
+  test("SSE replay of an already-terminal generation emits the frame immediately, no keep-alive", async () => {
+    __resetGenerateTemplateForTests(() =>
+      Promise.resolve({
+        template: fakeTemplate,
+        metrics: DEFAULT_TEST_METRICS,
+      }),
+    );
+    // Aggressive keep-alive: if the replay wrongly took the polling path, a
+    // `:\n\n` frame would show up well within the test window.
+    __setSseKeepaliveMsForTests(50);
+
+    const headers = sseHeaders("sse-already-terminal");
+
+    // First request drives the generation to `done`. Drain the whole stream so
+    // the row is terminal in the DB before the replay fires.
+    const first = await fetch(`${baseURL}/api/v2/agent-templates/generations`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(sampleBody),
+    });
+    expect(await first.text()).toContain("event: result");
+
+    // Replay with the same Idempotency-Key + body → dedupe path finds the
+    // already-`done` row and must emit the terminal frame immediately,
+    // skipping keep-alive setup entirely.
+    const replay = await fetch(
+      `${baseURL}/api/v2/agent-templates/generations`,
+      {
+        method: "POST",
+        headers,
+        body: JSON.stringify(sampleBody),
+      },
+    );
+    expect(replay.status).toBe(200);
+    expect(replay.headers.get("content-type")).toContain("text/event-stream");
+
+    const text = await replay.text();
+    expect(text).toContain("event: result");
+    expect(text).toContain('"status":"done"');
+    expect(text).not.toContain(":\n\n");
+  });
 });
 
 describe("SSE mode — keep-alive", () => {

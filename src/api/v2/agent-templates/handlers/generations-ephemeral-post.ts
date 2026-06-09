@@ -248,15 +248,21 @@ export async function generationsEphemeralPostHandler(
     // there's no persisted result to deliver, so just bail.
     if (isClosed() || res.writableEnded || res.destroyed) return;
 
-    if (outcome.kind === "ok") {
-      writeSseEvent(res, "result", {
-        template: outcome.result.template,
-        metrics: outcome.result.metrics,
-      });
-    } else if (outcome.kind === "timeout") {
-      writeSseEvent(res, "error", { error: "Generation timed out" });
-    } else {
-      writeSseEvent(res, "error", { error: "Generation failed" });
+    // The client can still drop between the check above and the write below;
+    // a write on a closed socket throws, so swallow it (nobody's listening).
+    try {
+      if (outcome.kind === "ok") {
+        writeSseEvent(res, "result", {
+          template: outcome.result.template,
+          metrics: outcome.result.metrics,
+        });
+      } else if (outcome.kind === "timeout") {
+        writeSseEvent(res, "error", { error: "Generation timed out" });
+      } else {
+        writeSseEvent(res, "error", { error: "Generation failed" });
+      }
+    } catch {
+      // Client disconnected mid-write — swallow.
     }
     return;
   }
