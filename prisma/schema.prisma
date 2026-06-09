@@ -181,6 +181,10 @@ model AgentTemplateGeneration {
   // Optional caller-supplied builder/system prompt override (admin dashboard);
   // privileged (agent-API-key only) and fed to the generator by the executor.
   builderPrompt   String?          @db.Text
+  // Optional caller-supplied model override (admin dashboard); privileged
+  // (agent-API-key only) and used by the executor for the main generation call
+  // instead of the default builder model.
+  builderModel    String?          @db.VarChar(256)
   templateId      String?          @db.Uuid
   publishStatus   PublishStatus    @default(draft)
   reply           String?          @db.Text

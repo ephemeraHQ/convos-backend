@@ -1293,6 +1293,7 @@ export async function generateTemplate(
   prefill?: GenerationPrefill | null,
   trace?: TraceContext,
   systemPromptOverride?: string | null,
+  modelOverride?: string | null,
 ): Promise<GenerationResult> {
   // Backward compat: string input = text
   const opts: GenerateTemplateInput =
@@ -1324,7 +1325,11 @@ export async function generateTemplate(
   const intentNote = intentText ? `\n\nUser's intent: ${intentText}` : "";
 
   let userContent: any;
-  const model = getModel();
+  // A per-request override (the admin tool's custom model) wins over the
+  // config/test-seam model; an empty/whitespace value falls through to the
+  // default. Applies to this main generation call only — the GitHub selector
+  // and content classifier keep their configured models.
+  const model = modelOverride?.trim() || getModel();
 
   if (opts.imageBase64) {
     // Image path: send as image_url for vision models
@@ -1652,6 +1657,7 @@ let _generateTemplateOverride:
       prefill?: GenerationPrefill | null,
       trace?: TraceContext,
       systemPromptOverride?: string | null,
+      modelOverride?: string | null,
     ) => Promise<GenerationResult>)
   | null = null;
 
@@ -1664,6 +1670,7 @@ export function __resetGenerateTemplateForTests(
         prefill?: GenerationPrefill | null,
         trace?: TraceContext,
         systemPromptOverride?: string | null,
+        modelOverride?: string | null,
       ) => Promise<GenerationResult>)
     | null,
 ) {
@@ -1681,6 +1688,9 @@ export function __resetGenerateTemplateForTests(
  * Optional `systemPromptOverride` lets a trusted caller (the admin preview
  * tool) swap the builder system prompt for a single request without
  * persisting anything; omitted on the production generation path.
+ *
+ * Optional `modelOverride` similarly swaps the builder model for the main
+ * generation call; omitted on the production generation path.
  */
 export async function callGenerateTemplate(
   input: GenerateTemplateInput | string,
@@ -1688,6 +1698,7 @@ export async function callGenerateTemplate(
   prefill?: GenerationPrefill | null,
   trace?: TraceContext,
   systemPromptOverride?: string | null,
+  modelOverride?: string | null,
 ): Promise<GenerationResult> {
   if (_generateTemplateOverride) {
     return _generateTemplateOverride(
@@ -1696,9 +1707,17 @@ export async function callGenerateTemplate(
       prefill,
       trace,
       systemPromptOverride,
+      modelOverride,
     );
   }
-  return generateTemplate(input, signal, prefill, trace, systemPromptOverride);
+  return generateTemplate(
+    input,
+    signal,
+    prefill,
+    trace,
+    systemPromptOverride,
+    modelOverride,
+  );
 }
 
 export { BREVITY_RAIL, BUILDER_CONTRACT_RAIL };

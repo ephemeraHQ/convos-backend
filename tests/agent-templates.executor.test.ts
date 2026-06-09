@@ -197,6 +197,70 @@ describe("generation-executor", () => {
     expect(capturedOverride).toBeNull();
   });
 
+  test("threads the row's builderModel to the generator as the model override", async () => {
+    let capturedModel: string | null | undefined;
+    __resetGenerateTemplateForTests(
+      (
+        _input,
+        _signal,
+        _prefill,
+        _trace,
+        _systemPromptOverride,
+        modelOverride,
+      ) => {
+        capturedModel = modelOverride;
+        return Promise.resolve({
+          template: fakeTemplate,
+          metrics: DEFAULT_TEST_METRICS,
+        });
+      },
+    );
+    const builderModel = "anthropic/claude-opus-4.8";
+    const gen = await prisma.agentTemplateGeneration.create({
+      data: {
+        ownerAccountId: ADMIN_ACCOUNT_ID,
+        source: TEST_SOURCE,
+        idempotencyKey: "builder-model-threading",
+        inputs: { text: "a trivia agent" },
+        builderModel,
+        status: "pending",
+      },
+    });
+
+    await executeGeneration(gen.id);
+
+    const final = await prisma.agentTemplateGeneration.findUnique({
+      where: { id: gen.id },
+    });
+    expect(final?.status).toBe("done");
+    expect(capturedModel).toBe(builderModel);
+  });
+
+  test("ordinary generation (no builderModel) passes no model override", async () => {
+    let capturedModel: string | null | undefined = "SENTINEL";
+    __resetGenerateTemplateForTests(
+      (
+        _input,
+        _signal,
+        _prefill,
+        _trace,
+        _systemPromptOverride,
+        modelOverride,
+      ) => {
+        capturedModel = modelOverride ?? null;
+        return Promise.resolve({
+          template: fakeTemplate,
+          metrics: DEFAULT_TEST_METRICS,
+        });
+      },
+    );
+    const gen = await createPendingGeneration("no-builder-model");
+
+    await executeGeneration(gen.id);
+
+    expect(capturedModel).toBeNull();
+  });
+
   test("preserves the user's text intent alongside an attached file", async () => {
     let capturedInput: unknown;
     let capturedProps: PostHogCaptureProperties | undefined;

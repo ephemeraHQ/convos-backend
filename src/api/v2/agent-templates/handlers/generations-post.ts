@@ -15,17 +15,21 @@
  *     `event: error` (failed). HTTP status is always 200 in SSE mode.
  *
  * Submit-time validation order (each check returns and short-circuits):
- *   1. Body shape (zod)                                         → 400
- *   2. Content-Length > 40 MB                                   → 413
+ *   1. Content-Length > 40 MB                                   → 413
+ *   2. Body shape (zod)                                         → 400
  *   3. Coalesced inputs present                                 → 400
  *   4. Input length limits (text ≤ 50k, base64 ≤ 35M)           → 400
  *   5. Owner resolution (auth account or admin fallback)
- *   6. Idempotency-Key header present                           → 400
- *   7. Idempotency lookup → existing { source, inputs } match   → respondPerMode
- *   8.                  → existing different body              → 409
- *   9. Content moderation (universal)                           → 422 (content)
- *   9b. Twitter intent moderation (when twitterContext present)  → 422 (intent)
- *  10. Persist row + fire executor + respondPerMode
+ *   6. twitterContext — agent-key only                          → 403
+ *   7. builderPrompt — agent-key only                           → 403
+ *   8. builderModel — agent-key only                            → 403
+ *   9. builderModel unknown to OpenRouter's catalog             → 400
+ *  10. Idempotency-Key header present                           → 400
+ *  11. Idempotency lookup → existing { source, inputs } match   → respondPerMode
+ *  12.                  → existing different body               → 409
+ *  13. Content moderation (universal)                           → 422 (content)
+ *  14. Twitter intent moderation (when twitterContext present)  → 422 (intent)
+ *  15. Persist row + fire executor + respondPerMode
  *
  * Idempotent replays go through the SAME respondPerMode path as the original
  * submit, so a retry with `Accept: text/event-stream` or `?wait_ms=` honours
@@ -48,6 +52,7 @@ import {
   checkTwitterIntent,
 } from "@/api/v2/agent-templates/services/moderation";
 import { type TraceContext } from "@/api/v2/agent-templates/services/openrouter-client";
+import { isKnownOpenRouterModel } from "@/api/v2/agent-templates/services/openrouter-models";
 import { resolveActor } from "@/api/v2/agent-templates/services/posthog";
 import { getEffectiveOwnerId } from "@/utils/auth-helpers";
 import { ADMIN_ACCOUNT_ID } from "@/utils/constants";
@@ -62,6 +67,9 @@ const MAX_BASE64_LEN = 35_000_000;
 // Builder/system prompt override cap — generous (the canonical file prompt is
 // ~12k tokens) but bounds an obviously-abusive body.
 const MAX_BUILDER_PROMPT_LEN = 100_000;
+// Model-override cap — OpenRouter model ids are short slugs; this just bounds
+// an obviously-abusive value (matches the column's VARCHAR(256)).
+const MAX_BUILDER_MODEL_LEN = 256;
 const MAX_BODY_BYTES = 40 * 1024 * 1024;
 const MAX_WAIT_MS = 45_000;
 const DEFAULT_SSE_KEEPALIVE_MS = 15_000;
@@ -218,6 +226,11 @@ const bodySchema = z
     // fire-and-forget executor can feed it to the generator. The produced
     // template still lands as a draft via the normal pipeline.
     builderPrompt: z.string().min(1).max(MAX_BUILDER_PROMPT_LEN).optional(),
+    // Custom model that overrides the default builder model for this
+    // generation's main call. Privileged — gated to agent-API-key callers
+    // below (like builderPrompt) — and persisted on the row so the
+    // fire-and-forget executor can hand it to the generator.
+    builderModel: z.string().min(1).max(MAX_BUILDER_MODEL_LEN).optional(),
     // Asserted owner — honoured only when the caller is agent-key-auth'd;
     // ignored for JWT (JWT account always wins) and anonymous (falls
     // back to ADMIN). See the owner-resolution block below.
@@ -498,6 +511,7 @@ interface DedupeRow extends GenerationRow {
   twitterContext: unknown;
   prefill: unknown;
   builderPrompt: string | null;
+  builderModel: string | null;
 }
 
 const dedupeSelect = {
@@ -507,6 +521,7 @@ const dedupeSelect = {
   twitterContext: true,
   prefill: true,
   builderPrompt: true,
+  builderModel: true,
   status: true,
   templateId: true,
   reply: true,
@@ -528,6 +543,7 @@ function dedupeBodiesMatch(existing: DedupeRow, body: Body): boolean {
       twitterContext: existing.twitterContext,
       prefill: existing.prefill,
       builderPrompt: existing.builderPrompt,
+      builderModel: existing.builderModel,
     },
     {
       source: body.source,
@@ -535,6 +551,7 @@ function dedupeBodiesMatch(existing: DedupeRow, body: Body): boolean {
       twitterContext: body.twitterContext ?? null,
       prefill: body.prefill ?? null,
       builderPrompt: body.builderPrompt ?? null,
+      builderModel: body.builderModel ?? null,
     },
   );
 }
@@ -728,7 +745,7 @@ export async function generationsPostHandler(req: Request, res: Response) {
     ownerAccountId = getEffectiveOwnerId(res) ?? ADMIN_ACCOUNT_ID;
   }
 
-  // 5b. twitterContext is privileged — it ends up attributed to a real
+  // 6. twitterContext is privileged — it ends up attributed to a real
   //     twitter handle. Only the bot (agent API key) is in a position to
   //     verify handle ownership against the tweet author, so reject the
   //     field for anonymous and JWT-only callers.
@@ -739,7 +756,7 @@ export async function generationsPostHandler(req: Request, res: Response) {
     return;
   }
 
-  // 5c. builderPrompt overrides the canonical generator system prompt — an
+  // 7. builderPrompt overrides the canonical generator system prompt — an
   //     abuse-prone surface (a free general-purpose LLM, or a way to strip the
   //     design/moderation guardrails baked into the canonical prompt), so it's
   //     restricted to agent-API-key callers (the admin dashboard).
@@ -750,7 +767,28 @@ export async function generationsPostHandler(req: Request, res: Response) {
     return;
   }
 
-  // 6. Idempotency-Key required and MUST be a UUID (any RFC 4122 version).
+  // 8. builderModel swaps the default builder model — same abuse surface
+  //     (an arbitrary, potentially unguardrailed model), so it's restricted
+  //     to agent-API-key callers like builderPrompt.
+  if (body.builderModel && !isApiKeyListener) {
+    res.status(403).json({
+      error: "builderModel requires agent API key authentication",
+    });
+    return;
+  }
+
+  // 9. Validate builderModel against OpenRouter's catalog so an unknown id
+  //     fails fast here instead of surfacing as a terminal `failed` generation
+  //     (which only reports a generic upstream error). Best-effort: the lookup
+  //     fails open if the catalog is unreachable.
+  if (body.builderModel && !(await isKnownOpenRouterModel(body.builderModel))) {
+    res.status(400).json({
+      error: `builderModel '${body.builderModel}' is not a valid OpenRouter model`,
+    });
+    return;
+  }
+
+  // 10. Idempotency-Key required and MUST be a UUID (any RFC 4122 version).
   //    Both the agent API key path and anonymous submissions are owned by
   //    `ADMIN_ACCOUNT_ID`, so they share an idempotency namespace; using
   //    UUIDs (122 bits of entropy) keeps that shared namespace safe from
@@ -772,7 +810,7 @@ export async function generationsPostHandler(req: Request, res: Response) {
     return;
   }
 
-  // 7+8. Idempotency dedupe lookup. Compare the FULL body (source + inputs);
+  // 11+12. Idempotency dedupe lookup. Compare the FULL body (source + inputs);
   // same key with a different source is a 409, matching the docstring contract.
   const existing = await prisma.agentTemplateGeneration.findUnique({
     where: {
@@ -820,7 +858,7 @@ export async function generationsPostHandler(req: Request, res: Response) {
     },
   };
 
-  // 9. Content moderation gate (universal)
+  // 13. Content moderation gate (universal)
   const moderationInput =
     coalesced.kind === "text"
       ? coalesced.text
@@ -834,7 +872,7 @@ export async function generationsPostHandler(req: Request, res: Response) {
     return;
   }
 
-  // 9b. Twitter intent gate — only when twitterContext is present
+  // 14. Twitter intent gate — only when twitterContext is present
   if (body.twitterContext) {
     const intentInput =
       body.twitterContext.idea ??
@@ -856,7 +894,7 @@ export async function generationsPostHandler(req: Request, res: Response) {
     }
   }
 
-  // 10. Persist + fire executor
+  // 15. Persist + fire executor
   let created: GenerationRow;
   try {
     created = await prisma.agentTemplateGeneration.create({
@@ -874,6 +912,7 @@ export async function generationsPostHandler(req: Request, res: Response) {
           ? (body.prefill as Prisma.InputJsonValue)
           : Prisma.JsonNull,
         builderPrompt: body.builderPrompt ?? null,
+        builderModel: body.builderModel ?? null,
         publishStatus: body.publishStatus,
         status: "pending",
       },
@@ -940,6 +979,6 @@ export async function generationsPostHandler(req: Request, res: Response) {
     );
   });
 
-  // 11. Response mode (fresh submit, status=pending)
+  // 16. Response mode (fresh submit, status=pending)
   await respondPerMode({ req, res, ownerAccountId, row: created, isClosed });
 }
