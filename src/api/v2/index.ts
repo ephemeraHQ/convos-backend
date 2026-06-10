@@ -27,6 +27,7 @@ import { renewBatchHandler } from "./assets/handlers/renew-batch";
 import { testLifecycleHandler } from "./assets/handlers/test-lifecycle";
 import { attachmentsRouter } from "./attachments/attachments.router";
 import { authRouter } from "./auth/auth.router";
+import { composioRouter } from "./composio/composio.router";
 import { connectionsRouter } from "./connections/connections.router";
 import { dailyRefillRouter } from "./credits/daily.router";
 import { devRouter } from "./dev/dev.router";
@@ -118,6 +119,9 @@ v2Router.use(
 v2Router.use("/agents", authMiddleware, agentsRouter);
 v2Router.use("/attachments", authMiddleware, attachmentsRouter);
 v2Router.use("/connections", authMiddleware, requireAccount, connectionsRouter);
+// Agent-facing tool execution. Agent API key authenticates the caller; the
+// exec handler authorizes per-account against the trusted identity + grants.
+v2Router.use("/composio", agentApiKeyAuth, composioRouter);
 v2Router.use("/notifications/xmtp", webhookRouter);
 v2Router.use("/notifications", authMiddleware, notificationsRouter);
 // No auth: Apple authenticates via JWS signature, verified inside the handler.
