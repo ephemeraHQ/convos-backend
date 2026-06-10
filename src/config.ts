@@ -84,6 +84,10 @@ export const COMPOSIO_CONNECTION_CALLBACK_URL =
 
 export const XMTP_ENV = process.env.XMTP_ENV || "dev";
 
+// Deployment environment tag (e.g. convos-otr-dev, convos-otr-prod). Used for
+// telemetry resource attributes. Mirrors the value the OTel instrumentation reads.
+export const ENV = process.env.ENV || "development";
+
 // SIWE / nonce-cookie auth (required)
 if (!process.env.SIWE_DOMAIN) {
   throw new Error("SIWE_DOMAIN is not configured");

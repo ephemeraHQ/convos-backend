@@ -10,7 +10,8 @@ import {
 } from "@/api/v2/agent-templates/services/ttl-sweep";
 import { runComposioUserIdMigrationOnce } from "@/api/v2/connections/migrate-user-ids";
 import apiRouter from "./api";
-import { IS_DEVELOPMENT } from "./config";
+import { IS_DEVELOPMENT, TELEMETRY_MAX_BODY_BYTES } from "./config";
+import { bodySizeGuard } from "./middleware/bodySizeGuard";
 import { errorHandlerMiddleware } from "./middleware/errorHandler";
 import { jsonMiddleware } from "./middleware/json";
 import { noRouteMiddleware } from "./middleware/noRoute";
@@ -45,6 +46,10 @@ const app = express();
 app.set("trust proxy", 1);
 app.use(helmet()); // Set security headers
 app.use(cors()); // Handle CORS
+// Reject oversized telemetry batches before the 50mb JSON parser buffers them.
+// Path-scoped so it only fires for telemetry routes; the telemetry router
+// re-applies the same guard as a backstop.
+app.use("/api/v2/telemetry", bodySizeGuard(TELEMETRY_MAX_BODY_BYTES));
 app.use(jsonMiddleware); // Parse JSON requests
 app.use(cookieParser()); // Parse cookies (required for SIWE nonce flow)
 app.use(pinoMiddleware);
