@@ -114,6 +114,45 @@ model Account {
   credits                  UserCredits?
   creditLedger             CreditLedger[]
   subscriptions            Subscription[]
+  connectionGrants         ConnectionGrant[]
+}
+
+/// Consent record for backend-mediated Composio tool execution (fork Y).
+///
+/// iOS issues one row when the owner approves a capability request: "owner
+/// (ownerAccountId) lets agent (granteeInboxId) use `toolkit` in this
+/// conversation." The backend's POST /v2/composio/exec reads these to decide
+/// whether an agent call is authorized, then resolves the connection and calls
+/// Composio itself — the agent never holds or names a connection id.
+///
+/// ownerAccountId is set from the issuer's authenticated JWT (never a body
+/// field), so an owner can only grant access to their own connections.
+/// connectionId is the Composio connected-account id (a bearer capability); it
+/// is stored backend-side and never returned to an agent. See
+/// docs/plans/composio-exec-grant-mediation.md.
+model ConnectionGrant {
+  id             String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  ownerAccountId String    @db.Uuid
+  ownerInboxId   String
+  granteeInboxId String
+  conversationId String
+  toolkit        String
+  /// Allowed Composio action slugs (e.g. GOOGLECALENDAR_EVENTS_LIST). Empty
+  /// means the whole toolkit; tighten to per-action as scoped sessions prove out.
+  actions        String[]  @default([])
+  /// Composio connected-account id, when iOS pins it. Bearer capability —
+  /// backend-only, never sent to an agent. Null ⇒ resolve from (owner, toolkit).
+  connectionId   String?
+  expiresAt      DateTime?
+  revokedAt      DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  owner Account @relation(fields: [ownerAccountId], references: [id], onDelete: Cascade)
+
+  @@unique([ownerAccountId, granteeInboxId, conversationId, toolkit])
+  @@index([granteeInboxId, conversationId])
+  @@index([ownerAccountId])
 }
 
 enum PublishStatus {

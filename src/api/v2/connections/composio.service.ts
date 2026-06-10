@@ -107,6 +107,49 @@ export class ComposioService {
   async delete(connectionId: string) {
     return this.composio.connectedAccounts.delete(connectionId);
   }
+
+  /**
+   * Resolve the connectedAccountId for (userId, toolkit) when a grant did not
+   * pin one. Picks the first connection matching the toolkit; returns null if
+   * the account has no connection for it.
+   *
+   * The connectedAccountId is a bearer capability — callers keep it server-side
+   * and never return it to an agent.
+   */
+  async resolveConnectionId(args: {
+    userId: string;
+    toolkit: string;
+  }): Promise<string | null> {
+    const list = await this.composio.connectedAccounts.list({
+      userIds: [args.userId],
+    });
+    const normalized = args.toolkit.toLowerCase();
+    const items: ConnectedAccountListResponseItem[] = list.items;
+    const match = items.find(
+      (item) => item.toolkit.slug.toLowerCase() === normalized,
+    );
+    return match?.id ?? null;
+  }
+
+  /**
+   * Execute a Composio tool action on behalf of an account. The connection is
+   * resolved and injected server-side; the agent never holds or names a
+   * connectedAccountId. `userId` is the data owner (stable accountId).
+   */
+  async execute(args: {
+    action: string;
+    userId: string;
+    arguments: Record<string, unknown>;
+    connectedAccountId?: string;
+  }) {
+    return this.composio.tools.execute(args.action, {
+      userId: args.userId,
+      arguments: args.arguments,
+      ...(args.connectedAccountId
+        ? { connectedAccountId: args.connectedAccountId }
+        : {}),
+    });
+  }
 }
 
 let cached: ComposioService | null = null;
