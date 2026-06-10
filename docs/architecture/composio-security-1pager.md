@@ -85,6 +85,11 @@ The hard part — and the real reason this is MVP-2: one agent instance serves t
 
 ### Open fork: where the grant store + the Composio call live
 
+> **Decided (2026-06-09): fork (Y) backend-mediates.** The backend holds the key and the
+> grants and makes the Composio call; the agent calls `Backend.exec(toolkit, action, args)`
+> with no connection identifier, so the bearer capability never leaves the backend. Backend
+> implementation plan: [`docs/plans/composio-exec-grant-mediation.md`](../plans/composio-exec-grant-mediation.md).
+
 Two secrets, and they need not co-locate: the **Composio project key** (one global secret) and the **per-user `connected_account_id`s** (your backend grant store keyed by `accountId`). But *who calls Composio* is a real decision:
 
 - **(X) Proxy-resolves.** The `outbound.ts` proxy holds the project key (Nick's model) and, per call, resolves the connection from the backend grant store using the verified sender's `accountId`, then calls Composio. Keeps key custody in assistants; adds a backend lookup on the hot path.
@@ -110,7 +115,7 @@ Unchanged from the first draft and still composes cleanly. Per-agent gating live
 
 ## Decision needed
 
-1. **Pick the call path — fork (X) proxy-resolves vs (Y) backend-mediates** (see Recommendation 2). This decides which repo owns the Composio call and whether key custody stays in the proxy. Everything else follows from it.
+1. **Decided (2026-06-09): fork (Y) backend-mediates.** The backend owns the Composio call and holds both the key and the grants; the agent calls `Backend.exec(toolkit, action, args)`. Consequence: this supersedes **Recommendation 1** (key custody in `outbound.ts`) — under (Y) the agent never calls Composio directly, so there is no key to inject in the proxy, and MVP-1 *does* carry backend work (contrast the "no backend changes" note below, written for the (X) path). Reconfirm with Nick, who preferred (X) to avoid a backend mediation hop.
 2. Approve **Tier 1 conversation-boundary isolation** as the MVP (closes the cross-conversation leak; DMs get exact per-user isolation). Owner for the grant store keyed by `accountId` + the agent contract (`{toolkit, action, args}`, no `connected_account_id`).
 3. **Resolved (Louis):** Composio does **not** cross-validate `connected_account_id` against the account — so it's a bearer capability and must never reach the agent. The agent contract carries no connection identifier regardless of fork.
 4. **Still open — for Nick:**
