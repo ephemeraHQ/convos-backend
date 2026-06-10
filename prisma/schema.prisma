@@ -410,3 +410,10 @@ model AppleReceipt {
   @@index([transactionId])
   @@index([subscriptionId, receivedAt])
 }
+
+model TelemetryBatch {
+  batchId    String   @id
+  receivedAt DateTime @default(now())
+
+  @@index([receivedAt])
+}
