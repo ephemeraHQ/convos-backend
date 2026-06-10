@@ -1,13 +1,31 @@
 import type { Request } from "express";
 
 /**
- * The cryptographically-trusted caller of a POST /v2/composio/exec request.
+ * Identity headers stamped by the TRUSTED assistants worker.
  *
- * `agentInboxId` and `conversationId` MUST come from a signal the agent cannot
- * forge — not from the request body. The agent authenticates with the shared
- * agent API key, which proves "an agent is calling," not "for whom"; so the
- * exec authorization (grant lookup) must key off this trusted identity, never
- * off agent-supplied fields.
+ * Trust model: /v2/composio is mounted behind agentApiKeyAuth, and the agent
+ * API key lives exclusively in the assistants worker (Cloudflare DO) — the
+ * agent container gets no key and cannot reach this surface. The worker's
+ * composio.internal outbound handler builds a FRESH request to exec: it copies
+ * only {toolkit, action, args} from the container and sets these headers from
+ * its own state (the conversationId pinned at instance creation and the
+ * instance's own inboxId), never from container input. The same key+worker
+ * trust already gates the credits surface in production.
+ *
+ * A request bearing the key but missing these headers is fail-closed by
+ * resolveTrustedCaller returning null (exec → 403): body fields or
+ * container-supplied headers can never substitute, because the worker
+ * overwrites them.
+ */
+export const CONVERSATION_ID_HEADER = "x-convos-conversation-id";
+export const AGENT_INBOX_ID_HEADER = "x-convos-agent-inbox-id";
+
+const MAX_HEADER_LENGTH = 256;
+
+/**
+ * The trusted caller of a POST /v2/composio/exec request: which agent, acting
+ * in which conversation. Matched against ConnectionGrant rows — never derived
+ * from the request body.
  */
 export type TrustedCaller = {
   conversationId: string;
@@ -15,37 +33,16 @@ export type TrustedCaller = {
   agentInboxId: string;
 };
 
-/**
- * Resolves the trusted caller for an exec request, or null when no trusted
- * signal is available (fail-closed → exec returns 403).
- *
- * Production has NO resolver wired yet: this backend cannot see Herald's
- * HMAC-signed sender or the conversation membership (no Herald client, no
- * membership table). Until that lands — the worker forwards Herald's signed
- * envelope and the backend re-verifies the HMAC — exec must fail closed rather
- * than trust an agent-named conversation/inbox. See
- * docs/plans/composio-exec-grant-mediation.md (Tier 2 sub-question).
- */
-export type TrustedCallerResolver = (
-  req: Request,
-) => Promise<TrustedCaller | null>;
-
-const FAIL_CLOSED: TrustedCallerResolver = () => Promise.resolve(null);
-
-let resolver: TrustedCallerResolver = FAIL_CLOSED;
-
-export function resolveTrustedCaller(
-  req: Request,
-): Promise<TrustedCaller | null> {
-  return resolver(req);
-}
-
-/**
- * Override the resolver — used by tests to exercise the grant→Composio path
- * with a known trusted caller. Pass null to restore the fail-closed default.
- */
-export function __setTrustedCallerResolverForTests(
-  override: TrustedCallerResolver | null,
-): void {
-  resolver = override ?? FAIL_CLOSED;
+export function resolveTrustedCaller(req: Request): TrustedCaller | null {
+  const conversationId = req.header(CONVERSATION_ID_HEADER)?.trim() ?? "";
+  const agentInboxId = req.header(AGENT_INBOX_ID_HEADER)?.trim() ?? "";
+  if (
+    !conversationId ||
+    !agentInboxId ||
+    conversationId.length > MAX_HEADER_LENGTH ||
+    agentInboxId.length > MAX_HEADER_LENGTH
+  ) {
+    return null;
+  }
+  return { conversationId, agentInboxId };
 }

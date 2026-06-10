@@ -25,7 +25,7 @@ export async function execHandler(req: Request, res: Response) {
 
   // Fail closed: without a forgery-proof (conversationId, agentInboxId), exec
   // cannot safely decide whose connection to use. See trusted-identity.ts.
-  const caller = await resolveTrustedCaller(req);
+  const caller = resolveTrustedCaller(req);
   if (!caller) {
     req.log.warn({ toolkit, action }, "[Composio] exec: no trusted identity");
     res.status(403).json({ code: "trusted_identity_unavailable" });

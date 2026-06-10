@@ -11,8 +11,8 @@ import {
 } from "vitest";
 import { composioRouter } from "@/api/v2/composio/composio.router";
 import {
-  __setTrustedCallerResolverForTests,
-  type TrustedCaller,
+  AGENT_INBOX_ID_HEADER,
+  CONVERSATION_ID_HEADER,
 } from "@/api/v2/composio/trusted-identity";
 import {
   __resetComposioServiceForTests,
@@ -82,18 +82,35 @@ function installComposioStub(
   );
 }
 
-function trust(caller: TrustedCaller | null) {
-  __setTrustedCallerResolverForTests(
-    caller ? () => Promise.resolve(caller) : null,
-  );
+// In production these headers are stamped by the trusted assistants worker
+// (which alone holds the agent API key); the container never sets them.
+function workerHeaders(
+  caller: { conversationId?: string; agentInboxId?: string } = {
+    conversationId: CONVERSATION,
+    agentInboxId: AGENT_INBOX,
+  },
+): Record<string, string> {
+  return {
+    ...(caller.conversationId
+      ? { [CONVERSATION_ID_HEADER]: caller.conversationId }
+      : {}),
+    ...(caller.agentInboxId
+      ? { [AGENT_INBOX_ID_HEADER]: caller.agentInboxId }
+      : {}),
+  };
 }
 
-function exec(body: unknown, key: string | null = AGENT_KEY) {
+function exec(
+  body: unknown,
+  opts: { key?: string | null; headers?: Record<string, string> } = {},
+) {
+  const key = opts.key === undefined ? AGENT_KEY : opts.key;
   return fetch(`${baseURL}/api/v2/composio/exec`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       ...(key ? { [AGENT_API_KEY_HEADER]: key } : {}),
+      ...(opts.headers ?? {}),
     },
     body: JSON.stringify(body),
   });
@@ -126,11 +143,9 @@ afterAll(async () => {
   });
   __setAgentAssetsApiKeyOverrideForTests(undefined);
   __resetComposioServiceForTests(null);
-  __setTrustedCallerResolverForTests(null);
 });
 
 afterEach(() => {
-  __setTrustedCallerResolverForTests(null);
   __resetComposioServiceForTests(null);
 });
 
@@ -138,23 +153,25 @@ afterEach(() => {
 
 describe("POST /v2/composio/exec — auth + fail-closed (no DB)", () => {
   test("401 without an agent API key", async () => {
-    const res = await exec(VALID_BODY, null);
+    const res = await exec(VALID_BODY, { key: null });
     expect(res.status).toBe(401);
   });
 
   test("401 with a wrong agent API key", async () => {
-    const res = await exec(VALID_BODY, "wrong".repeat(10));
+    const res = await exec(VALID_BODY, { key: "wrong".repeat(10) });
     expect(res.status).toBe(401);
   });
 
   test("400 on an invalid body (missing action)", async () => {
-    const res = await exec({ toolkit: "googlecalendar" });
+    const res = await exec(
+      { toolkit: "googlecalendar" },
+      { headers: workerHeaders() },
+    );
     expect(res.status).toBe(400);
     expect((await asJson<{ code: string }>(res)).code).toBe("invalid_request");
   });
 
-  test("403 fail-closed when no trusted identity is available", async () => {
-    // Default resolver returns null — the agent cannot be authorized.
+  test("403 fail-closed when the worker identity headers are absent", async () => {
     const res = await exec(VALID_BODY);
     expect(res.status).toBe(403);
     expect((await asJson<{ code: string }>(res)).code).toBe(
@@ -162,9 +179,32 @@ describe("POST /v2/composio/exec — auth + fail-closed (no DB)", () => {
     );
   });
 
-  test("agent-named fields cannot substitute for a trusted identity", async () => {
+  test("403 fail-closed when only one identity header is present", async () => {
+    const res = await exec(VALID_BODY, {
+      headers: workerHeaders({ conversationId: CONVERSATION }),
+    });
+    expect(res.status).toBe(403);
+    expect((await asJson<{ code: string }>(res)).code).toBe(
+      "trusted_identity_unavailable",
+    );
+  });
+
+  test("403 fail-closed on an oversized identity header", async () => {
+    const res = await exec(VALID_BODY, {
+      headers: workerHeaders({
+        conversationId: "c".repeat(300),
+        agentInboxId: AGENT_INBOX,
+      }),
+    });
+    expect(res.status).toBe(403);
+    expect((await asJson<{ code: string }>(res)).code).toBe(
+      "trusted_identity_unavailable",
+    );
+  });
+
+  test("agent-named body fields cannot substitute for the identity headers", async () => {
     // Even if the agent stuffs identity-looking fields into the body, exec
-    // still fail-closes: resolution ignores the body entirely.
+    // still fail-closes: resolution reads only the worker-stamped headers.
     const res = await exec({
       ...VALID_BODY,
       conversationId: CONVERSATION,
@@ -197,7 +237,7 @@ describe("POST /v2/composio/exec — grant authorization (DB)", () => {
     accountIds.length = 0;
   });
 
-  test("executes when a live grant matches the trusted caller", async () => {
+  test("executes when a live grant matches the worker-stamped caller", async () => {
     const ownerAccountId = await makeAccount();
     await prisma.connectionGrant.create({
       data: {
@@ -217,9 +257,8 @@ describe("POST /v2/composio/exec — grant authorization (DB)", () => {
         return Promise.resolve({ data: { events: [] } });
       },
     });
-    trust({ conversationId: CONVERSATION, agentInboxId: AGENT_INBOX });
 
-    const res = await exec(VALID_BODY);
+    const res = await exec(VALID_BODY, { headers: workerHeaders() });
     expect(res.status).toBe(200);
     expect((await asJson<{ data: unknown }>(res)).data).toEqual({ events: [] });
     // Composio is called with the OWNER's accountId, resolved server-side.
@@ -231,8 +270,31 @@ describe("POST /v2/composio/exec — grant authorization (DB)", () => {
 
   test("403 no_grant when the agent holds no grant here", async () => {
     installComposioStub();
-    trust({ conversationId: CONVERSATION, agentInboxId: AGENT_INBOX });
-    const res = await exec(VALID_BODY);
+    const res = await exec(VALID_BODY, { headers: workerHeaders() });
+    expect(res.status).toBe(403);
+    expect((await asJson<{ code: string }>(res)).code).toBe("no_grant");
+  });
+
+  test("403 no_grant for the same agent in a DIFFERENT conversation", async () => {
+    const ownerAccountId = await makeAccount();
+    await prisma.connectionGrant.create({
+      data: {
+        ownerAccountId,
+        ownerInboxId: "owner-inbox",
+        granteeInboxId: AGENT_INBOX,
+        conversationId: CONVERSATION,
+        toolkit: "googlecalendar",
+        actions: [],
+        connectionId: "conn_pinned",
+      },
+    });
+    installComposioStub();
+    const res = await exec(VALID_BODY, {
+      headers: workerHeaders({
+        conversationId: "conv-other",
+        agentInboxId: AGENT_INBOX,
+      }),
+    });
     expect(res.status).toBe(403);
     expect((await asJson<{ code: string }>(res)).code).toBe("no_grant");
   });
@@ -251,11 +313,10 @@ describe("POST /v2/composio/exec — grant authorization (DB)", () => {
       },
     });
     installComposioStub();
-    trust({ conversationId: CONVERSATION, agentInboxId: AGENT_INBOX });
-    const res = await exec({
-      ...VALID_BODY,
-      action: "GOOGLECALENDAR_EVENTS_DELETE",
-    });
+    const res = await exec(
+      { ...VALID_BODY, action: "GOOGLECALENDAR_EVENTS_DELETE" },
+      { headers: workerHeaders() },
+    );
     expect(res.status).toBe(403);
     expect((await asJson<{ code: string }>(res)).code).toBe("no_grant");
   });
@@ -275,8 +336,7 @@ describe("POST /v2/composio/exec — grant authorization (DB)", () => {
       },
     });
     installComposioStub();
-    trust({ conversationId: CONVERSATION, agentInboxId: AGENT_INBOX });
-    const res = await exec(VALID_BODY);
+    const res = await exec(VALID_BODY, { headers: workerHeaders() });
     expect(res.status).toBe(403);
     expect((await asJson<{ code: string }>(res)).code).toBe("no_grant");
   });
@@ -298,8 +358,7 @@ describe("POST /v2/composio/exec — grant authorization (DB)", () => {
       });
     }
     installComposioStub();
-    trust({ conversationId: CONVERSATION, agentInboxId: AGENT_INBOX });
-    const res = await exec(VALID_BODY);
+    const res = await exec(VALID_BODY, { headers: workerHeaders() });
     expect(res.status).toBe(409);
     expect((await asJson<{ code: string }>(res)).code).toBe("ambiguous_grant");
   });
@@ -327,8 +386,7 @@ describe("POST /v2/composio/exec — grant authorization (DB)", () => {
         { id: "conn_resolved", userId: ownerAccountId, slug: "googlecalendar" },
       ],
     });
-    trust({ conversationId: CONVERSATION, agentInboxId: AGENT_INBOX });
-    const res = await exec(VALID_BODY);
+    const res = await exec(VALID_BODY, { headers: workerHeaders() });
     expect(res.status).toBe(200);
     expect(seen).toMatchObject({ connectedAccountId: "conn_resolved" });
   });
