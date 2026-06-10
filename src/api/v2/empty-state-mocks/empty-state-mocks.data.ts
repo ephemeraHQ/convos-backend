@@ -99,7 +99,8 @@ const PUSHUPS_HTML = `<!DOCTYPE html>
 <style>
   /* From the Figma component (node 3940:4240), authored at its 176px
      frame and scaled by 10/11 to the renderer's 160px tile. */
-  html, body { margin: 0; padding: 0; background: #000000; }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { background: #000000; }
   .tile {
     box-sizing: border-box;
     width: 160px;
@@ -179,7 +180,8 @@ const COUNTDOWN_HTML = `<!DOCTYPE html>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Trip countdown</title>
 <style>
-  body { margin: 0; background: #000000; }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #000000; }
   .tile { position: relative; width: 160px; height: 160px; overflow: hidden; }
   .photo { width: 160px; height: 160px; object-fit: cover; display: block; }
   .overlay {
