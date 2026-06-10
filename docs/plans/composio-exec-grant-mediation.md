@@ -1,137 +1,183 @@
-# Composio exec — Backend-mediated tool execution (fork Y)
+# Composio exec — Backend-mediated tool execution (fork Y, worker-courier model)
 
-> **Status**: Draft for discussion
-> **Canonical security doc**: [`docs/architecture/composio-security-1pager.md`](../architecture/composio-security-1pager.md) (PR #286, revised after Nick's review)
-> **Decision recorded**: fork **(Y) backend-mediates** (2026-06-09)
+> **Status**: Active — backend backbone implemented on `louis/composio-exec`
+> **Canonical security doc**: [`docs/architecture/composio-security-1pager.md`](../architecture/composio-security-1pager.md) (PR #286)
+> **Decision recorded**: fork **(Y) backend-mediates**, identity via **worker-stamped headers** (2026-06-10)
 > **Builds on**: PR #294 — backend Composio OAuth flow keyed on `accountId`
-> **Created**: 2026-06-08 · **Reframed**: 2026-06-09
+> **Created**: 2026-06-08 · **Reframed for fork Y**: 2026-06-09 · **Grounded in repo facts**: 2026-06-10
 
-## What this is
+## The model in one paragraph
 
-The security one-pager leaves one load-bearing decision open: **who calls Composio** —
-(X) the Assistants `outbound.ts` proxy resolves the connection and calls Composio, or
-(Y) the **backend** holds the key *and* the grants and makes the call itself, with the agent
-calling `Backend.exec(toolkit, action, args)` and naming no connection. **We picked (Y).**
-This doc is the backend implementation plan for that path. Everything here defers to the
-one-pager for the threat model; it does not restate or contradict it.
+The agent container is untrusted; the assistants **worker** (Cloudflare DO running the
+outbound proxy) is trusted infrastructure and already holds the only agent API key for
+convos-backend (`CONVOS_API_KEY` / `X-Agent-API-Key` — used in production for credits;
+the container gets placeholder creds). The agent calls `composio.internal/exec` with only
+`{toolkit, action, args}`; the worker builds a **fresh** request to the backend's
+`POST /v2/composio/exec`, attaching the key plus identity headers from its **own state**
+(never container input). The backend authorizes against the iOS-pushed grant store,
+resolves the Composio `connected_account_id` server-side, and makes the Composio call.
+The bearer capability and the Composio key never touch the untrusted container; the agent
+has no field with which to name another account.
 
-## Threat model (from the one-pager — do not weaken)
+## Ground truth this rests on (verified 2026-06-10)
 
-Two facts make naive designs unsafe, and they hold under either fork:
+**convos-assistants**
 
-1. **`user_id` is not a secret.** It's the sender's `inboxId` today (`accountId` long-term).
-   A prompt-injected agent can name any value.
-2. **`connected_account_id` is a bearer capability.** Composio does **not** cross-check it
-   against `user_id` (confirmed by Louis). Whoever passes a `connected_account_id` can use
-   that connection regardless of `user_id`.
+- The worker proxies all container egress (`outbound.ts`): OpenRouter, Herald, Runtime,
+  Browser, private bucket — placeholder creds in the container, injection at the proxy,
+  `denyDirectEgress` for bypass attempts. Composio is **today's outlier**: the real
+  `COMPOSIO_API_KEY` is forwarded into the container (`hermes-env.ts:191-204`) and
+  `connections.mjs` calls `backend.composio.dev` directly with
+  `user_id: grant.composioEntityId`, `connected_account_id: grant.composioConnectionId`.
+- The worker already authenticates to convos-backend with `X-Agent-API-Key` for the
+  credits flow (`convos-backend-client.ts`); **the container never holds that key.**
+- Herald webhooks are HMAC-verified by the worker (`herald.ts:31-51`, timing-safe);
+  `senderInboxId`/`conversationId` arrive inside the signed body. The instance's
+  `heraldConversationId` is pinned at creation and is not agent-supplied.
+- `.convos-current-trigger.json` (where `connections.mjs` reads sender/conversation
+  today) is **agent-writable → spoofable**. Under this model it stops being
+  security-relevant: identity comes from the worker.
 
-Therefore the invariant is **not** "verify the connection belongs to the account" — an
-ownership check like `getIfOwned` is *insufficient*, because possession of the id *is* the
-capability. The invariant is:
+**convos-ios**
 
-> **The agent must never hold or name a `connected_account_id`, and must not be able to name
-> another account.** A trusted layer resolves the connection from a trusted identity and
-> injects it. The agent sends only `{ toolkit, action, args }`.
+- At grant time iOS holds everything the grant store needs:
+  `(senderId, grantedToInboxId, conversationId, service, composioConnectionId,
+composioEntityId)` — and it already **fans out one grant per agent** in the
+  conversation (`CloudConnectionGrantRequestSheet.swift:77-97`), matching the
+  per-`granteeInboxId` rows exactly.
+- iOS already calls `/v2/connections/*` with the SIWE-derived JWT
+  (`ConvosAPIClient.swift:790-828`); `POST /v2/connections/grants` slots in beside them,
+  called from `CloudConnectionGrantWriter.grantConnection()`.
+- Revocation: `CloudConnectionManager.disconnect()` → `ConnectionEventWriter.sendRevoked()`
+  is the hook for `DELETE /v2/connections/grants/:id`.
 
-> ⚠️ This supersedes the earlier draft of this plan, which used
-> `getIfOwned(connectionId, accountId)` as the gate and had the agent pass `ownerInboxId` /
-> `connectionId`. Both are unsafe under fact #2 and have been removed.
+## Threat model (unchanged — do not weaken)
 
-## Why (Y) is clean
+1. **`user_id` is not a secret** — a prompt-injected agent can name any value.
+2. **`connected_account_id` is a bearer capability** — Composio does not cross-check it
+   against `user_id`. Possession is access, so ownership checks are insufficient and the
+   id must never reach the agent.
 
-Under (Y) the bearer capability **never leaves the backend**. The backend already holds the
-single global Composio key, already creates the connections (OAuth flow, keyed on `accountId`
-per #294), and can hold the `accountId → connected_account_id` grant store. The agent contract
-is the smallest possible: `Backend.exec(toolkit, action, args)`. The cost (Nick's pushback) is
-a backend hop on the tool hot path — accepted as the price of keeping the bearer capability
-server-side.
+Invariant: **the agent never holds or names a connection, and cannot name another
+account.** Identity comes from the trusted worker; consent comes from the SIWE-issued
+grant store; custody (Composio key + bearer ids) stays in the backend.
 
-## The crux: where the backend gets a *trusted* identity
+## Why the worker-courier resolves the old open question
 
-`Backend.exec` is called by the Assistants worker, authenticated with the shared agent key.
-That key is global — it proves "an agent is calling," not "for whom." So the backend cannot
-trust an account/sender field the caller simply puts in the body; that is exactly the spoof
-fact #1 describes. The trusted identity must come from a signal the agent cannot forge. Two
-tiers, matching the one-pager:
+Earlier drafts asked how a trusted `(conversationId, agentInboxId)` reaches the backend
+(forward Herald's HMAC for re-verification? per-delivery tokens?). Ground truth makes
+this simple: the backend already trusts worker-stamped data on this key for **credits**
+(the worker debits specific accountIds). Identity headers are the same trust, same key,
+same pattern — no new auth scheme, no HMAC forwarding. Trusting the worker is not an
+added assumption: it already runs the proxy and holds every other credential.
 
-### Tier 1 — conversation-boundary (MVP-1)
+## Wire contract
 
-The call is bound to the **pinned `conversationId`** (set at instance creation, never
-agent-supplied). The backend resolves the connection only among the `accountId`s of *that
-conversation's members*, sourced from a trusted membership lookup (Herald conversation
-profiles, or the backend's own conversation record), and never from an agent-named field.
+Agent container → worker (`composio.internal`):
 
-- **DM:** one member → exact per-user isolation, nothing to spoof.
-- **Group:** blast radius bounded to conversation members — never a stranger in another chat.
+```
+POST /exec        { toolkit, action, args }
+```
 
-Closes the cross-conversation leak (A asks for B, different chats) completely. The agent names
-no connection. This is the shippable MVP.
+Worker → backend (fresh request — **never** forwards container headers):
 
-### Tier 2 — per-sender (MVP-2)
+```
+POST /v2/composio/exec
+  X-Agent-API-Key:           <CONVOS_API_KEY, worker-only>
+  X-Convos-Conversation-Id:  <heraldConversationId pinned at instance creation>
+  X-Convos-Agent-Inbox-Id:   <the instance's own inboxId, from worker state>
+  body: { toolkit, action, args }
+```
 
-Closes intra-group escalation (member B steering the agent into member A's connection). Needs
-the connection resolved from the **verified sender's** `accountId`. The trusted sender signal
-is Herald's HMAC-signed `senderInboxId` (one-pager Anchor 2). **Open sub-question for (Y):**
-how that signal reaches the backend trustworthily — the realistic options are
+Backend (`execHandler`):
 
-- **(a)** the worker forwards Herald's HMAC-signed envelope and the **backend re-verifies the
-  HMAC** itself (stateless, backend trusts the sender cryptographically, not the caller); or
-- **(b)** a short-lived **per-delivery capability** the trusted runtime mints per message; or
-- **(c)** Composio **scoped sessions** minted per verified sender, if they support action-level
-  scope (one-pager Decision Q).
+1. `agentApiKeyAuth` (worker authentication).
+2. `resolveTrustedCaller` reads the two identity headers; absent/oversized → **403
+   `trusted_identity_unavailable`** (fail-closed).
+3. Grant lookup by `(granteeInboxId = agentInboxId, conversationId, toolkit)`, live only
+   (`revokedAt` null, not expired), action within `actions` (empty ⇒ whole toolkit) →
+   else **403 `no_grant`**.
+4. Multiple distinct owners matched → **409 `ambiguous_grant`** (Tier 2 territory; fail
+   closed rather than guess whose data).
+5. Resolve `connectedAccountId` (grant-pinned, else from `(ownerAccountId, toolkit)`),
+   call `composio.tools.execute(action, { userId: ownerAccountId, arguments,
+connectedAccountId })`. The id is never returned to the agent.
 
-Tier 2 is explicitly out of MVP-1 scope; MVP-1 must not pretend per-sender isolation.
+## Safety properties
 
-## Where identifiers stand (no new dependency for MVP-1)
+- **Stranger outside the conversation**: no grant row for that conversation → 403 before
+  any Composio call. Holding the agent key (i.e., being our worker) doesn't help — the
+  worker stamps the _real_ conversation.
+- **Agent impersonating another agent**: `granteeInboxId` comes from worker state, not
+  the container; grants are per-agent (iOS #812 fan-out).
+- **Verb escalation**: action checked against the granted `actions`.
+- **Revocation**: checked per call; immediate.
+- **Known Tier-1 limit (honest)**: within one conversation, any member can drive the
+  agent into a granted toolkit — blast radius is the conversation, matching today's iOS
+  semantics (grants fan out to all agents per conversation). Per-sender isolation is
+  Tier 2: the worker additionally stamps `X-Convos-Sender-Inbox-Id` from the
+  HMAC-verified Herald delivery (needs per-delivery binding — interleaving makes a
+  mutable "current sender" racy), and the backend matches it against `ownerInboxId`
+  unless the grant is explicitly shared.
 
-- #294 already keys the backend's Composio **OAuth** flow on `accountId`; the grant store is
-  keyed by `accountId`.
-- The **agent execution** path today sends `user_id = inboxId` (the one-pager's "agent already
-  uses inboxId" correction). Tier 1 resolves membership → `accountId` via Herald profiles
-  (which carry both), so MVP-1 needs **no** `inboxId → accountId` table.
-- The `XmtpInbox` / auth-API `accountId` federation is the long-term unifier but stays **v2**,
-  gated on Borja's auth API — not blocking MVP-1.
+## Work plan
 
-## Consent vs. identity (two different gates)
+**Phase 0 — done**
 
-Resolving *whose* connection (above) is identity. *Whether this agent may use it* is consent —
-the iOS capability grants (`#796`/`#797`, per-agent scoping `#812`). Under (Y) the backend makes
-the call, so the backend must check consent too. Whether it does so from grant records iOS
-**pushes to the backend**, or by reading the messaging-layer scoping relayed via Herald, is a
-secondary decision to settle during MVP-1 design — it does not change the identity model above.
+- #294: backend OAuth flow keyed on `accountId` (+ migration).
+- `louis/composio-exec`: `ConnectionGrant` store + migration; grant CRUD under
+  `/v2/connections/grants` (SIWE JWT + `requireAccount`; owner stamped from the JWT);
+  `POST /v2/composio/exec` with the header-based trusted-caller resolver, fail-closed;
+  `ComposioService.execute`/`resolveConnectionId`. Tests: no-DB security boundary
+  passing; DB-backed grant/exec cases written (`pnpm test:local`).
 
-## Backend surface (MVP-1, Tier 1)
+**Phase 1 — convos-ios (small)**
 
-- `POST /v2/composio/exec` — agent-key auth. Body: `{ conversationId, toolkit, action, args }`.
-  **No connection id, no account id from the agent.**
-  1. Resolve conversation membership → candidate `accountId`s (trusted lookup).
-  2. Resolve the connection for `(toolkit, candidate accountIds)` from the grant store; in a DM
-     this is unique. Group disambiguation beyond membership is Tier 2.
-  3. Check consent (grant exists for this agent/capability/conversation).
-  4. `composio.tools.execute(action, { userId: accountId, arguments: args, connectedAccountId })`
-     — `connectedAccountId` injected server-side, never returned to the agent.
-- Grant store: `accountId → connected_account_id` per toolkit (the backend already mints these
-  in the OAuth flow; surface them to exec without ever returning the id to the agent).
+- `ConvosAPIClient`: add `POST /v2/connections/grants` + `DELETE
+/v2/connections/grants/:id` beside the existing connections methods.
+- Call grant-create from `CloudConnectionGrantWriter.grantConnection()` (per agent, as
+  it already loops); call revoke from `CloudConnectionManager.disconnect()` /
+  `postRevocationSideEffects()`.
+- Keep publishing profile metadata for UX; **later** drop
+  `composioConnectionId`/`composioEntityId` from it (the agent no longer needs them —
+  removing the bearer id from the untrusted wire entirely).
 
-`composio.tools.execute(slug, { userId, arguments, connectedAccountId? })` confirmed against
-`@composio/core` `ToolExecuteParamsSchema`.
+**Phase 2 — convos-assistants (the cutover)**
 
-## Sequencing
+- `outbound.ts`: add `composio.internal` handler → rewrites to
+  `${CONVOS_API_BASE_URL}/v2/composio/exec`, attaches `X-Agent-API-Key` + the two
+  identity headers from instance state; **constructs a fresh request** (drop all
+  container headers); add `"backend.composio.dev" → denyDirectEgress`.
+- `hermes-env.ts`: stop forwarding `COMPOSIO_API_KEY` (placeholder, like OpenRouter).
+- `connections.mjs`: execution path calls `composio.internal/exec` with
+  `{toolkit, action, args}`; delete the `user_id`/`connected_account_id` plumbing and
+  the trigger-file identity dependency.
+- Verify the worker has the instance's `agentInboxId` in its own state (it pins
+  `heraldConversationId` at creation; confirm the inboxId is alongside or add it).
 
-1. Confirm the Tier-1 membership source (Herald profiles vs backend conversation record).
-2. exec endpoint + grant-store read path, Tier 1 only, behind a flag. Tests assert: agent
-   cannot name a connection; cross-conversation request → denied; DM → resolves uniquely.
-3. Settle the consent source (iOS push vs Herald relay) and wire the consent check.
-4. Assistants worker swaps direct Composio calls for `Backend.exec`.
-5. MVP-2: Tier-2 trusted-sender mechanism (sub-question a/b/c above).
+**Phase 3 — Tier 2 (per-sender isolation)**
 
-MVP-1 fail-closes: with no resolvable membership/connection, exec returns 403 before any
-Composio call.
+- Worker: per-delivery binding of the Herald-verified `senderInboxId` →
+  `X-Convos-Sender-Inbox-Id` (a per-delivery capability, not shared mutable state).
+- Backend: when present, require `sender == grant.ownerInboxId` or an explicitly shared
+  grant; this also resolves `ambiguous_grant` (pick the sender's own connection).
+- iOS: explicit shared/private choice on grants if product wants intra-group privacy.
 
-## Removed from the earlier draft (kept here so the change is auditable)
+**Open items**
+
+- Nick's sign-off on the backend hop (fork Y) — softened now: Rec 1's proxy pattern is
+  _reused_ (the `composio.internal` handler), it just points at our backend instead of
+  Composio, and the consent re-check can't live in the worker (it has no grant store).
+- Agent-driven OAuth `connect` for non-iOS toolkits: route through the same proxy later;
+  out of scope for exec MVP.
+- Run the DB-backed suite (`pnpm test:local`) before PR.
+
+## Removed/corrected along the way (audit trail)
 
 - `getIfOwned`-as-authorization — unsafe under the bearer-capability fact.
-- Agent passing `ownerInboxId` / `connectionId` — the agent must name no connection.
-- "Retire per-assistant Composio projects" — there is no per-assistant pool (single global key).
-- Identifier alignment (deviceId→accountId) as MVP-1 work — the agent path already uses
-  `inboxId`; #294 handled the backend OAuth path; `accountId` federation is v2.
+- Agent passing `ownerInboxId`/`connectionId`/`accountId` — agent names nothing.
+- "Retire per-assistant Composio projects" — no such pool exists (single global key).
+- deviceId→accountId "identifier alignment" as MVP work — agent path already used
+  `inboxId`; #294 fixed the backend OAuth path; `accountId` federation stays v2.
+- "Forward Herald HMAC to backend / per-delivery token / scoped sessions" as the Tier-1
+  identity mechanism — superseded by worker-stamped headers (same trust as credits).

@@ -89,6 +89,15 @@ The hard part — and the real reason this is MVP-2: one agent instance serves t
 > grants and makes the Composio call; the agent calls `Backend.exec(toolkit, action, args)`
 > with no connection identifier, so the bearer capability never leaves the backend. Backend
 > implementation plan: [`docs/plans/composio-exec-grant-mediation.md`](../plans/composio-exec-grant-mediation.md).
+>
+> **Refined (2026-06-10): (Y) composes with Rec 1's proxy, it doesn't replace it.** The
+> `composio.internal` outbound handler still ships — it just forwards to the backend's
+> `/v2/composio/exec` instead of `backend.composio.dev`, injecting the worker's
+> `X-Agent-API-Key` plus identity headers (`X-Convos-Conversation-Id`,
+> `X-Convos-Agent-Inbox-Id`) stamped from instance state. The backend trusts those headers
+> exactly as it already trusts the worker's credits calls on the same key: the container
+> never holds it. This resolves Tier 1's trusted-identity source with no new auth scheme;
+> Anchor 2 (per-delivery verified sender) remains the Tier 2 mechanism.
 
 Two secrets, and they need not co-locate: the **Composio project key** (one global secret) and the **per-user `connected_account_id`s** (your backend grant store keyed by `accountId`). But *who calls Composio* is a real decision:
 
@@ -115,7 +124,7 @@ Unchanged from the first draft and still composes cleanly. Per-agent gating live
 
 ## Decision needed
 
-1. **Decided (2026-06-09): fork (Y) backend-mediates.** The backend owns the Composio call and holds both the key and the grants; the agent calls `Backend.exec(toolkit, action, args)`. Consequence: this supersedes **Recommendation 1** (key custody in `outbound.ts`) — under (Y) the agent never calls Composio directly, so there is no key to inject in the proxy, and MVP-1 *does* carry backend work (contrast the "no backend changes" note below, written for the (X) path). Reconfirm with Nick, who preferred (X) to avoid a backend mediation hop.
+1. **Decided (2026-06-09, refined 2026-06-10): fork (Y) backend-mediates, via Rec 1's proxy as the courier.** The backend owns the Composio call and holds both the key and the grants; the agent calls `composio.internal/exec` with `{toolkit, action, args}` and the `outbound.ts` handler forwards to the backend's `/v2/composio/exec`, injecting `X-Agent-API-Key` + identity headers from instance state (same worker→backend trust the credits flow already uses). So Rec 1's mechanism is *reused* — pointed at our backend instead of Composio — and `COMPOSIO_API_KEY` stops being forwarded into the container (today it is: `hermes-env.ts:190-204`). MVP-1 *does* carry backend work (contrast the "no backend changes" note below, written for the (X) path). Reconfirm with Nick: the consent re-check can't live in the proxy (no grant store there), and the extra hop buys exactly that.
 2. Approve **Tier 1 conversation-boundary isolation** as the MVP (closes the cross-conversation leak; DMs get exact per-user isolation). Owner for the grant store keyed by `accountId` + the agent contract (`{toolkit, action, args}`, no `connected_account_id`).
 3. **Resolved (Louis):** Composio does **not** cross-validate `connected_account_id` against the account — so it's a bearer capability and must never reach the agent. The agent contract carries no connection identifier regardless of fork.
 4. **Still open — for Nick:**
