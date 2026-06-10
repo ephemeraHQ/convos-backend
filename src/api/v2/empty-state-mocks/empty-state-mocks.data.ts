@@ -20,7 +20,9 @@ export type EmptyStateMockConversation = {
 
 export type EmptyStateMockThing = {
   id: string;
-  title: string;
+  // Caption for the tile's title pill; null hides the pill (some mock
+  // things, like the streak tracker, carry their label in the artwork).
+  title: string | null;
   emoji: string | null;
   // Name of the mock conversation the thing came from, captioned under
   // the preview tile to tell the story of who made it together.
@@ -218,15 +220,15 @@ export const EMPTY_STATE_MOCKS: EmptyStateMocksPayload = {
     },
     {
       id: "pushup-streak",
-      title: "Pushup tracker",
-      emoji: "💪",
+      title: null,
+      emoji: null,
       conversationName: "Pushup Party",
       html: PUSHUPS_HTML,
     },
     {
       id: "departure-countdown",
-      title: "Trip countdown",
-      emoji: "✈️",
+      title: null,
+      emoji: null,
       conversationName: "Sedona Weekend",
       html: COUNTDOWN_HTML,
     },
