@@ -33,8 +33,9 @@ export const getFirebaseApp = () => {
 /**
  * Verify a Firebase App Check token using the shared Firebase app instance.
  */
-export const verifyAppCheckToken = async (token: string) => {
+export const verifyAppCheckToken = async (token: string): Promise<string> => {
   const app = getFirebaseApp();
   const appCheck = await getAppCheck(app).verifyToken(token);
   logger.info(`App Check token verified for app ${appCheck.appId}`);
+  return appCheck.appId;
 };
