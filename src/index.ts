@@ -9,6 +9,10 @@ import {
   stopTtlSweep as stopGenerationTtlSweep,
 } from "@/api/v2/agent-templates/services/ttl-sweep";
 import { runComposioUserIdMigrationOnce } from "@/api/v2/connections/migrate-user-ids";
+import {
+  startTelemetryTtlSweep,
+  stopTelemetryTtlSweep,
+} from "@/api/v2/telemetry/services/ttl-sweep";
 import apiRouter from "./api";
 import { IS_DEVELOPMENT, TELEMETRY_MAX_BODY_BYTES } from "./config";
 import { bodySizeGuard } from "./middleware/bodySizeGuard";
@@ -109,6 +113,8 @@ validateJWTKeys()
       // Generation pipeline sweep — expires stale generation rows. Runs in
       // every env now that the agent-templates router is mounted everywhere.
       startGenerationTtlSweep();
+      // Telemetry dedup sweep — trims dedup rows past their retention window.
+      startTelemetryTtlSweep();
 
       // One-time data migration: move Composio connections from deviceId to the
       // stable accountId. Self-guards via a RuntimeConfig ledger marker so it
@@ -129,6 +135,7 @@ validateJWTKeys()
         // dispatching DB queries against a closing pool during the drain
         // window. No-op if the sweep was never started.
         stopGenerationTtlSweep();
+        stopTelemetryTtlSweep();
         // Flush buffered PostHog events before the process exits. The SDK
         // buffers up to flushAt (default 20) or flushInterval (default 10s)
         // — without an explicit shutdown, low-volume captures get dropped
