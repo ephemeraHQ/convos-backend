@@ -54,7 +54,16 @@ app.use(cors()); // Handle CORS
 // Path-scoped so it only fires for telemetry routes; the telemetry router
 // re-applies the same guard as a backstop.
 app.use("/api/v2/telemetry", bodySizeGuard(TELEMETRY_MAX_BODY_BYTES));
-app.use(jsonMiddleware); // Parse JSON requests
+// Telemetry routes parse their own body with a much smaller cap
+// (see telemetry.router.ts); skip the 50mb global parser for them so the
+// per-route limit actually applies (including to chunked uploads).
+app.use((req, res, next) => {
+  if (req.path.startsWith("/api/v2/telemetry")) {
+    next();
+    return;
+  }
+  jsonMiddleware(req, res, next);
+});
 app.use(cookieParser()); // Parse cookies (required for SIWE nonce flow)
 app.use(pinoMiddleware);
 
