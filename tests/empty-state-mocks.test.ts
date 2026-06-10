@@ -13,7 +13,7 @@ type MockConversation = {
   messageText: string;
 };
 
-type MockStuff = {
+type MockThing = {
   id: string;
   title: string;
   emoji: string | null;
@@ -22,7 +22,7 @@ type MockStuff = {
 
 type Payload = {
   conversations: MockConversation[];
-  stuffs: MockStuff[];
+  things: MockThing[];
 };
 
 const buildApp = (): express.Express => {
@@ -74,22 +74,22 @@ describe("GET /api/v2/empty-state-mocks", () => {
       expect(conversation.messageText.length).toBeGreaterThan(0);
     }
 
-    expect(body.stuffs.length).toBeGreaterThan(0);
-    for (const stuff of body.stuffs) {
-      expect(typeof stuff.id).toBe("string");
-      expect(stuff.id.length).toBeGreaterThan(0);
-      expect(typeof stuff.title).toBe("string");
-      expect(stuff.title.length).toBeGreaterThan(0);
+    expect(body.things.length).toBeGreaterThan(0);
+    for (const thing of body.things) {
+      expect(typeof thing.id).toBe("string");
+      expect(thing.id.length).toBeGreaterThan(0);
+      expect(typeof thing.title).toBe("string");
+      expect(thing.title.length).toBeGreaterThan(0);
       // The app renders the inline HTML to a preview image; require a
       // complete document so the WKWebView snapshot has something real.
-      expect(stuff.html).toContain("<!DOCTYPE html>");
-      expect(stuff.html).toContain("</html>");
+      expect(thing.html).toContain("<!DOCTYPE html>");
+      expect(thing.html).toContain("</html>");
     }
 
     const conversationIds = body.conversations.map((c) => c.id);
     expect(new Set(conversationIds).size).toBe(conversationIds.length);
-    const stuffIds = body.stuffs.map((s) => s.id);
-    expect(new Set(stuffIds).size).toBe(stuffIds.length);
+    const thingIds = body.things.map((s) => s.id);
+    expect(new Set(thingIds).size).toBe(thingIds.length);
   });
 
   test("is publicly cacheable", async () => {

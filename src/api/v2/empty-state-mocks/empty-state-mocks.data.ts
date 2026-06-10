@@ -13,7 +13,7 @@ export type EmptyStateMockConversation = {
   messageText: string;
 };
 
-export type EmptyStateMockStuff = {
+export type EmptyStateMockThing = {
   id: string;
   title: string;
   emoji: string | null;
@@ -27,7 +27,7 @@ export type EmptyStateMockStuff = {
 
 export type EmptyStateMocksPayload = {
   conversations: EmptyStateMockConversation[];
-  stuffs: EmptyStateMockStuff[];
+  things: EmptyStateMockThing[];
 };
 
 const DINNER_HTML = `<!DOCTYPE html>
@@ -267,7 +267,7 @@ export const EMPTY_STATE_MOCKS: EmptyStateMocksPayload = {
         "Trip Planner: cabin booked! I made a packing list for everyone",
     },
   ],
-  stuffs: [
+  things: [
     {
       id: "dinner-suggestion",
       title: "Dinner suggestion",
