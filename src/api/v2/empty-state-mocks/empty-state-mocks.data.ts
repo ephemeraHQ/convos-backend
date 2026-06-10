@@ -5,6 +5,11 @@
 // release. The iOS decoder lives at
 // Convos/Conversations List/Empty State/EmptyStateMocksProvider.swift
 // in convos-ios.
+//
+// The HTML follows the artifact design system in convos-assistants
+// (runtime DESIGN.md): monochrome system-typed tokens with the fixed
+// light/dark mapping, 1px edge borders, generous radii, accent and
+// success used sparingly, no JS or remote resources.
 
 export type EmptyStateMockConversation = {
   id: string;
@@ -42,196 +47,262 @@ const DINNER_HTML = `<!DOCTYPE html>
 <style>
   :root {
     color-scheme: light dark;
-    --bg: #FFF7F0;
-    --card: #FFFFFF;
-    --text: #1C1B1A;
-    --muted: #8A8580;
-    --accent: #FC4F37;
-    --chip: #FCEFE4;
+    --color-primary: #000000;
+    --color-secondary: #666666;
+    --color-tertiary: #B2B2B2;
+    --color-surface: #FFFFFF;
+    --color-muted: #F5F5F5;
+    --color-edge: #EBEBEB;
+    --color-accent: #FC4F37;
   }
   @media (prefers-color-scheme: dark) {
     :root {
-      --bg: #1C1816;
-      --card: #2A2522;
-      --text: #F5F1ED;
-      --muted: #A39C95;
-      --chip: #3A322C;
+      --color-primary: #FFFFFF;
+      --color-secondary: #999999;
+      --color-tertiary: #4D4D4D;
+      --color-surface: #262626;
+      --color-muted: #333333;
+      --color-edge: #333333;
     }
   }
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body {
-    background: var(--bg);
-    color: var(--text);
-    font-family: -apple-system, system-ui, sans-serif;
-    padding: 10px;
+    background: var(--color-muted);
+    color: var(--color-primary);
+    font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+    padding: 8px;
+  }
+  .card {
+    background: var(--color-surface);
+    border: 1px solid var(--color-edge);
+    border-radius: 12px;
+    padding: 12px 10px;
   }
   .hero {
-    background: linear-gradient(135deg, #FFB37A, #FC4F37);
-    border-radius: 10px;
-    height: 52px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 28px;
+    font-size: 34px;
+    text-align: center;
+    line-height: 1.2;
   }
-  h1 { font-size: 13px; font-weight: 700; margin: 8px 2px 2px; }
-  .sub { font-size: 9px; color: var(--muted); margin: 0 2px 6px; }
-  .chips { display: flex; flex-wrap: wrap; gap: 4px; }
-  .chip {
-    background: var(--chip);
-    border-radius: 999px;
+  .eyebrow {
+    margin-top: 8px;
+    font-size: 7px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--color-secondary);
+    text-align: center;
+  }
+  .eyebrow .dot { color: var(--color-accent); }
+  h1 {
+    margin-top: 2px;
+    font-size: 13px;
+    font-weight: 700;
+    letter-spacing: -0.025em;
+    line-height: 1.15;
+    text-align: center;
+  }
+  .dek {
+    margin-top: 3px;
     font-size: 8px;
+    line-height: 1.4;
+    color: var(--color-secondary);
+    text-align: center;
+  }
+  .badges {
+    margin-top: 9px;
+    display: flex;
+    justify-content: center;
+    gap: 4px;
+  }
+  .badge {
+    background: var(--color-muted);
+    color: var(--color-secondary);
+    border-radius: 9999px;
+    font-size: 7px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
     padding: 3px 7px;
     white-space: nowrap;
   }
-  .time {
-    margin-top: 7px;
-    font-size: 9px;
-    color: var(--accent);
-    font-weight: 600;
-  }
 </style>
 </head>
 <body>
-  <div class="hero">🥗</div>
-  <h1>Crispy salmon bowls</h1>
-  <p class="sub">Fresh, fast, and kid-approved</p>
-  <div class="chips">
-    <span class="chip">salmon</span>
-    <span class="chip">rice</span>
-    <span class="chip">avocado</span>
-    <span class="chip">cucumber</span>
+  <div class="card">
+    <div class="hero">🌮</div>
+    <p class="eyebrow"><span class="dot">●</span> Taco night</p>
+    <h1>Al pastor street tacos</h1>
+    <p class="dek">Pineapple salsa, charred corn tortillas, lime wedges</p>
+    <div class="badges">
+      <span class="badge">25 min</span>
+      <span class="badge">Serves 4</span>
+    </div>
   </div>
-  <p class="time">25 min &middot; serves 4</p>
 </body>
 </html>
 `;
 
-const PACKING_HTML = `<!DOCTYPE html>
+const PUSHUPS_HTML = `<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Packing list</title>
+<title>Pushup tracker</title>
 <style>
   :root {
     color-scheme: light dark;
-    --bg: #F0F6FF;
-    --text: #16202E;
-    --muted: #7A8699;
-    --accent: #2E6BE6;
-    --row: #FFFFFF;
+    --color-primary: #000000;
+    --color-secondary: #666666;
+    --color-surface: #FFFFFF;
+    --color-muted: #F5F5F5;
+    --color-edge: #EBEBEB;
+    --color-success: #16A34A;
   }
   @media (prefers-color-scheme: dark) {
     :root {
-      --bg: #161B24;
-      --text: #EFF3F9;
-      --muted: #939DAD;
-      --row: #232B38;
+      --color-primary: #FFFFFF;
+      --color-secondary: #999999;
+      --color-surface: #262626;
+      --color-muted: #333333;
+      --color-edge: #333333;
     }
   }
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body {
-    background: var(--bg);
-    color: var(--text);
-    font-family: -apple-system, system-ui, sans-serif;
-    padding: 10px;
+    background: var(--color-surface);
+    color: var(--color-primary);
+    font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+    /* Compact: the 160pt tile overlays its title pill along the bottom
+       edge, so all content must end above that band. */
+    padding: 8px 12px;
   }
-  h1 { font-size: 13px; font-weight: 700; }
-  .sub { font-size: 9px; color: var(--muted); margin: 2px 0 8px; }
-  .item {
-    background: var(--row);
-    border-radius: 8px;
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    padding: 5px 7px;
-    margin-bottom: 4px;
+  .month {
     font-size: 9px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--color-secondary);
+    text-align: center;
   }
-  .box {
-    width: 11px;
-    height: 11px;
-    border-radius: 4px;
-    border: 1.5px solid var(--muted);
-    flex: none;
+  .grid {
+    margin: 8px auto 0;
+    width: 112px;
+    display: grid;
+    grid-template-columns: repeat(7, 10px);
+    justify-content: space-between;
+    row-gap: 6px;
   }
-  .done .box {
-    background: var(--accent);
-    border-color: var(--accent);
+  .d {
+    width: 10px;
+    height: 10px;
+    border-radius: 9999px;
+    background: var(--color-muted);
   }
-  .done span { text-decoration: line-through; color: var(--muted); }
+  .on { background: var(--color-success); }
+  .today {
+    background: transparent;
+    border: 1.5px solid var(--color-secondary);
+  }
+  .off { visibility: hidden; }
+  .streaks {
+    margin-top: 9px;
+    display: flex;
+    justify-content: space-between;
+    font-size: 9px;
+    font-weight: 600;
+    color: var(--color-success);
+    font-variant-numeric: tabular-nums;
+  }
 </style>
 </head>
 <body>
-  <h1>🎒 Tahoe packing list</h1>
-  <p class="sub">Shared with everyone in the convo</p>
-  <div class="item done"><div class="box"></div><span>Ski jackets &amp; gloves</span></div>
-  <div class="item done"><div class="box"></div><span>Snow boots</span></div>
-  <div class="item"><div class="box"></div><span>Board games</span></div>
-  <div class="item"><div class="box"></div><span>Groceries for Saturday</span></div>
-  <div class="item"><div class="box"></div><span>Sunscreen</span></div>
+  <p class="month">May</p>
+  <div class="grid">
+    <span class="d off"></span><span class="d off"></span><span class="d off"></span><span class="d on"></span><span class="d on"></span><span class="d"></span><span class="d"></span>
+    <span class="d on"></span><span class="d on"></span><span class="d"></span><span class="d on"></span><span class="d"></span><span class="d on"></span><span class="d on"></span>
+    <span class="d"></span><span class="d on"></span><span class="d on"></span><span class="d on"></span><span class="d on"></span><span class="d on"></span><span class="d today"></span>
+    <span class="d"></span><span class="d"></span><span class="d"></span><span class="d"></span><span class="d"></span><span class="d"></span><span class="d"></span>
+    <span class="d"></span><span class="d"></span><span class="d"></span><span class="d"></span><span class="d"></span><span class="d off"></span><span class="d off"></span>
+  </div>
+  <div class="streaks">
+    <span>5d streak</span>
+    <span>11w streak</span>
+  </div>
 </body>
 </html>
 `;
 
-const WEEK_PLAN_HTML = `<!DOCTYPE html>
+const COUNTDOWN_HTML = `<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Weekly plan</title>
+<title>Trip countdown</title>
 <style>
   :root {
     color-scheme: light dark;
-    --bg: #F4FFF4;
-    --text: #15241A;
-    --muted: #7E9485;
-    --accent: #2FA45C;
-    --row: #FFFFFF;
+    --color-primary: #000000;
+    --color-secondary: #666666;
+    --color-tertiary: #B2B2B2;
+    --color-surface: #FFFFFF;
+    --color-muted: #F5F5F5;
+    --color-edge: #EBEBEB;
+    --color-accent: #FC4F37;
   }
   @media (prefers-color-scheme: dark) {
     :root {
-      --bg: #151D17;
-      --text: #ECF7EF;
-      --muted: #8FA897;
-      --row: #202B23;
+      --color-primary: #FFFFFF;
+      --color-secondary: #999999;
+      --color-tertiary: #4D4D4D;
+      --color-surface: #262626;
+      --color-muted: #333333;
+      --color-edge: #333333;
     }
   }
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body {
-    background: var(--bg);
-    color: var(--text);
-    font-family: -apple-system, system-ui, sans-serif;
-    padding: 10px;
+    background: var(--color-surface);
+    color: var(--color-primary);
+    font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+    /* Compact: the 160pt tile overlays its title pill along the bottom
+       edge, so all content must end above that band. */
+    padding: 10px 12px;
+    text-align: center;
   }
-  h1 { font-size: 13px; font-weight: 700; margin-bottom: 8px; }
-  .row {
-    background: var(--row);
-    border-radius: 8px;
-    display: flex;
-    align-items: center;
-    gap: 7px;
-    padding: 5px 7px;
-    margin-bottom: 4px;
-  }
-  .day {
+  .eyebrow {
     font-size: 8px;
-    font-weight: 700;
-    color: var(--accent);
-    width: 24px;
-    flex: none;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--color-secondary);
   }
-  .what { font-size: 9px; }
-  .when { font-size: 8px; color: var(--muted); margin-left: auto; }
+  .eyebrow .plane { color: var(--color-accent); }
+  .count {
+    margin-top: 2px;
+    font-size: 58px;
+    font-weight: 700;
+    letter-spacing: -0.025em;
+    line-height: 1.05;
+    font-variant-numeric: tabular-nums;
+  }
+  .label {
+    font-size: 9px;
+    font-weight: 600;
+    color: var(--color-secondary);
+  }
+  .meta {
+    margin-top: 5px;
+    padding-top: 5px;
+    border-top: 1px solid var(--color-edge);
+    font-size: 8px;
+    color: var(--color-secondary);
+  }
 </style>
 </head>
 <body>
-  <h1>🗓️ This week</h1>
-  <div class="row"><span class="day">MON</span><span class="what">Soccer practice</span><span class="when">5p</span></div>
-  <div class="row"><span class="day">TUE</span><span class="what">Taco night</span><span class="when">6:30p</span></div>
-  <div class="row"><span class="day">THU</span><span class="what">Book club, ch. 4&ndash;6</span><span class="when">7p</span></div>
-  <div class="row"><span class="day">SAT</span><span class="what">Farmers market</span><span class="when">9a</span></div>
+  <p class="eyebrow"><span class="plane">✈</span> Days to departure</p>
+  <div class="count">3</div>
+  <p class="label">Leaves Friday</p>
+  <p class="meta">PHX rental · cabin check-in 4pm</p>
 </body>
 </html>
 `;
@@ -273,24 +344,24 @@ export const EMPTY_STATE_MOCKS: EmptyStateMocksPayload = {
   things: [
     {
       id: "dinner-suggestion",
-      conversationName: "Fam",
       title: "Dinner suggestion",
-      emoji: "🍴",
+      emoji: "🌮",
+      conversationName: "The Kitchen",
       html: DINNER_HTML,
     },
     {
-      id: "packing-list",
-      conversationName: "Tahoe Trip",
-      title: "Packing list",
-      emoji: "🎒",
-      html: PACKING_HTML,
+      id: "pushup-streak",
+      title: "Pushup tracker",
+      emoji: "💪",
+      conversationName: "Pushup Party",
+      html: PUSHUPS_HTML,
     },
     {
-      id: "week-plan",
-      conversationName: "Roommates",
-      title: "Weekly plan",
-      emoji: "🗓️",
-      html: WEEK_PLAN_HTML,
+      id: "departure-countdown",
+      title: "Trip countdown",
+      emoji: "✈️",
+      conversationName: "Sedona Weekend",
+      html: COUNTDOWN_HTML,
     },
   ],
 };
