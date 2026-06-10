@@ -17,6 +17,11 @@ export const joinStatusEnum = z.enum([
   "starting",
   "pending_acceptance",
   "joined",
+  // The runtime marks an assistant "ready" once its container has booted —
+  // strictly after "joined". Treat it as joined wherever joins are awaited;
+  // leaving it out of the enum makes the status parse fail (502) for any
+  // assistant polled after boot completes.
+  "ready",
   "failed",
 ]);
 

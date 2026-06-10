@@ -42,8 +42,10 @@ const ERRORS = {
  * Polls the assistant runtime service for the current join status of an
  * instance dispatched via POST /api/v2/agents/join.
  *
- * Returns `joined: true` once `joinStatus === "joined"`, mirroring the
- * boolean the legacy pool API returned synchronously from /api/pool/claim.
+ * Returns `joined: true` once `joinStatus` is `"joined"` or `"ready"` (the
+ * runtime advances joined → ready when the agent finishes booting),
+ * mirroring the boolean the legacy pool API returned synchronously from
+ * /api/pool/claim.
  */
 export async function joinStatusHandler(req: Request, res: Response) {
   const assistantApiUrl = getAssistantApiUrl();
@@ -127,7 +129,7 @@ export async function joinStatusHandler(req: Request, res: Response) {
       success: true,
       instanceId: result.data.instanceId,
       joinStatus,
-      joined: joinStatus === "joined",
+      joined: joinStatus === "joined" || joinStatus === "ready",
       inboxId,
       conversationId,
       joinFailureReason,
