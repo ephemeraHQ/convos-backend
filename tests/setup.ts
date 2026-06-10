@@ -1,6 +1,17 @@
 // vi.mock for firebase-admin lives in __mocks__/ + per-test-file vi.mock()
 // declarations.
 
+// Local dev: load DATABASE_URL (and any other vars) from .env when the shell
+// hasn't already provided it. CI sets DATABASE_URL as a real env var, so this
+// no-ops there. vitest does not read .env on its own, unlike the prisma CLI.
+if (!process.env.DATABASE_URL) {
+  try {
+    process.loadEnvFile();
+  } catch {
+    // No .env file present (e.g. CI) — rely on the ambient environment.
+  }
+}
+
 // Pin pino to JSON output during tests; pino-pretty starts a worker thread
 // that can race the Vitest test-file teardown when many files run.
 process.env.LOG_FORMAT = "json";
