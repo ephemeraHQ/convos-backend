@@ -17,6 +17,7 @@ type MockThing = {
   id: string;
   title: string;
   emoji: string | null;
+  conversationName: string;
   html: string;
 };
 
@@ -80,6 +81,8 @@ describe("GET /api/v2/empty-state-mocks", () => {
       expect(thing.id.length).toBeGreaterThan(0);
       expect(typeof thing.title).toBe("string");
       expect(thing.title.length).toBeGreaterThan(0);
+      expect(typeof thing.conversationName).toBe("string");
+      expect(thing.conversationName.length).toBeGreaterThan(0);
       // The app renders the inline HTML to a preview image; require a
       // complete document so the WKWebView snapshot has something real.
       expect(thing.html).toContain("<!DOCTYPE html>");

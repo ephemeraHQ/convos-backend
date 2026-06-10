@@ -17,6 +17,9 @@ export type EmptyStateMockThing = {
   id: string;
   title: string;
   emoji: string | null;
+  // Name of the mock conversation the thing came from, captioned under
+  // the preview tile to tell the story of who made it together.
+  conversationName: string;
   // Inline, self-contained HTML document. The app writes it to disk and
   // renders a preview image through the same WKWebView snapshot pipeline
   // used for real agent-produced files, so it should be a complete page
@@ -270,18 +273,21 @@ export const EMPTY_STATE_MOCKS: EmptyStateMocksPayload = {
   things: [
     {
       id: "dinner-suggestion",
+      conversationName: "Fam",
       title: "Dinner suggestion",
       emoji: "🍴",
       html: DINNER_HTML,
     },
     {
       id: "packing-list",
+      conversationName: "Tahoe Trip",
       title: "Packing list",
       emoji: "🎒",
       html: PACKING_HTML,
     },
     {
       id: "week-plan",
+      conversationName: "Roommates",
       title: "Weekly plan",
       emoji: "🗓️",
       html: WEEK_PLAN_HTML,
