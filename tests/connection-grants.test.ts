@@ -189,4 +189,64 @@ describe("Connection grants API", () => {
     const row = await prisma.connectionGrant.findUnique({ where: { id } });
     expect(row?.revokedAt).toBeNull();
   });
+
+  async function postRevoke(
+    accountId: string,
+    body: { toolkit: string; conversationId?: string; granteeInboxId?: string },
+  ) {
+    return fetch(`${baseURL}/api/v2/connections/grants/revoke`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Convos-AuthToken": await token(accountId),
+      },
+      body: JSON.stringify(body),
+    });
+  }
+
+  test("revoke-by-natural-key revokes a stranded grant without its id (#4)", async () => {
+    const accountId = await makeAccount();
+    // Simulate the strand: backend grant is live, the client lost its id.
+    await postGrant(accountId, GRANT_BODY);
+    const res = await postRevoke(accountId, {
+      toolkit: GRANT_BODY.toolkit,
+      conversationId: GRANT_BODY.conversationId,
+      granteeInboxId: GRANT_BODY.granteeInboxId,
+    });
+    expect(res.status).toBe(200);
+    expect((await asJson<{ revoked: number }>(res)).revoked).toBe(1);
+    const rows = await prisma.connectionGrant.findMany({
+      where: { ownerAccountId: accountId },
+    });
+    expect(rows.every((r) => r.revokedAt !== null)).toBe(true);
+  });
+
+  test("revoke by toolkit alone clears every grant for that connection", async () => {
+    const accountId = await makeAccount();
+    await postGrant(accountId, GRANT_BODY);
+    await postGrant(accountId, {
+      ...GRANT_BODY,
+      conversationId: "conv-2",
+      granteeInboxId: "agent-2",
+    });
+    const res = await postRevoke(accountId, { toolkit: GRANT_BODY.toolkit });
+    expect((await asJson<{ revoked: number }>(res)).revoked).toBe(2);
+  });
+
+  test("revoke-by-natural-key cannot touch another account's grants", async () => {
+    const owner = await makeAccount();
+    const attacker = await makeAccount();
+    await postGrant(owner, GRANT_BODY);
+
+    const res = await postRevoke(attacker, {
+      toolkit: GRANT_BODY.toolkit,
+      conversationId: GRANT_BODY.conversationId,
+    });
+    expect(res.status).toBe(200);
+    expect((await asJson<{ revoked: number }>(res)).revoked).toBe(0);
+    const rows = await prisma.connectionGrant.findMany({
+      where: { ownerAccountId: owner },
+    });
+    expect(rows.every((r) => r.revokedAt === null)).toBe(true);
+  });
 });
