@@ -4,6 +4,7 @@ import { deleteHandler } from "./handlers/delete";
 import { grantsDeleteHandler } from "./handlers/grants-delete";
 import { grantsListHandler } from "./handlers/grants-list";
 import { grantsPostHandler } from "./handlers/grants-post";
+import { grantsRevokeHandler } from "./handlers/grants-revoke";
 import { initiateHandler } from "./handlers/initiate";
 import { listHandler } from "./handlers/list";
 
@@ -17,6 +18,10 @@ connectionsRouter.post("/complete", completeHandler);
 // Declared before "/:id" so "/grants" is never swallowed by the param route.
 connectionsRouter.post("/grants", grantsPostHandler);
 connectionsRouter.get("/grants", grantsListHandler);
+// Revoke by natural key (toolkit [+ conversation] [+ grantee]) — reliable even
+// when the client lost the grant id. Declared before "/grants/:id" so "revoke"
+// isn't captured as an :id.
+connectionsRouter.post("/grants/revoke", grantsRevokeHandler);
 connectionsRouter.delete("/grants/:id", grantsDeleteHandler);
 
 connectionsRouter.get("/", listHandler);
