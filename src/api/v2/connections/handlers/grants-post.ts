@@ -16,11 +16,15 @@ const bodySchema = z.object({
   toolkit: z.string().min(1).max(128),
   // Allowed action slugs; empty ⇒ whole toolkit.
   actions: z.array(z.string().min(1).max(128)).max(128).optional(),
-  // Composio connected-account id, when iOS pins it. Bearer capability —
-  // stored backend-side, never returned to an agent.
-  connectionId: z.string().min(1).max(256).optional(),
   expiresAt: z.string().datetime().optional(),
 });
+
+// NOTE: we deliberately do NOT accept a `connectionId` from the client. A
+// connected-account id is a Composio bearer capability and is NOT cross-checked
+// against the owner — accepting one would let a caller pin a *victim's*
+// connection to their own grant. exec resolves the connection server-side from
+// (ownerAccountId, toolkit), which can only ever return the owner's own
+// connections. Any `connectionId` field in the body is silently ignored.
 
 export async function grantsPostHandler(req: Request, res: Response) {
   const accountId = res.locals.accountId;
@@ -47,7 +51,6 @@ export async function grantsPostHandler(req: Request, res: Response) {
     conversationId,
     toolkit,
     actions,
-    connectionId,
     expiresAt,
   } = parsed.data;
 
@@ -69,13 +72,11 @@ export async function grantsPostHandler(req: Request, res: Response) {
       conversationId,
       toolkit,
       actions: actions ?? [],
-      connectionId: connectionId ?? null,
       expiresAt: expiresAt ? new Date(expiresAt) : null,
     },
     update: {
       ownerInboxId,
       actions: actions ?? [],
-      connectionId: connectionId ?? null,
       expiresAt: expiresAt ? new Date(expiresAt) : null,
       revokedAt: null,
     },

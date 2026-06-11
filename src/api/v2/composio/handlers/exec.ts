@@ -4,13 +4,17 @@ import { createComposioService } from "@/api/v2/connections/composio.service";
 import { prisma } from "@/utils/prisma";
 import { resolveTrustedCaller } from "../trusted-identity";
 
-// The agent contract: only what the toolkit needs. No connection id, no account
-// id — the backend resolves those from the trusted caller + the grant store, so
-// a compromised agent has no field with which to name another account.
+// The agent contract: only what the toolkit needs, plus an optional owner
+// selector. No connection id, no account id — the backend resolves those from
+// the trusted caller + the grant store. `onBehalfOf` is the inbox id of the
+// member whose connection to act on (e.g. "query Alice's calendar" in a group);
+// it is only a SELECTOR among the agent's authorized grants — naming a member
+// who never granted this agent simply yields no_grant, so it cannot widen access.
 const bodySchema = z.object({
   toolkit: z.string().min(1).max(128),
   action: z.string().min(1).max(128),
   args: z.record(z.unknown()).default({}),
+  onBehalfOf: z.string().min(1).max(256).optional(),
 });
 
 export async function execHandler(req: Request, res: Response) {
@@ -21,7 +25,7 @@ export async function execHandler(req: Request, res: Response) {
       .json({ code: "invalid_request", issues: parsed.error.issues });
     return;
   }
-  const { toolkit, action, args } = parsed.data;
+  const { toolkit, action, args, onBehalfOf } = parsed.data;
 
   // Fail closed: without a forgery-proof (conversationId, agentInboxId), exec
   // cannot safely decide whose connection to use. See trusted-identity.ts.
@@ -53,27 +57,31 @@ export async function execHandler(req: Request, res: Response) {
   });
 
   // Action scope: empty actions ⇒ whole toolkit; otherwise the action must be
-  // listed (no verb escalation).
+  // listed (no verb escalation). Owner scope: if the agent named a member
+  // (onBehalfOf), keep only that owner's grant — this is how a group query
+  // targets one person ("Alice's calendar") without touching anyone else's.
   const applicable = grants.filter(
-    (g) => g.actions.length === 0 || g.actions.includes(action),
+    (g) =>
+      (g.actions.length === 0 || g.actions.includes(action)) &&
+      (onBehalfOf === undefined || g.ownerInboxId === onBehalfOf),
   );
   if (applicable.length === 0) {
     req.log.warn(
-      { agentInboxId: caller.agentInboxId, toolkit, action },
+      { agentInboxId: caller.agentInboxId, toolkit, action, onBehalfOf },
       "[Composio] exec: no matching grant",
     );
     res.status(403).json({ code: "no_grant" });
     return;
   }
 
-  // Tier 1 bounds resolution to grants in this conversation. If several owners
-  // shared the same toolkit here, we can't disambiguate without the verified
-  // sender (Tier 2) — fail closed rather than guess whose data to touch.
+  // Multiple owners shared the same toolkit in this conversation and the agent
+  // didn't say whose to use. Fail closed and tell it to pass `onBehalfOf` rather
+  // than guess whose data to touch.
   const owners = new Set(applicable.map((g) => g.ownerAccountId));
   if (owners.size > 1) {
     req.log.warn(
       { conversationId: caller.conversationId, toolkit, owners: owners.size },
-      "[Composio] exec: ambiguous grant (Tier 2 needed)",
+      "[Composio] exec: ambiguous grant — onBehalfOf required",
     );
     res.status(409).json({ code: "ambiguous_grant" });
     return;
@@ -82,14 +90,14 @@ export async function execHandler(req: Request, res: Response) {
   const grant = applicable[0];
 
   try {
-    // connectionId (bearer capability) is resolved server-side and never
-    // returned to the agent.
-    const connectedAccountId =
-      grant.connectionId ??
-      (await service.resolveConnectionId({
-        userId: grant.ownerAccountId,
-        toolkit,
-      }));
+    // The connection (bearer capability) is resolved SERVER-SIDE from the
+    // owner's own account — never from a client-supplied id — and never returned
+    // to the agent. This is what makes a stolen connection id unusable: there is
+    // no path that acts on a caller-named connection.
+    const connectedAccountId = await service.resolveConnectionId({
+      userId: grant.ownerAccountId,
+      toolkit,
+    });
     if (!connectedAccountId) {
       req.log.warn(
         { ownerAccountId: grant.ownerAccountId, toolkit },

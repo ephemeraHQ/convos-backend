@@ -107,8 +107,10 @@ describe("Connection grants API", () => {
     expect(res.status).toBe(403);
   });
 
-  test("issues a grant stamped with the JWT's accountId (not a body field)", async () => {
+  test("issues a grant stamped with the JWT's accountId, and ignores a body connectionId (#2)", async () => {
     const accountId = await makeAccount();
+    // GRANT_BODY carries a connectionId; the API must NOT persist it (a bearer
+    // capability the client cannot be trusted to pin). Resolution is server-side.
     const res = await postGrant(accountId, GRANT_BODY);
     expect(res.status).toBe(200);
     const { id } = await asJson<{ id: string }>(res);
@@ -116,7 +118,7 @@ describe("Connection grants API", () => {
     const row = await prisma.connectionGrant.findUnique({ where: { id } });
     expect(row?.ownerAccountId).toBe(accountId);
     expect(row?.granteeInboxId).toBe("agent-inbox");
-    expect(row?.connectionId).toBe("conn_1");
+    expect(row?.connectionId).toBeNull();
   });
 
   test("re-issuing the same (owner, grantee, conversation, toolkit) upserts and un-revokes", async () => {

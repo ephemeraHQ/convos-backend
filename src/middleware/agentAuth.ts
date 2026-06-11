@@ -1,11 +1,16 @@
 import { createHash, timingSafeEqual } from "crypto";
 import type { NextFunction, Request, Response } from "express";
-import { AGENT_ASSETS_API_KEY } from "@/config";
+import { AGENT_ASSETS_API_KEY, COMPOSIO_EXEC_API_KEY } from "@/config";
 import { ADMIN_ACCOUNT_ID } from "@/utils/constants";
 import { maskKeyPrefix } from "@/utils/mask";
 import { authMiddleware } from "./auth";
 
 export const AGENT_API_KEY_HEADER = "X-Agent-API-Key";
+// Dedicated header for the Composio exec endpoint. The trusted worker's
+// proxyComposioExec sets it; the generic convos.internal proxy never does, so a
+// container that smuggles a request to /api/v2/composio/exec through the generic
+// proxy cannot authenticate (it has no way to produce this secret).
+export const COMPOSIO_EXEC_API_KEY_HEADER = "X-Composio-Exec-Key";
 const MIN_AGENT_API_KEY_LENGTH = 32;
 
 // ---------------------------------------------------------------------------
@@ -83,6 +88,68 @@ export const agentApiKeyAuth = (
       "agent_api_key.unauthorized",
     );
     res.status(401).json({ error: "Invalid or missing agent API key" });
+    return;
+  }
+
+  next();
+};
+
+// ---------------------------------------------------------------------------
+// Composio exec auth — separate secret, separate header (see header doc above)
+// ---------------------------------------------------------------------------
+
+let _composioExecApiKeyOverride: string | null | undefined = undefined;
+
+function getComposioExecApiKey(): string {
+  if (_composioExecApiKeyOverride !== undefined) {
+    return (_composioExecApiKeyOverride ?? "").trim();
+  }
+  return COMPOSIO_EXEC_API_KEY.trim();
+}
+
+/** Override `COMPOSIO_EXEC_API_KEY` for tests (same contract as the agent-key
+ *  override: string overrides, `null` simulates unset → 503, `undefined`
+ *  clears). */
+export function __setComposioExecApiKeyOverrideForTests(
+  key: string | null | undefined,
+): void {
+  _composioExecApiKeyOverride = key;
+}
+
+/**
+ * Authenticates POST /v2/composio/exec against COMPOSIO_EXEC_API_KEY via the
+ * X-Composio-Exec-Key header. Deliberately distinct from agentApiKeyAuth: the
+ * worker's generic convos.internal proxy injects the *agent* key for arbitrary
+ * backend paths, so reusing it here would let a container smuggle an exec call
+ * (with forged identity headers) through that proxy. This secret lives only in
+ * the worker and is set only by proxyComposioExec.
+ */
+export const composioExecAuth = (
+  req: Request,
+  res: Response,
+  next: NextFunction,
+) => {
+  const expectedKey = getComposioExecApiKey();
+
+  if (!expectedKey || expectedKey.length < MIN_AGENT_API_KEY_LENGTH) {
+    req.log.error("composio_exec_api_key.not_configured");
+    res.status(503).json({ error: "Composio exec API key not configured" });
+    return;
+  }
+
+  const providedKey = req.header(COMPOSIO_EXEC_API_KEY_HEADER)?.trim() ?? "";
+  if (!providedKey) {
+    req.log.warn({ reason: "missing" }, "composio_exec_api_key.unauthorized");
+    res.status(401).json({ error: "Invalid or missing Composio exec key" });
+    return;
+  }
+
+  if (!constantTimeSecretCompare(providedKey, expectedKey)) {
+    req.log.warn(
+      { reason: "mismatch", providedPrefix: maskKeyPrefix(providedKey) },
+      "composio_exec_api_key.unauthorized",
+    );
+    res.status(401).json({ error: "Invalid or missing Composio exec key" });
     return;
   }
 

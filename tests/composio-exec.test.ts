@@ -19,9 +19,9 @@ import {
   ComposioService,
 } from "@/api/v2/connections/composio.service";
 import {
-  __setAgentAssetsApiKeyOverrideForTests,
-  AGENT_API_KEY_HEADER,
-  agentApiKeyAuth,
+  __setComposioExecApiKeyOverrideForTests,
+  COMPOSIO_EXEC_API_KEY_HEADER,
+  composioExecAuth,
 } from "@/middleware/agentAuth";
 import { jsonMiddleware } from "@/middleware/json";
 import { pinoMiddleware } from "@/middleware/pino";
@@ -31,14 +31,14 @@ vi.mock("firebase-admin/app");
 vi.mock("firebase-admin/app-check");
 vi.mock("firebase-admin/messaging");
 
-const AGENT_KEY = "x".repeat(40);
+const EXEC_KEY = "x".repeat(40);
 const AGENT_INBOX = "agent-inbox-1";
 const CONVERSATION = "conv-1";
 
 const app = express();
 app.use(pinoMiddleware);
 app.use(jsonMiddleware);
-app.use("/api/v2/composio", agentApiKeyAuth, composioRouter);
+app.use("/api/v2/composio", composioExecAuth, composioRouter);
 
 let server: Server;
 const baseURL = "http://localhost:4014";
@@ -104,12 +104,12 @@ function exec(
   body: unknown,
   opts: { key?: string | null; headers?: Record<string, string> } = {},
 ) {
-  const key = opts.key === undefined ? AGENT_KEY : opts.key;
+  const key = opts.key === undefined ? EXEC_KEY : opts.key;
   return fetch(`${baseURL}/api/v2/composio/exec`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      ...(key ? { [AGENT_API_KEY_HEADER]: key } : {}),
+      ...(key ? { [COMPOSIO_EXEC_API_KEY_HEADER]: key } : {}),
       ...(opts.headers ?? {}),
     },
     body: JSON.stringify(body),
@@ -127,7 +127,7 @@ const VALID_BODY = {
 };
 
 beforeAll(async () => {
-  __setAgentAssetsApiKeyOverrideForTests(AGENT_KEY);
+  __setComposioExecApiKeyOverrideForTests(EXEC_KEY);
   await new Promise<void>((resolve) => {
     server = app.listen(4014, () => {
       resolve();
@@ -141,7 +141,7 @@ afterAll(async () => {
       resolve();
     });
   });
-  __setAgentAssetsApiKeyOverrideForTests(undefined);
+  __setComposioExecApiKeyOverrideForTests(undefined);
   __resetComposioServiceForTests(null);
 });
 
@@ -237,7 +237,7 @@ describe("POST /v2/composio/exec — grant authorization (DB)", () => {
     accountIds.length = 0;
   });
 
-  test("executes when a live grant matches the worker-stamped caller", async () => {
+  test("executes when a live grant matches — connection resolved server-side", async () => {
     const ownerAccountId = await makeAccount();
     await prisma.connectionGrant.create({
       data: {
@@ -247,7 +247,6 @@ describe("POST /v2/composio/exec — grant authorization (DB)", () => {
         conversationId: CONVERSATION,
         toolkit: "googlecalendar",
         actions: [],
-        connectionId: "conn_pinned",
       },
     });
     let seen: { userId: string; connectedAccountId?: string } | null = null;
@@ -256,16 +255,56 @@ describe("POST /v2/composio/exec — grant authorization (DB)", () => {
         seen = body;
         return Promise.resolve({ data: { events: [] } });
       },
+      connections: [
+        { id: "conn_owned", userId: ownerAccountId, slug: "googlecalendar" },
+      ],
     });
 
     const res = await exec(VALID_BODY, { headers: workerHeaders() });
     expect(res.status).toBe(200);
     expect((await asJson<{ data: unknown }>(res)).data).toEqual({ events: [] });
-    // Composio is called with the OWNER's accountId, resolved server-side.
+    // Composio is called with the OWNER's accountId and a connection resolved
+    // from that account — never a client-supplied id.
     expect(seen).toMatchObject({
       userId: ownerAccountId,
-      connectedAccountId: "conn_pinned",
+      connectedAccountId: "conn_owned",
     });
+  });
+
+  test("a client-supplied connection id in the body is ignored (#2)", async () => {
+    const ownerAccountId = await makeAccount();
+    await prisma.connectionGrant.create({
+      data: {
+        ownerAccountId,
+        ownerInboxId: "owner-inbox",
+        granteeInboxId: AGENT_INBOX,
+        conversationId: CONVERSATION,
+        toolkit: "googlecalendar",
+        actions: [],
+      },
+    });
+    let seen: { connectedAccountId?: string } | null = null;
+    installComposioStub({
+      execute: (_slug, body) => {
+        seen = body;
+        return Promise.resolve({ data: {} });
+      },
+      connections: [
+        { id: "conn_owned", userId: ownerAccountId, slug: "googlecalendar" },
+      ],
+    });
+    // The agent tries to smuggle a foreign connection id; exec must ignore it
+    // and use the owner's own resolved connection.
+    const res = await exec(
+      {
+        ...VALID_BODY,
+        connectionId: "ca_victim",
+        connectedAccountId: "ca_victim",
+      },
+      { headers: workerHeaders() },
+    );
+    expect(res.status).toBe(200);
+    expect(seen).toMatchObject({ connectedAccountId: "conn_owned" });
   });
 
   test("403 no_grant when the agent holds no grant here", async () => {
@@ -285,7 +324,6 @@ describe("POST /v2/composio/exec — grant authorization (DB)", () => {
         conversationId: CONVERSATION,
         toolkit: "googlecalendar",
         actions: [],
-        connectionId: "conn_pinned",
       },
     });
     installComposioStub();
@@ -309,7 +347,6 @@ describe("POST /v2/composio/exec — grant authorization (DB)", () => {
         conversationId: CONVERSATION,
         toolkit: "googlecalendar",
         actions: ["GOOGLECALENDAR_EVENTS_LIST"],
-        connectionId: "conn_pinned",
       },
     });
     installComposioStub();
@@ -331,7 +368,6 @@ describe("POST /v2/composio/exec — grant authorization (DB)", () => {
         conversationId: CONVERSATION,
         toolkit: "googlecalendar",
         actions: [],
-        connectionId: "conn_pinned",
         revokedAt: new Date(),
       },
     });
@@ -341,53 +377,68 @@ describe("POST /v2/composio/exec — grant authorization (DB)", () => {
     expect((await asJson<{ code: string }>(res)).code).toBe("no_grant");
   });
 
-  test("409 ambiguous_grant when two owners shared the toolkit in one conversation", async () => {
-    const ownerA = await makeAccount();
-    const ownerB = await makeAccount();
-    for (const ownerAccountId of [ownerA, ownerB]) {
-      await prisma.connectionGrant.create({
-        data: {
-          ownerAccountId,
-          ownerInboxId: `inbox-${ownerAccountId}`,
-          granteeInboxId: AGENT_INBOX,
-          conversationId: CONVERSATION,
-          toolkit: "googlecalendar",
-          actions: [],
-          connectionId: `conn_${ownerAccountId}`,
-        },
-      });
+  describe("onBehalfOf owner selector (group queries)", () => {
+    async function seedTwoOwners() {
+      const alice = await makeAccount();
+      const bob = await makeAccount();
+      for (const [accountId, inbox] of [
+        [alice, "alice-inbox"],
+        [bob, "bob-inbox"],
+      ] as const) {
+        await prisma.connectionGrant.create({
+          data: {
+            ownerAccountId: accountId,
+            ownerInboxId: inbox,
+            granteeInboxId: AGENT_INBOX,
+            conversationId: CONVERSATION,
+            toolkit: "googlecalendar",
+            actions: [],
+          },
+        });
+      }
+      return { alice, bob };
     }
-    installComposioStub();
-    const res = await exec(VALID_BODY, { headers: workerHeaders() });
-    expect(res.status).toBe(409);
-    expect((await asJson<{ code: string }>(res)).code).toBe("ambiguous_grant");
-  });
 
-  test("resolves the connection from (owner, toolkit) when the grant pins none", async () => {
-    const ownerAccountId = await makeAccount();
-    await prisma.connectionGrant.create({
-      data: {
-        ownerAccountId,
-        ownerInboxId: "owner-inbox",
-        granteeInboxId: AGENT_INBOX,
-        conversationId: CONVERSATION,
-        toolkit: "googlecalendar",
-        actions: [],
-        connectionId: null,
-      },
+    test("409 ambiguous_grant when two owners shared and onBehalfOf is omitted", async () => {
+      await seedTwoOwners();
+      installComposioStub();
+      const res = await exec(VALID_BODY, { headers: workerHeaders() });
+      expect(res.status).toBe(409);
+      expect((await asJson<{ code: string }>(res)).code).toBe(
+        "ambiguous_grant",
+      );
     });
-    let seen: { connectedAccountId?: string } | null = null;
-    installComposioStub({
-      execute: (_slug, body) => {
-        seen = body;
-        return Promise.resolve({ data: {} });
-      },
-      connections: [
-        { id: "conn_resolved", userId: ownerAccountId, slug: "googlecalendar" },
-      ],
+
+    test("onBehalfOf selects that member's own connection", async () => {
+      const { bob } = await seedTwoOwners();
+      let seen: { userId: string; connectedAccountId?: string } | null = null;
+      installComposioStub({
+        execute: (_slug, body) => {
+          seen = body;
+          return Promise.resolve({ data: { ok: true } });
+        },
+        connections: [{ id: "conn_bob", userId: bob, slug: "googlecalendar" }],
+      });
+      const res = await exec(
+        { ...VALID_BODY, onBehalfOf: "bob-inbox" },
+        { headers: workerHeaders() },
+      );
+      expect(res.status).toBe(200);
+      expect(seen).toMatchObject({
+        userId: bob,
+        connectedAccountId: "conn_bob",
+      });
     });
-    const res = await exec(VALID_BODY, { headers: workerHeaders() });
-    expect(res.status).toBe(200);
-    expect(seen).toMatchObject({ connectedAccountId: "conn_resolved" });
+
+    test("403 no_grant when onBehalfOf names a member who never granted", async () => {
+      await seedTwoOwners();
+      installComposioStub();
+      const res = await exec(
+        { ...VALID_BODY, onBehalfOf: "carol-inbox" },
+        { headers: workerHeaders() },
+      );
+      expect(res.status).toBe(403);
+      expect((await asJson<{ code: string }>(res)).code).toBe("no_grant");
+    });
   });
 });
