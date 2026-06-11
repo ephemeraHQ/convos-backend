@@ -66,6 +66,18 @@ describe("bundles catalog — resolveBundleActions (no DB)", () => {
       expect(a).not.toMatch(/CREATE|UPDATE|DELETE|PATCH/);
     }
   });
+
+  test("DEPRECATED bundles still resolve — legacy grants must keep working", () => {
+    // calendar.events.read was retired from the public catalog in v4 but
+    // real grants persist it; deprecation must never break exec resolution.
+    const readBundle = getServiceConfig("googlecalendar")?.bundles.find(
+      (b) => b.id === "calendar.events.read",
+    );
+    expect(readBundle?.deprecated).toBe(true);
+    expect(
+      resolveBundleActions("googlecalendar", ["calendar.events.read"]),
+    ).toEqual(["GOOGLECALENDAR_EVENTS_LIST"]);
+  });
 });
 
 describe("bundles catalog — getServiceConfig (no DB)", () => {
@@ -76,9 +88,9 @@ describe("bundles catalog — getServiceConfig (no DB)", () => {
     expect(svc?.bundles.map((b) => b.id)).toContain("calendar.events.read");
   });
 
-  test("googlecalendar version was bumped for the read bundle (contract: bump on ANY change)", () => {
+  test("googlecalendar version was bumped for the single-bundle merge (contract: bump on ANY change)", () => {
     expect(getServiceConfig("googlecalendar")?.version).toBeGreaterThanOrEqual(
-      2,
+      4,
     );
   });
 
@@ -124,5 +136,23 @@ describe("bundles catalog — public view strips slugs (no DB)", () => {
 
   test("public catalog covers every seeded service", () => {
     expect(getPublicServiceConfigs()).toHaveLength(SERVICE_CONFIGS.length);
+  });
+
+  test("googlecalendar serves exactly ONE bundle: 'View and edit events'", () => {
+    // Product decision (2026-06-12): a single user-facing toggle covering
+    // read+write. The read-only sibling is deprecated and must not be offered.
+    const gcal = getPublicServiceConfigs().find(
+      (s) => s.id === "googlecalendar",
+    );
+    expect(gcal).toBeDefined();
+    expect(gcal!.bundles).toHaveLength(1);
+    expect(gcal!.bundles[0].id).toBe("calendar.events");
+    expect(gcal!.bundles[0].title.en).toBe("View and edit events");
+  });
+
+  test("deprecated bundles are excluded from the public view, and the flag never leaks", () => {
+    const json = JSON.stringify(getPublicServiceConfigs());
+    expect(json).not.toContain("calendar.events.read");
+    expect(json).not.toContain("deprecated");
   });
 });

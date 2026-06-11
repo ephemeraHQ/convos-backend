@@ -89,6 +89,27 @@ describe("GET /v2/connections/services (no DB)", () => {
     expect(JSON.stringify(body)).not.toMatch(/composioActions/);
   });
 
+  test("googlecalendar offers a single 'View and edit events' bundle — deprecated read bundle hidden", async () => {
+    // Product decision: ONE picker toggle for calendar (read+write). The
+    // retired calendar.events.read id stays exec-resolvable internally but
+    // must never be offered to clients again.
+    const token = await createJwtToken({ deviceId: "dev-catalog" });
+    const res = await request(makeApp())
+      .get("/connections/services")
+      .set("X-Convos-AuthToken", token);
+    expect(res.status).toBe(200);
+
+    const body = res.body as ServicesResponse;
+    const gcal = body.services.find((s) => s.id === "googlecalendar");
+    expect(gcal).toBeDefined();
+    expect(gcal!.version).toBeGreaterThanOrEqual(4);
+    expect(gcal!.bundles).toHaveLength(1);
+    expect(gcal!.bundles[0].id).toBe("calendar.events");
+    expect(gcal!.bundles[0].title.en).toBe("View and edit events");
+    expect(JSON.stringify(body)).not.toContain("calendar.events.read");
+    expect(JSON.stringify(body)).not.toContain("deprecated");
+  });
+
   test("sets a private cache header", async () => {
     const token = await createJwtToken({ deviceId: "dev-catalog" });
     const res = await request(makeApp())

@@ -44,6 +44,8 @@ describe("POST /v2/connections/grants — bundleIds validation (no DB)", () => {
   });
 
   test("400 unknown_bundle when one id of several is unknown — names the bad one", async () => {
+    // calendar.events.read is deprecated (hidden from the public catalog) yet
+    // deliberately still KNOWN to validation — only calendar.nope is rejected.
     const res = await request(makeApp())
       .post("/grants")
       .send({

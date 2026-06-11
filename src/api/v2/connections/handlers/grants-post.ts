@@ -70,6 +70,10 @@ export async function grantsPostHandler(req: Request, res: Response) {
   // bundle id must exist in the catalog for this toolkit; bundleIds against a
   // toolkit absent from the catalog are equally unknown. Toolkits outside the
   // catalog stay grantable with empty/absent bundleIds (legacy path).
+  // Deprecated bundles are deliberately still grantable: an old app holding a
+  // cached catalog (up to its TTL) may legitimately round-trip one, and the
+  // grant still resolves at exec — so rejecting it would only break old
+  // clients without protecting anything.
   if (bundleIds && bundleIds.length > 0) {
     const svc = getServiceConfig(toolkit);
     const known = new Set(svc?.bundles.map((b) => b.id) ?? []);

@@ -25,6 +25,14 @@ export type Bundle = {
   defaultEnabled: boolean;
   /** Composio action slugs this bundle grants. The only slug list in the system. */
   composioActions: string[];
+  /**
+   * A retired bundle: hidden from the public catalog (clients can no longer
+   * discover it) but still resolvable at exec time AND still grantable, so
+   * (a) existing grants persisting this id keep working and (b) old clients
+   * holding a cached catalog (up to its TTL) can still round-trip a grant.
+   * Never delete a bundle id that may exist on a grant — deprecate it instead.
+   */
+  deprecated?: boolean;
 };
 
 export type ServiceConfig = {
@@ -49,13 +57,19 @@ export const SERVICE_CONFIGS: ServiceConfig[] = [
     // catalog (2026-06-11): GOOGLECALENDAR_LIST_EVENTS does not exist (404);
     // GOOGLECALENDAR_EVENTS_LIST / _CREATE_EVENT / _UPDATE_EVENT /
     // _DELETE_EVENT are all served.
-    version: 3,
+    // v4: product decision — the picker shows ONE calendar toggle. The public
+    // catalog now offers only calendar.events (retitled "View and edit
+    // events"); calendar.events.read is deprecated (hidden, still resolvable
+    // and grantable — grants in the wild carry it).
+    version: 4,
     displayName: { en: "Google Calendar" },
     bundles: [
       {
         id: "calendar.events",
-        title: { en: "Events" },
-        description: { en: "View and edit events on all calendars" },
+        title: { en: "View and edit events" },
+        description: {
+          en: "View, create, update, and delete events on all calendars",
+        },
         defaultEnabled: false,
         composioActions: [
           "GOOGLECALENDAR_EVENTS_LIST",
@@ -65,14 +79,17 @@ export const SERVICE_CONFIGS: ServiceConfig[] = [
         ],
       },
       {
-        // Read-only sibling of calendar.events: proves the scoping invariant
-        // (a read-scoped grant must never authorize a write). MUST NOT contain
-        // any CREATE/UPDATE/DELETE/PATCH slug.
+        // DEPRECATED (v4): folded into the single calendar.events toggle.
+        // Kept so existing grants persisting this id still resolve to LIST at
+        // exec, and so old clients on a cached v2/v3 catalog can still grant
+        // it. Read-only invariant still holds: MUST NOT contain any
+        // CREATE/UPDATE/DELETE/PATCH slug.
         id: "calendar.events.read",
         title: { en: "View events" },
         description: { en: "View events on all calendars" },
         defaultEnabled: false,
         composioActions: ["GOOGLECALENDAR_EVENTS_LIST"],
+        deprecated: true,
       },
     ],
   },
@@ -111,19 +128,25 @@ export type PublicServiceConfig = {
   bundles: PublicBundle[];
 };
 
-/** Strip `composioActions` so no slug ever reaches a client. */
+/**
+ * Strip `composioActions` so no slug ever reaches a client, and drop
+ * deprecated bundles: clients only ever see (and offer) the live catalog,
+ * while the internal one keeps resolving ids that grants already persist.
+ */
 export function toPublicServiceConfig(svc: ServiceConfig): PublicServiceConfig {
   return {
     id: svc.id,
     composioSlug: svc.composioSlug,
     version: svc.version,
     displayName: svc.displayName,
-    bundles: svc.bundles.map((b) => ({
-      id: b.id,
-      title: b.title,
-      description: b.description,
-      defaultEnabled: b.defaultEnabled,
-    })),
+    bundles: svc.bundles
+      .filter((b) => !b.deprecated)
+      .map((b) => ({
+        id: b.id,
+        title: b.title,
+        description: b.description,
+        defaultEnabled: b.defaultEnabled,
+      })),
   };
 }
 
@@ -136,6 +159,8 @@ export function getPublicServiceConfigs(): PublicServiceConfig[] {
  * The union of Composio action slugs granted by `bundleIds` on a service.
  * Unknown service or unknown bundle ids contribute nothing (fail-closed): a
  * grant that references only stale/unknown bundles authorizes no actions.
+ * Deprecated bundles DO resolve — that is the whole point of deprecating
+ * (instead of deleting) a bundle id that grants in the wild still carry.
  */
 export function resolveBundleActions(
   serviceId: string,

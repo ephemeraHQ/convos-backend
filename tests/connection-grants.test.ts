@@ -180,8 +180,11 @@ describe("Connection grants API", () => {
     expect(grants[0].bundleIds).toEqual(["calendar.events"]);
   });
 
-  test("POST persists catalog-known bundleIds; unknown ones are 400 unknown_bundle", async () => {
+  test("POST persists catalog-known bundleIds (incl. DEPRECATED ones); unknown ones are 400 unknown_bundle", async () => {
     const accountId = await makeAccount();
+    // calendar.events.read is deprecated (hidden from the public catalog since
+    // googlecalendar v4) but MUST stay grantable: old clients may round-trip
+    // it from a cached catalog until their TTL expires.
     const ok = await postGrant(accountId, {
       ...GRANT_BODY,
       actions: [],

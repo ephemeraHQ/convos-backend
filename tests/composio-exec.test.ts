@@ -601,6 +601,10 @@ describe("POST /v2/composio/exec — grant authorization (DB)", () => {
   });
 
   test("read-only bundle: read is allowed, writes are no_grant", async () => {
+    // calendar.events.read is DEPRECATED since googlecalendar v4 (hidden from
+    // the public catalog) but real grants persist it — this test is the
+    // backward-compat guarantee that those grants keep resolving to LIST,
+    // and ONLY to LIST, at exec time.
     const ownerAccountId = await makeAccount();
     await prisma.connectionGrant.create({
       data: {
