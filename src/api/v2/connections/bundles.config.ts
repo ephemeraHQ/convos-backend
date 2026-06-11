@@ -61,14 +61,17 @@ export const SERVICE_CONFIGS: ServiceConfig[] = [
     // catalog now offers only calendar.events (retitled "View and edit
     // events"); calendar.events.read is deprecated (hidden, still resolvable
     // and grantable — grants in the wild carry it).
-    version: 4,
+    // v5: copy aligned with the Figma design — row title "Events", subtitle
+    // "View and edit events on all calendars". Copy-only, but the contract is
+    // bump on ANY change (copy included).
+    version: 5,
     displayName: { en: "Google Calendar" },
     bundles: [
       {
         id: "calendar.events",
-        title: { en: "View and edit events" },
+        title: { en: "Events" },
         description: {
-          en: "View, create, update, and delete events on all calendars",
+          en: "View and edit events on all calendars",
         },
         defaultEnabled: false,
         composioActions: [

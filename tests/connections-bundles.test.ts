@@ -138,16 +138,21 @@ describe("bundles catalog — public view strips slugs (no DB)", () => {
     expect(getPublicServiceConfigs()).toHaveLength(SERVICE_CONFIGS.length);
   });
 
-  test("googlecalendar serves exactly ONE bundle: 'View and edit events'", () => {
+  test("googlecalendar serves exactly ONE bundle: 'Events'", () => {
     // Product decision (2026-06-12): a single user-facing toggle covering
     // read+write. The read-only sibling is deprecated and must not be offered.
+    // Copy per the Figma design: row title "Events", subtitle (description)
+    // "View and edit events on all calendars".
     const gcal = getPublicServiceConfigs().find(
       (s) => s.id === "googlecalendar",
     );
     expect(gcal).toBeDefined();
     expect(gcal!.bundles).toHaveLength(1);
     expect(gcal!.bundles[0].id).toBe("calendar.events");
-    expect(gcal!.bundles[0].title.en).toBe("View and edit events");
+    expect(gcal!.bundles[0].title.en).toBe("Events");
+    expect(gcal!.bundles[0].description.en).toBe(
+      "View and edit events on all calendars",
+    );
   });
 
   test("deprecated bundles are excluded from the public view, and the flag never leaks", () => {
