@@ -1,10 +1,35 @@
 # Composio exec — Backend-mediated tool execution (fork Y, worker-courier model)
 
-> **Status**: Active — backend backbone implemented on `louis/composio-exec`
+> **Status**: Implemented (historical plan) — backend on `louis/composio-exec` → `louis/connections-bundles`; assistants cutover on `louis/composio-backend-exec`; iOS grant push + picker on `louis/connection-grants-backend-push` → `louis/connections-picker-bundles`. In review, not yet on `dev`.
 > **Canonical security doc**: [`docs/architecture/composio-security-1pager.md`](../architecture/composio-security-1pager.md) (PR #286)
 > **Decision recorded**: fork **(Y) backend-mediates**, identity via **worker-stamped headers** (2026-06-10)
-> **Builds on**: PR #294 — backend Composio OAuth flow keyed on `accountId`
-> **Created**: 2026-06-08 · **Reframed for fork Y**: 2026-06-09 · **Grounded in repo facts**: 2026-06-10
+> **Builds on**: PR #294 — backend Composio OAuth flow keyed on `accountId` (**still open/in-flight**)
+> **Created**: 2026-06-08 · **Reframed for fork Y**: 2026-06-09 · **Grounded in repo facts**: 2026-06-10 · **Status corrections**: 2026-06-11
+
+## ⚠️ Corrections vs. the shipped implementation (2026-06-11)
+
+The plan below predates the build-out; where it disagrees with the code, the code (and the
+1-pager) wins:
+
+1. **Exec auth is a dedicated secret, not the agent key.** The wire contract below says
+   `X-Agent-API-Key`; shipped exec authenticates with **`X-Composio-Exec-Key`**
+   (`COMPOSIO_EXEC_API_KEY`), deliberately distinct — the generic `convos.internal` proxy
+   injects the agent key for arbitrary paths, so reusing it would let a container smuggle
+   an exec call with forged identity headers. The generic proxy also denies
+   `/api/v2/composio/*` and strips `x-convos-*` headers.
+2. **Action scope is bundle-based.** "actions empty ⇒ whole toolkit" is superseded by
+   **permission bundles** (`docs/plans/connections-bundles-backend.md`): allowed set =
+   union(`grant.actions`, bundle-resolved actions), fail-closed on unknown/unresolvable
+   bundles; whole-toolkit survives only for legacy grants with *both* fields empty
+   (Phase C flips that to fail-closed).
+3. **`onBehalfOf` exists.** The 409 `ambiguous_grant` path is now resolvable by the agent
+   passing `onBehalfOf` (a selector among already-authorized grants — cannot widen access).
+4. **No grant-pinned connection.** Step 5's "grant-pinned" connection resolution was
+   dropped; clients can never supply a `connectionId` (ignored at grant, no field at exec);
+   resolution is always server-side from `(ownerAccountId, toolkit)`. Exec also pins the
+   toolkit version (fail-closed when unresolvable).
+5. **Revocation is by natural key** (`POST /v2/connections/grants/revoke`), in addition to
+   `DELETE /grants/:id` — reliable even when the client lost the grant id.
 
 ## The model in one paragraph
 
@@ -124,7 +149,7 @@ connectedAccountId })`. The id is never returned to the agent.
 
 **Phase 0 — done**
 
-- #294: backend OAuth flow keyed on `accountId` (+ migration).
+- #294: backend OAuth flow keyed on `accountId` (+ migration) — *PR still open/in-flight*.
 - `louis/composio-exec`: `ConnectionGrant` store + migration; grant CRUD under
   `/v2/connections/grants` (SIWE JWT + `requireAccount`; owner stamped from the JWT);
   `POST /v2/composio/exec` with the header-based trusted-caller resolver, fail-closed;
