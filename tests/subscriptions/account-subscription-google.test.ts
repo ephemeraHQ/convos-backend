@@ -122,6 +122,12 @@ describe("POST /v2/accounts/me/subscription/verify — Google Play branch", () =
     expect(persisted?.purchaseToken).toBe("ptok-happy");
     expect(persisted?.obfuscatedAccountId).toBe("obf-aaa");
     expect(persisted?.environment).toBeNull();
+
+    const receipt = await prisma.billingReceipt.findFirst({
+      where: { subscriptionId: persisted?.id },
+    });
+    expect(receipt?.provider).toBe(BillingProvider.googlePlay);
+    expect(receipt?.transactionId).toBe("GPA.test-order");
   });
 
   test("rejects productId mismatch (client claimed different tier than Play recorded)", async () => {
@@ -261,6 +267,16 @@ describe("POST /v2/accounts/me/subscription/verify — Google Play branch", () =
     expect(rows[0].currentPeriodEnd.toISOString()).toBe(
       "2028-05-01T00:00:00.000Z",
     );
+
+    const receipts = await prisma.billingReceipt.findMany({
+      where: { subscriptionId: rows[0].id },
+      orderBy: { receivedAt: "asc" },
+    });
+    expect(receipts).toHaveLength(2);
+    expect(receipts.map((r) => r.transactionId)).toEqual([
+      "GPA.order-original",
+      "GPA.order-rotated",
+    ]);
   });
 
   test("rejects extra body fields (discriminated body is strict)", async () => {

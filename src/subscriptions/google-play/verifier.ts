@@ -17,6 +17,10 @@ export class PubsubAuthError extends Error {
   }
 }
 
+// Read NODE_ENV dynamically so the prod guard stays testable. NODE_ENV doesn't
+// change mid-process in production, so runtime behavior is identical.
+const isProductionEnv = () => process.env.NODE_ENV === "production";
+
 let cachedClient: OAuth2Client | null = null;
 const getOAuthClient = () => {
   if (cachedClient) return cachedClient;
@@ -39,6 +43,13 @@ export const setPubsubVerifierForTests = (
     | ((authorizationHeader: string | undefined) => void | Promise<void>)
     | null,
 ) => {
+  // Installing a verifier that bypasses OIDC validation must never be possible
+  // in production, even if LOCAL_TESTING is misconfigured on a deployed env.
+  if (isProductionEnv()) {
+    throw new Error(
+      "setPubsubVerifierForTests is forbidden in production (NODE_ENV=production)",
+    );
+  }
   testVerifier = verifier;
 };
 
@@ -58,7 +69,13 @@ const ACCEPTED_ISSUERS = new Set([
 export const verifyPubsubPushAuth = async (
   authorizationHeader: string | undefined,
 ): Promise<void> => {
-  if (process.env.LOCAL_TESTING === "1" && testVerifier) {
+  // Defense in depth: even if a testVerifier somehow survived into a prod
+  // process, never let it short-circuit Google-signed OIDC verification.
+  if (
+    !isProductionEnv() &&
+    process.env.LOCAL_TESTING === "1" &&
+    testVerifier
+  ) {
     await testVerifier(authorizationHeader);
     return;
   }
