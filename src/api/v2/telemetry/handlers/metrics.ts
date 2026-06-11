@@ -1,8 +1,5 @@
 import type { Request, Response } from "express";
-import {
-  isDuplicateBatch,
-  recordBatch,
-} from "@/api/v2/telemetry/services/dedup";
+import { releaseBatch, tryClaimBatch } from "@/api/v2/telemetry/services/dedup";
 import { forwardMetrics } from "@/api/v2/telemetry/services/forwarder";
 import { prepareBatch } from "@/api/v2/telemetry/services/otlp";
 import { ENV } from "@/config";
@@ -56,54 +53,64 @@ export async function postMetrics(req: Request, res: Response) {
     return;
   }
 
-  if (await isDuplicateBatch(batchId)) {
+  // Claim the batch id up front — the INSERT is the duplicate gate, so two
+  // concurrent requests with the same Idempotency-Key cannot both forward.
+  if (!(await tryClaimBatch(batchId))) {
     countTelemetryBatch(client, "duplicate");
     res.status(202).json({ status: "duplicate" });
     return;
   }
 
-  const receivedAtMs = Date.now();
-  let prepared;
+  // Only an accepted batch keeps the claim; any other outcome releases it so
+  // the client's retry with the same Idempotency-Key isn't dropped as a dup.
+  let accepted = false;
   try {
-    prepared = prepareBatch(req.body, {
-      offsetMs: receivedAtMs - sentAtMs,
-      receivedAtMs,
-      serviceName: client,
-      environment: ENV,
-    });
-  } catch (error) {
-    if (error instanceof ValidationError) {
-      countTelemetryBatch(client, "rejected");
-      res.status(400).json({ error: error.message });
-      return;
+    const receivedAtMs = Date.now();
+    let prepared;
+    try {
+      prepared = prepareBatch(req.body, {
+        offsetMs: receivedAtMs - sentAtMs,
+        receivedAtMs,
+        serviceName: client,
+        environment: ENV,
+      });
+    } catch (error) {
+      if (error instanceof ValidationError) {
+        countTelemetryBatch(client, "rejected");
+        res.status(400).json({ error: error.message });
+        return;
+      }
+      throw error;
     }
-    throw error;
-  }
 
-  if (prepared.droppedStalePoints > 0) {
-    req.log.info(
-      { count: prepared.droppedStalePoints, batchId },
-      "telemetry.points_dropped_stale",
-    );
-  }
-  if (prepared.strippedAttrKeys.length > 0) {
-    req.log.warn(
-      { keys: prepared.strippedAttrKeys, batchId },
-      "telemetry.resource_attrs_stripped",
-    );
-  }
+    if (prepared.droppedStalePoints > 0) {
+      req.log.info(
+        { count: prepared.droppedStalePoints, batchId },
+        "telemetry.points_dropped_stale",
+      );
+    }
+    if (prepared.strippedAttrKeys.length > 0) {
+      req.log.warn(
+        { keys: prepared.strippedAttrKeys, batchId },
+        "telemetry.resource_attrs_stripped",
+      );
+    }
 
-  if (!prepared.isEmpty) {
-    const ok = await forwardMetrics(prepared.body);
-    if (!ok) {
-      // Do NOT record the batch: client retries with the same Idempotency-Key.
-      countTelemetryBatch(client, "forward_failed");
-      res.status(502).json({ error: "Telemetry forwarding failed" });
-      return;
+    if (!prepared.isEmpty) {
+      const ok = await forwardMetrics(prepared.body);
+      if (!ok) {
+        countTelemetryBatch(client, "forward_failed");
+        res.status(502).json({ error: "Telemetry forwarding failed" });
+        return;
+      }
+    }
+
+    accepted = true;
+    countTelemetryBatch(client, "accepted");
+    res.status(202).json({ status: "accepted" });
+  } finally {
+    if (!accepted) {
+      await releaseBatch(batchId);
     }
   }
-
-  await recordBatch(batchId);
-  countTelemetryBatch(client, "accepted");
-  res.status(202).json({ status: "accepted" });
 }

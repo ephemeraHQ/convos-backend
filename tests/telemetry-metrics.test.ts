@@ -196,6 +196,29 @@ describe("POST /telemetry/metrics", () => {
     );
   });
 
+  test("concurrent same-key requests forward exactly once", async () => {
+    const app = makeApp();
+    const [r1, r2] = await Promise.all([
+      post(app).send(makeBody()),
+      post(app).send(makeBody()),
+    ]);
+    expect(r1.status).toBe(202);
+    expect(r2.status).toBe(202);
+    expect(forwardMetrics).toHaveBeenCalledTimes(1);
+    const statuses = [r1, r2].map((r) => (r.body as { status: string }).status);
+    expect(statuses.sort()).toEqual(["accepted", "duplicate"]);
+  });
+
+  test("400 rejection does not poison the Idempotency-Key", async () => {
+    const app = makeApp();
+    const bad = makeBody();
+    bad.resourceMetrics[0].scopeMetrics[0].metrics[0].name = "evil.thing";
+    expect((await post(app).send(bad)).status).toBe(400);
+    const retry = await post(app).send(makeBody());
+    expect(retry.status).toBe(202);
+    expect(retry.body).toEqual({ status: "accepted" });
+  });
+
   test("forward failure → 502 and batch NOT recorded (retry stays possible)", async () => {
     vi.mocked(forwardMetrics).mockResolvedValue(false);
     const res = await post(makeApp()).send(makeBody());

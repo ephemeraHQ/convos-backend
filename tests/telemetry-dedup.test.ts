@@ -1,8 +1,5 @@
 import { beforeEach, describe, expect, test } from "vitest";
-import {
-  isDuplicateBatch,
-  recordBatch,
-} from "@/api/v2/telemetry/services/dedup";
+import { releaseBatch, tryClaimBatch } from "@/api/v2/telemetry/services/dedup";
 import { prisma } from "@/utils/prisma";
 
 describe("telemetry dedup", () => {
@@ -10,21 +7,32 @@ describe("telemetry dedup", () => {
     await prisma.telemetryBatch.deleteMany();
   });
 
-  test("unknown batch id is not a duplicate", async () => {
-    expect(await isDuplicateBatch("11111111-1111-4111-8111-111111111111")).toBe(
-      false,
-    );
+  test("first claim wins, second is a duplicate", async () => {
+    const id = "11111111-1111-4111-8111-111111111111";
+    expect(await tryClaimBatch(id)).toBe(true);
+    expect(await tryClaimBatch(id)).toBe(false);
   });
 
-  test("recorded batch id is a duplicate", async () => {
+  test("concurrent claims grant exactly one winner", async () => {
     const id = "22222222-2222-4222-8222-222222222222";
-    await recordBatch(id);
-    expect(await isDuplicateBatch(id)).toBe(true);
+    const results = await Promise.all([
+      tryClaimBatch(id),
+      tryClaimBatch(id),
+      tryClaimBatch(id),
+    ]);
+    expect(results.filter(Boolean)).toHaveLength(1);
   });
 
-  test("recordBatch is idempotent (no throw on conflict)", async () => {
+  test("released batch id can be claimed again", async () => {
     const id = "33333333-3333-4333-8333-333333333333";
-    await recordBatch(id);
-    await expect(recordBatch(id)).resolves.toBeUndefined();
+    expect(await tryClaimBatch(id)).toBe(true);
+    await releaseBatch(id);
+    expect(await tryClaimBatch(id)).toBe(true);
+  });
+
+  test("releasing an unclaimed batch id does not throw", async () => {
+    await expect(
+      releaseBatch("44444444-4444-4444-8444-444444444444"),
+    ).resolves.toBeUndefined();
   });
 });
