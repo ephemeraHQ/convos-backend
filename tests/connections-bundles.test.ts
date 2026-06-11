@@ -54,6 +54,18 @@ describe("bundles catalog — resolveBundleActions (no DB)", () => {
     ]);
     expect(new Set(twice)).toEqual(new Set(once));
   });
+
+  test("calendar.events.read resolves to read-only slugs — no write verbs", () => {
+    const actions = resolveBundleActions("googlecalendar", [
+      "calendar.events.read",
+    ]);
+    expect(actions.length).toBeGreaterThan(0);
+    expect(actions).toContain("GOOGLECALENDAR_LIST_EVENTS");
+    // The scoping invariant: a read bundle must never carry a mutating slug.
+    for (const a of actions) {
+      expect(a).not.toMatch(/CREATE|UPDATE|DELETE|PATCH/);
+    }
+  });
 });
 
 describe("bundles catalog — getServiceConfig (no DB)", () => {
@@ -61,6 +73,13 @@ describe("bundles catalog — getServiceConfig (no DB)", () => {
     const svc = getServiceConfig("googlecalendar");
     expect(svc?.id).toBe("googlecalendar");
     expect(svc?.bundles.map((b) => b.id)).toContain("calendar.events");
+    expect(svc?.bundles.map((b) => b.id)).toContain("calendar.events.read");
+  });
+
+  test("googlecalendar version was bumped for the read bundle (contract: bump on ANY change)", () => {
+    expect(getServiceConfig("googlecalendar")?.version).toBeGreaterThanOrEqual(
+      2,
+    );
   });
 
   test("returns undefined for an unknown service", () => {

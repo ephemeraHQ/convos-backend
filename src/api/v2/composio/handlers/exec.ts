@@ -59,26 +59,34 @@ export async function execHandler(req: Request, res: Response) {
 
   // Action scope: the allowed set is the UNION of the grant's legacy `actions`
   // and the actions its `bundleIds` resolve to against the CURRENT catalog (so
-  // re-mapping a bundle needs no client update — the point of bundles). If that
-  // union is empty (neither actions nor bundleIds — a legacy/transition grant)
-  // the grant authorizes the whole toolkit, logged as a warning; once clients
-  // always send bundleIds this default tightens to fail-closed. Owner scope: if
-  // the agent named a member (onBehalfOf), keep only that owner's grant — this
-  // is how a group query targets one person ("Alice's calendar") without
-  // touching anyone else's.
+  // re-mapping a bundle needs no client update — the point of bundles). The
+  // whole-toolkit transition default applies ONLY to true legacy grants that
+  // carry NEITHER actions NOR bundleIds; once clients always send bundleIds it
+  // tightens to fail-closed. A grant that DOES carry actions or bundleIds is
+  // scoped to exactly what they resolve to — if the union does not contain the
+  // requested action (including a union left EMPTY because the bundle ids are
+  // unknown/stale to the catalog), the grant is not applicable: fail closed
+  // (no_grant), never fall back to whole-toolkit. Owner scope: if the agent
+  // named a member (onBehalfOf), keep only that owner's grant — this is how a
+  // group query targets one person ("Alice's calendar") without touching
+  // anyone else's.
   const applicable = grants.filter((g) => {
     if (onBehalfOf !== undefined && g.ownerInboxId !== onBehalfOf) return false;
-    const allowed = new Set<string>(g.actions);
-    for (const a of resolveBundleActions(g.toolkit, g.bundleIds)) {
-      allowed.add(a);
-    }
-    if (allowed.size === 0) {
+    if (g.actions.length === 0 && g.bundleIds.length === 0) {
       req.log.warn(
         { grantId: g.id, toolkit, action },
         "[Composio] exec: grant has no actions/bundleIds — whole-toolkit (transition default)",
       );
       return true;
     }
+    const resolved = resolveBundleActions(g.toolkit, g.bundleIds);
+    if (g.bundleIds.length > 0 && resolved.length === 0) {
+      req.log.warn(
+        { grantId: g.id, toolkit, bundleIds: g.bundleIds },
+        "[Composio] exec: grant bundleIds resolve to no actions (unknown/stale) — fail closed",
+      );
+    }
+    const allowed = new Set<string>([...g.actions, ...resolved]);
     return allowed.has(action);
   });
   if (applicable.length === 0) {

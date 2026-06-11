@@ -359,11 +359,10 @@ describe("POST /v2/composio/exec — grant authorization (DB)", () => {
   });
 
   // Bundle scope: a grant carrying bundleIds authorizes exactly the actions the
-  // bundle resolves to (resolveBundleActions against the current catalog). The
-  // "calendar.events" bundle includes LIST/CREATE/UPDATE/DELETE but a different
-  // bundle limited to reads must NOT authorize a write. We exercise the boundary
-  // by granting only "calendar.events" and asserting an action OUTSIDE it (a
-  // settings action) is rejected, while an in-bundle action is allowed.
+  // bundle resolves to (resolveBundleActions against the current catalog) — no
+  // more. In-bundle actions are allowed, out-of-bundle actions are no_grant,
+  // a read-only bundle never authorizes a write, and unresolvable bundle ids
+  // fail CLOSED (never the whole-toolkit transition default).
   test("bundle scope: an action inside the granted bundle is allowed", async () => {
     const ownerAccountId = await makeAccount();
     await prisma.connectionGrant.create({
@@ -416,6 +415,107 @@ describe("POST /v2/composio/exec — grant authorization (DB)", () => {
     );
     expect(res.status).toBe(403);
     expect((await asJson<{ code: string }>(res)).code).toBe("no_grant");
+  });
+
+  test("fail-closed: unresolvable bundleIds authorize NOTHING (codex exploit)", async () => {
+    // The exploit: a grant whose bundleIds don't resolve against the catalog
+    // used to fall through to the whole-toolkit transition default (fail-open).
+    // It must now be inapplicable for EVERY action — read or write.
+    const ownerAccountId = await makeAccount();
+    await prisma.connectionGrant.create({
+      data: {
+        ownerAccountId,
+        ownerInboxId: "owner-inbox",
+        granteeInboxId: AGENT_INBOX,
+        conversationId: CONVERSATION,
+        toolkit: "googlecalendar",
+        actions: [],
+        bundleIds: ["calendar.bogus"],
+        serviceVersion: 2,
+      },
+    });
+    installComposioStub({
+      connections: [
+        { id: "conn_owned", userId: ownerAccountId, slug: "googlecalendar" },
+      ],
+    });
+    for (const action of [
+      "GOOGLECALENDAR_LIST_EVENTS",
+      "GOOGLECALENDAR_DELETE_EVENT",
+    ]) {
+      const res = await exec(
+        { ...VALID_BODY, action },
+        { headers: workerHeaders() },
+      );
+      expect(res.status).toBe(403);
+      expect((await asJson<{ code: string }>(res)).code).toBe("no_grant");
+    }
+  });
+
+  test("read-only bundle: read is allowed, writes are no_grant", async () => {
+    const ownerAccountId = await makeAccount();
+    await prisma.connectionGrant.create({
+      data: {
+        ownerAccountId,
+        ownerInboxId: "owner-inbox",
+        granteeInboxId: AGENT_INBOX,
+        conversationId: CONVERSATION,
+        toolkit: "googlecalendar",
+        actions: [],
+        bundleIds: ["calendar.events.read"],
+        serviceVersion: 2,
+      },
+    });
+    installComposioStub({
+      connections: [
+        { id: "conn_owned", userId: ownerAccountId, slug: "googlecalendar" },
+      ],
+    });
+
+    const read = await exec(
+      { ...VALID_BODY, action: "GOOGLECALENDAR_LIST_EVENTS" },
+      { headers: workerHeaders() },
+    );
+    expect(read.status).toBe(200);
+
+    for (const action of [
+      "GOOGLECALENDAR_CREATE_EVENT",
+      "GOOGLECALENDAR_DELETE_EVENT",
+    ]) {
+      const res = await exec(
+        { ...VALID_BODY, action },
+        { headers: workerHeaders() },
+      );
+      expect(res.status).toBe(403);
+      expect((await asJson<{ code: string }>(res)).code).toBe("no_grant");
+    }
+  });
+
+  test("legacy transition: no actions AND no bundleIds still means whole-toolkit", async () => {
+    // The transition default survives ONLY for true legacy grants (both scope
+    // fields empty) — even a write action passes. Tightens once clients always
+    // send bundleIds.
+    const ownerAccountId = await makeAccount();
+    await prisma.connectionGrant.create({
+      data: {
+        ownerAccountId,
+        ownerInboxId: "owner-inbox",
+        granteeInboxId: AGENT_INBOX,
+        conversationId: CONVERSATION,
+        toolkit: "googlecalendar",
+        actions: [],
+      },
+    });
+    installComposioStub({
+      connections: [
+        { id: "conn_owned", userId: ownerAccountId, slug: "googlecalendar" },
+      ],
+    });
+    const res = await exec(
+      { ...VALID_BODY, action: "GOOGLECALENDAR_DELETE_EVENT" },
+      { headers: workerHeaders() },
+    );
+    expect(res.status).toBe(200);
   });
 
   test("403 no_grant once the grant is revoked", async () => {

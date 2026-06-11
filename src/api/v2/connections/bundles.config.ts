@@ -42,7 +42,9 @@ export const SERVICE_CONFIGS: ServiceConfig[] = [
   {
     id: "googlecalendar",
     composioSlug: "googlecalendar",
-    version: 1,
+    // v2: added the read-only calendar.events.read bundle (contract: bump on
+    // ANY change to the service).
+    version: 2,
     displayName: { en: "Google Calendar" },
     bundles: [
       {
@@ -56,6 +58,16 @@ export const SERVICE_CONFIGS: ServiceConfig[] = [
           "GOOGLECALENDAR_UPDATE_EVENT",
           "GOOGLECALENDAR_DELETE_EVENT",
         ],
+      },
+      {
+        // Read-only sibling of calendar.events: proves the scoping invariant
+        // (a read-scoped grant must never authorize a write). MUST NOT contain
+        // any CREATE/UPDATE/DELETE/PATCH slug.
+        id: "calendar.events.read",
+        title: { en: "View events" },
+        description: { en: "View events on all calendars" },
+        defaultEnabled: false,
+        composioActions: ["GOOGLECALENDAR_LIST_EVENTS"],
       },
     ],
   },

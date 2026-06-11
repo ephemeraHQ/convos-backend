@@ -160,6 +160,54 @@ describe("Connection grants API", () => {
     expect(grants[0]).not.toHaveProperty("connectionId");
   });
 
+  test("GET returns bundleIds and never raw Composio action slugs", async () => {
+    const mine = await makeAccount();
+    // GRANT_BODY carries a raw slug in `actions`; the stored row has it, but
+    // the wire must not — clients only ever reason in bundle ids.
+    await postGrant(mine, { ...GRANT_BODY, bundleIds: ["calendar.events"] });
+
+    const res = await fetch(`${baseURL}/api/v2/connections/grants`, {
+      headers: { "X-Convos-AuthToken": await token(mine) },
+    });
+    expect(res.status).toBe(200);
+    const raw = await res.text();
+    expect(raw).not.toMatch(/GOOGLECALENDAR_/);
+    const { grants } = JSON.parse(raw) as {
+      grants: Array<{ bundleIds?: string[] }>;
+    };
+    expect(grants).toHaveLength(1);
+    expect(grants[0]).not.toHaveProperty("actions");
+    expect(grants[0].bundleIds).toEqual(["calendar.events"]);
+  });
+
+  test("POST persists catalog-known bundleIds; unknown ones are 400 unknown_bundle", async () => {
+    const accountId = await makeAccount();
+    const ok = await postGrant(accountId, {
+      ...GRANT_BODY,
+      actions: [],
+      bundleIds: ["calendar.events.read"],
+      serviceVersion: 2,
+    });
+    expect(ok.status).toBe(200);
+    const { id } = await asJson<{ id: string }>(ok);
+    const row = await prisma.connectionGrant.findUnique({ where: { id } });
+    expect(row?.bundleIds).toEqual(["calendar.events.read"]);
+    expect(row?.serviceVersion).toBe(2);
+
+    // Validation is also covered no-DB in connection-grants-validation.test.ts;
+    // this asserts the full HTTP wiring rejects before any write.
+    const bad = await postGrant(accountId, {
+      ...GRANT_BODY,
+      conversationId: "conv-bad",
+      bundleIds: ["calendar.bogus"],
+    });
+    expect(bad.status).toBe(400);
+    expect(await asJson<{ code: string; bundleId: string }>(bad)).toEqual({
+      code: "unknown_bundle",
+      bundleId: "calendar.bogus",
+    });
+  });
+
   test("DELETE revokes the caller's own grant (soft-delete)", async () => {
     const accountId = await makeAccount();
     const { id } = await asJson<{ id: string }>(

@@ -3,6 +3,8 @@ import { prisma } from "@/utils/prisma";
 
 // Lists the caller's own (non-revoked) grants. connectionId is deliberately
 // omitted from the wire — it is a bearer capability that stays backend-side.
+// `actions` (raw Composio slugs) is omitted too: slugs are the backend-only
+// security boundary, clients only ever reason in bundle ids.
 export async function grantsListHandler(req: Request, res: Response) {
   const accountId = res.locals.accountId;
   if (!accountId) {
@@ -19,7 +21,7 @@ export async function grantsListHandler(req: Request, res: Response) {
       granteeInboxId: true,
       conversationId: true,
       toolkit: true,
-      actions: true,
+      bundleIds: true,
       expiresAt: true,
       createdAt: true,
     },

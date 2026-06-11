@@ -1,5 +1,6 @@
 import type { Request, Response } from "express";
 import { z } from "zod";
+import { getServiceConfig } from "@/api/v2/connections/bundles.config";
 import { prisma } from "@/utils/prisma";
 
 // iOS issues a grant when the owner approves a capability request. The owner is
@@ -62,6 +63,26 @@ export async function grantsPostHandler(req: Request, res: Response) {
     serviceVersion,
     expiresAt,
   } = parsed.data;
+
+  // Defense in depth (on top of exec failing closed on unresolvable bundles):
+  // reject unknown bundle ids at write time so a stale/typo'd client gets an
+  // actionable 400 instead of a grant that silently authorizes nothing. Every
+  // bundle id must exist in the catalog for this toolkit; bundleIds against a
+  // toolkit absent from the catalog are equally unknown. Toolkits outside the
+  // catalog stay grantable with empty/absent bundleIds (legacy path).
+  if (bundleIds && bundleIds.length > 0) {
+    const svc = getServiceConfig(toolkit);
+    const known = new Set(svc?.bundles.map((b) => b.id) ?? []);
+    const unknown = bundleIds.find((id) => !known.has(id));
+    if (unknown !== undefined) {
+      req.log.warn(
+        { accountId, toolkit, bundleId: unknown },
+        "[Composio] grant rejected: unknown bundle id",
+      );
+      res.status(400).json({ code: "unknown_bundle", bundleId: unknown });
+      return;
+    }
+  }
 
   // One grant per (owner, grantee, conversation, toolkit): re-approval updates
   // the same row (refreshes scope/expiry, clears a prior revocation).
