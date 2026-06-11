@@ -1,5 +1,9 @@
 import { Router } from "express";
-import { agentApiKeyAuth, authOrAgentApiKeyAuth } from "@/middleware/agentAuth";
+import {
+  agentApiKeyAuth,
+  authOrAgentApiKeyAuth,
+  composioExecAuth,
+} from "@/middleware/agentAuth";
 import {
   appCheckOnlyMiddleware,
   authMiddleware,
@@ -119,9 +123,11 @@ v2Router.use(
 v2Router.use("/agents", authMiddleware, agentsRouter);
 v2Router.use("/attachments", authMiddleware, attachmentsRouter);
 v2Router.use("/connections", authMiddleware, requireAccount, connectionsRouter);
-// Agent-facing tool execution. Agent API key authenticates the caller; the
-// exec handler authorizes per-account against the trusted identity + grants.
-v2Router.use("/composio", agentApiKeyAuth, composioRouter);
+// Agent-facing tool execution. A DEDICATED exec key (held only by the trusted
+// worker, never in the container, and not injected by the generic convos.internal
+// proxy) authenticates the caller; the exec handler then authorizes per-account
+// against the worker-stamped identity headers + the grant store.
+v2Router.use("/composio", composioExecAuth, composioRouter);
 v2Router.use("/notifications/xmtp", webhookRouter);
 v2Router.use("/notifications", authMiddleware, notificationsRouter);
 // No auth: Apple authenticates via JWS signature, verified inside the handler.
