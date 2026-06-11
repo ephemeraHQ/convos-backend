@@ -43,15 +43,23 @@ app.use("/api/v2/composio", composioExecAuth, composioRouter);
 let server: Server;
 const baseURL = "http://localhost:4014";
 
-// Minimal Composio stub: exec touches tools.execute and (when a grant pins no
-// connection) connectedAccounts.list.
+// The toolkit version the stub publishes; exec must pin it on every execute.
+const STUB_TOOLKIT_VERSION = "20260429_00";
+
+// Minimal Composio stub: exec touches tools.execute, toolkits.get (version
+// pinning) and (when a grant pins no connection) connectedAccounts.list.
 function installComposioStub(
   opts: {
     execute?: (
       slug: string,
-      body: { userId: string; connectedAccountId?: string },
+      body: {
+        userId: string;
+        connectedAccountId?: string;
+        version?: string;
+      },
     ) => Promise<unknown>;
     connections?: Array<{ id: string; userId: string; slug: string }>;
+    toolkitVersions?: string[];
   } = {},
 ) {
   const stub = {
@@ -62,6 +70,14 @@ function installComposioStub(
           _slug: string,
           _body: { userId: string; connectedAccountId?: string },
         ) => Promise.resolve({ data: { ok: true } })),
+    },
+    toolkits: {
+      get: (_slug: string) =>
+        Promise.resolve({
+          meta: {
+            availableVersions: opts.toolkitVersions ?? [STUB_TOOLKIT_VERSION],
+          },
+        }),
     },
     connectedAccounts: {
       list: (query: { userIds?: string[] }) => {
@@ -218,6 +234,99 @@ describe("POST /v2/composio/exec — auth + fail-closed (no DB)", () => {
   });
 });
 
+// --- No DB required: toolkit version resolution (unit) ---
+
+describe("ComposioService.resolveToolkitVersion (no DB)", () => {
+  function makeService(
+    get: (slug: string) => Promise<unknown>,
+  ): ComposioService {
+    const stub = { toolkits: { get } };
+    return new ComposioService({
+      composio: stub as unknown as ConstructorParameters<
+        typeof ComposioService
+      >[0]["composio"],
+    });
+  }
+
+  test("resolves the NEWEST version (lexicographic max), not list order", async () => {
+    const service = makeService(() =>
+      Promise.resolve({
+        meta: {
+          availableVersions: ["20260427_00", "20260429_00", "20260422_01"],
+        },
+      }),
+    );
+    expect(await service.resolveToolkitVersion("googlecalendar")).toBe(
+      "20260429_00",
+    );
+  });
+
+  test("caches per toolkit and normalizes the slug case", async () => {
+    let calls = 0;
+    const service = makeService((slug) => {
+      calls += 1;
+      expect(slug).toBe("googlecalendar");
+      return Promise.resolve({ meta: { availableVersions: ["20260429_00"] } });
+    });
+    expect(await service.resolveToolkitVersion("googlecalendar")).toBe(
+      "20260429_00",
+    );
+    expect(await service.resolveToolkitVersion("GoogleCalendar")).toBe(
+      "20260429_00",
+    );
+    expect(calls).toBe(1);
+  });
+
+  test("returns null when no versions are published — and does NOT cache the miss", async () => {
+    let calls = 0;
+    const service = makeService(() => {
+      calls += 1;
+      return Promise.resolve({
+        meta:
+          calls === 1
+            ? { availableVersions: [] }
+            : { availableVersions: ["20260429_00"] },
+      });
+    });
+    expect(await service.resolveToolkitVersion("googlecalendar")).toBeNull();
+    // A transient gap must not stick: the next call retries and succeeds.
+    expect(await service.resolveToolkitVersion("googlecalendar")).toBe(
+      "20260429_00",
+    );
+    expect(calls).toBe(2);
+  });
+
+  test("returns null when availableVersions is absent from the response", async () => {
+    const service = makeService(() => Promise.resolve({ meta: {} }));
+    expect(await service.resolveToolkitVersion("googlecalendar")).toBeNull();
+  });
+
+  test("execute forwards the pinned version to the SDK", async () => {
+    let seen: { version?: string } | null = null;
+    const stub = {
+      tools: {
+        execute: (_slug: string, body: { version?: string }) => {
+          seen = body;
+          return Promise.resolve({ data: {} });
+        },
+      },
+    };
+    const service = new ComposioService({
+      composio: stub as unknown as ConstructorParameters<
+        typeof ComposioService
+      >[0]["composio"],
+    });
+    await service.execute({
+      action: "GOOGLECALENDAR_EVENTS_LIST",
+      userId: "acct-1",
+      arguments: {},
+      connectedAccountId: "conn-1",
+      version: "20260429_00",
+    });
+    expect(seen).toMatchObject({ version: "20260429_00" });
+  });
+});
+
 // --- DB-backed: requires the test Postgres (pnpm test:local) ---
 
 describe("POST /v2/composio/exec — grant authorization (DB)", () => {
@@ -249,7 +358,11 @@ describe("POST /v2/composio/exec — grant authorization (DB)", () => {
         actions: [],
       },
     });
-    let seen: { userId: string; connectedAccountId?: string } | null = null;
+    let seen: {
+      userId: string;
+      connectedAccountId?: string;
+      version?: string;
+    } | null = null;
     installComposioStub({
       execute: (_slug, body) => {
         seen = body;
@@ -263,12 +376,47 @@ describe("POST /v2/composio/exec — grant authorization (DB)", () => {
     const res = await exec(VALID_BODY, { headers: workerHeaders() });
     expect(res.status).toBe(200);
     expect((await asJson<{ data: unknown }>(res)).data).toEqual({ events: [] });
-    // Composio is called with the OWNER's accountId and a connection resolved
-    // from that account — never a client-supplied id.
+    // Composio is called with the OWNER's accountId, a connection resolved
+    // from that account — never a client-supplied id — and the toolkit's
+    // current version pinned (manual exec rejects implicit "latest").
     expect(seen).toMatchObject({
       userId: ownerAccountId,
       connectedAccountId: "conn_owned",
+      version: STUB_TOOLKIT_VERSION,
     });
+  });
+
+  test("502 toolkit_version_unresolved when Composio reports no versions — fail closed", async () => {
+    const ownerAccountId = await makeAccount();
+    await prisma.connectionGrant.create({
+      data: {
+        ownerAccountId,
+        ownerInboxId: "owner-inbox",
+        granteeInboxId: AGENT_INBOX,
+        conversationId: CONVERSATION,
+        toolkit: "googlecalendar",
+        actions: [],
+      },
+    });
+    let executed = false;
+    installComposioStub({
+      execute: () => {
+        executed = true;
+        return Promise.resolve({ data: {} });
+      },
+      connections: [
+        { id: "conn_owned", userId: ownerAccountId, slug: "googlecalendar" },
+      ],
+      toolkitVersions: [],
+    });
+
+    const res = await exec(VALID_BODY, { headers: workerHeaders() });
+    expect(res.status).toBe(502);
+    expect((await asJson<{ code: string }>(res)).code).toBe(
+      "toolkit_version_unresolved",
+    );
+    // Fail closed means the tool is never executed unversioned.
+    expect(executed).toBe(false);
   });
 
   test("a client-supplied connection id in the body is ignored (#2)", async () => {

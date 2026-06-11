@@ -131,11 +131,26 @@ export async function execHandler(req: Request, res: Response) {
       return;
     }
 
+    // Composio refuses manual execution against the implicit "latest" toolkit
+    // version (TOOL_VERSION_REQUIRED). Pin the toolkit's current published
+    // version, resolved from Composio and cached in-process; if it cannot be
+    // determined, fail closed rather than skip the version check.
+    const version = await service.resolveToolkitVersion(toolkit);
+    if (!version) {
+      req.log.error(
+        { toolkit, action },
+        "[Composio] exec: toolkit version unresolved",
+      );
+      res.status(502).json({ code: "toolkit_version_unresolved" });
+      return;
+    }
+
     const result = await service.execute({
       action,
       userId: grant.ownerAccountId,
       arguments: args,
       connectedAccountId,
+      version,
     });
 
     res.status(200).json({ data: result.data });
