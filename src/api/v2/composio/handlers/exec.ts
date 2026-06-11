@@ -1,5 +1,6 @@
 import type { Request, Response } from "express";
 import { z } from "zod";
+import { resolveBundleActions } from "@/api/v2/connections/bundles.config";
 import { createComposioService } from "@/api/v2/connections/composio.service";
 import { prisma } from "@/utils/prisma";
 import { resolveTrustedCaller } from "../trusted-identity";
@@ -56,15 +57,30 @@ export async function execHandler(req: Request, res: Response) {
     },
   });
 
-  // Action scope: empty actions ⇒ whole toolkit; otherwise the action must be
-  // listed (no verb escalation). Owner scope: if the agent named a member
-  // (onBehalfOf), keep only that owner's grant — this is how a group query
-  // targets one person ("Alice's calendar") without touching anyone else's.
-  const applicable = grants.filter(
-    (g) =>
-      (g.actions.length === 0 || g.actions.includes(action)) &&
-      (onBehalfOf === undefined || g.ownerInboxId === onBehalfOf),
-  );
+  // Action scope: the allowed set is the UNION of the grant's legacy `actions`
+  // and the actions its `bundleIds` resolve to against the CURRENT catalog (so
+  // re-mapping a bundle needs no client update — the point of bundles). If that
+  // union is empty (neither actions nor bundleIds — a legacy/transition grant)
+  // the grant authorizes the whole toolkit, logged as a warning; once clients
+  // always send bundleIds this default tightens to fail-closed. Owner scope: if
+  // the agent named a member (onBehalfOf), keep only that owner's grant — this
+  // is how a group query targets one person ("Alice's calendar") without
+  // touching anyone else's.
+  const applicable = grants.filter((g) => {
+    if (onBehalfOf !== undefined && g.ownerInboxId !== onBehalfOf) return false;
+    const allowed = new Set<string>(g.actions);
+    for (const a of resolveBundleActions(g.toolkit, g.bundleIds)) {
+      allowed.add(a);
+    }
+    if (allowed.size === 0) {
+      req.log.warn(
+        { grantId: g.id, toolkit, action },
+        "[Composio] exec: grant has no actions/bundleIds — whole-toolkit (transition default)",
+      );
+      return true;
+    }
+    return allowed.has(action);
+  });
   if (applicable.length === 0) {
     req.log.warn(
       { agentInboxId: caller.agentInboxId, toolkit, action, onBehalfOf },

@@ -358,6 +358,66 @@ describe("POST /v2/composio/exec — grant authorization (DB)", () => {
     expect((await asJson<{ code: string }>(res)).code).toBe("no_grant");
   });
 
+  // Bundle scope: a grant carrying bundleIds authorizes exactly the actions the
+  // bundle resolves to (resolveBundleActions against the current catalog). The
+  // "calendar.events" bundle includes LIST/CREATE/UPDATE/DELETE but a different
+  // bundle limited to reads must NOT authorize a write. We exercise the boundary
+  // by granting only "calendar.events" and asserting an action OUTSIDE it (a
+  // settings action) is rejected, while an in-bundle action is allowed.
+  test("bundle scope: an action inside the granted bundle is allowed", async () => {
+    const ownerAccountId = await makeAccount();
+    await prisma.connectionGrant.create({
+      data: {
+        ownerAccountId,
+        ownerInboxId: "owner-inbox",
+        granteeInboxId: AGENT_INBOX,
+        conversationId: CONVERSATION,
+        toolkit: "googlecalendar",
+        actions: [],
+        bundleIds: ["calendar.events"],
+        serviceVersion: 1,
+      },
+    });
+    installComposioStub({
+      connections: [
+        { id: "conn_owned", userId: ownerAccountId, slug: "googlecalendar" },
+      ],
+    });
+    const res = await exec(
+      { ...VALID_BODY, action: "GOOGLECALENDAR_CREATE_EVENT" },
+      { headers: workerHeaders() },
+    );
+    expect(res.status).toBe(200);
+  });
+
+  test("bundle scope: an action outside the granted bundle is no_grant", async () => {
+    const ownerAccountId = await makeAccount();
+    await prisma.connectionGrant.create({
+      data: {
+        ownerAccountId,
+        ownerInboxId: "owner-inbox",
+        granteeInboxId: AGENT_INBOX,
+        conversationId: CONVERSATION,
+        toolkit: "googlecalendar",
+        actions: [],
+        bundleIds: ["calendar.events"],
+        serviceVersion: 1,
+      },
+    });
+    installComposioStub({
+      connections: [
+        { id: "conn_owned", userId: ownerAccountId, slug: "googlecalendar" },
+      ],
+    });
+    // Not in the calendar.events bundle's action list.
+    const res = await exec(
+      { ...VALID_BODY, action: "GOOGLECALENDAR_DELETE_CALENDAR" },
+      { headers: workerHeaders() },
+    );
+    expect(res.status).toBe(403);
+    expect((await asJson<{ code: string }>(res)).code).toBe("no_grant");
+  });
+
   test("403 no_grant once the grant is revoked", async () => {
     const ownerAccountId = await makeAccount();
     await prisma.connectionGrant.create({

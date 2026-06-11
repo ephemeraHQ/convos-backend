@@ -14,8 +14,15 @@ const bodySchema = z.object({
   granteeInboxId: z.string().min(1).max(256),
   conversationId: z.string().min(1).max(256),
   toolkit: z.string().min(1).max(128),
-  // Allowed action slugs; empty ⇒ whole toolkit.
+  // Allowed action slugs; empty ⇒ whole toolkit. Legacy/transition — superseded
+  // by bundleIds, kept as a fallback so older clients keep working.
   actions: z.array(z.string().min(1).max(128)).max(128).optional(),
+  // Granted permission-bundle ids (e.g. "calendar.events"). The backend resolves
+  // these to Composio actions at exec; clients never send slugs.
+  bundleIds: z.array(z.string().min(1).max(128)).max(128).optional(),
+  // Catalog service version the client granted against. Stored for
+  // audit/telemetry only — exec resolves bundles against the current catalog.
+  serviceVersion: z.number().int().nonnegative().optional(),
   expiresAt: z.string().datetime().optional(),
 });
 
@@ -51,6 +58,8 @@ export async function grantsPostHandler(req: Request, res: Response) {
     conversationId,
     toolkit,
     actions,
+    bundleIds,
+    serviceVersion,
     expiresAt,
   } = parsed.data;
 
@@ -72,11 +81,15 @@ export async function grantsPostHandler(req: Request, res: Response) {
       conversationId,
       toolkit,
       actions: actions ?? [],
+      bundleIds: bundleIds ?? [],
+      serviceVersion: serviceVersion ?? null,
       expiresAt: expiresAt ? new Date(expiresAt) : null,
     },
     update: {
       ownerInboxId,
       actions: actions ?? [],
+      bundleIds: bundleIds ?? [],
+      serviceVersion: serviceVersion ?? null,
       expiresAt: expiresAt ? new Date(expiresAt) : null,
       revokedAt: null,
     },

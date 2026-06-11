@@ -1,0 +1,109 @@
+import { describe, expect, test } from "vitest";
+import {
+  getPublicServiceConfigs,
+  getServiceConfig,
+  resolveBundleActions,
+  SERVICE_CONFIGS,
+  toPublicServiceConfig,
+} from "@/api/v2/connections/bundles.config";
+
+// Pure catalog logic — no DB, no HTTP. Covers bundle → action resolution and
+// the public (slug-stripped) view served by GET /v2/connections/services.
+
+describe("bundles catalog — resolveBundleActions (no DB)", () => {
+  test("resolves a known bundle to its action slugs", () => {
+    const actions = resolveBundleActions("googlecalendar", ["calendar.events"]);
+    expect(actions).toEqual(
+      expect.arrayContaining([
+        "GOOGLECALENDAR_LIST_EVENTS",
+        "GOOGLECALENDAR_CREATE_EVENT",
+        "GOOGLECALENDAR_UPDATE_EVENT",
+        "GOOGLECALENDAR_DELETE_EVENT",
+      ]),
+    );
+  });
+
+  test("service id match is case-insensitive", () => {
+    expect(resolveBundleActions("GoogleCalendar", ["calendar.events"])).toEqual(
+      resolveBundleActions("googlecalendar", ["calendar.events"]),
+    );
+  });
+
+  test("unknown service contributes nothing", () => {
+    expect(resolveBundleActions("notaservice", ["calendar.events"])).toEqual(
+      [],
+    );
+  });
+
+  test("unknown bundle id contributes nothing (stale grant ⇒ no actions)", () => {
+    expect(resolveBundleActions("googlecalendar", ["calendar.bogus"])).toEqual(
+      [],
+    );
+  });
+
+  test("empty bundleIds resolves to no actions", () => {
+    expect(resolveBundleActions("googlecalendar", [])).toEqual([]);
+  });
+
+  test("union dedupes across overlapping bundles", () => {
+    // Passing the same bundle twice must not duplicate actions.
+    const once = resolveBundleActions("googlecalendar", ["calendar.events"]);
+    const twice = resolveBundleActions("googlecalendar", [
+      "calendar.events",
+      "calendar.events",
+    ]);
+    expect(new Set(twice)).toEqual(new Set(once));
+  });
+});
+
+describe("bundles catalog — getServiceConfig (no DB)", () => {
+  test("returns the seeded googlecalendar service", () => {
+    const svc = getServiceConfig("googlecalendar");
+    expect(svc?.id).toBe("googlecalendar");
+    expect(svc?.bundles.map((b) => b.id)).toContain("calendar.events");
+  });
+
+  test("returns undefined for an unknown service", () => {
+    expect(getServiceConfig("notaservice")).toBeUndefined();
+  });
+});
+
+describe("bundles catalog — public view strips slugs (no DB)", () => {
+  test("toPublicServiceConfig drops composioActions from every bundle", () => {
+    const svc = getServiceConfig("googlecalendar");
+    expect(svc).toBeDefined();
+    const pub = toPublicServiceConfig(svc!);
+    for (const b of pub.bundles) {
+      expect(b).not.toHaveProperty("composioActions");
+      expect(Object.keys(b).sort()).toEqual([
+        "defaultEnabled",
+        "description",
+        "id",
+        "title",
+      ]);
+      expect(typeof b.id).toBe("string");
+      expect(typeof b.title.en).toBe("string");
+      expect(typeof b.description.en).toBe("string");
+      expect(typeof b.defaultEnabled).toBe("boolean");
+    }
+  });
+
+  test("getPublicServiceConfigs serializes with no slug anywhere", () => {
+    const json = JSON.stringify(getPublicServiceConfigs());
+    // No Composio action slug should survive into the public payload.
+    expect(json).not.toMatch(/GOOGLECALENDAR_/);
+    expect(json).not.toMatch(/composioActions/);
+  });
+
+  test("public service keeps id/composioSlug/version/displayName", () => {
+    const [svc] = getPublicServiceConfigs();
+    expect(svc.id).toBe("googlecalendar");
+    expect(svc.composioSlug).toBe("googlecalendar");
+    expect(typeof svc.version).toBe("number");
+    expect(svc.displayName.en).toBe("Google Calendar");
+  });
+
+  test("public catalog covers every seeded service", () => {
+    expect(getPublicServiceConfigs()).toHaveLength(SERVICE_CONFIGS.length);
+  });
+});

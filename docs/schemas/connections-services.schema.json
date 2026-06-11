@@ -1,0 +1,71 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://convos.org/schemas/connections-services.schema.json",
+  "title": "GET /v2/connections/services response",
+  "description": "The connections-picker catalog. Backend-owned services and permission bundles, with Composio action slugs stripped (slugs stay backend-only; clients persist only bundle ids). Source of truth: src/api/v2/connections/bundles.config.ts (toPublicServiceConfig).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["services"],
+  "properties": {
+    "services": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/PublicServiceConfig" }
+    }
+  },
+  "$defs": {
+    "LocalizedString": {
+      "description": "A localized string map. MUST always carry an \"en\" key (the guaranteed fallback).",
+      "type": "object",
+      "required": ["en"],
+      "properties": {
+        "en": { "type": "string" }
+      },
+      "additionalProperties": { "type": "string" }
+    },
+    "PublicBundle": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "title", "description", "defaultEnabled"],
+      "properties": {
+        "id": {
+          "description": "Stable id persisted on the grant, e.g. \"calendar.events\".",
+          "type": "string"
+        },
+        "title": { "$ref": "#/$defs/LocalizedString" },
+        "description": { "$ref": "#/$defs/LocalizedString" },
+        "defaultEnabled": { "type": "boolean" }
+      }
+    },
+    "PublicServiceConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "composioSlug", "version", "displayName", "bundles"],
+      "properties": {
+        "id": {
+          "description": "Equals the Composio toolkit slug; sent back as `toolkit` on a grant.",
+          "type": "string"
+        },
+        "composioSlug": { "type": "string" },
+        "version": {
+          "description": "Bumped whenever anything about this service changes; clients refetch on a mismatch (stale detection).",
+          "type": "integer",
+          "minimum": 0
+        },
+        "displayName": { "$ref": "#/$defs/LocalizedString" },
+        "icon": {
+          "description": "Optional service icon. Omitted in v1.",
+          "type": "object",
+          "required": ["format", "base64"],
+          "properties": {
+            "format": { "type": "string" },
+            "base64": { "type": "string" }
+          }
+        },
+        "bundles": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/PublicBundle" }
+        }
+      }
+    }
+  }
+}
