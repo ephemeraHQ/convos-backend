@@ -351,7 +351,7 @@ describe("POST /v2/composio/exec — grant authorization (DB)", () => {
     });
     installComposioStub();
     const res = await exec(
-      { ...VALID_BODY, action: "GOOGLECALENDAR_EVENTS_DELETE" },
+      { ...VALID_BODY, action: "GOOGLECALENDAR_DELETE_EVENT" },
       { headers: workerHeaders() },
     );
     expect(res.status).toBe(403);
@@ -410,7 +410,7 @@ describe("POST /v2/composio/exec — grant authorization (DB)", () => {
     });
     // Not in the calendar.events bundle's action list.
     const res = await exec(
-      { ...VALID_BODY, action: "GOOGLECALENDAR_DELETE_CALENDAR" },
+      { ...VALID_BODY, action: "GOOGLECALENDAR_CALENDARS_DELETE" },
       { headers: workerHeaders() },
     );
     expect(res.status).toBe(403);
@@ -440,7 +440,7 @@ describe("POST /v2/composio/exec — grant authorization (DB)", () => {
       ],
     });
     for (const action of [
-      "GOOGLECALENDAR_LIST_EVENTS",
+      "GOOGLECALENDAR_EVENTS_LIST",
       "GOOGLECALENDAR_DELETE_EVENT",
     ]) {
       const res = await exec(
@@ -473,7 +473,7 @@ describe("POST /v2/composio/exec — grant authorization (DB)", () => {
     });
 
     const read = await exec(
-      { ...VALID_BODY, action: "GOOGLECALENDAR_LIST_EVENTS" },
+      { ...VALID_BODY, action: "GOOGLECALENDAR_EVENTS_LIST" },
       { headers: workerHeaders() },
     );
     expect(read.status).toBe(200);

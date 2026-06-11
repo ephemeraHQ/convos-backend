@@ -44,7 +44,12 @@ export const SERVICE_CONFIGS: ServiceConfig[] = [
     composioSlug: "googlecalendar",
     // v2: added the read-only calendar.events.read bundle (contract: bump on
     // ANY change to the service).
-    version: 2,
+    // v3: corrected the list slug GOOGLECALENDAR_LIST_EVENTS →
+    // GOOGLECALENDAR_EVENTS_LIST. Verified against the live Composio v3 tool
+    // catalog (2026-06-11): GOOGLECALENDAR_LIST_EVENTS does not exist (404);
+    // GOOGLECALENDAR_EVENTS_LIST / _CREATE_EVENT / _UPDATE_EVENT /
+    // _DELETE_EVENT are all served.
+    version: 3,
     displayName: { en: "Google Calendar" },
     bundles: [
       {
@@ -53,7 +58,7 @@ export const SERVICE_CONFIGS: ServiceConfig[] = [
         description: { en: "View and edit events on all calendars" },
         defaultEnabled: false,
         composioActions: [
-          "GOOGLECALENDAR_LIST_EVENTS",
+          "GOOGLECALENDAR_EVENTS_LIST",
           "GOOGLECALENDAR_CREATE_EVENT",
           "GOOGLECALENDAR_UPDATE_EVENT",
           "GOOGLECALENDAR_DELETE_EVENT",
@@ -67,7 +72,7 @@ export const SERVICE_CONFIGS: ServiceConfig[] = [
         title: { en: "View events" },
         description: { en: "View events on all calendars" },
         defaultEnabled: false,
-        composioActions: ["GOOGLECALENDAR_LIST_EVENTS"],
+        composioActions: ["GOOGLECALENDAR_EVENTS_LIST"],
       },
     ],
   },

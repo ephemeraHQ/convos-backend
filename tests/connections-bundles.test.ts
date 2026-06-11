@@ -15,7 +15,7 @@ describe("bundles catalog — resolveBundleActions (no DB)", () => {
     const actions = resolveBundleActions("googlecalendar", ["calendar.events"]);
     expect(actions).toEqual(
       expect.arrayContaining([
-        "GOOGLECALENDAR_LIST_EVENTS",
+        "GOOGLECALENDAR_EVENTS_LIST",
         "GOOGLECALENDAR_CREATE_EVENT",
         "GOOGLECALENDAR_UPDATE_EVENT",
         "GOOGLECALENDAR_DELETE_EVENT",
@@ -60,7 +60,7 @@ describe("bundles catalog — resolveBundleActions (no DB)", () => {
       "calendar.events.read",
     ]);
     expect(actions.length).toBeGreaterThan(0);
-    expect(actions).toContain("GOOGLECALENDAR_LIST_EVENTS");
+    expect(actions).toContain("GOOGLECALENDAR_EVENTS_LIST");
     // The scoping invariant: a read bundle must never carry a mutating slug.
     for (const a of actions) {
       expect(a).not.toMatch(/CREATE|UPDATE|DELETE|PATCH/);
