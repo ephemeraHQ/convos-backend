@@ -9,6 +9,7 @@ import {
   getAssistantApiUrl,
   getJoinPollIntervalMs,
   getJoinWaitBudgetMs,
+  type AssistantStatus,
 } from "./assistant-config";
 
 const AGENT_BUILDER_ONBOARDING = "agent-builder";
@@ -46,15 +47,36 @@ const optionsSchema = z
 // would be discarded. The caller-facing contract is now: send `templateId`
 // to apply a template; send neither for a bare agent. There is no escape
 // hatch for inline `instructions` — templates are the unit.
+//
+// `slug` and `conversationId` select the join mechanism (exactly one): with
+// a slug, the runtime joins via the invite's join-request DM; with a
+// conversationId, the agent is provisioned in direct-add mode — the response
+// carries the agent's `inboxId`, the caller adds it to the declared group
+// with addMembers, and the runtime attaches when it observes the resulting
+// group welcome. No confirmation call exists.
 const bodySchema = z
   .object({
-    slug: z.string().min(1, "Slug is required").max(2048),
+    slug: z.string().min(1, "slug must not be empty").max(2048).optional(),
+    // Normalized to lowercase: the runtime forwards this to Herald, whose
+    // conversation-id schema is lowercase-only hex.
+    conversationId: z
+      .string()
+      .regex(/^[0-9a-f]+$/i, "conversationId must be a hex string")
+      .min(8)
+      .max(128)
+      .transform((v) => v.toLowerCase())
+      .optional(),
     templateId: z.string().uuid().optional(),
     name: z.string().min(1).max(256).optional(),
     profileImage: z.string().min(1).max(2048).optional(),
     options: optionsSchema.optional(),
   })
-  .strict();
+  .strict()
+  .refine((b) => (b.slug === undefined) !== (b.conversationId === undefined), {
+    message:
+      "Provide exactly one of slug (invite join) or conversationId (direct-add)",
+    path: ["conversationId"],
+  });
 
 const FORCE_ERROR_DELAY_MS = 5_000;
 
@@ -95,7 +117,12 @@ type PollOutcome =
   | { kind: "failed"; reason: string | null }
   | { kind: "pending" };
 
-async function pollUntilJoined(args: {
+type RegisteredOutcome =
+  | { kind: "registered"; inboxId: string }
+  | { kind: "failed"; reason: string | null }
+  | { kind: "pending" };
+
+async function pollAssistantStatus<Outcome>(args: {
   assistantBaseUrl: string;
   instanceId: string;
   authHeader: string | undefined;
@@ -103,7 +130,9 @@ async function pollUntilJoined(args: {
   pollIntervalMs: number;
   log: Request["log"];
   abortSignal?: AbortSignal;
-}): Promise<PollOutcome> {
+  // Maps an upstream status row to a final outcome, or null to keep polling.
+  check: (status: AssistantStatus) => Outcome | null;
+}): Promise<Outcome | { kind: "pending" }> {
   const {
     assistantBaseUrl,
     instanceId,
@@ -112,6 +141,7 @@ async function pollUntilJoined(args: {
     pollIntervalMs,
     log,
     abortSignal,
+    check,
   } = args;
 
   const headers: Record<string, string> = {};
@@ -128,6 +158,11 @@ async function pollUntilJoined(args: {
       return { kind: "pending" };
     }
 
+    // Cap each status fetch by the remaining wait budget so a hung upstream
+    // GET can't hold the response open past the deadline.
+    const fetchTimeoutMs = Math.min(POLL_TIMEOUT_MS, deadlineMs - Date.now());
+    if (fetchTimeoutMs <= 0) break;
+
     try {
       const upstream = await fetch(
         `${assistantBaseUrl}/api/assistants/${encodeURIComponent(instanceId)}`,
@@ -136,10 +171,10 @@ async function pollUntilJoined(args: {
           headers,
           signal: abortSignal
             ? AbortSignal.any([
-                AbortSignal.timeout(POLL_TIMEOUT_MS),
+                AbortSignal.timeout(fetchTimeoutMs),
                 abortSignal,
               ])
-            : AbortSignal.timeout(POLL_TIMEOUT_MS),
+            : AbortSignal.timeout(fetchTimeoutMs),
         },
       );
 
@@ -156,13 +191,9 @@ async function pollUntilJoined(args: {
             { issues: parsed.error.issues, instanceId },
             "Assistant status poll returned malformed body",
           );
-        } else if (parsed.data.joinStatus === "joined") {
-          return { kind: "joined" };
-        } else if (parsed.data.joinStatus === "failed") {
-          return {
-            kind: "failed",
-            reason: parsed.data.joinFailureReason ?? null,
-          };
+        } else {
+          const outcome = check(parsed.data);
+          if (outcome !== null) return outcome;
         }
       }
     } catch (err) {
@@ -183,20 +214,68 @@ async function pollUntilJoined(args: {
   return { kind: "pending" };
 }
 
+function pollUntilJoined(
+  args: Omit<Parameters<typeof pollAssistantStatus<PollOutcome>>[0], "check">,
+): Promise<PollOutcome> {
+  return pollAssistantStatus<PollOutcome>({
+    ...args,
+    check: (status) => {
+      if (status.joinStatus === "joined" || status.joinStatus === "ready") {
+        return { kind: "joined" };
+      }
+      if (status.joinStatus === "failed") {
+        return { kind: "failed", reason: status.joinFailureReason ?? null };
+      }
+      return null;
+    },
+  });
+}
+
+// Direct-add mode waits only for Herald registration (inboxId lands in the
+// status row), not for the join itself — the join happens after the caller
+// adds the inbox to the group.
+function pollUntilRegistered(
+  args: Omit<
+    Parameters<typeof pollAssistantStatus<RegisteredOutcome>>[0],
+    "check"
+  >,
+): Promise<RegisteredOutcome> {
+  return pollAssistantStatus<RegisteredOutcome>({
+    ...args,
+    check: (status) => {
+      if (status.joinStatus === "failed") {
+        return { kind: "failed", reason: status.joinFailureReason ?? null };
+      }
+      if (status.inboxId)
+        return { kind: "registered", inboxId: status.inboxId };
+      return null;
+    },
+  });
+}
+
 /**
  * Handler for POST /api/v2/agents/join
  *
  * Requests an AI agent to join a conversation. Internally dispatches the
  * assistant runtime service (convos-assistants) `POST /api/assistants`
- * workflow with the conversation's invite URL, then server-side polls
- * the upstream status until the agent has joined, the workflow has failed,
- * or the wait budget has elapsed.
+ * workflow, then server-side polls the upstream status.
  *
- * Response shape preserves the legacy synchronous contract:
+ * With `slug`, the runtime joins via the invite's join-request DM and the
+ * poll waits until the agent has joined, the workflow has failed, or the
+ * wait budget has elapsed:
  *
  *   { success: true, joined: true  }                  — agent joined within window
  *   { success: true, joined: false, instanceId: ... } — still provisioning;
  *     caller may poll GET /api/v2/agents/join/:instanceId
+ *
+ * With `conversationId` (direct-add), the poll waits only until the agent's
+ * XMTP inbox is registered and responds with it; the caller then adds the
+ * inbox to the declared group with addMembers, and the runtime attaches once
+ * it observes the resulting group welcome — no further calls required:
+ *
+ *   { success: true, joined: false, instanceId, inboxId } — add this inbox
+ *   { success: true, joined: false, instanceId, inboxId: null } — registration
+ *     still in flight; poll GET /api/v2/agents/join/:instanceId for inboxId
  *
  * On upstream `failed`, returns 502 AGENT_PROVISION_FAILED.
  *
@@ -267,7 +346,8 @@ export async function joinHandler(req: Request, res: Response) {
     return;
   }
 
-  const { slug, templateId, name, profileImage, options } = parsed.data;
+  const { slug, conversationId, templateId, name, profileImage, options } =
+    parsed.data;
   // Avoid logging the raw slug (it's a join-token granting conversation
   // access) and the raw `options` (caller-controlled input). Log only the
   // public `templateId` reference + option keys so volumes/cardinality
@@ -409,7 +489,6 @@ export async function joinHandler(req: Request, res: Response) {
 
   let instanceId: string;
   try {
-    const joinUrl = buildInviteUrl(slug);
     const dispatchHeaders: Record<string, string> = {
       "Content-Type": "application/json",
     };
@@ -450,8 +529,13 @@ export async function joinHandler(req: Request, res: Response) {
         })
       : null;
 
+    // Direct-add sends the declared conversationId instead of a joinUrl —
+    // the runtime then skips the invite dance and watches the conversation
+    // for the group welcome the caller's addMembers produces.
     const dispatchBody: Record<string, unknown> = {
-      joinUrl,
+      ...(slug !== undefined
+        ? { joinUrl: buildInviteUrl(slug) }
+        : { conversationId }),
       template: joinPayload?.template ?? null,
       ownerAccountId: joiningUserAccountId,
     };
@@ -543,6 +627,55 @@ export async function joinHandler(req: Request, res: Response) {
     );
     const { status, ...body } = ERRORS.AGENT_PROVISION_FAILED;
     res.status(status).json({ success: false, ...body });
+    return;
+  }
+
+  // Direct-add: wait only for Herald registration so the caller gets the
+  // inboxId to add to the group; the join completes when the runtime
+  // observes the group welcome their addMembers produces.
+  if (slug === undefined) {
+    const outcome = await pollUntilRegistered({
+      assistantBaseUrl,
+      instanceId,
+      authHeader,
+      deadlineMs: Date.now() + getJoinWaitBudgetMs(),
+      pollIntervalMs: getJoinPollIntervalMs(),
+      log: req.log,
+      abortSignal: clientDisconnect.signal,
+    });
+
+    if (clientDisconnect.signal.aborted) {
+      req.log.info(
+        { instanceId },
+        "Client disconnected during poll — aborting silently",
+      );
+      return;
+    }
+
+    if (outcome.kind === "failed") {
+      req.log.error(
+        { instanceId, reason: outcome.reason },
+        "Assistant workflow reported failed before registration",
+      );
+      const { status, ...body } = ERRORS.AGENT_PROVISION_FAILED;
+      res.status(status).json({ success: false, ...body });
+      return;
+    }
+
+    // Pending: registration outlasted the wait budget; the caller polls
+    // GET /api/v2/agents/join/:instanceId, which carries inboxId.
+    if (outcome.kind === "pending") {
+      req.log.info(
+        { instanceId },
+        "Agent registration still pending after server-side wait budget",
+      );
+    }
+    res.status(200).json({
+      success: true,
+      joined: false,
+      instanceId,
+      inboxId: outcome.kind === "registered" ? outcome.inboxId : null,
+    });
     return;
   }
 

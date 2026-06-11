@@ -88,11 +88,18 @@ function jsonResponse(status: number, body: unknown): Response {
 
 describe("agents join (assistant API)", () => {
   let server: Server;
-  const baseURL = "http://localhost:4015";
+  // Assigned from the OS-picked port in beforeAll — a fixed port flakes with
+  // EADDRINUSE under parallel test runs.
+  let baseURL: string;
 
   beforeAll(async () => {
     await new Promise<void>((resolve) => {
-      server = app.listen(4015, () => {
+      server = app.listen(0, () => {
+        const addr = server.address();
+        if (!addr || typeof addr === "string") {
+          throw new Error("Failed to resolve test server address");
+        }
+        baseURL = `http://127.0.0.1:${addr.port}`;
         resolve();
       });
     });
@@ -167,12 +174,182 @@ describe("agents join (assistant API)", () => {
       expect(data.error).toBe("AGENT_POOL_UNAVAILABLE");
     });
 
-    test("returns 400 when slug is missing", async () => {
-      const res = await post({});
+    const DIRECT_ADD_CONVERSATION_ID = "abc123def4567890";
+
+    test("conversationId → direct-add: dispatches it instead of joinUrl, returns inboxId once registered", async () => {
+      mockFetchImpl = (url, init) => {
+        if (init?.method === "POST") {
+          expect(url).toBe(`${ASSISTANT_URL}/api/assistants`);
+          const body = JSON.parse(init.body as string) as Record<
+            string,
+            unknown
+          >;
+          expect(body).not.toHaveProperty("joinUrl");
+          // Uppercase in the request — normalized to lowercase for the
+          // runtime (Herald's conversation-id schema is lowercase-only).
+          expect(body.conversationId).toBe(DIRECT_ADD_CONVERSATION_ID);
+          expect(body.template).toBeNull();
+          return Promise.resolve(
+            jsonResponse(200, { instanceId: "inst-direct" }),
+          );
+        }
+        expect(url).toBe(`${ASSISTANT_URL}/api/assistants/inst-direct`);
+        return Promise.resolve(
+          jsonResponse(200, {
+            instanceId: "inst-direct",
+            joinStatus: "starting",
+            inboxId: "inbox-direct-1",
+          }),
+        );
+      };
+
+      const res = await post({
+        conversationId: DIRECT_ADD_CONVERSATION_ID.toUpperCase(),
+      });
+      expect(res.status).toBe(200);
+      const data = (await res.json()) as {
+        success: boolean;
+        joined: boolean;
+        instanceId: string;
+        inboxId: string | null;
+      };
+      expect(data.success).toBe(true);
+      expect(data.joined).toBe(false);
+      expect(data.instanceId).toBe("inst-direct");
+      expect(data.inboxId).toBe("inbox-direct-1");
+    });
+
+    test("direct-add → polls past a null inboxId until registration lands", async () => {
+      let pollCount = 0;
+      mockFetchImpl = (_url, init) => {
+        if (init?.method === "POST") {
+          return Promise.resolve(
+            jsonResponse(200, { instanceId: "inst-direct-2" }),
+          );
+        }
+        pollCount += 1;
+        return Promise.resolve(
+          jsonResponse(200, {
+            instanceId: "inst-direct-2",
+            joinStatus: "starting",
+            inboxId: pollCount < 3 ? null : "inbox-direct-2",
+          }),
+        );
+      };
+
+      const res = await post({ conversationId: DIRECT_ADD_CONVERSATION_ID });
+      expect(res.status).toBe(200);
+      const data = (await res.json()) as { inboxId: string | null };
+      expect(data.inboxId).toBe("inbox-direct-2");
+      expect(pollCount).toBeGreaterThanOrEqual(3);
+    });
+
+    test("direct-add → inboxId:null when registration outlasts the wait budget", async () => {
+      mockFetchImpl = (_url, init) => {
+        if (init?.method === "POST") {
+          return Promise.resolve(
+            jsonResponse(200, { instanceId: "inst-direct-slow" }),
+          );
+        }
+        return Promise.resolve(
+          jsonResponse(200, {
+            instanceId: "inst-direct-slow",
+            joinStatus: "starting",
+            inboxId: null,
+          }),
+        );
+      };
+
+      const res = await post({ conversationId: DIRECT_ADD_CONVERSATION_ID });
+      expect(res.status).toBe(200);
+      const data = (await res.json()) as {
+        success: boolean;
+        joined: boolean;
+        instanceId: string;
+        inboxId: string | null;
+      };
+      expect(data.success).toBe(true);
+      expect(data.joined).toBe(false);
+      expect(data.instanceId).toBe("inst-direct-slow");
+      expect(data.inboxId).toBeNull();
+    });
+
+    test("no slug → 502 when the workflow fails before registration", async () => {
+      mockFetchImpl = (_url, init) => {
+        if (init?.method === "POST") {
+          return Promise.resolve(
+            jsonResponse(200, { instanceId: "inst-direct-bad" }),
+          );
+        }
+        return Promise.resolve(
+          jsonResponse(200, {
+            instanceId: "inst-direct-bad",
+            joinStatus: "failed",
+            joinFailureReason: "attestation not configured",
+          }),
+        );
+      };
+
+      const res = await post({ conversationId: DIRECT_ADD_CONVERSATION_ID });
+      expect(res.status).toBe(502);
+      const data = (await res.json()) as { success: boolean; error: string };
+      expect(data.success).toBe(false);
+      expect(data.error).toBe("AGENT_PROVISION_FAILED");
+    });
+
+    test.each([
+      ["neither slug nor conversationId", {}],
+      [
+        "both slug and conversationId",
+        { slug: "abc", conversationId: DIRECT_ADD_CONVERSATION_ID },
+      ],
+      ["non-hex conversationId", { conversationId: "not hex!" }],
+    ])("%s → 400 INVALID_REQUEST, nothing dispatched", async (_label, body) => {
+      let dispatched = false;
+      mockFetchImpl = () => {
+        dispatched = true;
+        return Promise.reject(new Error("should not dispatch"));
+      };
+
+      const res = await post(body);
       expect(res.status).toBe(400);
       const data = (await res.json()) as { success: boolean; error: string };
       expect(data.success).toBe(false);
       expect(data.error).toBe("INVALID_REQUEST");
+      expect(dispatched).toBe(false);
+    });
+
+    test("slug join: a poll that lands on 'ready' counts as joined", async () => {
+      // The runtime advances joined → ready when boot completes; a poll can
+      // observe only the latter. Treating it as not-joined burned the whole
+      // wait budget (and the enum once 502'd on it) — pin the mapping.
+      mockFetchImpl = (_url, init) => {
+        if (init?.method === "POST") {
+          return Promise.resolve(jsonResponse(200, { instanceId: "inst-rdy" }));
+        }
+        return Promise.resolve(
+          jsonResponse(200, {
+            instanceId: "inst-rdy",
+            joinStatus: "ready",
+            inboxId: "inbox-rdy",
+            conversationId: "conv-rdy",
+            joinFailureReason: null,
+            createdAt: 1715000000000,
+            destroyedAt: null,
+          }),
+        );
+      };
+
+      const res = await post({ slug: "ready-slug" });
+      expect(res.status).toBe(200);
+      const data = (await res.json()) as {
+        success: boolean;
+        joined: boolean;
+        instanceId: string;
+      };
+      expect(data.success).toBe(true);
+      expect(data.joined).toBe(true);
+      expect(data.instanceId).toBe("inst-rdy");
     });
 
     test("returns joined:true once upstream reports joined", async () => {
@@ -807,6 +984,29 @@ describe("agents join (assistant API)", () => {
       expect(data.joinStatus).toBe("joined");
       expect(data.inboxId).toBe("inbox-1");
       expect(data.conversationId).toBe("conv-1");
+    });
+
+    test("returns joined=true when upstream reports ready (post-boot)", async () => {
+      // "ready" lands after the runtime finishes booting; treating it as
+      // not-joined (or failing the enum parse) was a real 502 bug — pin it.
+      mockFetchImpl = () =>
+        Promise.resolve(
+          jsonResponse(200, {
+            instanceId: "inst-99",
+            joinStatus: "ready",
+            inboxId: "inbox-1",
+            conversationId: "conv-1",
+          }),
+        );
+
+      const res = await getStatus("inst-99");
+      expect(res.status).toBe(200);
+      const data = (await res.json()) as {
+        joined: boolean;
+        joinStatus: string;
+      };
+      expect(data.joined).toBe(true);
+      expect(data.joinStatus).toBe("ready");
     });
 
     test("returns joined=false when status is starting", async () => {
