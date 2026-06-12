@@ -172,6 +172,22 @@ describe("Agent template create endpoint", () => {
     expect(row.forkedFromId).toBeNull();
   });
 
+  test("strips unknown body keys - accepted, never stored, never echoed", async () => {
+    const { body, response } = await createTemplate({
+      agentName: "Create Test Strip Probe",
+      prompt: "You are helpful",
+      totallyUnknownKey: "should vanish",
+    });
+
+    expect(response.status).toBe(201);
+    expect(body).not.toHaveProperty("totallyUnknownKey");
+
+    const row = await prisma.agentTemplate.findUniqueOrThrow({
+      where: { id: body.id as string },
+    });
+    expect(JSON.stringify(row)).not.toContain("should vanish");
+  });
+
   test("auto-derives slugs and allows duplicates (disambiguated by hashed-slug URL)", async () => {
     const ids: string[] = [];
 
