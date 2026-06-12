@@ -2,6 +2,7 @@ import type { Request, Response } from "express";
 import { z } from "zod";
 import { buildJoinPayload } from "@/api/v2/agents/lib/build-join-payload";
 import { XMTP_ENV } from "@/config";
+import { accountIdSchema } from "@/utils/account-id";
 import { prisma } from "@/utils/prisma";
 import {
   assistantStatusSchema,
@@ -100,6 +101,11 @@ const ERRORS = {
     error: "AGENT_POOL_TIMEOUT",
     message: "Agent provisioning request timed out",
   },
+  JOIN_DISPATCH_INVALID: {
+    status: 500,
+    error: "JOIN_DISPATCH_INVALID",
+    message: "Internal error building agent dispatch",
+  },
 } as const;
 
 function buildInviteUrl(slug: string): string {
@@ -111,6 +117,34 @@ function buildInviteUrl(slug: string): string {
 const assistantDispatchSchema = z.object({
   instanceId: z.string().min(1),
 });
+
+// Egress contract for POST {assistant}/api/assistants. The envelope is
+// strict and `ownerAccountId` is required — an agent must never be
+// provisioned without an owner (the pre-#231 ownerless-agent bug class).
+// `template` interior stays loose: it is built from an already-validated
+// DB row; this schema guards the envelope, not template evolution.
+// Adding a wire field requires updating this schema (.strict() turns a missed
+// field into a 500 on every join — deliberately loud), and conversationId here
+// is lowercase-only by design: the inbound schema's .transform has already
+// canonicalized it.
+const dispatchBodySchema = z
+  .object({
+    joinUrl: z.string().url().optional(),
+    conversationId: z
+      .string()
+      .regex(/^[0-9a-f]+$/)
+      .min(8)
+      .max(128)
+      .optional(),
+    template: z.record(z.string(), z.unknown()).nullable(),
+    ownerAccountId: accountIdSchema,
+    options: optionsSchema.optional(),
+  })
+  .strict()
+  .refine(
+    (b) => (b.joinUrl === undefined) !== (b.conversationId === undefined),
+    { message: "Exactly one of joinUrl or conversationId" },
+  );
 
 type PollOutcome =
   | { kind: "joined" }
@@ -543,6 +577,17 @@ export async function joinHandler(req: Request, res: Response) {
       dispatchBody.options = upstreamOptions;
     }
 
+    const dispatchParse = dispatchBodySchema.safeParse(dispatchBody);
+    if (!dispatchParse.success) {
+      req.log.error(
+        { issues: dispatchParse.error.issues },
+        "Dispatch body failed validation - refusing to dispatch",
+      );
+      const { status, ...body } = ERRORS.JOIN_DISPATCH_INVALID;
+      res.status(status).json({ success: false, ...body });
+      return;
+    }
+
     const dispatchRes = await fetch(`${assistantBaseUrl}/api/assistants`, {
       method: "POST",
       headers: dispatchHeaders,
@@ -550,7 +595,7 @@ export async function joinHandler(req: Request, res: Response) {
         AbortSignal.timeout(DISPATCH_TIMEOUT_MS),
         clientDisconnect.signal,
       ]),
-      body: JSON.stringify(dispatchBody),
+      body: JSON.stringify(dispatchParse.data),
     });
 
     if (!dispatchRes.ok) {
