@@ -116,6 +116,66 @@ describe("prepareBatch", () => {
     expect(out.strippedAttrKeys).toEqual(["device.id"]);
   });
 
+  test("strips data point attributes (PII cannot ride on points)", () => {
+    const body = makeBody();
+    body.resourceMetrics[0].scopeMetrics[0].metrics[0].sum.dataPoints[0].attributes =
+      [
+        { key: "user.id", value: { stringValue: "u-123" } },
+        { key: "wallet.address", value: { stringValue: "0xabc" } },
+      ] as never;
+    const out = prepareBatch(body, baseOpts);
+    const fwd = out.body as unknown as TestBody;
+    const dp = fwd.resourceMetrics[0].scopeMetrics[0].metrics[0].sum
+      ?.dataPoints[0] as { attributes?: unknown[] };
+    expect(dp.attributes ?? []).toEqual([]);
+    expect(out.strippedPointAttrKeys).toEqual(
+      expect.arrayContaining(["user.id", "wallet.address"]),
+    );
+  });
+
+  test("strips scope attributes", () => {
+    const body = makeBody();
+    (
+      body.resourceMetrics[0].scopeMetrics[0].scope as {
+        attributes?: unknown[];
+      }
+    ).attributes = [{ key: "device.id", value: { stringValue: "abc" } }];
+    const out = prepareBatch(body, baseOpts);
+    const scope = (out.body as unknown as TestBody).resourceMetrics[0]
+      .scopeMetrics[0] as { scope?: { attributes?: unknown[] } };
+    expect(scope.scope?.attributes ?? []).toEqual([]);
+  });
+
+  test("strips unknown metric containers riding alongside a valid one", () => {
+    const body = makeBody();
+    const metric = body.resourceMetrics[0].scopeMetrics[0].metrics[0] as Record<
+      string,
+      unknown
+    >;
+    metric.exponentialHistogram = {
+      dataPoints: [{ timeUnixNano: "1", attributes: [{ key: "user.id" }] }],
+    };
+    const out = prepareBatch(body, baseOpts);
+    const fwd = (out.body as unknown as TestBody).resourceMetrics[0]
+      .scopeMetrics[0].metrics[0] as Record<string, unknown>;
+    expect(fwd.exponentialHistogram).toBeUndefined();
+    expect(fwd.sum).toBeDefined(); // valid container untouched
+    expect(out.droppedMetricKeys).toContain("exponentialHistogram");
+  });
+
+  test("summary-only metric is dropped, not forwarded raw", () => {
+    const body = makeBody();
+    const metric = body.resourceMetrics[0].scopeMetrics[0].metrics[0] as Record<
+      string,
+      unknown
+    >;
+    delete metric.sum;
+    metric.summary = { dataPoints: [{ timeUnixNano: "1" }] };
+    const out = prepareBatch(body, baseOpts);
+    expect(out.isEmpty).toBe(true);
+    expect(out.droppedMetricKeys).toContain("summary");
+  });
+
   test("shifts timestamps by offsetMs (BigInt math)", () => {
     const out = prepareBatch(makeBody({ timeMs: NOW_MS - 60_000 }), {
       ...baseOpts,

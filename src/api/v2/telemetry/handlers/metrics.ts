@@ -29,7 +29,7 @@ const parseSentAtMs = (raw: string | undefined): number | null => {
 // App Check appIds follow the format `1:<project-number>:<platform>:<hash>`.
 // Unknown platforms (including web or future additions) fall through to
 // "convos-client".
-const serviceNameFor = (appId: string | undefined): string => {
+export const serviceNameFor = (appId: string | undefined): string => {
   if (appId?.includes(":ios:")) return "convos-ios";
   if (appId?.includes(":android:")) return "convos-android";
   return "convos-client";
@@ -38,7 +38,13 @@ const serviceNameFor = (appId: string | undefined): string => {
 export async function postMetrics(req: Request, res: Response) {
   // Tag our own batches_received counter with the client app this bundle
   // came from (verified App Check appId, not client-supplied).
-  const client = serviceNameFor(res.locals.appCheckAppId as string | undefined);
+  const appId = res.locals.appCheckAppId as string | undefined;
+  if (appId === undefined) {
+    // App Check bypass (app_attest_enabled=false) — attribution defaults to
+    // convos-client; log so a mislabeled `client` dimension is explainable.
+    req.log.warn("telemetry.client_attribution_defaulted");
+  }
+  const client = serviceNameFor(appId);
 
   const batchId = req.header("Idempotency-Key");
   if (!batchId || !UUID_RE.test(batchId)) {
@@ -93,6 +99,18 @@ export async function postMetrics(req: Request, res: Response) {
       req.log.warn(
         { keys: prepared.strippedAttrKeys, batchId },
         "telemetry.resource_attrs_stripped",
+      );
+    }
+    if (prepared.strippedPointAttrKeys.length > 0) {
+      req.log.warn(
+        { keys: prepared.strippedPointAttrKeys, batchId },
+        "telemetry.point_attrs_stripped",
+      );
+    }
+    if (prepared.droppedMetricKeys.length > 0) {
+      req.log.warn(
+        { keys: prepared.droppedMetricKeys, batchId },
+        "telemetry.unknown_metric_keys_dropped",
       );
     }
 

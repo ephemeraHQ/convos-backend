@@ -41,6 +41,17 @@ function errorHandler(
     });
   }
 
+  // body-parser and friends attach an HTTP status to their errors (e.g. 413
+  // entity.too.large, 400 entity.parse.failed). Honor 4xx so client mistakes
+  // aren't reported as server 500s; 5xx still falls through to the generic
+  // handler below.
+  const errStatus =
+    (err as { statusCode?: unknown }).statusCode ??
+    (err as { status?: unknown }).status;
+  if (typeof errStatus === "number" && errStatus >= 400 && errStatus < 500) {
+    return res.status(errStatus).json({ error: err.message });
+  }
+
   // Handle unknown errors
   return res.status(500).json({
     error: "Internal Server Error",

@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, test, vi } from "vitest";
 import { forwardMetrics } from "@/api/v2/telemetry/services/forwarder";
 import { telemetryRouter } from "@/api/v2/telemetry/telemetry.router";
 import { appCheckOnlyMiddleware } from "@/middleware/auth";
+import { errorHandlerMiddleware } from "@/middleware/errorHandler";
 import { pinoMiddleware } from "@/middleware/pino";
 import { countTelemetryBatch } from "@/utils/metrics";
 import { prisma } from "@/utils/prisma";
@@ -25,6 +26,7 @@ function makeApp() {
   const app = express();
   app.use(pinoMiddleware);
   app.use("/telemetry", appCheckOnlyMiddleware, telemetryRouter);
+  app.use(errorHandlerMiddleware);
   return app;
 }
 
@@ -237,6 +239,19 @@ describe("POST /telemetry/metrics", () => {
     const body = makeBody();
     body.resourceMetrics[0].scopeMetrics[0].metrics[0].name = "evil.thing";
     const res = await post(makeApp()).send(body);
+    expect(res.status).toBe(400);
+    expect(forwardMetrics).not.toHaveBeenCalled();
+    expect(countTelemetryBatch).toHaveBeenCalledTimes(1);
+    expect(countTelemetryBatch).toHaveBeenCalledWith(
+      "convos-android",
+      "rejected",
+    );
+  });
+
+  test("malformed JSON body → 400 (not 500) and counted as rejected", async () => {
+    const res = await post(makeApp())
+      .set("Content-Type", "application/json")
+      .send('{"resourceMetrics": [');
     expect(res.status).toBe(400);
     expect(forwardMetrics).not.toHaveBeenCalled();
     expect(countTelemetryBatch).toHaveBeenCalledTimes(1);

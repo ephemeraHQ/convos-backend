@@ -1,5 +1,6 @@
 import { z } from "zod";
 import {
+  TELEMETRY_ALLOWED_POINT_ATTRS,
   TELEMETRY_ALLOWED_RESOURCE_ATTRS,
   TELEMETRY_MAX_POINT_AGE_MS,
   TELEMETRY_METRIC_PREFIXES,
@@ -18,6 +19,7 @@ const dataPointSchema = z
   .object({
     timeUnixNano: nanoString,
     startTimeUnixNano: nanoString.optional(),
+    attributes: z.array(attributeSchema).optional(),
   })
   .passthrough();
 
@@ -35,7 +37,13 @@ const metricSchema = z
   .passthrough();
 
 const scopeMetricsSchema = z
-  .object({ metrics: z.array(metricSchema).default([]) })
+  .object({
+    metrics: z.array(metricSchema).default([]),
+    scope: z
+      .object({ attributes: z.array(attributeSchema).optional() })
+      .passthrough()
+      .optional(),
+  })
   .passthrough();
 
 const resourceMetricsSchema = z
@@ -57,6 +65,18 @@ type DataPoint = z.infer<typeof dataPointSchema>;
 
 const DATA_KEYS = ["sum", "histogram", "gauge"] as const;
 
+// Metric-level keys allowed to survive re-serialization. Anything else —
+// notably containers this sanitizer doesn't walk (summary,
+// exponentialHistogram) — is deleted, otherwise it would be forwarded with
+// unshifted timestamps and unfiltered attributes via .passthrough().
+const METRIC_ALLOWED_KEYS = new Set<string>([
+  "name",
+  "description",
+  "unit",
+  "metadata",
+  ...DATA_KEYS,
+]);
+
 export interface PrepareOptions {
   offsetMs: number; // receivedAt - sentAt (client clock correction)
   receivedAtMs: number;
@@ -67,7 +87,9 @@ export interface PrepareOptions {
 export interface PreparedBatch {
   body: ExportRequest; // mutated in place, re-serialized by the forwarder
   droppedStalePoints: number;
-  strippedAttrKeys: string[];
+  strippedAttrKeys: string[]; // resource attrs removed by the allowlist
+  strippedPointAttrKeys: string[]; // data point attrs removed by the allowlist
+  droppedMetricKeys: string[]; // unknown metric-level keys deleted
   isEmpty: boolean;
 }
 
@@ -108,6 +130,8 @@ export function prepareBatch(
     BigInt(opts.receivedAtMs + FUTURE_TOLERANCE_MS) * 1_000_000n;
   let droppedStalePoints = 0;
   const strippedAttrKeys = new Set<string>();
+  const strippedPointAttrKeys = new Set<string>();
+  const droppedMetricKeys = new Set<string>();
 
   for (const rm of body.resourceMetrics) {
     // Resource attribute policy: strip unknown keys, then override
@@ -130,6 +154,25 @@ export function prepareBatch(
     rm.resource = { ...(rm.resource ?? {}), attributes: overridden };
 
     for (const sm of rm.scopeMetrics) {
+      // Scope attributes are never forwarded — same trust boundary as
+      // resource/point attrs, with no known legitimate use from clients.
+      if (sm.scope?.attributes !== undefined) {
+        sm.scope.attributes = [];
+      }
+      // Rebuild each metric from allowlisted keys only, so unwalked
+      // containers (summary, exponentialHistogram, future additions) can't
+      // smuggle unsanitized points past the DATA_KEYS loop below.
+      sm.metrics = sm.metrics.map((metric) => {
+        const cleaned: typeof metric = { name: metric.name };
+        for (const key of Object.keys(metric)) {
+          if (METRIC_ALLOWED_KEYS.has(key)) {
+            cleaned[key] = metric[key];
+          } else {
+            droppedMetricKeys.add(key);
+          }
+        }
+        return cleaned;
+      });
       for (const metric of sm.metrics) {
         for (const key of DATA_KEYS) {
           const container = metric[key];
@@ -148,6 +191,15 @@ export function prepareBatch(
                 dp.startTimeUnixNano,
                 opts.offsetMs,
               );
+            }
+            // Point attribute policy mirrors the resource one: strip unknown
+            // keys (they become Datadog metric tags — PII/cardinality risk).
+            if (dp.attributes !== undefined) {
+              dp.attributes = dp.attributes.filter((a) => {
+                if (TELEMETRY_ALLOWED_POINT_ATTRS.has(a.key)) return true;
+                strippedPointAttrKeys.add(a.key);
+                return false;
+              });
             }
             shifted.push(dp);
           }
@@ -169,6 +221,8 @@ export function prepareBatch(
     body,
     droppedStalePoints,
     strippedAttrKeys: [...strippedAttrKeys],
+    strippedPointAttrKeys: [...strippedPointAttrKeys],
+    droppedMetricKeys: [...droppedMetricKeys],
     isEmpty: body.resourceMetrics.length === 0,
   };
 }

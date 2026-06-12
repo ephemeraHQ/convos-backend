@@ -4,6 +4,14 @@ import { prisma } from "@/utils/prisma";
 // uniqueness), so two concurrent requests with the same batch id cannot both
 // proceed — a check-then-insert pair would race between the check and the
 // insert. Returns true when this call claimed the id.
+//
+// Accepted at-most-once edges (no in-flight lease, by design — this is
+// telemetry, occasional loss beats added machinery):
+// - A concurrent loser gets "duplicate" while the winner is still in flight;
+//   if the winner then fails, the loser was told duplicate for a batch that
+//   never forwarded. The winner's client sees the failure and retries.
+// - A crash between claim and forward strands the row until the TTL sweep
+//   (48h) releases it; retries in that window are dropped as duplicates.
 export async function tryClaimBatch(batchId: string): Promise<boolean> {
   const { count } = await prisma.telemetryBatch.createMany({
     data: [{ batchId }],

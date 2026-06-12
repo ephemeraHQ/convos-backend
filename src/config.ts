@@ -260,5 +260,10 @@ export const TELEMETRY_ALLOWED_RESOURCE_ATTRS = new Set([
   "telemetry.sdk.version",
 ]);
 
+// Data point attributes allowed through (same cardinality/PII policy as
+// resource attrs — they become Datadog metric tags). Deny-all until a client
+// has a concrete need for a point-level dimension; add keys here then.
+export const TELEMETRY_ALLOWED_POINT_ATTRS = new Set<string>([]);
+
 // How long dedup rows are kept (covers client retry horizon).
 export const TELEMETRY_BATCH_TTL_MS = 48 * 60 * 60 * 1000;
