@@ -2,7 +2,7 @@
 
 **Author:** Louis
 **Audience:** Fabri, Nick, Mike
-**Status:** Implemented — on `louis/composio-exec` → `louis/connections-bundles` (backend), `louis/composio-backend-exec` (assistants), `louis/connections-picker-bundles` (iOS); in review, not yet merged to `dev`. The original decision record (fork X/Y, sign-off questions) lives in this PR's history.
+**Status:** Implemented — in review as backend #303 (stacked on #294), assistants #2112, iOS #1047/#1048/#1049; not yet merged to `dev`. The original decision record (fork X/Y, sign-off questions) lives in this PR's history.
 
 ## TL;DR
 
@@ -52,7 +52,7 @@ Clients have no Composio action slugs, so action-level consent is expressed as b
 
 - The catalog (`src/api/v2/connections/bundles.config.ts`) maps `service → bundle → action slugs` and is served via **`GET /v2/connections/services`** (JWT-only) **with slugs stripped** — no Composio slug ever reaches a client.
 - Grants carry `{toolkit, serviceVersion, bundleIds}`; the device persists only bundle ids. The backend resolves bundles → actions **at exec time against the current catalog**, so re-mapping actions needs no app release.
-- **Fail closed everywhere:** unknown bundle ids are rejected at grant time (400 `unknown_bundle`); a grant whose bundles resolve to nothing (stale/unknown) authorizes nothing at exec (403 `no_grant`) — it never falls back to whole-toolkit. A read-only bundle (`calendar.events.read`) exists precisely to prove a read grant can never write (regression-tested).
+- **Fail closed everywhere:** unknown bundle ids are rejected at grant time (400 `unknown_bundle`); a grant whose bundles resolve to nothing (stale/unknown) authorizes nothing at exec (403 `no_grant`) — it never falls back to whole-toolkit. The catalog ships a single calendar bundle, "Events" (view + edit); the legacy read-only bundle (`calendar.events.read`) is deprecated but still resolvable, and proves a read grant can never write (regression-tested).
 - **Transition-only exception:** a legacy grant with _both_ `actions` and `bundleIds` empty still means whole-toolkit (logged). Flipping this to fail-closed is Phase C, once iOS + Android always send `bundleIds` — see "In progress."
 
 ## Grant lifecycle

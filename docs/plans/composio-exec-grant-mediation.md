@@ -8,11 +8,12 @@
 
 ## ⚠️ Corrections vs. the shipped implementation (2026-06-11)
 
-The plan below predates the build-out; where it disagrees with the code, the code (and the
-1-pager) wins:
+The plan below predates the build-out; where it disagreed with the code, the code (and the
+1-pager) wins. The wire contract and exec steps below were updated 2026-06-12 to match the
+shipped design; these items remain as the audit trail:
 
-1. **Exec auth is a dedicated secret, not the agent key.** The wire contract below says
-   `X-Agent-API-Key`; shipped exec authenticates with **`X-Composio-Exec-Key`**
+1. **Exec auth is a dedicated secret, not the agent key.** The wire contract below
+   originally said `X-Agent-API-Key`; shipped exec authenticates with **`X-Composio-Exec-Key`**
    (`COMPOSIO_EXEC_API_KEY`), deliberately distinct — the generic `convos.internal` proxy
    injects the agent key for arbitrary paths, so reusing it would let a container smuggle
    an exec call with forged identity headers. The generic proxy also denies
@@ -108,7 +109,7 @@ Worker → backend (fresh request — **never** forwards container headers):
 
 ```
 POST /v2/composio/exec
-  X-Agent-API-Key:           <CONVOS_API_KEY, worker-only>
+  X-Composio-Exec-Key:       <COMPOSIO_EXEC_API_KEY, worker-only>
   X-Convos-Conversation-Id:  <heraldConversationId pinned at instance creation>
   X-Convos-Agent-Inbox-Id:   <the instance's own inboxId, from worker state>
   body: { toolkit, action, args }
@@ -116,17 +117,20 @@ POST /v2/composio/exec
 
 Backend (`execHandler`):
 
-1. `agentApiKeyAuth` (worker authentication).
+1. `composioExecAuth` (dedicated `X-Composio-Exec-Key`, constant-time compare).
 2. `resolveTrustedCaller` reads the two identity headers; absent/oversized → **403
    `trusted_identity_unavailable`** (fail-closed).
 3. Grant lookup by `(granteeInboxId = agentInboxId, conversationId, toolkit)`, live only
-   (`revokedAt` null, not expired), action within `actions` (empty ⇒ whole toolkit) →
-   else **403 `no_grant`**.
-4. Multiple distinct owners matched → **409 `ambiguous_grant`** (Tier 2 territory; fail
-   closed rather than guess whose data).
-5. Resolve `connectedAccountId` (grant-pinned, else from `(ownerAccountId, toolkit)`),
+   (`revokedAt` null, not expired). Allowed actions = union(`grant.actions`,
+   bundle-resolved actions), fail-closed on unknown/unresolvable bundles; requested
+   action outside the union → **403 `no_grant`**. (Legacy-only: a grant with _both_
+   fields empty keeps whole-toolkit until Phase C flips it to fail-closed.)
+4. Multiple distinct owners matched and no `onBehalfOf` → **409 `ambiguous_grant`**
+   (fail closed rather than guess whose data).
+5. Resolve `connectedAccountId` **server-side** from `(ownerAccountId, toolkit)` — never
+   client-supplied or grant-pinned; pin the toolkit version (unresolvable → fail closed);
    call `composio.tools.execute(action, { userId: ownerAccountId, arguments,
-connectedAccountId })`. The id is never returned to the agent.
+connectedAccountId, version })`. The id is never returned to the agent.
 
 ## Safety properties
 
@@ -135,7 +139,8 @@ connectedAccountId })`. The id is never returned to the agent.
   worker stamps the _real_ conversation.
 - **Agent impersonating another agent**: `granteeInboxId` comes from worker state, not
   the container; grants are per-agent (iOS #812 fan-out).
-- **Verb escalation**: action checked against the granted `actions`.
+- **Verb escalation**: action checked against union(`grant.actions`, bundle-resolved
+  actions); fail-closed on unknown bundles.
 - **Revocation**: checked per call; immediate.
 - **Known Tier-1 limit (honest)**: within one conversation, any member can drive the
   agent into a granted toolkit — blast radius is the conversation, matching today's iOS
