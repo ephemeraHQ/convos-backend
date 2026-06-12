@@ -4,6 +4,7 @@ import { z } from "zod";
 import { pickCollisionFreeId } from "@/api/v2/agent-templates/lib/pick-collision-free-id";
 import { serializeAgentTemplate } from "@/api/v2/agent-templates/lib/serialize-agent-template";
 import { revalidateTemplate } from "@/api/v2/agent-templates/services/revalidate-dashboard";
+import { accountIdSchema } from "@/utils/account-id";
 import { getEffectiveOwnerId } from "@/utils/auth-helpers";
 import { prisma } from "@/utils/prisma";
 import { validateSlug } from "@/utils/reserved-slugs";
@@ -32,7 +33,7 @@ const bodySchema = z
     // the generations POST endpoint's owner-assertion contract so a trusted
     // agent runtime can attribute a created template to the user it's acting
     // on behalf of rather than the ADMIN seed account.
-    ownerAccountId: z.string().uuid().optional(),
+    ownerAccountId: accountIdSchema.optional(),
     // Provenance for forks. When a row is created as a copy of an existing
     // template (e.g. the runtime forking a catalog template a group adopted),
     // this records the source id. The FK (`forkedFromId → AgentTemplate.id`,

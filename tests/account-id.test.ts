@@ -1,5 +1,6 @@
 import { describe, expect, test } from "vitest";
 import { accountIdSchema } from "@/utils/account-id";
+import { ADMIN_ACCOUNT_ID } from "@/utils/constants";
 
 describe("accountIdSchema", () => {
   test("accepts a v4 uuid", () => {
@@ -10,9 +11,7 @@ describe("accountIdSchema", () => {
   });
 
   test("accepts the ADMIN seed uuid", () => {
-    const result = accountIdSchema.safeParse(
-      "48a05ef4-4a71-57a0-957f-a3d410992b31",
-    );
+    const result = accountIdSchema.safeParse(ADMIN_ACCOUNT_ID);
     expect(result.success).toBe(true);
   });
 
