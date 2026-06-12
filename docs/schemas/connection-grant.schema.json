@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://convos.org/schemas/connection-grant.schema.json",
+  "title": "POST /v2/connections/grants request body",
+  "description": "Body iOS/Android send to issue a connection grant. ownerAccountId is taken from the authenticated JWT, never the body, so a caller can only grant access to their own connections. Unknown fields are silently ignored (stripped) by the server — `connectionId` deliberately so (a bearer capability the client must not pin). Source of truth: src/api/v2/connections/handlers/grants-post.ts (bodySchema).",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["ownerInboxId", "granteeInboxId", "conversationId", "toolkit"],
+  "properties": {
+    "ownerInboxId": {
+      "description": "The owner's own XMTP inbox id.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "granteeInboxId": {
+      "description": "The agent allowed to act.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "conversationId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "toolkit": {
+      "description": "Composio toolkit slug; equals a service `id` from GET /v2/connections/services.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "actions": {
+      "description": "Legacy/transition: explicit Composio action slugs. Empty/omitted ⇒ whole toolkit. Superseded by bundleIds.",
+      "type": "array",
+      "maxItems": 128,
+      "items": { "type": "string", "minLength": 1, "maxLength": 128 }
+    },
+    "bundleIds": {
+      "description": "Granted permission-bundle ids (e.g. \"calendar.events\"). The backend resolves these to actions at exec; clients never send slugs. Each id must exist in the catalog for `toolkit` (GET /v2/connections/services); an unknown id is rejected with 400 {code: \"unknown_bundle\", bundleId}.",
+      "type": "array",
+      "maxItems": 128,
+      "items": { "type": "string", "minLength": 1, "maxLength": 128 }
+    },
+    "serviceVersion": {
+      "description": "Catalog service version the client granted against. Stored for audit/telemetry only — exec resolves against the current catalog.",
+      "type": "integer",
+      "minimum": 0
+    },
+    "expiresAt": {
+      "description": "RFC 3339 / ISO 8601 datetime. Omitted ⇒ no expiry.",
+      "type": "string",
+      "format": "date-time"
+    }
+  }
+}

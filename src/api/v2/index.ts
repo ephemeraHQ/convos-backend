@@ -1,5 +1,9 @@
 import { Router } from "express";
-import { agentApiKeyAuth, authOrAgentApiKeyAuth } from "@/middleware/agentAuth";
+import {
+  agentApiKeyAuth,
+  authOrAgentApiKeyAuth,
+  composioExecAuth,
+} from "@/middleware/agentAuth";
 import {
   appCheckOnlyMiddleware,
   authMiddleware,
@@ -27,7 +31,9 @@ import { renewBatchHandler } from "./assets/handlers/renew-batch";
 import { testLifecycleHandler } from "./assets/handlers/test-lifecycle";
 import { attachmentsRouter } from "./attachments/attachments.router";
 import { authRouter } from "./auth/auth.router";
+import { composioRouter } from "./composio/composio.router";
 import { connectionsRouter } from "./connections/connections.router";
+import { servicesGetHandler } from "./connections/handlers/services-get";
 import { dailyRefillRouter } from "./credits/daily.router";
 import { devRouter } from "./dev/dev.router";
 import { deviceRouter } from "./device/device.router";
@@ -117,7 +123,17 @@ v2Router.use(
 // limits. authMiddleware applies to the whole subtree.
 v2Router.use("/agents", authMiddleware, agentsRouter);
 v2Router.use("/attachments", authMiddleware, attachmentsRouter);
+// The connections-picker catalog is JWT-only (NOT account-scoped): the catalog
+// is identical for every user, so requireAccount is deliberately not applied.
+// Declared BEFORE the requireAccount-gated /connections mount so this more
+// specific path is matched first and never forced through requireAccount.
+v2Router.get("/connections/services", authMiddleware, servicesGetHandler);
 v2Router.use("/connections", authMiddleware, requireAccount, connectionsRouter);
+// Agent-facing tool execution. A DEDICATED exec key (held only by the trusted
+// worker, never in the container, and not injected by the generic convos.internal
+// proxy) authenticates the caller; the exec handler then authorizes per-account
+// against the worker-stamped identity headers + the grant store.
+v2Router.use("/composio", composioExecAuth, composioRouter);
 v2Router.use("/notifications/xmtp", webhookRouter);
 v2Router.use("/notifications", authMiddleware, notificationsRouter);
 // No auth: Apple authenticates via JWS signature, verified inside the handler.

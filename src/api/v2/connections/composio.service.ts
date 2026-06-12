@@ -11,9 +11,17 @@ const AUTH_CONFIG_CACHE_TTL_MS = 5 * 60 * 1000;
 
 type AuthConfigCacheEntry = { authConfigId: string | null; expiresAt: number };
 
+// Toolkit versions are date-stamped releases (e.g. "20260429_00") published a
+// few times a month; an hour of staleness only delays picking up a NEW release,
+// it never serves an invalid version.
+const TOOLKIT_VERSION_CACHE_TTL_MS = 60 * 60 * 1000;
+
+type ToolkitVersionCacheEntry = { version: string; expiresAt: number };
+
 export class ComposioService {
   private composio: Composio;
   private authConfigCache = new Map<string, AuthConfigCacheEntry>();
+  private toolkitVersionCache = new Map<string, ToolkitVersionCacheEntry>();
 
   constructor(args: { composio: Composio }) {
     this.composio = args.composio;
@@ -70,6 +78,49 @@ export class ComposioService {
     return authConfigId;
   }
 
+  /**
+   * Resolve the CURRENT published version of a toolkit (e.g. "20260429_00").
+   * Composio refuses manual `tools.execute` against the implicit "latest"
+   * version (TOOL_VERSION_REQUIRED), so exec pins the newest version at call
+   * time instead of hardcoding one that silently ages. Versions are
+   * date-stamped (YYYYMMDD_NN), so the lexicographic max is the newest.
+   * Returns null when Composio reports no versions — callers fail closed.
+   * Misses are NOT cached: a transient gap must not stick for an hour.
+   */
+  async resolveToolkitVersion(toolkit: string): Promise<string | null> {
+    const now = Date.now();
+    const normalized = toolkit.toLowerCase();
+    const hit = this.toolkitVersionCache.get(normalized);
+    if (hit && hit.expiresAt > now) {
+      return hit.version;
+    }
+
+    const info = await this.composio.toolkits.get(normalized);
+    const versions = info.meta.availableVersions ?? [];
+    const version = versions.reduce<string | null>(
+      (max, candidate) => (max === null || candidate > max ? candidate : max),
+      null,
+    );
+
+    if (!version) {
+      logger.warn(
+        { toolkit: normalized },
+        "[Composio] resolveToolkitVersion: no available versions",
+      );
+      return null;
+    }
+
+    logger.info(
+      { toolkit: normalized, version },
+      "[Composio] resolveToolkitVersion: resolved",
+    );
+    this.toolkitVersionCache.set(normalized, {
+      version,
+      expiresAt: now + TOOLKIT_VERSION_CACHE_TTL_MS,
+    });
+    return version;
+  }
+
   async initiate(args: {
     userId: string;
     authConfigId: string;
@@ -106,6 +157,53 @@ export class ComposioService {
 
   async delete(connectionId: string) {
     return this.composio.connectedAccounts.delete(connectionId);
+  }
+
+  /**
+   * Resolve the connectedAccountId for (userId, toolkit) when a grant did not
+   * pin one. Picks the first connection matching the toolkit; returns null if
+   * the account has no connection for it.
+   *
+   * The connectedAccountId is a bearer capability — callers keep it server-side
+   * and never return it to an agent.
+   */
+  async resolveConnectionId(args: {
+    userId: string;
+    toolkit: string;
+  }): Promise<string | null> {
+    const list = await this.composio.connectedAccounts.list({
+      userIds: [args.userId],
+    });
+    const normalized = args.toolkit.toLowerCase();
+    const items: ConnectedAccountListResponseItem[] = list.items;
+    const match = items.find(
+      (item) => item.toolkit.slug.toLowerCase() === normalized,
+    );
+    return match?.id ?? null;
+  }
+
+  /**
+   * Execute a Composio tool action on behalf of an account. The connection is
+   * resolved and injected server-side; the agent never holds or names a
+   * connectedAccountId. `userId` is the data owner (stable accountId).
+   * `version` is the pinned toolkit version (see resolveToolkitVersion) —
+   * without it the SDK rejects manual execution (TOOL_VERSION_REQUIRED).
+   */
+  async execute(args: {
+    action: string;
+    userId: string;
+    arguments: Record<string, unknown>;
+    connectedAccountId?: string;
+    version?: string;
+  }) {
+    return this.composio.tools.execute(args.action, {
+      userId: args.userId,
+      arguments: args.arguments,
+      ...(args.connectedAccountId
+        ? { connectedAccountId: args.connectedAccountId }
+        : {}),
+      ...(args.version ? { version: args.version } : {}),
+    });
   }
 }
 

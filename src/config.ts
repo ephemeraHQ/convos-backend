@@ -72,6 +72,12 @@ export const AGENT_ASSETS_API_KEY = process.env.AGENT_ASSETS_API_KEY || "";
 // Composio (optional — /v2/connections/* endpoints return 503 if not configured).
 // Auth configs are resolved dynamically from Composio by toolkit slug; no local mapping.
 export const COMPOSIO_API_KEY = process.env.COMPOSIO_API_KEY || "";
+// Dedicated credential for POST /v2/composio/exec — held ONLY by the trusted
+// assistants worker, never forwarded into the agent container. Distinct from
+// AGENT_ASSETS_API_KEY so the worker's generic convos.internal proxy (which
+// injects the agent key for any backend path) cannot satisfy the exec auth.
+// Endpoint returns 503 if unset.
+export const COMPOSIO_EXEC_API_KEY = process.env.COMPOSIO_EXEC_API_KEY || "";
 export const COMPOSIO_CONNECTION_CALLBACK_URL =
   process.env.COMPOSIO_CONNECTION_CALLBACK_URL ||
   "convos://connections/callback";
