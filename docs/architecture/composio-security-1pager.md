@@ -9,7 +9,7 @@
 Two problems hide under "Composio security," and **backend-mediated execution** closes both:
 
 1. **Key custody** — the agent must never hold a Composio key. It now holds none: `COMPOSIO_API_KEY` lives only in convos-backend, the agent container gets placeholder creds, and the legacy direct-Composio path in the agent runtime is deleted.
-2. **User scoping** — a compromised (prompt-injected) agent must not act on another user's connection, nor exceed what the user consented to. The agent sends only `{toolkit, action, args}` (plus an optional `onBehalfOf` *selector*); identity is stamped by trusted infrastructure, consent is re-checked per call against the grant store, and actions are scoped by **permission bundles**.
+2. **User scoping** — a compromised (prompt-injected) agent must not act on another user's connection, nor exceed what the user consented to. The agent sends only `{toolkit, action, args}` (plus an optional `onBehalfOf` _selector_); identity is stamped by trusted infrastructure, consent is re-checked per call against the grant store, and actions are scoped by **permission bundles**.
 
 ## Threat model (the two facts everything rests on)
 
@@ -44,7 +44,7 @@ Defense around the path:
 
 - **Dedicated exec key, not the agent key.** The worker's generic `convos.internal` proxy injects the agent API key for arbitrary backend paths — reusing that key for exec would let a container smuggle an exec call with forged identity headers through the generic proxy. So exec authenticates with a separate secret (`COMPOSIO_EXEC_API_KEY`) that only `proxyComposioExec` sets, and the generic proxy additionally **denies `/api/v2/composio/*`** and **strips `x-convos-*` headers**.
 - **Direct egress denied.** `backend.composio.dev` → `denyDirectEgress` in the worker, same as `openrouter.ai`.
-- **`onBehalfOf` is a selector, not authority.** It picks among the agent's *already-authorized* grants ("query Alice's calendar" in a group); naming a member who never granted yields `no_grant` — it cannot widen access.
+- **`onBehalfOf` is a selector, not authority.** It picks among the agent's _already-authorized_ grants ("query Alice's calendar" in a group); naming a member who never granted yields `no_grant` — it cannot widen access.
 
 ## Permission bundles (least privilege)
 
@@ -53,7 +53,7 @@ Clients have no Composio action slugs, so action-level consent is expressed as b
 - The catalog (`src/api/v2/connections/bundles.config.ts`) maps `service → bundle → action slugs` and is served via **`GET /v2/connections/services`** (JWT-only) **with slugs stripped** — no Composio slug ever reaches a client.
 - Grants carry `{toolkit, serviceVersion, bundleIds}`; the device persists only bundle ids. The backend resolves bundles → actions **at exec time against the current catalog**, so re-mapping actions needs no app release.
 - **Fail closed everywhere:** unknown bundle ids are rejected at grant time (400 `unknown_bundle`); a grant whose bundles resolve to nothing (stale/unknown) authorizes nothing at exec (403 `no_grant`) — it never falls back to whole-toolkit. A read-only bundle (`calendar.events.read`) exists precisely to prove a read grant can never write (regression-tested).
-- **Transition-only exception:** a legacy grant with *both* `actions` and `bundleIds` empty still means whole-toolkit (logged). Flipping this to fail-closed is Phase C, once iOS + Android always send `bundleIds` — see "In progress."
+- **Transition-only exception:** a legacy grant with _both_ `actions` and `bundleIds` empty still means whole-toolkit (logged). Flipping this to fail-closed is Phase C, once iOS + Android always send `bundleIds` — see "In progress."
 
 ## Grant lifecycle
 
@@ -63,16 +63,16 @@ Clients have no Composio action slugs, so action-level consent is expressed as b
 
 ## Safety properties
 
-| Attack | Outcome |
-|---|---|
-| Stranger outside the conversation | No grant row → 403 before any Composio call |
-| Container forges identity headers | Worker builds a fresh request; generic proxy strips `x-convos-*` and denies `/api/v2/composio/*`; exec key never in the container |
-| Agent impersonates another agent | `granteeInboxId` comes from worker state, not the container |
-| Client/agent supplies a `connectionId` | No API accepts one; resolution is server-side from the owner's own account |
-| Verb escalation (read grant tries a write) | Action must be in the bundle-resolved union → 403 `no_grant` |
-| Stale/unknown bundle ids | 400 `unknown_bundle` at grant; resolve-to-nothing at exec → 403 `no_grant` |
-| Revoked grant | Re-checked per call; natural-key revoke needs no stored id |
-| Two members granted the same toolkit | 409 `ambiguous_grant` unless `onBehalfOf` names one |
+| Attack                                     | Outcome                                                                                                                           |
+| ------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------- |
+| Stranger outside the conversation          | No grant row → 403 before any Composio call                                                                                       |
+| Container forges identity headers          | Worker builds a fresh request; generic proxy strips `x-convos-*` and denies `/api/v2/composio/*`; exec key never in the container |
+| Agent impersonates another agent           | `granteeInboxId` comes from worker state, not the container                                                                       |
+| Client/agent supplies a `connectionId`     | No API accepts one; resolution is server-side from the owner's own account                                                        |
+| Verb escalation (read grant tries a write) | Action must be in the bundle-resolved union → 403 `no_grant`                                                                      |
+| Stale/unknown bundle ids                   | 400 `unknown_bundle` at grant; resolve-to-nothing at exec → 403 `no_grant`                                                        |
+| Revoked grant                              | Re-checked per call; natural-key revoke needs no stored id                                                                        |
+| Two members granted the same toolkit       | 409 `ambiguous_grant` unless `onBehalfOf` names one                                                                               |
 
 ## Known limits & in progress
 

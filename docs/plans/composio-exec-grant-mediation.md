@@ -20,7 +20,7 @@ The plan below predates the build-out; where it disagrees with the code, the cod
 2. **Action scope is bundle-based.** "actions empty ⇒ whole toolkit" is superseded by
    **permission bundles** (`docs/plans/connections-bundles-backend.md`): allowed set =
    union(`grant.actions`, bundle-resolved actions), fail-closed on unknown/unresolvable
-   bundles; whole-toolkit survives only for legacy grants with *both* fields empty
+   bundles; whole-toolkit survives only for legacy grants with _both_ fields empty
    (Phase C flips that to fail-closed).
 3. **`onBehalfOf` exists.** The 409 `ambiguous_grant` path is now resolvable by the agent
    passing `onBehalfOf` (a selector among already-authorized grants — cannot widen access).
@@ -149,7 +149,7 @@ connectedAccountId })`. The id is never returned to the agent.
 
 **Phase 0 — done**
 
-- #294: backend OAuth flow keyed on `accountId` (+ migration) — *PR still open/in-flight*.
+- #294: backend OAuth flow keyed on `accountId` (+ migration) — _PR still open/in-flight_.
 - `louis/composio-exec`: `ConnectionGrant` store + migration; grant CRUD under
   `/v2/connections/grants` (SIWE JWT + `requireAccount`; owner stamped from the JWT);
   `POST /v2/composio/exec` with the header-based trusted-caller resolver, fail-closed;
