@@ -4,13 +4,7 @@ import {
   TELEMETRY_MAX_POINT_AGE_MS,
   TELEMETRY_METRIC_PREFIXES,
 } from "@/config";
-
-export class TelemetryValidationError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "TelemetryValidationError";
-  }
-}
+import { ValidationError } from "@/utils/errors";
 
 // Loose structural validation. .passthrough() everywhere: we re-serialize
 // this body, so unknown OTLP fields must survive.
@@ -86,7 +80,7 @@ export function prepareBatch(
 ): PreparedBatch {
   const parsed = exportRequestSchema.safeParse(rawBody);
   if (!parsed.success) {
-    throw new TelemetryValidationError(
+    throw new ValidationError(
       `Invalid OTLP metrics body: ${parsed.error.issues[0]?.message ?? "parse error"}`,
     );
   }
@@ -99,9 +93,7 @@ export function prepareBatch(
     for (const sm of rm.scopeMetrics) {
       for (const metric of sm.metrics) {
         if (!TELEMETRY_METRIC_PREFIXES.some((p) => metric.name.startsWith(p))) {
-          throw new TelemetryValidationError(
-            `Metric name not allowed: ${metric.name}`,
-          );
+          throw new ValidationError(`Metric name not allowed: ${metric.name}`);
         }
       }
     }

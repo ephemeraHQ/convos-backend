@@ -17,7 +17,7 @@ import apiRouter from "./api";
 import { IS_DEVELOPMENT, TELEMETRY_MAX_BODY_BYTES } from "./config";
 import { bodySizeGuard } from "./middleware/bodySizeGuard";
 import { errorHandlerMiddleware } from "./middleware/errorHandler";
-import { jsonMiddleware } from "./middleware/json";
+import { globalJsonMiddleware } from "./middleware/json";
 import { noRouteMiddleware } from "./middleware/noRoute";
 import { pinoMiddleware } from "./middleware/pino";
 import { rateLimitMiddleware } from "./middleware/rateLimit";
@@ -50,20 +50,12 @@ const app = express();
 app.set("trust proxy", 1);
 app.use(helmet()); // Set security headers
 app.use(cors()); // Handle CORS
-// Reject oversized telemetry batches before the 50mb JSON parser buffers them.
+// Reject oversized telemetry batches before any JSON parser buffers them.
 // Path-scoped so it only fires for telemetry routes; the telemetry router
 // re-applies the same guard as a backstop.
 app.use("/api/v2/telemetry", bodySizeGuard(TELEMETRY_MAX_BODY_BYTES));
-// Telemetry routes parse their own body with a much smaller cap
-// (see telemetry.router.ts); skip the 50mb global parser for them so the
-// per-route limit actually applies (including to chunked uploads).
-app.use((req, res, next) => {
-  if (req.path.startsWith("/api/v2/telemetry")) {
-    next();
-    return;
-  }
-  jsonMiddleware(req, res, next);
-});
+// Skips routes that own their body parsing (see SELF_PARSING_PREFIXES).
+app.use(globalJsonMiddleware);
 app.use(cookieParser()); // Parse cookies (required for SIWE nonce flow)
 app.use(pinoMiddleware);
 

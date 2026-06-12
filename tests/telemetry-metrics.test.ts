@@ -83,8 +83,8 @@ describe("POST /telemetry/metrics", () => {
     ).not.toBeNull();
   });
 
-  test("service.name derived from android appId", async () => {
-    await post(makeApp()).send(makeBody());
+  // service.name resource attribute of the first (only) forwarded batch.
+  function forwardedServiceName(): string | undefined {
     const forwarded = vi.mocked(forwardMetrics).mock.calls[0][0] as {
       resourceMetrics: {
         resource: {
@@ -92,10 +92,14 @@ describe("POST /telemetry/metrics", () => {
         };
       }[];
     };
-    const sn = forwarded.resourceMetrics[0].resource.attributes.find(
+    return forwarded.resourceMetrics[0].resource.attributes.find(
       (a) => a.key === "service.name",
-    );
-    expect(sn?.value.stringValue).toBe("convos-android");
+    )?.value.stringValue;
+  }
+
+  test("service.name derived from android appId", async () => {
+    await post(makeApp()).send(makeBody());
+    expect(forwardedServiceName()).toBe("convos-android");
   });
 
   test("service.name derived from ios appId", async () => {
@@ -104,17 +108,7 @@ describe("POST /telemetry/metrics", () => {
       "1:226420087156:ios:abc123def456",
     );
     await post(makeApp()).send(makeBody());
-    const forwarded = vi.mocked(forwardMetrics).mock.calls[0][0] as {
-      resourceMetrics: {
-        resource: {
-          attributes: { key: string; value: { stringValue: string } }[];
-        };
-      }[];
-    };
-    const sn = forwarded.resourceMetrics[0].resource.attributes.find(
-      (a) => a.key === "service.name",
-    );
-    expect(sn?.value.stringValue).toBe("convos-ios");
+    expect(forwardedServiceName()).toBe("convos-ios");
   });
 
   test("X-Sent-At accepts an integer epoch-ms timestamp", async () => {

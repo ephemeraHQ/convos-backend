@@ -4,11 +4,9 @@ import {
   recordBatch,
 } from "@/api/v2/telemetry/services/dedup";
 import { forwardMetrics } from "@/api/v2/telemetry/services/forwarder";
-import {
-  prepareBatch,
-  TelemetryValidationError,
-} from "@/api/v2/telemetry/services/otlp";
+import { prepareBatch } from "@/api/v2/telemetry/services/otlp";
 import { ENV } from "@/config";
+import { ValidationError } from "@/utils/errors";
 
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -68,7 +66,7 @@ export async function postMetrics(req: Request, res: Response) {
       environment: ENV,
     });
   } catch (error) {
-    if (error instanceof TelemetryValidationError) {
+    if (error instanceof ValidationError) {
       res.status(400).json({ error: error.message });
       return;
     }

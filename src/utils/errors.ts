@@ -6,6 +6,9 @@ export class AppError extends Error {
   ) {
     super(message);
     this.name = "AppError";
+    // new.target preserves subclass prototypes (e.g. ValidationError), so
+    // `instanceof` works for subclasses too — pinning AppError.prototype here
+    // would clobber the subclass chain.
     Object.setPrototypeOf(this, new.target.prototype);
   }
 }

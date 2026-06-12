@@ -1,8 +1,6 @@
 import { describe, expect, test } from "vitest";
-import {
-  prepareBatch,
-  TelemetryValidationError,
-} from "@/api/v2/telemetry/services/otlp";
+import { prepareBatch } from "@/api/v2/telemetry/services/otlp";
+import { ValidationError } from "@/utils/errors";
 
 // Local view of the OTLP shape these tests assert against. The production
 // PreparedBatch.body is strongly typed; tests cast to this concrete view to
@@ -98,7 +96,7 @@ describe("prepareBatch", () => {
   test("rejects disallowed metric name prefix", () => {
     expect(() =>
       prepareBatch(makeBody({ metricName: "evil.metric" }), baseOpts),
-    ).toThrow(TelemetryValidationError);
+    ).toThrow(ValidationError);
   });
 
   test("strips device-unique resource attributes", () => {
@@ -192,19 +190,17 @@ describe("prepareBatch", () => {
     expect(dp.bucketCounts).toEqual(["1", "4"]); // untouched
   });
 
-  test("malformed body throws TelemetryValidationError", () => {
+  test("malformed body throws ValidationError", () => {
     expect(() => prepareBatch({ nope: true }, baseOpts)).toThrow(
-      TelemetryValidationError,
+      ValidationError,
     );
   });
 
-  test("non-numeric timeUnixNano throws TelemetryValidationError", () => {
+  test("non-numeric timeUnixNano throws ValidationError", () => {
     const body = makeBody();
     body.resourceMetrics[0].scopeMetrics[0].metrics[0].sum.dataPoints[0].timeUnixNano =
       "not-a-number";
-    expect(() => prepareBatch(body, baseOpts)).toThrow(
-      TelemetryValidationError,
-    );
+    expect(() => prepareBatch(body, baseOpts)).toThrow(ValidationError);
   });
 
   test("drops points dated far in the future", () => {
