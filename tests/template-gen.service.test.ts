@@ -1772,6 +1772,77 @@ describe("templateGen service — OpenRouter integration", () => {
   });
 
   // -----------------------------------------------------------------------
+  // Escaped-emoji repair — decodeEmojiEscapes / sanitizeEmojiField
+  // -----------------------------------------------------------------------
+  test("decodeEmojiEscapes decodes surrogate-pair escape text into glyphs", async () => {
+    const mod = await import("@/api/v2/agent-templates/services/templateGen");
+    const { decodeEmojiEscapes } = mod;
+
+    expect(decodeEmojiEscapes("Weather \\ud83c\\udf24\\ufe0f report")).toBe(
+      "Weather 🌤️ report",
+    );
+    // Uppercase hex decodes too
+    expect(decodeEmojiEscapes("\\uD83E\\uDD16")).toBe("🤖");
+    // Text without escape sequences passes through untouched
+    expect(decodeEmojiEscapes("plain text")).toBe("plain text");
+  });
+
+  test("decodeEmojiEscapes drops lone-surrogate escape debris", async () => {
+    const mod = await import("@/api/v2/agent-templates/services/templateGen");
+    const { decodeEmojiEscapes } = mod;
+
+    expect(decodeEmojiEscapes("Skyler \\ud83c")).toBe("Skyler ");
+    expect(decodeEmojiEscapes("x \\udf24 y")).toBe("x  y");
+  });
+
+  test("sanitizeEmojiField repairs escape text and rejects non-emoji", async () => {
+    const mod = await import("@/api/v2/agent-templates/services/templateGen");
+    const { sanitizeEmojiField } = mod;
+
+    expect(sanitizeEmojiField("\\ud83c\\udf24\\ufe0f")).toBe("🌤️");
+    expect(sanitizeEmojiField("🤖")).toBe("🤖");
+    expect(sanitizeEmojiField("🇺🇸")).toBe("🇺🇸");
+    expect(sanitizeEmojiField("#️⃣")).toBe("#️⃣");
+    // Prose, lone-surrogate debris, and blanks all empty out
+    expect(sanitizeEmojiField("robot")).toBe("");
+    expect(sanitizeEmojiField("\\ud83c")).toBe("");
+    expect(sanitizeEmojiField("  ")).toBe("");
+  });
+
+  test("parseTemplateResponse repairs double-escaped emoji from the wire", async () => {
+    const mod = await import("@/api/v2/agent-templates/services/templateGen");
+    const { parseTemplateResponse } = mod;
+
+    // Simulates a completion whose strings carry emoji as literal escape
+    // text: JSON.stringify re-escapes the backslashes exactly as the wire
+    // JSON does, so JSON.parse yields literal `\ud83c…` text pre-repair.
+    const content = JSON.stringify({
+      agentName: "Skyler \\ud83c",
+      prompt: "Give forecasts. Sign off with \\ud83c\\udf24\\ufe0f.",
+      emoji: "\\ud83c\\udf24\\ufe0f",
+      description: "Weather \\ud83c\\udf24\\ufe0f friend",
+      category: "Local",
+      tools: [],
+    });
+
+    const result = parseTemplateResponse(content);
+    expect(result.agentName).toBe("Skyler");
+    expect(result.prompt).toBe("Give forecasts. Sign off with 🌤️.");
+    expect(result.description).toBe("Weather 🌤️ friend");
+    expect(result.emoji).toBe("🌤️");
+  });
+
+  test("parseTemplateResponse blanks a non-emoji emoji field", async () => {
+    const mod = await import("@/api/v2/agent-templates/services/templateGen");
+    const { parseTemplateResponse } = mod;
+
+    const result = parseTemplateResponse(
+      JSON.stringify({ agentName: "Bot", prompt: "x", emoji: "weather" }),
+    );
+    expect(result.emoji).toBe("");
+  });
+
+  // -----------------------------------------------------------------------
   // appendBrevityRail exported and works correctly
   // -----------------------------------------------------------------------
   test("appendBrevityRail appends rail with separator", async () => {
