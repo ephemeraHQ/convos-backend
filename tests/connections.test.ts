@@ -31,8 +31,11 @@ vi.mock("firebase-admin/app-check");
 vi.mock("firebase-admin/messaging");
 
 // Stub shapes — match just what the service touches on the Composio client.
+// `initiate()` is deliberately absent: the SDK retires it for Composio-managed
+// OAuth on 2026-07-03, so the service must only call `link()`. A regression
+// back to `initiate()` would throw here and fail the happy-path tests.
 type ConnectedAccountsStub = {
-  initiate: (
+  link: (
     userId: string,
     authConfigId: string,
     options?: { callbackUrl?: string },
@@ -88,7 +91,7 @@ function makeStub(
 ): {
   stub: ComposioStub;
   calls: {
-    initiate: Array<{
+    link: Array<{
       userId: string;
       authConfigId: string;
       callbackUrl?: string;
@@ -104,7 +107,7 @@ function makeStub(
     ConnectedAccountListResponseItem & { userId: string }
   >();
   const calls = {
-    initiate: [] as Array<{
+    link: [] as Array<{
       userId: string;
       authConfigId: string;
       callbackUrl?: string;
@@ -114,8 +117,8 @@ function makeStub(
     authConfigsList: [] as AuthConfigListParams[],
   };
   const defaults: ConnectedAccountsStub = {
-    initiate: (userId, authConfigId, options) => {
-      calls.initiate.push({
+    link: (userId, authConfigId, options) => {
+      calls.link.push({
         userId,
         authConfigId,
         callbackUrl: options?.callbackUrl,
@@ -285,7 +288,7 @@ describe("Connections API", () => {
         body: JSON.stringify({ serviceId: "google_calendar" }),
       });
       expect(res.status).toBe(403);
-      expect(calls.initiate).toEqual([]);
+      expect(calls.link).toEqual([]);
     });
   });
 
@@ -311,12 +314,50 @@ describe("Connections API", () => {
       };
       expect(body.connectionRequestId).toBe("conn_1");
       expect(body.redirectUrl).toBe("https://composio.example/auth");
-      expect(calls.initiate[0]?.userId).toBe(ACCOUNT_ID);
-      expect(calls.initiate[0]?.authConfigId).toBe(AUTH_CONFIG_ID);
+      expect(calls.link[0]?.userId).toBe(ACCOUNT_ID);
+      expect(calls.link[0]?.authConfigId).toBe(AUTH_CONFIG_ID);
       // No redirectUri in body → service falls back to the env default.
-      expect(calls.initiate[0]?.callbackUrl).toBe(
-        "convos://connections/callback",
-      );
+      expect(calls.link[0]?.callbackUrl).toBe("convos://connections/callback");
+    });
+
+    test("initiate returns null redirectUrl when Composio omits one", async () => {
+      const { stub } = makeStub({
+        overrides: {
+          link: (_userId, _authConfigId, _options) =>
+            Promise.resolve({
+              id: "conn_no_redirect",
+              status: "INITIATED",
+              redirectUrl: null,
+              waitForConnection: () =>
+                Promise.reject(new Error("not used in tests")),
+              toJSON: () => ({
+                id: "conn_no_redirect",
+                status: "INITIATED",
+                redirectUrl: null,
+              }),
+              toString: () => "conn_no_redirect",
+            }),
+        },
+      });
+      installStub(stub);
+      const token = await makeToken({ accountId: ACCOUNT_ID });
+
+      const res = await fetch(`${baseURL}/api/v2/connections/initiate`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Convos-AuthToken": token,
+        },
+        body: JSON.stringify({ serviceId: "google_calendar" }),
+      });
+
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as {
+        connectionRequestId: string;
+        redirectUrl: string | null;
+      };
+      expect(body.connectionRequestId).toBe("conn_no_redirect");
+      expect(body.redirectUrl).toBeNull();
     });
 
     test("initiate forwards per-request redirectUri to Composio", async () => {
@@ -337,7 +378,7 @@ describe("Connections API", () => {
       });
 
       expect(res.status).toBe(200);
-      expect(calls.initiate[0]?.callbackUrl).toBe(
+      expect(calls.link[0]?.callbackUrl).toBe(
         "convos-dev://connections/callback",
       );
     });

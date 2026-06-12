@@ -121,12 +121,20 @@ export class ComposioService {
     return version;
   }
 
+  /**
+   * Start an OAuth connection flow for a user. Named after our endpoint
+   * (POST /connections/initiate); internally this uses the SDK's `link()` —
+   * Composio retires `connectedAccounts.initiate()` for Composio-managed
+   * OAuth on 2026-07-03 (see https://docs.composio.dev/docs/changelog/2026/04/24).
+   * `link()` returns the same ConnectionRequest shape ({ id, status,
+   * redirectUrl }), so the endpoint response is unchanged.
+   */
   async initiate(args: {
     userId: string;
     authConfigId: string;
     callbackUrl?: string;
   }) {
-    return this.composio.connectedAccounts.initiate(
+    return this.composio.connectedAccounts.link(
       args.userId,
       args.authConfigId,
       {
