@@ -244,6 +244,9 @@ export const TELEMETRY_METRIC_PREFIXES = [
   "message.",
   "push.",
   "worker.",
+  "session.",
+  "storage.",
+  "stream.",
 ] as const;
 
 // Resource attributes allowed through (cardinality policy: nothing
@@ -261,9 +264,13 @@ export const TELEMETRY_ALLOWED_RESOURCE_ATTRS = new Set([
 ]);
 
 // Data point attributes allowed through (same cardinality/PII policy as
-// resource attrs — they become Datadog metric tags). Deny-all until a client
-// has a concrete need for a point-level dimension; add keys here then.
-export const TELEMETRY_ALLOWED_POINT_ATTRS = new Set<string>([]);
+// resource attrs — they become Datadog metric tags). "key" is the client
+// meter sub-dimension (e.g. stream.content_type key=text/plain); values are
+// app-enumerated, never user data.
+// Note: only attribute KEYS are enforced here — value-level cardinality/PII
+// discipline is the client's responsibility; review any new `key` call site
+// against the cardinality policy before shipping.
+export const TELEMETRY_ALLOWED_POINT_ATTRS = new Set<string>(["key"]);
 
 // How long dedup rows are kept (covers client retry horizon).
 export const TELEMETRY_BATCH_TTL_MS = 48 * 60 * 60 * 1000;

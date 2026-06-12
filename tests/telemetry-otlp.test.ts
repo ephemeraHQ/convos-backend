@@ -284,4 +284,62 @@ describe("prepareBatch", () => {
       "https://example.com/schema",
     );
   });
+
+  test("allows session/storage/stream metric prefixes", () => {
+    for (const name of [
+      "session.delete_account",
+      "storage.conversations.fetch",
+      "stream.process_message",
+    ]) {
+      const out = prepareBatch(makeBody({ metricName: name }), baseOpts);
+      expect(out.isEmpty).toBe(false);
+    }
+  });
+
+  test("keeps the 'key' data point attribute", () => {
+    const body = makeBody();
+    body.resourceMetrics[0].scopeMetrics[0].metrics[0].sum.dataPoints[0].attributes =
+      [{ key: "key", value: { stringValue: "text/plain" } }] as never;
+    const out = prepareBatch(body, baseOpts);
+    const fwd = out.body as unknown as TestBody;
+    const dp = fwd.resourceMetrics[0].scopeMetrics[0].metrics[0].sum
+      ?.dataPoints[0] as { attributes?: { key: string }[] };
+    expect(dp.attributes?.map((a) => a.key)).toEqual(["key"]);
+    // only "key" present, nothing to strip
+    expect(out.strippedPointAttrKeys).toEqual([]);
+  });
+
+  test("keeps the 'key' attribute on histogram data points too", () => {
+    const body = makeBody();
+    body.resourceMetrics[0].scopeMetrics[0].metrics = [
+      {
+        name: "api.authenticate",
+        unit: "ms",
+        histogram: {
+          aggregationTemporality: 1,
+          dataPoints: [
+            {
+              startTimeUnixNano: ms(NOW_MS - 61_000).toString(),
+              timeUnixNano: ms(NOW_MS - 60_000).toString(),
+              count: "5",
+              sum: 1234.5,
+              bucketCounts: ["1", "4"],
+              explicitBounds: [100],
+              attributes: [
+                { key: "key", value: { stringValue: "wifi" } },
+                { key: "user.id", value: { stringValue: "u-123" } },
+              ],
+            },
+          ],
+        },
+      } as never,
+    ];
+    const out = prepareBatch(body, baseOpts);
+    const dp = (out.body as unknown as TestBody).resourceMetrics[0]
+      .scopeMetrics[0].metrics[0].histogram!.dataPoints[0] as {
+      attributes?: { key: string }[];
+    };
+    expect(dp.attributes?.map((a) => a.key)).toEqual(["key"]);
+    expect(out.strippedPointAttrKeys).toEqual(["user.id"]);
+  });
 });
