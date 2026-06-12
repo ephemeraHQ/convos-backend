@@ -8,6 +8,7 @@ import {
   startTtlSweep as startGenerationTtlSweep,
   stopTtlSweep as stopGenerationTtlSweep,
 } from "@/api/v2/agent-templates/services/ttl-sweep";
+import { runComposioUserIdMigrationOnce } from "@/api/v2/connections/migrate-user-ids";
 import apiRouter from "./api";
 import { IS_DEVELOPMENT } from "./config";
 import { errorHandlerMiddleware } from "./middleware/errorHandler";
@@ -103,6 +104,13 @@ validateJWTKeys()
       // Generation pipeline sweep — expires stale generation rows. Runs in
       // every env now that the agent-templates router is mounted everywhere.
       startGenerationTtlSweep();
+
+      // One-time data migration: move Composio connections from deviceId to the
+      // stable accountId. Self-guards via a RuntimeConfig ledger marker so it
+      // runs exactly once per environment (like a DB migration) and is a no-op
+      // on every subsequent boot. Fired after listen so a slow/failing external
+      // call never blocks startup or health checks.
+      void runComposioUserIdMigrationOnce();
     });
 
     // Wrap the async drain steps in a void-IIFE so the SIGTERM listener

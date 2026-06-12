@@ -21,7 +21,7 @@ import {
   ComposioService,
 } from "@/api/v2/connections/composio.service";
 import { connectionsRouter } from "@/api/v2/connections/connections.router";
-import { authMiddleware } from "@/middleware/auth";
+import { authMiddleware, requireAccount } from "@/middleware/auth";
 import { jsonMiddleware } from "@/middleware/json";
 import { pinoMiddleware } from "@/middleware/pino";
 import { createJwtToken } from "@/utils/jwt";
@@ -53,11 +53,29 @@ type ComposioStub = {
 };
 
 const AUTH_CONFIG_ID = "ac_test_google_calendar";
+// Connections are scoped to the stable accountId; the JWT carries it and
+// requireAccount enforces its presence.
+const ACCOUNT_ID = "11111111-1111-4111-8111-111111111111";
+const DEVICE_ID = "device-abc";
+
+// Mint an auth token for the standard test device. Omit accountId to exercise
+// the requireAccount gate (device authenticated but not bound to an account).
+function makeToken(opts: { accountId?: string } = {}) {
+  return createJwtToken({
+    deviceId: DEVICE_ID,
+    ...(opts.accountId ? { accountId: opts.accountId } : {}),
+  });
+}
 
 const app = express();
 app.use(pinoMiddleware);
 app.use(jsonMiddleware);
-app.use("/api/v2/connections", authMiddleware, connectionsRouter);
+app.use(
+  "/api/v2/connections",
+  authMiddleware,
+  requireAccount,
+  connectionsRouter,
+);
 
 let server: Server;
 const baseURL = "http://localhost:4012";
@@ -252,14 +270,30 @@ describe("Connections API", () => {
       });
       expect(res.status).toBe(401);
     });
+
+    test("initiate returns 403 when token has no accountId", async () => {
+      const { stub, calls } = makeStub();
+      installStub(stub);
+      // Authenticated device but not bound to an account → requireAccount blocks.
+      const token = await makeToken();
+      const res = await fetch(`${baseURL}/api/v2/connections/initiate`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Convos-AuthToken": token,
+        },
+        body: JSON.stringify({ serviceId: "google_calendar" }),
+      });
+      expect(res.status).toBe(403);
+      expect(calls.initiate).toEqual([]);
+    });
   });
 
   describe("happy path", () => {
-    test("initiate forwards deviceId as userId and maps serviceId to authConfigId", async () => {
+    test("initiate forwards accountId as userId and maps serviceId to authConfigId", async () => {
       const { stub, calls } = makeStub();
       installStub(stub);
-      const deviceId = "device-abc";
-      const token = await createJwtToken({ deviceId });
+      const token = await makeToken({ accountId: ACCOUNT_ID });
 
       const res = await fetch(`${baseURL}/api/v2/connections/initiate`, {
         method: "POST",
@@ -277,7 +311,7 @@ describe("Connections API", () => {
       };
       expect(body.connectionRequestId).toBe("conn_1");
       expect(body.redirectUrl).toBe("https://composio.example/auth");
-      expect(calls.initiate[0]?.userId).toBe(deviceId);
+      expect(calls.initiate[0]?.userId).toBe(ACCOUNT_ID);
       expect(calls.initiate[0]?.authConfigId).toBe(AUTH_CONFIG_ID);
       // No redirectUri in body → service falls back to the env default.
       expect(calls.initiate[0]?.callbackUrl).toBe(
@@ -288,8 +322,7 @@ describe("Connections API", () => {
     test("initiate forwards per-request redirectUri to Composio", async () => {
       const { stub, calls } = makeStub();
       installStub(stub);
-      const deviceId = "device-abc";
-      const token = await createJwtToken({ deviceId });
+      const token = await makeToken({ accountId: ACCOUNT_ID });
 
       const res = await fetch(`${baseURL}/api/v2/connections/initiate`, {
         method: "POST",
@@ -312,7 +345,7 @@ describe("Connections API", () => {
     test("initiate rejects malformed redirectUri", async () => {
       const { stub } = makeStub();
       installStub(stub);
-      const token = await createJwtToken({ deviceId: "device-abc" });
+      const token = await makeToken({ accountId: ACCOUNT_ID });
 
       const res = await fetch(`${baseURL}/api/v2/connections/initiate`, {
         method: "POST",
@@ -332,10 +365,9 @@ describe("Connections API", () => {
     test("complete returns mapped response for owned connection", async () => {
       const { stub, accounts } = makeStub();
       installStub(stub);
-      const deviceId = "device-abc";
       accounts.set("conn_owned", {
         id: "conn_owned",
-        userId: deviceId,
+        userId: ACCOUNT_ID,
         authConfig: {
           id: AUTH_CONFIG_ID,
           isComposioManaged: true,
@@ -348,7 +380,7 @@ describe("Connections API", () => {
         createdAt: "2026-01-01T00:00:00Z",
         updatedAt: "2026-01-01T00:00:00Z",
       });
-      const token = await createJwtToken({ deviceId });
+      const token = await makeToken({ accountId: ACCOUNT_ID });
 
       const res = await fetch(`${baseURL}/api/v2/connections/complete`, {
         method: "POST",
@@ -367,18 +399,17 @@ describe("Connections API", () => {
         serviceId: string;
       };
       expect(body.connectionId).toBe("conn_owned");
-      expect(body.composioEntityId).toBe(deviceId);
+      expect(body.composioEntityId).toBe(ACCOUNT_ID);
       expect(body.serviceId).toBe("google_calendar");
       expect(body.status).toBe("ACTIVE");
     });
 
-    test("list returns only this device's connections", async () => {
+    test("list returns only this account's connections", async () => {
       const { stub, accounts } = makeStub();
       installStub(stub);
-      const deviceId = "device-abc";
       accounts.set("conn_1", {
         id: "conn_1",
-        userId: deviceId,
+        userId: ACCOUNT_ID,
         authConfig: {
           id: AUTH_CONFIG_ID,
           isComposioManaged: true,
@@ -406,7 +437,7 @@ describe("Connections API", () => {
         createdAt: "2026-01-01T00:00:00Z",
         updatedAt: "2026-01-01T00:00:00Z",
       });
-      const token = await createJwtToken({ deviceId });
+      const token = await makeToken({ accountId: ACCOUNT_ID });
 
       const res = await fetch(`${baseURL}/api/v2/connections`, {
         method: "GET",
@@ -423,10 +454,9 @@ describe("Connections API", () => {
     test("delete removes owned connection and returns 204", async () => {
       const { stub, accounts, calls } = makeStub();
       installStub(stub);
-      const deviceId = "device-abc";
       accounts.set("conn_owned", {
         id: "conn_owned",
-        userId: deviceId,
+        userId: ACCOUNT_ID,
         authConfig: {
           id: AUTH_CONFIG_ID,
           isComposioManaged: true,
@@ -439,7 +469,7 @@ describe("Connections API", () => {
         createdAt: "2026-01-01T00:00:00Z",
         updatedAt: "2026-01-01T00:00:00Z",
       });
-      const token = await createJwtToken({ deviceId });
+      const token = await makeToken({ accountId: ACCOUNT_ID });
 
       const res = await fetch(`${baseURL}/api/v2/connections/conn_owned`, {
         method: "DELETE",
@@ -452,7 +482,7 @@ describe("Connections API", () => {
   });
 
   describe("entity mismatch", () => {
-    test("complete returns 403 when connection belongs to another device", async () => {
+    test("complete returns 403 when connection belongs to another account", async () => {
       const { stub, accounts } = makeStub();
       installStub(stub);
       accounts.set("conn_other", {
@@ -470,7 +500,7 @@ describe("Connections API", () => {
         createdAt: "2026-01-01T00:00:00Z",
         updatedAt: "2026-01-01T00:00:00Z",
       });
-      const token = await createJwtToken({ deviceId: "device-abc" });
+      const token = await makeToken({ accountId: ACCOUNT_ID });
 
       const res = await fetch(`${baseURL}/api/v2/connections/complete`, {
         method: "POST",
@@ -484,7 +514,7 @@ describe("Connections API", () => {
       expect(res.status).toBe(403);
     });
 
-    test("delete returns 403 when connection belongs to another device", async () => {
+    test("delete returns 403 when connection belongs to another account", async () => {
       const { stub, accounts, calls } = makeStub();
       installStub(stub);
       accounts.set("conn_other", {
@@ -502,7 +532,7 @@ describe("Connections API", () => {
         createdAt: "2026-01-01T00:00:00Z",
         updatedAt: "2026-01-01T00:00:00Z",
       });
-      const token = await createJwtToken({ deviceId: "device-abc" });
+      const token = await makeToken({ accountId: ACCOUNT_ID });
 
       const res = await fetch(`${baseURL}/api/v2/connections/conn_other`, {
         method: "DELETE",
@@ -523,7 +553,7 @@ describe("Connections API", () => {
         },
       });
       installStub(stub);
-      const token = await createJwtToken({ deviceId: "device-abc" });
+      const token = await makeToken({ accountId: ACCOUNT_ID });
       const res = await fetch(`${baseURL}/api/v2/connections/initiate`, {
         method: "POST",
         headers: {

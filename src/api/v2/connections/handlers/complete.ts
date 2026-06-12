@@ -8,8 +8,8 @@ const bodySchema = z.object({
 });
 
 export async function completeHandler(req: Request, res: Response) {
-  const deviceId = res.locals.deviceId;
-  if (!deviceId) {
+  const accountId = res.locals.accountId;
+  if (!accountId) {
     res.status(401).json({ error: "Unauthorized" });
     return;
   }
@@ -18,7 +18,7 @@ export async function completeHandler(req: Request, res: Response) {
   if (!parsed.success) {
     req.log.warn(
       {
-        deviceId,
+        accountId,
         issues: parsed.error.issues,
         receivedBody: req.body as unknown,
         contentType: req.header("content-type"),
@@ -41,16 +41,16 @@ export async function completeHandler(req: Request, res: Response) {
   try {
     const owned = await service.getIfOwned({
       connectionId: parsed.data.connectionRequestId,
-      userId: deviceId,
+      userId: accountId,
     });
     if (!owned) {
-      res.status(403).json({ error: "Connection not owned by this device" });
+      res.status(403).json({ error: "Connection not owned by this account" });
       return;
     }
-    res.status(200).json(mapComposioToResponse(owned, deviceId));
+    res.status(200).json(mapComposioToResponse(owned, accountId));
     return;
   } catch (error) {
-    req.log.error({ error, deviceId }, "[Composio] complete failed");
+    req.log.error({ error, accountId }, "[Composio] complete failed");
     res.status(502).json({ error: "Failed to complete connection" });
     return;
   }

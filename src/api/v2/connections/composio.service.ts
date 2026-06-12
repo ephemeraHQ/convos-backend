@@ -89,7 +89,8 @@ export class ComposioService {
    * Returns null if it doesn't exist or isn't owned by the caller.
    *
    * Composio's retrieve endpoint no longer returns userId on the response,
-   * so ownership is verified by listing the caller's accounts.
+   * so ownership is verified by listing the caller's accounts. The userId is
+   * the caller's stable accountId.
    */
   async getIfOwned(args: { connectionId: string; userId: string }) {
     const list = await this.composio.connectedAccounts.list({

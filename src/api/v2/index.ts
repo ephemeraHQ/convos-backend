@@ -117,7 +117,7 @@ v2Router.use(
 // limits. authMiddleware applies to the whole subtree.
 v2Router.use("/agents", authMiddleware, agentsRouter);
 v2Router.use("/attachments", authMiddleware, attachmentsRouter);
-v2Router.use("/connections", authMiddleware, connectionsRouter);
+v2Router.use("/connections", authMiddleware, requireAccount, connectionsRouter);
 v2Router.use("/notifications/xmtp", webhookRouter);
 v2Router.use("/notifications", authMiddleware, notificationsRouter);
 // No auth: Apple authenticates via JWS signature, verified inside the handler.

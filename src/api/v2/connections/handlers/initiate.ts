@@ -11,8 +11,10 @@ const bodySchema = z.object({
 });
 
 export async function initiateHandler(req: Request, res: Response) {
-  const deviceId = res.locals.deviceId;
-  if (!deviceId) {
+  // Connections are scoped to the stable accountId (requireAccount guarantees it
+  // is present). The 401 guard is defense-in-depth.
+  const accountId = res.locals.accountId;
+  if (!accountId) {
     res.status(401).json({ error: "Unauthorized" });
     return;
   }
@@ -21,7 +23,7 @@ export async function initiateHandler(req: Request, res: Response) {
   if (!parsed.success) {
     req.log.warn(
       {
-        deviceId,
+        accountId,
         issues: parsed.error.issues,
         receivedBody: req.body as unknown,
         contentType: req.header("content-type"),
@@ -47,7 +49,7 @@ export async function initiateHandler(req: Request, res: Response) {
     );
     if (!authConfigId) {
       req.log.warn(
-        { deviceId, serviceId: parsed.data.serviceId },
+        { accountId, serviceId: parsed.data.serviceId },
         "[Composio] no ENABLED auth config found for serviceId",
       );
       res.status(400).json({
@@ -58,7 +60,7 @@ export async function initiateHandler(req: Request, res: Response) {
     }
 
     const request = await service.initiate({
-      userId: deviceId,
+      userId: accountId,
       authConfigId,
       callbackUrl: parsed.data.redirectUri,
     });
@@ -68,7 +70,7 @@ export async function initiateHandler(req: Request, res: Response) {
     });
     return;
   } catch (error) {
-    req.log.error({ error, deviceId }, "[Composio] initiate failed");
+    req.log.error({ error, accountId }, "[Composio] initiate failed");
     res.status(502).json({ error: "Failed to initiate connection" });
     return;
   }
