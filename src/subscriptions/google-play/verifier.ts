@@ -71,11 +71,7 @@ export const verifyPubsubPushAuth = async (
 ): Promise<void> => {
   // Defense in depth: even if a testVerifier somehow survived into a prod
   // process, never let it short-circuit Google-signed OIDC verification.
-  if (
-    !isProductionEnv() &&
-    process.env.LOCAL_TESTING === "1" &&
-    testVerifier
-  ) {
+  if (!isProductionEnv() && process.env.LOCAL_TESTING === "1" && testVerifier) {
     await testVerifier(authorizationHeader);
     return;
   }
