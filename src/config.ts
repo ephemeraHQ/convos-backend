@@ -84,6 +84,10 @@ export const COMPOSIO_CONNECTION_CALLBACK_URL =
 
 export const XMTP_ENV = process.env.XMTP_ENV || "dev";
 
+// Deployment environment tag (e.g. convos-otr-dev, convos-otr-prod). Used for
+// telemetry resource attributes. Mirrors the value the OTel instrumentation reads.
+export const ENV = process.env.ENV || "development";
+
 // SIWE / nonce-cookie auth (required)
 if (!process.env.SIWE_DOMAIN) {
   throw new Error("SIWE_DOMAIN is not configured");
@@ -217,3 +221,49 @@ if (GENERATION_STUCK_SWEEP_THRESHOLD_MS <= GENERATION_EXECUTOR_TIMEOUT_MS) {
     `Configuration error: GENERATION_STUCK_SWEEP_THRESHOLD_MS (${GENERATION_STUCK_SWEEP_THRESHOLD_MS}ms) must be greater than GENERATION_EXECUTOR_TIMEOUT_MS (${GENERATION_EXECUTOR_TIMEOUT_MS}ms).`,
   );
 }
+
+// Telemetry proxy (client metrics → Datadog Agent OTLP receiver)
+export const OTLP_METRICS_FORWARD_URL =
+  process.env.OTLP_METRICS_FORWARD_URL?.trim() ||
+  "http://localhost:4318/v1/metrics";
+
+// Datadog rejects points >1h old; drop at 55min to leave forwarding headroom.
+export const TELEMETRY_MAX_POINT_AGE_MS = 55 * 60 * 1000;
+
+// Max request body size for telemetry batches (bytes).
+export const TELEMETRY_MAX_BODY_BYTES = 262_144; // 256 KiB
+
+// Metric names must start with one of these prefixes.
+export const TELEMETRY_METRIC_PREFIXES = [
+  "xmtp.",
+  "api.",
+  "core.",
+  "inbox.",
+  "network.",
+  "sync.",
+  "message.",
+  "push.",
+  "worker.",
+] as const;
+
+// Resource attributes allowed through (cardinality policy: nothing
+// device-unique). Unknown keys are stripped, not rejected.
+export const TELEMETRY_ALLOWED_RESOURCE_ATTRS = new Set([
+  "service.name",
+  "service.version",
+  "deployment.environment",
+  "convos.flavor",
+  "os.version",
+  "device.model",
+  "telemetry.sdk.name",
+  "telemetry.sdk.language",
+  "telemetry.sdk.version",
+]);
+
+// Data point attributes allowed through (same cardinality/PII policy as
+// resource attrs — they become Datadog metric tags). Deny-all until a client
+// has a concrete need for a point-level dimension; add keys here then.
+export const TELEMETRY_ALLOWED_POINT_ATTRS = new Set<string>([]);
+
+// How long dedup rows are kept (covers client retry horizon).
+export const TELEMETRY_BATCH_TTL_MS = 48 * 60 * 60 * 1000;

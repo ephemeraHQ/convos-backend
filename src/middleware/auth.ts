@@ -39,7 +39,8 @@ export const appCheckOnlyMiddleware = async (
   }
 
   try {
-    await verifyAppCheckToken(appCheckToken);
+    const appId = await verifyAppCheckToken(appCheckToken);
+    res.locals.appCheckAppId = appId;
     req.log.info("AppCheck verification successful");
     next();
   } catch (error) {

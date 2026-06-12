@@ -17,6 +17,7 @@ import {
   agentAssetPreAuthLimiter,
   assetRenewalLimiter,
   inviteCodeRedeemLimiter,
+  telemetryLimiter,
 } from "@/middleware/rateLimit";
 import { accountsByIdRouter } from "./accounts/accountsByIdRouter";
 import { accountsMeRouter } from "./accounts/accountsMeRouter";
@@ -45,6 +46,7 @@ import invitesV2Router from "./invites/invites.router";
 import { notificationsRouter } from "./notifications/notifications.router";
 import { webhookRouter } from "./notifications/webhook.router";
 import { appleWebhookRouter } from "./subscriptions/apple-webhook.router";
+import { telemetryRouter } from "./telemetry/telemetry.router";
 
 const v2Router = Router();
 
@@ -80,6 +82,12 @@ v2Router.use(
 );
 v2Router.use("/credits", dailyRefillRouter);
 v2Router.use("/device", appCheckOnlyMiddleware, deviceRouter);
+v2Router.use(
+  "/telemetry",
+  telemetryLimiter,
+  appCheckOnlyMiddleware,
+  telemetryRouter,
+);
 
 // Lifecycle test endpoints - protected by token auth, must be before authenticated /assets route
 v2Router.post(

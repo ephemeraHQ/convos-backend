@@ -85,3 +85,14 @@ export const agentAssetLimiter = rateLimit({
   standardHeaders: "draft-8",
   message: { error: "Too many agent upload requests, please try again later" },
 });
+
+// Telemetry batches: clients export every ~15 min plus foreground flushes.
+// App Check appId identifies the app, not the device, so key on IP.
+export const telemetryLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000, // 1 hour
+  limit: 120,
+  keyGenerator: (req) => req.ip || "unknown",
+  legacyHeaders: false,
+  standardHeaders: "draft-8",
+  message: { error: "Too many telemetry uploads, please try again later" },
+});

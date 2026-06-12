@@ -1,8 +1,10 @@
+import { OTLPMetricExporter } from "@opentelemetry/exporter-metrics-otlp-grpc";
 import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-grpc";
 import { ExpressInstrumentation } from "@opentelemetry/instrumentation-express";
 import { HttpInstrumentation } from "@opentelemetry/instrumentation-http";
 import { PinoInstrumentation } from "@opentelemetry/instrumentation-pino";
 import { resourceFromAttributes } from "@opentelemetry/resources";
+import { PeriodicExportingMetricReader } from "@opentelemetry/sdk-metrics";
 import { NodeSDK } from "@opentelemetry/sdk-node";
 import {
   BatchSpanProcessor,
@@ -25,6 +27,11 @@ const sdk = new NodeSDK({
     IS_PRODUCTION
       ? new BatchSpanProcessor(traceExporter)
       : new SimpleSpanProcessor(traceExporter),
+  ],
+  metricReaders: [
+    // Export our own metrics (see src/utils/metrics.ts) to the same OTLP
+    // endpoint as traces (localhost:4317).
+    new PeriodicExportingMetricReader({ exporter: new OTLPMetricExporter() }),
   ],
   resource: resourceFromAttributes({
     [ATTR_SERVICE_NAME]: "convos-backend",
