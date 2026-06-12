@@ -928,7 +928,7 @@ async function tryGithubPassthrough(
         repoDescription ||
         `Assistant based on ${owner}/${repo}.`,
       category: selection.category || "Work",
-      emoji: selection.emoji || "📦",
+      emoji: sanitizeEmojiField(selection.emoji ?? "") || "📦",
     },
     type,
   );
@@ -1250,7 +1250,7 @@ async function tryContentPassthrough(
       agentName: classification.agentName || "Agent",
       description: classification.description || "A Convos agent.",
       category: classification.category || "Work",
-      emoji: classification.emoji || "🤖",
+      emoji: sanitizeEmojiField(classification.emoji ?? "") || "🤖",
     },
     classification.passthroughType,
   );
@@ -1587,6 +1587,42 @@ export async function generateTemplate(
   };
 }
 
+// ---------------------------------------------------------------------------
+// Escaped-emoji repair — exported for testing
+// ---------------------------------------------------------------------------
+
+// Completions occasionally arrive with emoji written as literal `\uXXXX`
+// escape TEXT instead of glyphs — constrained json_schema decoding biases the
+// model toward ASCII escape tokens, and it can even split a surrogate pair.
+// On the wire the backslash itself is then JSON-escaped, so JSON.parse hands
+// back literal `\ud83c…` characters that render verbatim in clients.
+
+/** Decode literal surrogate-pair escape text (`\ud83c\udf24` → 🌤) plus the
+ *  emoji-sequence escapes VS15/VS16, ZWJ, and keycap, then drop any leftover
+ *  lone-surrogate escape — a broken half of a pair with nothing to recover. */
+export function decodeEmojiEscapes(text: string): string {
+  return text
+    .replace(/\\u(d[89ab][0-9a-f]{2})\\u(d[c-f][0-9a-f]{2})/gi, (_, hi, lo) =>
+      String.fromCharCode(parseInt(hi, 16), parseInt(lo, 16)),
+    )
+    .replace(/\\u(fe0e|fe0f|200d|20e3)/gi, (_, hex) =>
+      String.fromCharCode(parseInt(hex, 16)),
+    )
+    .replace(/\\ud[89a-f][0-9a-f]{2}/gi, "");
+}
+
+/** Repair + gate the `emoji` field: decode escape text, then require at least
+ *  one emoji-class character. Anything else (prose, escape debris) becomes ""
+ *  so a non-emoji string can never ship in the field. */
+export function sanitizeEmojiField(emoji: string): string {
+  const decoded = decodeEmojiEscapes(emoji).trim();
+  return /\p{Extended_Pictographic}|\p{Regional_Indicator}|\u20e3/u.test(
+    decoded,
+  )
+    ? decoded
+    : "";
+}
+
 /** Parse and validate LLM response into a GeneratedTemplate. Exported for testing. */
 export function parseTemplateResponse(
   content: string,
@@ -1636,11 +1672,16 @@ export function parseTemplateResponse(
   }
 
   return {
-    agentName: parsed.agentName,
-    description: parsed.description || "",
-    prompt: parsed.prompt,
+    agentName: decodeEmojiEscapes(parsed.agentName).trim(),
+    description:
+      typeof parsed.description === "string"
+        ? decodeEmojiEscapes(parsed.description)
+        : "",
+    prompt: decodeEmojiEscapes(parsed.prompt),
     category: parsed.category || "",
-    emoji: parsed.emoji || "",
+    emoji: sanitizeEmojiField(
+      typeof parsed.emoji === "string" ? parsed.emoji : "",
+    ),
     tools: Array.isArray(parsed.tools) ? parsed.tools : [],
   };
 }
