@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, test } from "vitest";
+import { beforeEach, describe, expect, test, vi } from "vitest";
 import { releaseBatch, tryClaimBatch } from "@/api/v2/telemetry/services/dedup";
 import { prisma } from "@/utils/prisma";
 
@@ -34,5 +34,16 @@ describe("telemetry dedup", () => {
     await expect(
       releaseBatch("44444444-4444-4444-8444-444444444444"),
     ).resolves.toBeUndefined();
+  });
+
+  // DB errors must propagate (the handler's finally releases the claim and
+  // Express maps the rejection to a 5xx) — not be swallowed as false.
+  test("claim rejects when the insert fails", async () => {
+    vi.spyOn(prisma.telemetryBatch, "createMany").mockRejectedValueOnce(
+      new Error("db down"),
+    );
+    await expect(
+      tryClaimBatch("55555555-5555-4555-8555-555555555555"),
+    ).rejects.toThrow("db down");
   });
 });

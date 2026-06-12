@@ -23,7 +23,17 @@ beforeAll(async () => {
   url = `http://127.0.0.1:${addr.port}/v1/metrics`;
 });
 
-afterAll(() => server.close());
+afterAll(async () => {
+  await new Promise<void>((resolve, reject) => {
+    server.close((err) => {
+      if (err) {
+        reject(err);
+      } else {
+        resolve();
+      }
+    });
+  });
+});
 
 describe("forwardMetrics", () => {
   test("POSTs JSON body and returns true on 200", async () => {
