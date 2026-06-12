@@ -1597,9 +1597,21 @@ export async function generateTemplate(
 // On the wire the backslash itself is then JSON-escaped, so JSON.parse hands
 // back literal `\ud83c…` characters that render verbatim in clients.
 
-/** Decode literal surrogate-pair escape text (`\ud83c\udf24` → 🌤) plus the
- *  emoji-sequence escapes VS15/VS16, ZWJ, and keycap, then drop any leftover
- *  lone-surrogate escape — a broken half of a pair with nothing to recover. */
+/** Matches any emoji-class character — pictographs, regional indicators
+ *  (flags), or the keycap combining mark: the classes a valid `emoji` field
+ *  value must contain at least one of. */
+const EMOJI_CLASS_REGEX =
+  /\p{Extended_Pictographic}|\p{Regional_Indicator}|\u20e3/u;
+
+/**
+ * Decode literal `\uXXXX` escape text into the characters it names.
+ *
+ * Handles surrogate pairs (`\ud83c\udf24` → 🌤) and the emoji-sequence
+ * escapes — variation selectors VS15/VS16, zero-width joiner, and the keycap
+ * combining mark — then drops any leftover lone-surrogate escape: a broken
+ * half of a pair with nothing to recover. Text without escape sequences
+ * passes through unchanged.
+ */
 export function decodeEmojiEscapes(text: string): string {
   return text
     .replace(/\\u(d[89ab][0-9a-f]{2})\\u(d[c-f][0-9a-f]{2})/gi, (_, hi, lo) =>
@@ -1611,16 +1623,17 @@ export function decodeEmojiEscapes(text: string): string {
     .replace(/\\ud[89a-f][0-9a-f]{2}/gi, "");
 }
 
-/** Repair + gate the `emoji` field: decode escape text, then require at least
- *  one emoji-class character. Anything else (prose, escape debris) becomes ""
- *  so a non-emoji string can never ship in the field. */
+/**
+ * Repair and gate an `emoji` field value.
+ *
+ * Decodes escape text via `decodeEmojiEscapes`, trims, and returns the
+ * result only when it contains at least one emoji-class character (per
+ * `EMOJI_CLASS_REGEX`). Anything else — prose, escape debris, blanks —
+ * becomes "" so a non-emoji string can never ship in the field.
+ */
 export function sanitizeEmojiField(emoji: string): string {
   const decoded = decodeEmojiEscapes(emoji).trim();
-  return /\p{Extended_Pictographic}|\p{Regional_Indicator}|\u20e3/u.test(
-    decoded,
-  )
-    ? decoded
-    : "";
+  return EMOJI_CLASS_REGEX.test(decoded) ? decoded : "";
 }
 
 /** Parse and validate LLM response into a GeneratedTemplate. Exported for testing. */
