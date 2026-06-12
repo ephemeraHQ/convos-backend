@@ -5,6 +5,7 @@ import { forwardMetrics } from "@/api/v2/telemetry/services/forwarder";
 import { telemetryRouter } from "@/api/v2/telemetry/telemetry.router";
 import { appCheckOnlyMiddleware } from "@/middleware/auth";
 import { pinoMiddleware } from "@/middleware/pino";
+import { countTelemetryBatch } from "@/utils/metrics";
 import { prisma } from "@/utils/prisma";
 
 // Mock App Check verification (network-free) and the forwarder (no agent).
@@ -15,6 +16,9 @@ vi.mock("@/utils/firebase", () => ({
 }));
 vi.mock("@/api/v2/telemetry/services/forwarder", () => ({
   forwardMetrics: vi.fn().mockResolvedValue(true),
+}));
+vi.mock("@/utils/metrics", () => ({
+  countTelemetryBatch: vi.fn(),
 }));
 
 function makeApp() {
@@ -72,6 +76,7 @@ describe("POST /telemetry/metrics", () => {
     await prisma.telemetryBatch.deleteMany();
     vi.mocked(forwardMetrics).mockClear();
     vi.mocked(forwardMetrics).mockResolvedValue(true);
+    vi.mocked(countTelemetryBatch).mockClear();
   });
 
   test("happy path → 202, forwarded, batch recorded", async () => {
@@ -81,6 +86,11 @@ describe("POST /telemetry/metrics", () => {
     expect(
       await prisma.telemetryBatch.findUnique({ where: { batchId: BATCH_ID } }),
     ).not.toBeNull();
+    expect(countTelemetryBatch).toHaveBeenCalledTimes(1);
+    expect(countTelemetryBatch).toHaveBeenCalledWith(
+      "convos-android",
+      "accepted",
+    );
   });
 
   // service.name resource attribute of the first (only) forwarded batch.
@@ -109,6 +119,8 @@ describe("POST /telemetry/metrics", () => {
     );
     await post(makeApp()).send(makeBody());
     expect(forwardedServiceName()).toBe("convos-ios");
+    expect(countTelemetryBatch).toHaveBeenCalledTimes(1);
+    expect(countTelemetryBatch).toHaveBeenCalledWith("convos-ios", "accepted");
   });
 
   test("X-Sent-At accepts an integer epoch-ms timestamp", async () => {
@@ -150,6 +162,11 @@ describe("POST /telemetry/metrics", () => {
       .set("X-Sent-At", new Date().toISOString())
       .send(makeBody());
     expect(res.status).toBe(400);
+    expect(countTelemetryBatch).toHaveBeenCalledTimes(1);
+    expect(countTelemetryBatch).toHaveBeenCalledWith(
+      "convos-android",
+      "rejected",
+    );
   });
 
   test("missing X-Sent-At → 400", async () => {
@@ -159,6 +176,11 @@ describe("POST /telemetry/metrics", () => {
       .set("Idempotency-Key", BATCH_ID)
       .send(makeBody());
     expect(res.status).toBe(400);
+    expect(countTelemetryBatch).toHaveBeenCalledTimes(1);
+    expect(countTelemetryBatch).toHaveBeenCalledWith(
+      "convos-android",
+      "rejected",
+    );
   });
 
   test("duplicate batch → 202 without second forward", async () => {
@@ -168,6 +190,10 @@ describe("POST /telemetry/metrics", () => {
     expect(res.status).toBe(202);
     expect(res.body).toEqual({ status: "duplicate" });
     expect(forwardMetrics).toHaveBeenCalledTimes(1);
+    expect(countTelemetryBatch).toHaveBeenLastCalledWith(
+      "convos-android",
+      "duplicate",
+    );
   });
 
   test("forward failure → 502 and batch NOT recorded (retry stays possible)", async () => {
@@ -177,6 +203,11 @@ describe("POST /telemetry/metrics", () => {
     expect(
       await prisma.telemetryBatch.findUnique({ where: { batchId: BATCH_ID } }),
     ).toBeNull();
+    expect(countTelemetryBatch).toHaveBeenCalledTimes(1);
+    expect(countTelemetryBatch).toHaveBeenCalledWith(
+      "convos-android",
+      "forward_failed",
+    );
   });
 
   test("disallowed metric name → 400, nothing forwarded", async () => {
@@ -185,6 +216,11 @@ describe("POST /telemetry/metrics", () => {
     const res = await post(makeApp()).send(body);
     expect(res.status).toBe(400);
     expect(forwardMetrics).not.toHaveBeenCalled();
+    expect(countTelemetryBatch).toHaveBeenCalledTimes(1);
+    expect(countTelemetryBatch).toHaveBeenCalledWith(
+      "convos-android",
+      "rejected",
+    );
   });
 
   test("fully-stale batch → 202, recorded, nothing forwarded", async () => {

@@ -7,6 +7,7 @@ import { forwardMetrics } from "@/api/v2/telemetry/services/forwarder";
 import { prepareBatch } from "@/api/v2/telemetry/services/otlp";
 import { ENV } from "@/config";
 import { ValidationError } from "@/utils/errors";
+import { countTelemetryBatch } from "@/utils/metrics";
 
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -38,18 +39,25 @@ const serviceNameFor = (appId: string | undefined): string => {
 };
 
 export async function postMetrics(req: Request, res: Response) {
+  // Tag our own batches_received counter with the client app this bundle
+  // came from (verified App Check appId, not client-supplied).
+  const client = serviceNameFor(res.locals.appCheckAppId as string | undefined);
+
   const batchId = req.header("Idempotency-Key");
   if (!batchId || !UUID_RE.test(batchId)) {
+    countTelemetryBatch(client, "rejected");
     res.status(400).json({ error: "Missing or invalid Idempotency-Key" });
     return;
   }
   const sentAtMs = parseSentAtMs(req.header("X-Sent-At"));
   if (sentAtMs === null) {
+    countTelemetryBatch(client, "rejected");
     res.status(400).json({ error: "Missing or invalid X-Sent-At" });
     return;
   }
 
   if (await isDuplicateBatch(batchId)) {
+    countTelemetryBatch(client, "duplicate");
     res.status(202).json({ status: "duplicate" });
     return;
   }
@@ -60,13 +68,12 @@ export async function postMetrics(req: Request, res: Response) {
     prepared = prepareBatch(req.body, {
       offsetMs: receivedAtMs - sentAtMs,
       receivedAtMs,
-      serviceName: serviceNameFor(
-        res.locals.appCheckAppId as string | undefined,
-      ),
+      serviceName: client,
       environment: ENV,
     });
   } catch (error) {
     if (error instanceof ValidationError) {
+      countTelemetryBatch(client, "rejected");
       res.status(400).json({ error: error.message });
       return;
     }
@@ -90,11 +97,13 @@ export async function postMetrics(req: Request, res: Response) {
     const ok = await forwardMetrics(prepared.body);
     if (!ok) {
       // Do NOT record the batch: client retries with the same Idempotency-Key.
+      countTelemetryBatch(client, "forward_failed");
       res.status(502).json({ error: "Telemetry forwarding failed" });
       return;
     }
   }
 
   await recordBatch(batchId);
+  countTelemetryBatch(client, "accepted");
   res.status(202).json({ status: "accepted" });
 }
