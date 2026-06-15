@@ -59,12 +59,11 @@ describe("system-prompt module loading", () => {
   });
 });
 
-describe("system-prompt module graceful error handling", () => {
-  test("module does not crash when readFileSync throws at import", () => {
-    // Verify the module source contains a try/catch so it doesn't crash.
-    const sourcePath = resolve(
-      "src/api/v2/agent-templates/lib/system-prompt.ts",
-    );
+describe("prompt loader graceful error handling", () => {
+  test("loader does not crash when readFileSync throws", () => {
+    // The bundled-vs-source path resolution + fail-soft-to-null guard lives in
+    // the shared `loadDataPrompt` helper (system-prompt.ts delegates to it).
+    const sourcePath = resolve("src/api/v2/agent-templates/lib/data-prompt.ts");
     const source = readFileSync(sourcePath, "utf8");
     // The source must have a try/catch wrapping readFileSync
     expect(source).toContain("try");

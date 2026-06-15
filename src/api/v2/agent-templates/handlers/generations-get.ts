@@ -4,6 +4,14 @@
  * Returns the current status of a generation. Optionally long-polls until
  * terminal via `?wait_ms=N` (capped at 45_000, polled every 500 ms).
  *
+ * HTTP status is the in-progress/terminal signal:
+ *   - 202 while `pending`/`running` — body carries `progressPhrases` and the
+ *     `preview` (the draft agent's identity: agentName/emoji/description) as
+ *     they fill in.
+ *   - 200 once `done`/`failed` — `preview`/`progressPhrases` drop off; the body
+ *     carries `templateId` (the client fetches the real template for the full
+ *     fields) or `error`.
+ *
  * Visibility:
  *   - The generation ID itself is the capability — anyone with the UUID
  *     can read the row. (Anonymous submissions need this; once they have
@@ -13,7 +21,7 @@
  * Response shape:
  *   {
  *     generationId, status,
- *     templateId?, error?,
+ *     templateId?, error?, preview?, progressPhrases?,
  *     createdAt, updatedAt
  *   }
  *
@@ -22,6 +30,10 @@
  */
 
 import type { Request, Response } from "express";
+import {
+  previewResponseFields,
+  type AgentPreview,
+} from "@/api/v2/agent-templates/lib/generation-preview";
 import { prisma } from "@/utils/prisma";
 
 // ---------------------------------------------------------------------------
@@ -65,6 +77,8 @@ interface GenerationRow {
   templateId: string | null;
   reply: string | null;
   error: string | null;
+  preview: unknown;
+  progressPhrases: unknown;
   expiresAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
@@ -76,6 +90,8 @@ interface GenerationResponse {
   templateId?: string;
   reply?: { text: string };
   error?: string;
+  preview?: AgentPreview;
+  progressPhrases?: string[];
   createdAt: string;
   updatedAt: string;
 }
@@ -93,6 +109,12 @@ function toResponse(row: GenerationRow): GenerationResponse {
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   };
+  // `preview` (the draft agent) + `progressPhrases` ride only the in-progress
+  // 202s; the terminal 200 hands back `templateId` (the client fetches the real
+  // template) / `error` instead.
+  if (!isTerminal(row.status)) {
+    Object.assign(out, previewResponseFields(row.preview, row.progressPhrases));
+  }
   if (row.templateId) out.templateId = row.templateId;
   if (row.reply) out.reply = { text: row.reply };
   if (row.error) out.error = row.error;
@@ -108,6 +130,8 @@ async function fetchRow(generationId: string): Promise<GenerationRow | null> {
       templateId: true,
       reply: true,
       error: true,
+      preview: true,
+      progressPhrases: true,
       expiresAt: true,
       createdAt: true,
       updatedAt: true,
@@ -206,5 +230,8 @@ export async function generationsGetHandler(
     return;
   }
 
-  res.status(200).json(toResponse(row));
+  // The HTTP status IS the in-progress/terminal signal: 202 while
+  // pending/running (body carries progressPhrases + preview), 200 once
+  // done/failed (body carries templateId, or the error).
+  res.status(isTerminal(row.status) ? 200 : 202).json(toResponse(row));
 }
