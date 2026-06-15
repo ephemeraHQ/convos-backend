@@ -1,7 +1,5 @@
 import type { NextFunction, Request, Response } from "express";
-import { z } from "zod";
-
-const accountIdSchema = z.string().uuid();
+import { accountIdSchema } from "@/utils/account-id";
 
 /**
  * Reject any :accountId path param that is not a valid UUID. UUID parsing IS

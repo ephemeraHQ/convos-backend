@@ -1,6 +1,7 @@
 import * as jose from "jose";
 import { z } from "zod";
 import { JWT_ISSUER, JWT_PRIVATE_KEY, JWT_PUBLIC_KEY } from "@/config";
+import { accountIdSchema } from "@/utils/account-id";
 import { deviceIdSchema } from "@/utils/device-id";
 import { AppError } from "@/utils/errors";
 import logger from "@/utils/logger";
@@ -23,7 +24,7 @@ export type V2JWTPayload = {
 
 const v2JWTPayloadSchema = z.object({
   deviceId: deviceIdSchema,
-  accountId: z.string().uuid().optional(),
+  accountId: accountIdSchema.optional(),
   metadata: z
     .object({
       notificationExtensionOnly: z.boolean().optional(),

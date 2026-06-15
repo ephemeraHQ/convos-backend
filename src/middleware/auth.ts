@@ -1,7 +1,9 @@
 import type { NextFunction, Request, Response } from "express";
+import { accountIdSchema } from "@/utils/account-id";
 import { AppError } from "@/utils/errors";
 import { verifyAppCheckToken } from "@/utils/firebase";
 import { isNotificationExtensionOnlyToken, verifyJwtToken } from "@/utils/jwt";
+import logger from "@/utils/logger";
 import { getRuntimeConfig } from "@/utils/runtimeConfig";
 
 export const AUTH_HEADER = "X-Convos-AuthToken";
@@ -176,11 +178,15 @@ export const authMiddlewareAllowNSE = async (
 };
 
 export const requireAccount = (
-  _req: Request,
+  req: Request,
   res: Response,
   next: NextFunction,
 ) => {
-  if (!res.locals.accountId) {
+  if (!accountIdSchema.safeParse(res.locals.accountId).success) {
+    ((req as { log?: Request["log"] }).log ?? logger).warn(
+      { accountIdPresent: res.locals.accountId !== undefined },
+      "requireAccount rejected request",
+    );
     res.status(403).json({ error: "Account required" });
     return;
   }

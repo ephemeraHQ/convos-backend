@@ -59,6 +59,7 @@ import {
 import { type TraceContext } from "@/api/v2/agent-templates/services/openrouter-client";
 import { isKnownOpenRouterModel } from "@/api/v2/agent-templates/services/openrouter-models";
 import { resolveActor } from "@/api/v2/agent-templates/services/posthog";
+import { accountIdSchema } from "@/utils/account-id";
 import { getEffectiveOwnerId } from "@/utils/auth-helpers";
 import { ADMIN_ACCOUNT_ID } from "@/utils/constants";
 import { prisma } from "@/utils/prisma";
@@ -220,7 +221,7 @@ const bodySchema = z
     // Asserted owner — honoured only when the caller is agent-key-auth'd;
     // ignored for JWT (JWT account always wins) and anonymous (falls
     // back to ADMIN). See the owner-resolution block below.
-    ownerAccountId: z.string().uuid().optional(),
+    ownerAccountId: accountIdSchema.optional(),
   })
   .strict();
 
