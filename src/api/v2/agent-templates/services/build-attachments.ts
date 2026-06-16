@@ -43,7 +43,7 @@ export type AttachmentKind = "image" | "pdf" | "audio";
 // processed server-side and can be larger. The aggregate cap across all
 // attachments lives in config (BUILD_ATTACHMENTS_MAX_TOTAL_BYTES).
 const MAX_BYTES_BY_KIND: Record<AttachmentKind, number> = {
-  image: 5 * 1024 * 1024,
+  image: 10 * 1024 * 1024,
   pdf: 25 * 1024 * 1024,
   audio: 25 * 1024 * 1024,
 };

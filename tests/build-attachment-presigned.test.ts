@@ -88,10 +88,10 @@ test("non-positive / non-numeric contentLength → 400", async () => {
 
 test("contentLength over the per-kind cap → 400", async () => {
   const res = mockRes();
-  // Image cap is 5 MiB; one byte over must be rejected before a key is minted.
+  // Image cap is 10 MiB; one byte over must be rejected before a key is minted.
   await call(res, {
     contentType: "image/png",
-    contentLength: String(5 * 1024 * 1024 + 1),
+    contentLength: String(10 * 1024 * 1024 + 1),
   });
   expect(res.statusCode).toBe(400);
 });
