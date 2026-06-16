@@ -37,6 +37,10 @@ import {
   writeSseEvent,
 } from "@/api/v2/agent-templates/lib/sse";
 import {
+  applyConnections,
+  resolveConnectionIds,
+} from "@/api/v2/agent-templates/lib/template-connections";
+import {
   attachmentsArraySchema,
   resolveAttachments,
   type AttachmentRef,
@@ -49,6 +53,7 @@ import {
   type GenerationPrefill,
   type GenerationResult,
 } from "@/api/v2/agent-templates/services/templateGen";
+import { getServiceConfig } from "@/api/v2/connections/bundles.config";
 import { AppError } from "@/utils/errors";
 
 // One synchronous generation, kept under typical edge/proxy request ceilings.
@@ -68,6 +73,10 @@ const MAX_BUILDER_PROMPT_LEN = 100_000;
 // Model-override cap — OpenRouter model ids are short slugs; this just bounds
 // an obviously-abusive value (matches the async endpoint's builderModel cap).
 const MAX_BUILDER_MODEL_LEN = 256;
+// Connection-slug caps — short service slugs; the real gate is the catalog
+// lookup below (matches the async endpoint's connection caps).
+const MAX_CONNECTION_SLUG_LEN = 64;
+const MAX_CONNECTIONS = 16;
 
 const inputsSchema = z
   .object({
@@ -93,6 +102,14 @@ const bodySchema = z
     builderPrompt: z.string().min(1).max(MAX_BUILDER_PROMPT_LEN).optional(),
     builderModel: z.string().min(1).max(MAX_BUILDER_MODEL_LEN).optional(),
     prefill: prefillSchema.optional(),
+    // Neutral service ids the throwaway agent should use — same shape + catalog
+    // validation as the async endpoint. Drives the generator's capabilities
+    // directive and is overlaid onto the returned (non-persisted) template's
+    // `connections`. Bare slugs on the wire, no `composio:` prefix.
+    connections: z
+      .array(z.string().trim().min(1).max(MAX_CONNECTION_SLUG_LEN))
+      .max(MAX_CONNECTIONS)
+      .optional(),
   })
   .strict();
 
@@ -123,6 +140,9 @@ async function runGeneration(
     prefill: GenerationPrefill | null;
     builderPrompt: string | null;
     builderModel: string | null;
+    /** Canonical catalog service ids. Fed to the generator (capabilities
+     *  directive) and overlaid onto the returned template's `connections`. */
+    connectionIds: string[];
   },
 ): Promise<Outcome> {
   try {
@@ -133,8 +153,18 @@ async function runGeneration(
       undefined,
       args.builderPrompt,
       args.builderModel,
+      args.connectionIds,
     );
-    return { kind: "ok", result };
+    // Overlay the connections onto the returned template (replacing the
+    // generator's hardcoded []), so the throwaway candidate the admin tool shows
+    // records the same services its prompt was written to use.
+    return {
+      kind: "ok",
+      result: {
+        ...result,
+        template: applyConnections(result.template, args.connectionIds),
+      },
+    };
   } catch (err) {
     // The 90s ceiling is the only abort we surface as a timeout.
     if (args.timeoutSignal.aborted) {
@@ -218,6 +248,20 @@ export async function generationsEphemeralPostHandler(
     return;
   }
 
+  // Validate connections against the supported-services catalog — unknown → 400,
+  // same as the async endpoint. Then normalize to canonical ids for the
+  // generator directive + the template overlay.
+  const requestedConnections = parsed.data.connections;
+  if (requestedConnections) {
+    for (const serviceId of requestedConnections) {
+      if (!getServiceConfig(serviceId)) {
+        res.status(400).json({ error: `Unknown connection '${serviceId}'` });
+        return;
+      }
+    }
+  }
+  const connectionIds = resolveConnectionIds(requestedConnections);
+
   // Abort the upstream generation on the 90s ceiling OR a client disconnect.
   // Unlike the async endpoint (whose executor runs to completion to persist a
   // result), an ephemeral result is discarded the moment the client hangs up,
@@ -290,6 +334,7 @@ export async function generationsEphemeralPostHandler(
     prefill,
     builderPrompt,
     builderModel,
+    connectionIds,
   };
 
   // SSE mode: heartbeat while the generation runs, then a single terminal

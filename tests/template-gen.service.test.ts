@@ -250,6 +250,63 @@ describe("templateGen service — OpenRouter integration", () => {
   });
 
   // -----------------------------------------------------------------------
+  // Connected-capabilities directive
+  // -----------------------------------------------------------------------
+  test("connections append a capabilities directive sourced from the catalog", async () => {
+    const mod = await import("@/api/v2/agent-templates/services/templateGen");
+    generateTemplate = mod.generateTemplate;
+
+    await generateTemplate(
+      { text: "a scheduling helper" },
+      undefined,
+      null,
+      undefined,
+      null,
+      null,
+      ["googlecalendar"],
+    );
+
+    const req = getLastOpenRouterRequest();
+    const userMsg = req.body.messages[1].content as string;
+    expect(typeof userMsg).toBe("string");
+    expect(userMsg).toContain("CONNECTED CAPABILITIES");
+    // Copy comes from the catalog: displayName + the live bundle's title/desc.
+    expect(userMsg).toContain("Google Calendar");
+    expect(userMsg).toContain("Events");
+    expect(userMsg).toContain("View and edit events on all calendars");
+  });
+
+  test("no connections → no capabilities directive", async () => {
+    const mod = await import("@/api/v2/agent-templates/services/templateGen");
+    generateTemplate = mod.generateTemplate;
+
+    await generateTemplate({ text: "a scheduling helper" });
+
+    const req = getLastOpenRouterRequest();
+    const userMsg = req.body.messages[1].content as string;
+    expect(userMsg).not.toContain("CONNECTED CAPABILITIES");
+  });
+
+  test("unknown connection ids contribute nothing (defensive — handler gates them)", async () => {
+    const mod = await import("@/api/v2/agent-templates/services/templateGen");
+    generateTemplate = mod.generateTemplate;
+
+    await generateTemplate(
+      { text: "a scheduling helper" },
+      undefined,
+      null,
+      undefined,
+      null,
+      null,
+      ["not_a_real_service"],
+    );
+
+    const req = getLastOpenRouterRequest();
+    const userMsg = req.body.messages[1].content as string;
+    expect(userMsg).not.toContain("CONNECTED CAPABILITIES");
+  });
+
+  // -----------------------------------------------------------------------
   // Model defaults to anthropic/claude-opus-4.8-fast
   // -----------------------------------------------------------------------
   test("model defaults to anthropic/claude-opus-4.8-fast", async () => {

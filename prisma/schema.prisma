@@ -233,6 +233,14 @@ model AgentTemplateGeneration {
   // (agent-API-key only) and used by the executor for the main generation call
   // instead of the default builder model.
   builderModel    String?          @db.VarChar(256)
+  // Neutral service ids (e.g. "googlecalendar") the caller flagged the agent as
+  // using — validated against the supported-services catalog at submit, read by
+  // the executor (which appends a capabilities directive to the generator and
+  // overlays these onto the produced template's `connections`). Open: stamping a
+  // connection grants nothing, it only records the template uses the service;
+  // the grant itself is issued later, at provisioning. Stored raw like
+  // `inputs`/`prefill` (the executor normalizes against the catalog).
+  connections     String[]         @default([])
   // The draft agent shown while the build runs — { agentName, emoji,
   // description } — written by the distill stage and surfaced as `preview` on
   // in-progress (202) poll responses. The full agent arrives via `templateId`
@@ -316,7 +324,7 @@ model CreditLedger {
   delta            BigInt
   reason           LedgerReason
   idempotencyKey   String
-  scope            String       @db.VarChar(32) @default("transaction")
+  scope            String       @default("transaction") @db.VarChar(32)
   balanceAfter     BigInt?
   usdCostMicros    BigInt?
   markupRate       Decimal?     @db.Decimal(8, 4)

@@ -530,6 +530,81 @@ describe("POST /generations — builderModel (privileged override)", () => {
   });
 });
 
+describe("POST /generations — connections (open capability flag)", () => {
+  test("unknown connection → 400", async () => {
+    const res = await post(
+      { ...sampleBody, connections: ["not_a_real_service"] },
+      { headers: withKey("conn-unknown") },
+    );
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toContain("Unknown connection");
+  });
+
+  test("valid connections → 202 and persist raw on the row (no auth gate)", async () => {
+    __resetGenerationExecutorForTests(() => Promise.resolve());
+    // Anonymous (no agent key): unlike builderPrompt/builderModel, stamping a
+    // connection grants nothing, so it is NOT restricted to agent-key callers.
+    const res = await post(
+      { ...sampleBody, connections: ["googlecalendar"] },
+      {
+        headers: {
+          "Content-Type": "application/json",
+          "Idempotency-Key": stableUuid("conn-ok-anon"),
+        },
+      },
+    );
+    expect(res.status).toBe(202);
+    const body = (await res.json()) as { generationId: string };
+    const row = await prisma.agentTemplateGeneration.findUnique({
+      where: { id: body.generationId },
+    });
+    expect(row?.connections).toEqual(["googlecalendar"]);
+  });
+
+  test("no connections → row.connections defaults to []", async () => {
+    __resetGenerationExecutorForTests(() => Promise.resolve());
+    const res = await post(sampleBody, { headers: withKey("conn-absent") });
+    expect(res.status).toBe(202);
+    const body = (await res.json()) as { generationId: string };
+    const row = await prisma.agentTemplateGeneration.findUnique({
+      where: { id: body.generationId },
+    });
+    expect(row?.connections).toEqual([]);
+  });
+
+  test("same key + different connections → 409", async () => {
+    // connections influence the generator's output (capabilities directive) and
+    // the persisted template, so they are part of the idempotent contract.
+    __resetGenerationExecutorForTests(() => Promise.resolve());
+    const first = await post(
+      { ...sampleBody, connections: ["googlecalendar"] },
+      { headers: withKey("idem-conn-diff") },
+    );
+    expect(first.status).toBe(202);
+
+    const second = await post(sampleBody, {
+      headers: withKey("idem-conn-diff"),
+    });
+    expect(second.status).toBe(409);
+  });
+
+  test("same key + same connections → dedupes (no spurious 409)", async () => {
+    __resetGenerationExecutorForTests(() => Promise.resolve());
+    const first = await post(
+      { ...sampleBody, connections: ["googlecalendar"] },
+      { headers: withKey("idem-conn-match") },
+    );
+    expect(first.status).toBe(202);
+
+    const second = await post(
+      { ...sampleBody, connections: ["googlecalendar"] },
+      { headers: withKey("idem-conn-match") },
+    );
+    expect([200, 202]).toContain(second.status);
+  });
+});
+
 describe("POST /generations — SSE mode", () => {
   test("Accept: text/event-stream emits terminal result frame", async () => {
     const res = await fetch(`${baseURL}/api/v2/agent-templates/generations`, {

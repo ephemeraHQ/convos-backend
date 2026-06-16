@@ -395,6 +395,86 @@ describe("generation-executor", () => {
     expect(capturedModel).toBeNull();
   });
 
+  test("threads the row's connections to the generator and overlays canonical ids onto the template", async () => {
+    let capturedConnections: string[] | null | undefined;
+    __resetGenerateTemplateForTests(
+      (
+        _input,
+        _signal,
+        _prefill,
+        _trace,
+        _systemPromptOverride,
+        _modelOverride,
+        connections,
+      ) => {
+        capturedConnections = connections;
+        return Promise.resolve({
+          template: fakeTemplate,
+          metrics: DEFAULT_TEST_METRICS,
+        });
+      },
+    );
+    const gen = await prisma.agentTemplateGeneration.create({
+      data: {
+        ownerAccountId: ADMIN_ACCOUNT_ID,
+        source: TEST_SOURCE,
+        idempotencyKey: "connections-threading",
+        inputs: { text: "a calendar agent" },
+        // Mixed case + a duplicate to exercise catalog normalization + dedupe.
+        connections: ["GoogleCalendar", "googlecalendar"],
+        status: "pending",
+      },
+    });
+
+    await executeGeneration(gen.id);
+
+    const final = await prisma.agentTemplateGeneration.findUnique({
+      where: { id: gen.id },
+    });
+    expect(final?.status).toBe("done");
+    // Normalized to the catalog's canonical neutral id, deduped — both fed to the
+    // generator and overlaid onto the persisted template.
+    expect(capturedConnections).toEqual(["googlecalendar"]);
+
+    const template = await prisma.agentTemplate.findUnique({
+      where: { id: final?.templateId as string },
+    });
+    expect(template?.connections).toEqual(["googlecalendar"]);
+  });
+
+  test("ordinary generation (no connections) leaves template.connections empty", async () => {
+    let capturedConnections: string[] | null | undefined = ["SENTINEL"];
+    __resetGenerateTemplateForTests(
+      (
+        _input,
+        _signal,
+        _prefill,
+        _trace,
+        _systemPromptOverride,
+        _modelOverride,
+        connections,
+      ) => {
+        capturedConnections = connections;
+        return Promise.resolve({
+          template: fakeTemplate,
+          metrics: DEFAULT_TEST_METRICS,
+        });
+      },
+    );
+    const gen = await createPendingGeneration("no-connections");
+
+    await executeGeneration(gen.id);
+
+    const final = await prisma.agentTemplateGeneration.findUnique({
+      where: { id: gen.id },
+    });
+    expect(capturedConnections).toEqual([]);
+    const template = await prisma.agentTemplate.findUnique({
+      where: { id: final?.templateId as string },
+    });
+    expect(template?.connections).toEqual([]);
+  });
+
   test("preserves the user's text intent alongside an attached file", async () => {
     let capturedInput: unknown;
     let capturedProps: PostHogCaptureProperties | undefined;
