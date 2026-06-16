@@ -70,9 +70,35 @@ test("unsupported contentType → 400", async () => {
   expect(res.statusCode).toBe(400);
 });
 
-test("supported contentType → objectKey + uploadUrl, no public asset URL", async () => {
+test("missing contentLength → 400", async () => {
   const res = mockRes();
   await call(res, { contentType: "image/png" });
+  expect(res.statusCode).toBe(400);
+});
+
+test("non-positive / non-numeric contentLength → 400", async () => {
+  const zero = mockRes();
+  await call(zero, { contentType: "image/png", contentLength: "0" });
+  expect(zero.statusCode).toBe(400);
+
+  const nan = mockRes();
+  await call(nan, { contentType: "image/png", contentLength: "huge" });
+  expect(nan.statusCode).toBe(400);
+});
+
+test("contentLength over the per-kind cap → 400", async () => {
+  const res = mockRes();
+  // Image cap is 5 MiB; one byte over must be rejected before a key is minted.
+  await call(res, {
+    contentType: "image/png",
+    contentLength: String(5 * 1024 * 1024 + 1),
+  });
+  expect(res.statusCode).toBe(400);
+});
+
+test("supported contentType + in-cap contentLength → objectKey + uploadUrl, no public asset URL", async () => {
+  const res = mockRes();
+  await call(res, { contentType: "image/png", contentLength: "1024" });
   expect(res.statusCode).toBe(200);
   const body = res.body as { objectKey: string; uploadUrl: string };
   expect(body.objectKey).toMatch(/^build\//);

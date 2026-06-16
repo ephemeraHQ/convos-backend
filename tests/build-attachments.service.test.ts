@@ -3,6 +3,7 @@
  * module boundary (the renew-batch.test.ts pattern) so no AWS access is needed.
  */
 
+import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import {
   classifyMime,
@@ -48,6 +49,7 @@ vi.mock("@aws-sdk/s3-request-presigner", () => ({
 
 afterEach(() => {
   mockSend.mockReset();
+  vi.mocked(getSignedUrl).mockClear();
 });
 
 describe("classifyMime", () => {
@@ -78,16 +80,41 @@ test("maxBytesForKind caps images tighter than pdf/audio", () => {
 });
 
 describe("presignBuildUpload", () => {
-  test("mints a build/ key with the type's extension + a presigned PUT", async () => {
-    const { objectKey, uploadUrl } = await presignBuildUpload("image/png");
+  test("mints a build/ key, sets ContentLength, and signs content-length", async () => {
+    const { objectKey, uploadUrl } = await presignBuildUpload(
+      "image/png",
+      1024,
+    );
     expect(objectKey).toMatch(/^build\/[\w-]+\.png$/);
     expect(uploadUrl).toBe("https://signed.example/put");
+
+    // The exact byte count is signed so S3 caps the (anonymous) PUT itself.
+    const [, command, opts] = vi.mocked(getSignedUrl).mock
+      .calls[0] as unknown as [
+      unknown,
+      { input: { ContentLength?: number } },
+      { signableHeaders?: Set<string> },
+    ];
+    expect(command.input.ContentLength).toBe(1024);
+    expect([...(opts.signableHeaders ?? [])]).toContain("content-length");
   });
 
   test("rejects an unsupported type with 400", async () => {
-    await expect(presignBuildUpload("image/webp")).rejects.toMatchObject({
+    await expect(presignBuildUpload("image/webp", 1024)).rejects.toMatchObject({
       statusCode: 400,
     });
+  });
+
+  test("rejects a non-positive contentLength with 400", async () => {
+    await expect(presignBuildUpload("image/png", 0)).rejects.toMatchObject({
+      statusCode: 400,
+    });
+  });
+
+  test("rejects a contentLength over the per-kind cap with 400", async () => {
+    await expect(
+      presignBuildUpload("image/png", maxBytesForKind("image") + 1),
+    ).rejects.toMatchObject({ statusCode: 400 });
   });
 });
 

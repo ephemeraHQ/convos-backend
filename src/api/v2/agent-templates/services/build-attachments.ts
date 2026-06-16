@@ -138,13 +138,32 @@ export interface PresignedBuildUpload {
 
 /** Mint a presigned PUT for a new build attachment. The returned `objectKey` is
  *  what the client echoes back in `inputs.attachments[]`. No public asset URL is
- *  returned — the bucket is private and only the backend reads it. */
+ *  returned — the bucket is private and only the backend reads it.
+ *
+ *  `contentLength` (the exact byte size the client will upload) is required and
+ *  capped at the per-kind limit. It is signed into the URL: the presigned PUT is
+ *  an anonymous write capability, so a declared-size check alone is bypassable —
+ *  a client could request a small size and then upload an arbitrarily large body.
+ *  Signing `content-length` makes S3 itself reject any PUT whose length differs,
+ *  so the cap holds without the backend in the upload path. */
 export async function presignBuildUpload(
   contentType: string,
+  contentLength: number,
 ): Promise<PresignedBuildUpload> {
   const { bucket, client } = requireBucket();
-  if (!classifyMime(contentType)) {
+  const kind = classifyMime(contentType);
+  if (!kind) {
     throw new AppError(400, `Unsupported attachment type: ${contentType}`);
+  }
+  if (!Number.isInteger(contentLength) || contentLength <= 0) {
+    throw new AppError(400, "contentLength must be a positive integer");
+  }
+  const max = maxBytesForKind(kind);
+  if (contentLength > max) {
+    throw new AppError(
+      400,
+      `Attachment exceeds the ${kind} size limit of ${max} bytes`,
+    );
   }
   const ext = mime.extension(contentType);
   const objectKey = `build/${uuidv4()}${ext ? `.${ext}` : ""}`;
@@ -152,8 +171,14 @@ export async function presignBuildUpload(
     Bucket: bucket,
     Key: objectKey,
     ContentType: contentType,
+    ContentLength: contentLength,
   });
-  const uploadUrl = await getSignedUrl(client, command, { expiresIn: 3600 });
+  const uploadUrl = await getSignedUrl(client, command, {
+    expiresIn: 3600,
+    // Sign content-length so S3 enforces the body matches the capped size; the
+    // client must send exactly this many bytes or the signature won't match.
+    signableHeaders: new Set(["content-length"]),
+  });
   return { objectKey, uploadUrl };
 }
 

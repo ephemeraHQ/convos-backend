@@ -8,8 +8,10 @@
  * asset URL is returned.
  *
  * Auth mirrors the generation endpoint (optional): anonymous builds upload too.
+ * Because the PUT is an anonymous write capability, `contentLength` (the exact
+ * upload size) is required and signed into the URL so S3 caps the upload itself.
  * `contentType` is validated against the attachment allowlist; an unsupported
- * type 400s before a key is minted.
+ * type or an over-cap size 400s before a key is minted.
  */
 
 import type { Request, Response } from "express";
@@ -19,6 +21,9 @@ import { presignBuildUpload } from "../services/build-attachments";
 
 const presignedQuerySchema = z.object({
   contentType: z.string().trim().min(1),
+  // Query strings are strings; coerce to a positive integer byte count. The
+  // per-kind cap is enforced (and the value signed) in presignBuildUpload.
+  contentLength: z.coerce.number().int().positive(),
 });
 
 export async function buildAttachmentPresignedHandler(
@@ -27,13 +32,16 @@ export async function buildAttachmentPresignedHandler(
 ) {
   const parsed = presignedQuerySchema.safeParse(req.query);
   if (!parsed.success) {
-    res.status(400).json({ error: "contentType query parameter is required" });
+    res.status(400).json({
+      error: "contentType and a positive contentLength are required",
+    });
     return;
   }
 
   try {
     const { objectKey, uploadUrl } = await presignBuildUpload(
       parsed.data.contentType,
+      parsed.data.contentLength,
     );
 
     res.set({
