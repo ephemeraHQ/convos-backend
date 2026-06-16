@@ -33,10 +33,19 @@ export function previewResponseFields(
 ): { preview?: AgentPreview; progressPhrases?: string[] } {
   const out: { preview?: AgentPreview; progressPhrases?: string[] } = {};
   if (preview && typeof preview === "object" && !Array.isArray(preview)) {
-    out.preview = preview;
+    const p = preview as Record<string, unknown>;
+    const shaped: AgentPreview = {};
+    if (typeof p.agentName === "string") shaped.agentName = p.agentName;
+    if (typeof p.emoji === "string") shaped.emoji = p.emoji;
+    if (typeof p.description === "string") shaped.description = p.description;
+    if (Object.keys(shaped).length > 0) out.preview = shaped;
   }
-  if (Array.isArray(progressPhrases) && progressPhrases.length > 0) {
-    out.progressPhrases = progressPhrases as string[];
+  if (Array.isArray(progressPhrases)) {
+    const phrases = progressPhrases.filter(
+      (phrase): phrase is string =>
+        typeof phrase === "string" && phrase.trim().length > 0,
+    );
+    if (phrases.length > 0) out.progressPhrases = phrases;
   }
   return out;
 }
