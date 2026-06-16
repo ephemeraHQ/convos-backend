@@ -1,8 +1,13 @@
 import { randomUUID } from "node:crypto";
 import { LedgerReason, SubscriptionPeriod } from "@prisma/client";
 import { afterEach, describe, expect, it } from "vitest";
+import { getBalance } from "@/payments";
 import { config } from "@/payments/credits/config";
-import { getSpendableBalance, isSpendAllowed } from "@/payments/spendable";
+import {
+  getSpendableBalance,
+  isSpendAllowed,
+  recordConsume,
+} from "@/payments/spendable";
 import { tierGrant } from "@/subscriptions/tier-config";
 import { SUBSCRIPTION_TIER_PLUS } from "@/subscriptions/tiers";
 import { prisma } from "@/utils/prisma";
@@ -80,5 +85,73 @@ describe("getSpendableBalance / isSpendAllowed", () => {
     await seedBalance(accountId, 1234n);
     // Subscription row exists but is not entitled → raw additive balance, not derived.
     expect(await getSpendableBalance(accountId)).toBe(1234n);
+  });
+});
+
+describe("recordConsume", () => {
+  it("subscriber → ledger row written, raw balance untouched, never throws", async () => {
+    const accountId = await seedAccount();
+    tracker.push(accountId);
+    await seedPlusMonthlySubscription(accountId);
+
+    const res = await recordConsume({
+      accountId,
+      usdCostMicros: 1_000_000n,
+      idempotencyKey: `t-${randomUUID()}`,
+      requestId: "req-1",
+    });
+    expect(res.spent).toBeGreaterThan(0);
+
+    // Raw balance untouched (no UserCredits row created).
+    expect(await getBalance(accountId)).toBe(0n);
+    // Usage is recorded → spendable dropped by the consumed amount.
+    expect(await getSpendableBalance(accountId)).toBe(
+      BigInt(perPeriod() - res.spent),
+    );
+    const rows = await prisma.creditLedger.count({
+      where: { accountId, reason: LedgerReason.consume },
+    });
+    expect(rows).toBe(1);
+  });
+
+  it("non-subscriber → identical to consume() (decrements raw balance)", async () => {
+    const accountId = await seedAccount();
+    tracker.push(accountId);
+    await seedBalance(accountId, 5000n);
+
+    const res = await recordConsume({
+      accountId,
+      usdCostMicros: 1_000_000n,
+      idempotencyKey: `t-${randomUUID()}`,
+      requestId: "req-2",
+    });
+    expect(await getBalance(accountId)).toBe(5000n - BigInt(res.spent));
+  });
+
+  it("subscriber idempotent replay → single row, replayed: true", async () => {
+    const accountId = await seedAccount();
+    tracker.push(accountId);
+    await seedPlusMonthlySubscription(accountId);
+    const key = `t-${randomUUID()}`;
+
+    const first = await recordConsume({
+      accountId,
+      usdCostMicros: 1_000_000n,
+      idempotencyKey: key,
+      requestId: "req-r",
+    });
+    const second = await recordConsume({
+      accountId,
+      usdCostMicros: 1_000_000n,
+      idempotencyKey: key,
+      requestId: "req-r",
+    });
+
+    expect(second.replayed).toBe(true);
+    expect(second.ledgerId).toBe(first.ledgerId);
+    const rows = await prisma.creditLedger.count({
+      where: { accountId, reason: LedgerReason.consume },
+    });
+    expect(rows).toBe(1);
   });
 });

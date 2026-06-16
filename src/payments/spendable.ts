@@ -1,6 +1,8 @@
 import { LedgerReason } from "@prisma/client";
-import { getBalance } from "@/payments";
+import { consume, getBalance, usdToCredits } from "@/payments";
 import { config } from "@/payments/credits/config";
+import { applyDelta } from "@/payments/ledger";
+import type { ConsumeResult } from "@/payments/types";
 import { findCurrentByAccountId } from "@/subscriptions/repository";
 import { isEntitledSubscription } from "@/subscriptions/status";
 import { tierGrant } from "@/subscriptions/tier-config";
@@ -45,3 +47,32 @@ export const getSpendableBalance = async (
 
 export const isSpendAllowed = async (accountId: string): Promise<boolean> =>
   (await getSpendableBalance(accountId)) >= config.reservedMaxTurnCredits;
+
+export const recordConsume = async (args: {
+  accountId: string;
+  usdCostMicros: bigint;
+  idempotencyKey: string;
+  requestId: string;
+  model?: string;
+}): Promise<ConsumeResult> => {
+  const subscription = await findCurrentByAccountId(args.accountId);
+  if (!subscription || !isEntitledSubscription(subscription)) {
+    return consume(args);
+  }
+
+  const credits = usdToCredits(args.usdCostMicros);
+  const { replayed, newBalance, balanceAfter, ledgerId } = await applyDelta({
+    accountId: args.accountId,
+    delta: BigInt(-credits),
+    reason: LedgerReason.consume,
+    idempotencyKey: args.idempotencyKey,
+    scope: "transaction",
+    usdCostMicros: args.usdCostMicros,
+    markupRate: config.markupRate,
+    creditsPerDollar: config.creditsPerDollar,
+    model: args.model,
+    requestId: args.requestId,
+    recordOnly: true,
+  });
+  return { spent: credits, replayed, newBalance, balanceAfter, ledgerId };
+};
