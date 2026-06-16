@@ -75,7 +75,7 @@ vi.mock("@aws-sdk/client-s3", () => ({
   },
 }));
 
-const TEST_PORT = 4079;
+const TEST_PORT = 4080;
 const TEST_SOURCE = "generations-attachments-test";
 
 const withKey = (key: string) => ({

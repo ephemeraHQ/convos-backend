@@ -1370,14 +1370,22 @@ export async function generateTemplate(
         type: "text",
         text: `${describeAttachments(images.length, pdfs.length)}${intentNote}`,
       },
-      ...images.map((img) => ({
-        type: "image_url",
-        image_url: { url: img.dataUri },
-      })),
-      ...pdfs.map((pdf) => ({
-        type: "file",
-        file: { filename: pdf.filename, file_data: pdf.dataUri },
-      })),
+      // Map the original `attachments` array (not the filtered ones) so a mixed
+      // image/PDF order from the caller is preserved in the content blocks.
+      ...attachments.map((attachment) =>
+        attachment.kind === "image"
+          ? {
+              type: "image_url",
+              image_url: { url: attachment.dataUri },
+            }
+          : {
+              type: "file",
+              file: {
+                filename: attachment.filename,
+                file_data: attachment.dataUri,
+              },
+            },
+      ),
     ];
   } else {
     // Text path: idea, content, or URL

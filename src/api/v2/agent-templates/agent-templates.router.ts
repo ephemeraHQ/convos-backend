@@ -4,6 +4,7 @@ import {
   optionalAuthOrAgentApiKeyAuth,
 } from "@/middleware/agentAuth";
 import { requireAccount } from "@/middleware/auth";
+import { buildAttachmentPresignedLimiter } from "@/middleware/rateLimit";
 import { buildAttachmentPresignedHandler } from "./handlers/build-attachment-presigned";
 import { createHandler } from "./handlers/create";
 import { deleteHandler } from "./handlers/delete";
@@ -57,8 +58,11 @@ agentTemplatesRouter.get(
 // Presigned PUT for a generation attachment (image / PDF / voice) → the private
 // bucket. Mounted before /:idOrUrlSlug so the wildcard doesn't capture
 // "attachments" as a slug-or-id. Optional auth, like the generation endpoint.
+// A dedicated per-IP limiter caps capability-token minting since the endpoint
+// is optional-auth.
 agentTemplatesRouter.get(
   "/attachments/presigned",
+  buildAttachmentPresignedLimiter,
   optionalAuthOrAgentApiKeyAuth,
   buildAttachmentPresignedHandler,
 );

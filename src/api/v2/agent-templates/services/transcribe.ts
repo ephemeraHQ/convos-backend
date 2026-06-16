@@ -20,6 +20,7 @@
 
 import type { OpenAI } from "openai";
 import { BUILD_TRANSCRIBE_MODEL, BUILDER_OPENROUTER_API_KEY } from "@/config";
+import { normalizeMime } from "./build-attachments";
 import {
   openRouterChatCompletion,
   type TraceContext,
@@ -34,7 +35,7 @@ const TRANSCRIBE_PROMPT =
 /** Map a wire MIME type to the short audio-format token OpenRouter expects in
  *  the `input_audio.format` field. Exported for testing. */
 export function audioFormat(mimeType: string): string {
-  const m = mimeType.split(";")[0].trim().toLowerCase();
+  const m = normalizeMime(mimeType);
   switch (m) {
     case "audio/mpeg":
       return "mp3";

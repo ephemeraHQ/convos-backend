@@ -13,24 +13,27 @@
  */
 
 import type { Request, Response } from "express";
+import { z } from "zod";
 import { AppError } from "@/utils/errors";
 import { presignBuildUpload } from "../services/build-attachments";
+
+const presignedQuerySchema = z.object({
+  contentType: z.string().trim().min(1),
+});
 
 export async function buildAttachmentPresignedHandler(
   req: Request,
   res: Response,
 ) {
-  try {
-    const contentType = req.query.contentType;
-    if (typeof contentType !== "string" || contentType.trim().length === 0) {
-      res
-        .status(400)
-        .json({ error: "contentType query parameter is required" });
-      return;
-    }
+  const parsed = presignedQuerySchema.safeParse(req.query);
+  if (!parsed.success) {
+    res.status(400).json({ error: "contentType query parameter is required" });
+    return;
+  }
 
+  try {
     const { objectKey, uploadUrl } = await presignBuildUpload(
-      contentType.trim(),
+      parsed.data.contentType,
     );
 
     res.set({

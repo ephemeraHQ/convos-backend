@@ -717,12 +717,21 @@ export async function generationsPostHandler(req: Request, res: Response) {
     return;
   }
 
+  // A whitespace-only `idea` is treated as absent so a valid `inputs.text`
+  // still satisfies the intent check (and feeds the classifier) instead of
+  // being shadowed by `??`.
+  const twitterIdea =
+    typeof body.twitterContext?.idea === "string" &&
+    body.twitterContext.idea.trim().length > 0
+      ? body.twitterContext.idea
+      : undefined;
+
   // 6a. The twitter intent classifier needs text to run on, so a twitter
   //     submission must carry either `inputs.text` or `twitterContext.idea`.
   //     Checked here — before any S3/LLM work — so a text-less twitter request
   //     fails fast rather than after fetching attachment bytes.
   if (body.twitterContext) {
-    const intentText = body.twitterContext.idea ?? coalesced.text;
+    const intentText = twitterIdea ?? coalesced.text;
     if (!intentText || intentText.trim().length === 0) {
       res.status(400).json({
         error:
@@ -838,6 +847,19 @@ export async function generationsPostHandler(req: Request, res: Response) {
         totalBytes += size;
       }
       if (totalBytes > BUILD_ATTACHMENTS_MAX_TOTAL_BYTES) {
+        // The 400 reports the total only; log the per-attachment breakdown so
+        // an over-cap submission can be traced to the offending objects.
+        req.log.warn(
+          {
+            attachments: heads.map((h, i) => ({
+              objectKey: coalesced.attachments[i].objectKey,
+              size: h.contentLength,
+            })),
+            totalBytes,
+            limit: BUILD_ATTACHMENTS_MAX_TOTAL_BYTES,
+          },
+          "Aggregate attachment size exceeded",
+        );
         res.status(400).json({
           error: `Attachments exceed the total size limit of ${BUILD_ATTACHMENTS_MAX_TOTAL_BYTES} bytes`,
         });
@@ -897,7 +919,7 @@ export async function generationsPostHandler(req: Request, res: Response) {
   // 14. Twitter intent gate — only when twitterContext is present. The
   //     presence of usable intent text was already enforced in step 6a.
   if (body.twitterContext) {
-    const intentInput = body.twitterContext.idea ?? coalesced.text ?? "";
+    const intentInput = twitterIdea ?? coalesced.text ?? "";
     const intent = await checkTwitterIntent(intentInput, moderationTrace);
     if (!intent.allowed) {
       res.status(422).json({

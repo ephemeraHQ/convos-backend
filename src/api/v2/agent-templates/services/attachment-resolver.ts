@@ -20,6 +20,7 @@ import {
   classifyMime,
   getBuildObjectBytes,
   maxBytesForKind,
+  normalizeMime,
 } from "./build-attachments";
 import { checkImage } from "./image-moderation";
 import { checkContent } from "./moderation";
@@ -64,10 +65,6 @@ export interface ResolvedInputs {
   /** Audio transcripts, in attachment order — the caller folds these into the
    *  generation's text input. */
   transcripts: string[];
-}
-
-function canonicalMime(mimeType: string): string {
-  return mimeType.split(";")[0].trim().toLowerCase();
 }
 
 export interface ResolveOpts {
@@ -129,7 +126,7 @@ async function resolveOne(
 
   const base64 = Buffer.from(bytes).toString("base64");
   if (kind === "image") {
-    const mime = canonicalMime(ref.mimeType);
+    const mime = normalizeMime(ref.mimeType);
     return {
       kind: "attachment",
       attachment: {

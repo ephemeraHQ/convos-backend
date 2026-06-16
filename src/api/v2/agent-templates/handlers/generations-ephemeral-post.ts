@@ -257,7 +257,17 @@ export async function generationsEphemeralPostHandler(
         : {}),
     };
   } catch (err) {
-    if (abort.signal.aborted) return; // client hung up / timed out mid-resolve
+    if (abort.signal.aborted) {
+      // The client is gone — nothing to write.
+      if (res.writableEnded || res.destroyed) return;
+      // A timeout aborts via `timeoutSignal`; surface it like the generation
+      // timeout path rather than leaving the client hanging.
+      if (timeoutSignal.aborted) {
+        res.status(504).json({ error: "Generation timed out" });
+        return;
+      }
+      return; // client hung up mid-resolve
+    }
     if (err instanceof AppError) {
       res.status(err.statusCode).json({ error: err.message });
       return;

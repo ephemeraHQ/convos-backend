@@ -21,13 +21,9 @@ import {
   RekognitionClient,
 } from "@aws-sdk/client-rekognition";
 import type { ModerationResult } from "@/api/v2/agent-templates/services/moderation";
+import { IMAGE_MODERATION_MIN_CONFIDENCE } from "@/config";
 import logger from "@/utils/logger";
 import { getPrivateBucket } from "./build-attachments";
-
-// Minimum label confidence (%) to treat an image as unsafe. Rekognition returns
-// only labels at or above this; 60 mirrors AWS's recommended default for a
-// block decision without over-flagging borderline content.
-const MIN_CONFIDENCE = 60;
 
 // Ambient credentials/region, like the S3 client.
 const rekognitionClient = new RekognitionClient({});
@@ -78,7 +74,7 @@ async function _checkImage(objectKey: string): Promise<ModerationResult> {
     const res = await rekognitionClient.send(
       new DetectModerationLabelsCommand({
         Image: { S3Object: { Bucket: bucket, Name: objectKey } },
-        MinConfidence: MIN_CONFIDENCE,
+        MinConfidence: IMAGE_MODERATION_MIN_CONFIDENCE,
       }),
     );
     const labels = res.ModerationLabels ?? [];

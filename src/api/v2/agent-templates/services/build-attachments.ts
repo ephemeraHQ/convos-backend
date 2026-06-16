@@ -69,8 +69,9 @@ const KIND_BY_MIME: Record<string, AttachmentKind> = {
   "audio/webm": "audio",
 };
 
-/** Normalize a wire MIME type: lowercase + strip parameters (`; codecs=…`). */
-function normalizeMime(mimeType: string): string {
+/** Normalize a wire MIME type: lowercase + strip parameters (`; codecs=…`).
+ *  Shared by the resolver + transcriber so every site canonicalizes identically. */
+export function normalizeMime(mimeType: string): string {
   return mimeType.split(";")[0].trim().toLowerCase();
 }
 

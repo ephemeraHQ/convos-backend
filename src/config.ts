@@ -232,6 +232,15 @@ export const BUILD_ATTACHMENTS_MAX_TOTAL_BYTES = parsePositiveInt(
 export const BUILD_TRANSCRIBE_MODEL =
   process.env.BUILD_TRANSCRIBE_MODEL?.trim() || "google/gemini-3.1-flash-lite";
 
+// Minimum Rekognition label confidence (%) to treat an image attachment as
+// unsafe — AWS's recommended default for a block decision, tunable per-env
+// without a deploy. Clamped to 1–100 (it's a percentage); out-of-range or
+// non-numeric values fall back to the default.
+export const IMAGE_MODERATION_MIN_CONFIDENCE = Math.min(
+  100,
+  parsePositiveInt(process.env.IMAGE_MODERATION_MIN_CONFIDENCE, 60),
+);
+
 // Server-side wait knobs for POST /api/v2/agents/join — the handler blocks
 // while the upstream assistant workflow boots a fresh container. Override
 // via env in tests / staging to shrink the wait.
