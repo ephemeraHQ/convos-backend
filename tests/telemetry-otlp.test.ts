@@ -296,6 +296,14 @@ describe("prepareBatch", () => {
     }
   });
 
+  test("allows agent metric prefix", () => {
+    const out = prepareBatch(
+      makeBody({ metricName: "agent.join.failure" }),
+      baseOpts,
+    );
+    expect(out.isEmpty).toBe(false);
+  });
+
   test("keeps the 'key' data point attribute", () => {
     const body = makeBody();
     body.resourceMetrics[0].scopeMetrics[0].metrics[0].sum.dataPoints[0].attributes =

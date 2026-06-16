@@ -3,6 +3,7 @@ import { TELEMETRY_MAX_BODY_BYTES } from "@/config";
 import { bodySizeGuard } from "@/middleware/bodySizeGuard";
 import { countTelemetryBatch } from "@/utils/metrics";
 import { postMetrics, serviceNameFor } from "./handlers/metrics";
+import { postTraces } from "./handlers/traces";
 
 // Parse the telemetry body here (after the size guard) with the telemetry
 // cap, so this route does not depend on the global 50mb JSON parser and the
@@ -35,6 +36,12 @@ telemetryRouter.post(
   bodySizeGuard(TELEMETRY_MAX_BODY_BYTES),
   parseTelemetryBody,
   postMetrics,
+);
+telemetryRouter.post(
+  "/traces",
+  bodySizeGuard(TELEMETRY_MAX_BODY_BYTES),
+  parseTelemetryBody,
+  postTraces,
 );
 telemetryRouter.use(countParseRejections);
 

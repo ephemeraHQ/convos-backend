@@ -226,6 +226,9 @@ if (GENERATION_STUCK_SWEEP_THRESHOLD_MS <= GENERATION_EXECUTOR_TIMEOUT_MS) {
 export const OTLP_METRICS_FORWARD_URL =
   process.env.OTLP_METRICS_FORWARD_URL?.trim() ||
   "http://localhost:4318/v1/metrics";
+export const OTLP_TRACES_FORWARD_URL =
+  process.env.OTLP_TRACES_FORWARD_URL?.trim() ||
+  "http://localhost:4318/v1/traces";
 
 // Datadog rejects points >1h old; drop at 55min to leave forwarding headroom.
 export const TELEMETRY_MAX_POINT_AGE_MS = 55 * 60 * 1000;
@@ -237,6 +240,7 @@ export const TELEMETRY_MAX_BODY_BYTES = 262_144; // 256 KiB
 export const TELEMETRY_METRIC_PREFIXES = [
   "xmtp.",
   "api.",
+  "agent.",
   "core.",
   "inbox.",
   "network.",
