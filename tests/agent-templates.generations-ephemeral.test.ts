@@ -137,7 +137,7 @@ describe("POST /generations/ephemeral — validation", () => {
     const res = await post({ inputs: {} });
     expect(res.status).toBe(400);
     const body = (await res.json()) as { error: string };
-    expect(body.error.toLowerCase()).toContain("one of");
+    expect(body.error.toLowerCase()).toContain("attachment");
   });
 });
 

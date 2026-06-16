@@ -624,8 +624,13 @@ describe("templateGen service — OpenRouter integration", () => {
     });
 
     await generateTemplate({
-      imageBase64: "iVBORw0KGgo=",
-      mimeType: "image/png",
+      attachments: [
+        {
+          kind: "image",
+          mimeType: "image/png",
+          dataUri: "data:image/png;base64,iVBORw0KGgo=",
+        },
+      ],
       text: "Make an assistant from this image",
     });
 
@@ -672,9 +677,13 @@ describe("templateGen service — OpenRouter integration", () => {
     });
 
     await generateTemplate({
-      pdfBase64: "JVBERi0=",
-      mimeType: "application/pdf",
-      filename: "document.pdf",
+      attachments: [
+        {
+          kind: "pdf",
+          filename: "document.pdf",
+          dataUri: "data:application/pdf;base64,JVBERi0=",
+        },
+      ],
       text: "Summarize this PDF",
     });
 
@@ -685,7 +694,7 @@ describe("templateGen service — OpenRouter integration", () => {
 
     // First element: text directive
     expect(userContent[0].type).toBe("text");
-    expect(userContent[0].text).toContain("PDF");
+    expect(userContent[0].text).toContain("document");
 
     // Second element: file
     expect(userContent[1].type).toBe("file");
@@ -1144,7 +1153,16 @@ describe("templateGen service — OpenRouter integration", () => {
     generateTemplate = mod.generateTemplate;
 
     await generateTemplate(
-      { imageBase64: "iVBORw0KGgo=", mimeType: "image/png", text: "" },
+      {
+        attachments: [
+          {
+            kind: "image",
+            mimeType: "image/png",
+            dataUri: "data:image/png;base64,iVBORw0KGgo=",
+          },
+        ],
+        text: "",
+      },
       undefined,
       { agentName: "Pixel Pal", emoji: "📸" },
     );

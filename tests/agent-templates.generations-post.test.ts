@@ -178,7 +178,7 @@ describe("POST /generations — validation", () => {
     );
     expect(res.status).toBe(400);
     const body = (await res.json()) as { error: string };
-    expect(body.error.toLowerCase()).toContain("one of");
+    expect(body.error.toLowerCase()).toContain("attachment");
   });
 
   test("text exceeds 50_000 chars → 400", async () => {
@@ -190,12 +190,19 @@ describe("POST /generations — validation", () => {
     expect(res.status).toBe(400);
   });
 
-  test("intent text exceeds 50_000 chars on a file path → 400", async () => {
-    // The intent text rides along with an attached file (the generator uses it
-    // as the file's directive), so it's length-capped on the file path too.
+  test("intent text exceeds 50_000 chars on an attachment path → 400", async () => {
+    // The intent text rides along with an attachment (the generator uses it as
+    // the files' directive), so it's length-capped there too — and the check
+    // fires before any S3 work, so the unfetchable objectKey is never touched.
     const tooLong = "a".repeat(50_001);
     const res = await post(
-      { source: TEST_SOURCE, inputs: { imageBase64: "AAAA", text: tooLong } },
+      {
+        source: TEST_SOURCE,
+        inputs: {
+          attachments: [{ objectKey: "build/x.png", mimeType: "image/png" }],
+          text: tooLong,
+        },
+      },
       { headers: withKey("v4-file-intent") },
     );
     expect(res.status).toBe(400);

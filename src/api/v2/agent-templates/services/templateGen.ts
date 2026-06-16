@@ -291,23 +291,26 @@ export const DEFAULT_TEST_METRICS: GenerationMetrics = {
   latencyMs: 1500,
 };
 
+/** One attachment resolved to LLM-ready content by the executor — the bytes are
+ *  already fetched from the private bucket and base64-encoded into a `data:` URI
+ *  (off the client request path, never a public URL). Audio is NOT here: it's
+ *  transcribed to text upstream and folded into `text`. */
+export type ResolvedAttachment =
+  | { kind: "image"; mimeType: string; dataUri: string }
+  | { kind: "pdf"; filename: string; dataUri: string };
+
 export interface GenerateTemplateInput {
-  /** What the user typed in the composer. When sent alone, URL-shaped
-   *  text is auto-extracted; everything else flows through the standard
-   *  text generation path. When sent alongside a file (pdfBase64 /
-   *  imageBase64), the file is the source material and `text` is the
-   *  user's intent / directive about how to use it. The HTTP route
-   *  handler coalesces legacy `idea` / `content` / `url` fields from
-   *  older clients into this single field at the API boundary. */
+  /** What the user typed in the composer, plus any transcribed voice notes the
+   *  executor folded in. When sent alone, URL-shaped text is auto-extracted and
+   *  everything else flows through the standard text path. When sent alongside
+   *  attachments, the files are the source material and `text` is the user's
+   *  intent / directive about how to use them. The HTTP route handler coalesces
+   *  legacy `idea` / `content` / `url` fields into this single field at the API
+   *  boundary. */
   text?: string;
-  /** Base64-encoded PDF content. */
-  pdfBase64?: string;
-  /** Base64-encoded image content. */
-  imageBase64?: string;
-  /** MIME type for images (e.g. "image/png"). */
-  mimeType?: string;
-  /** Optional filename for the uploaded document. */
-  filename?: string;
+  /** Image / PDF attachments, resolved to data URIs. Images become `image_url`
+   *  vision blocks; PDFs become native `file` blocks. */
+  attachments?: ResolvedAttachment[];
 }
 
 /** Caller-pinned identity fields (mirror of the generation row's `prefill`
@@ -346,6 +349,21 @@ function buildIdentityDirective(prefill?: GenerationPrefill | null): string {
     `Use these exact values; do NOT substitute different ones: ${parts.join(", ")}. ` +
     closing
   );
+}
+
+/** Lead instruction for the multimodal path, phrased for the actual mix of
+ *  attached files so the model knows whether it's looking at images, reading
+ *  documents, or both. */
+function describeAttachments(imageCount: number, pdfCount: number): string {
+  const noun = (n: number, singular: string) =>
+    `${n} ${singular}${n === 1 ? "" : "s"}`;
+  if (imageCount > 0 && pdfCount > 0) {
+    return `Create an assistant based on the attached files (${noun(imageCount, "image")} and ${noun(pdfCount, "document")}). Use all of them together to infer the topic, purpose, and audience.`;
+  }
+  if (pdfCount > 0) {
+    return `Create an assistant based on the content of the attached ${pdfCount === 1 ? "document" : `${pdfCount} documents`}.`;
+  }
+  return `Create an assistant based on what you see in the attached ${imageCount === 1 ? "image" : `${imageCount} images`}. Infer the topic, purpose, and audience from the visual content.`;
 }
 
 // ---------------------------------------------------------------------------
@@ -1331,34 +1349,35 @@ export async function generateTemplate(
   // and content classifier keep their configured models.
   const model = modelOverride?.trim() || getModel();
 
-  if (opts.imageBase64) {
-    // Image path: send as image_url for vision models
-    const mime = opts.mimeType || "image/png";
+  const attachments = opts.attachments ?? [];
+
+  if (attachments.length > 0) {
+    // Multimodal path: text directive + N image/PDF blocks. Images go to the
+    // vision model as `image_url`; PDFs as native `file` blocks. The executor
+    // already fetched the bytes and built each data URI, so this just lays out
+    // the blocks. The URL/GitHub/passthrough logic below is text-only and
+    // doesn't apply when files are attached.
+    const images = attachments.filter(
+      (a): a is Extract<ResolvedAttachment, { kind: "image" }> =>
+        a.kind === "image",
+    );
+    const pdfs = attachments.filter(
+      (a): a is Extract<ResolvedAttachment, { kind: "pdf" }> =>
+        a.kind === "pdf",
+    );
     userContent = [
       {
         type: "text",
-        text: `Create an assistant based on what you see in this image. Infer the topic, purpose, and audience from the visual content.${intentNote}`,
+        text: `${describeAttachments(images.length, pdfs.length)}${intentNote}`,
       },
-      {
+      ...images.map((img) => ({
         type: "image_url",
-        image_url: { url: `data:${mime};base64,${opts.imageBase64}` },
-      },
-    ];
-  } else if (opts.pdfBase64) {
-    // PDF path: native support via OpenRouter
-    const filename = opts.filename || "document.pdf";
-    userContent = [
-      {
-        type: "text",
-        text: `Create an assistant based on the content of this PDF document.${intentNote}`,
-      },
-      {
+        image_url: { url: img.dataUri },
+      })),
+      ...pdfs.map((pdf) => ({
         type: "file",
-        file: {
-          filename,
-          file_data: `data:application/pdf;base64,${opts.pdfBase64}`,
-        },
-      },
+        file: { filename: pdf.filename, file_data: pdf.dataUri },
+      })),
     ];
   } else {
     // Text path: idea, content, or URL

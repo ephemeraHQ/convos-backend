@@ -173,15 +173,18 @@ describe("POST /generations — twitterContext validation", () => {
     expect(res.status).toBe(400);
   });
 
-  test("twitterContext + binary-only inputs (no text, no idea) → 400", async () => {
-    // When the caller sends twitterContext but provides only a pdfBase64 or
-    // imageBase64 input AND no `twitterContext.idea`, there's no text for the
-    // intent moderation check to operate on. The handler should reject with
-    // 400 rather than send the placeholder "[binary input: ...]" string to
-    // the intent classifier.
+  test("twitterContext + attachment-only inputs (no text, no idea) → 400", async () => {
+    // When the caller sends twitterContext but provides only an attachment AND
+    // no `twitterContext.idea`, there's no text for the intent moderation check
+    // to operate on. The handler rejects with 400 (in step 6a, before any S3
+    // work) rather than proceeding with empty intent text.
     const body = {
       source: TEST_SOURCE,
-      inputs: { pdfBase64: "JVBERi0xLjQK" }, // minimal pdf base64 stub
+      inputs: {
+        attachments: [
+          { objectKey: "build/doc.pdf", mimeType: "application/pdf" },
+        ],
+      },
       twitterContext: {
         twitterHandle: "@some_user",
         tweetId: "1789432100123456789",
