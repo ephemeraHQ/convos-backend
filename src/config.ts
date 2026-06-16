@@ -221,9 +221,11 @@ export const BUILD_ATTACHMENTS_MAX_COUNT = parsePositiveInt(
 // Aggregate cap across all attachments on one generation (bytes). Per-file
 // caps are class-specific (image vs pdf vs audio) and live in
 // services/build-attachments.ts, set against real vision-model ceilings.
+// 100 MiB fits a full batch either way: 9 images (9 × 10 MiB) or 4 pdf/audio
+// (4 × 25 MiB).
 export const BUILD_ATTACHMENTS_MAX_TOTAL_BYTES = parsePositiveInt(
   process.env.BUILD_ATTACHMENTS_MAX_TOTAL_BYTES,
-  60 * 1024 * 1024,
+  100 * 1024 * 1024,
 );
 
 // Audio-capable model that transcribes voice attachments to text before
