@@ -11,6 +11,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import {
   __setDistillApiKeyOverrideForTests,
+  buildPinnedIdentityNote,
   distill,
   parseDistillResponse,
 } from "@/api/v2/agent-templates/services/distill";
@@ -71,6 +72,50 @@ describe("parseDistillResponse", () => {
     );
     expect(r.emoji).toBe(""); // sanitized away — never ships a word as the glyph
     expect(r.progressPhrases).toHaveLength(6); // blanks dropped
+  });
+});
+
+describe("buildPinnedIdentityNote", () => {
+  test("returns empty string for null / undefined / empty prefill", () => {
+    expect(buildPinnedIdentityNote(null)).toBe("");
+    expect(buildPinnedIdentityNote(undefined)).toBe("");
+    expect(buildPinnedIdentityNote({})).toBe("");
+  });
+
+  test("returns empty string when every field is blank/whitespace", () => {
+    expect(
+      buildPinnedIdentityNote({
+        agentName: "   ",
+        emoji: "",
+        description: " ",
+      }),
+    ).toBe("");
+  });
+
+  test("includes only the pinned fields, in name/emoji/description order", () => {
+    const nameOnly = buildPinnedIdentityNote({ agentName: "Wave Boss" });
+    expect(nameOnly).toContain('name "Wave Boss"');
+    expect(nameOnly).not.toContain("emoji");
+    expect(nameOnly).not.toContain("description");
+
+    const emojiOnly = buildPinnedIdentityNote({ emoji: "🏄" });
+    expect(emojiOnly).toContain('emoji "🏄"');
+    expect(emojiOnly).not.toContain("name");
+
+    const all = buildPinnedIdentityNote({
+      agentName: "Wave Boss",
+      emoji: "🏄",
+      description: "surf crew",
+    });
+    expect(all).toContain(
+      'name "Wave Boss", emoji "🏄", description "surf crew"',
+    );
+  });
+
+  test("trims surrounding whitespace on each pinned value", () => {
+    expect(buildPinnedIdentityNote({ agentName: "  Wave Boss  " })).toContain(
+      'name "Wave Boss"',
+    );
   });
 });
 

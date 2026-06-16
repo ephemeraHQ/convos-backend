@@ -190,7 +190,9 @@ async function _distill(
  *  exact values and fit the rest (phrases, description) around them. The
  *  executor still does the authoritative caller-wins merge; this just keeps the
  *  generated phrases coherent with a pinned name. */
-function buildPinnedIdentityNote(prefill?: GenerationPrefill | null): string {
+export function buildPinnedIdentityNote(
+  prefill?: GenerationPrefill | null,
+): string {
   if (!prefill) return "";
   const parts: string[] = [];
   const name = prefill.agentName?.trim();
