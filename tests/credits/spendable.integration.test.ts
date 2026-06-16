@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { LedgerReason, SubscriptionPeriod } from "@prisma/client";
 import { afterEach, describe, expect, it } from "vitest";
-import { getBalance } from "@/payments";
+import { getBalance, getBucketedConsumption } from "@/payments";
 import { config } from "@/payments/credits/config";
 import {
   getSpendableBalance,
@@ -153,5 +153,23 @@ describe("recordConsume", () => {
       where: { accountId, reason: LedgerReason.consume },
     });
     expect(rows).toBe(1);
+  });
+
+  it("record-only subscriber consume surfaces in bucketed consumption", async () => {
+    const accountId = await seedAccount();
+    tracker.push(accountId);
+    await seedPlusMonthlySubscription(accountId);
+    const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
+
+    const res = await recordConsume({
+      accountId,
+      usdCostMicros: 1_000_000n,
+      idempotencyKey: `u-${randomUUID()}`,
+      requestId: "req-u",
+    });
+
+    const buckets = await getBucketedConsumption(accountId, since, "day");
+    const total = buckets.reduce((n, b) => n + Number(b.consumed), 0);
+    expect(total).toBe(res.spent);
   });
 });
