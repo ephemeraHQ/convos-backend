@@ -5,11 +5,8 @@ import {
   transactionRequestSchema,
 } from "@/api/v2/accounts/schemas/credits-by-id";
 import { idempotencyKeySchema } from "@/api/v2/accounts/schemas/shared";
-import {
-  consume,
-  IdempotencyMismatchError,
-  InsufficientBalanceError,
-} from "@/payments";
+import { IdempotencyMismatchError, InsufficientBalanceError } from "@/payments";
+import { recordConsume } from "@/payments/spendable";
 
 /**
  * POST /v2/accounts/:accountId/credits/transactions
@@ -63,7 +60,7 @@ export const creditsTransactionsPostHandler = async (
   const { usdCostMicros, requestId, model } = bodyResult.data;
 
   try {
-    const result = await consume({
+    const result = await recordConsume({
       accountId,
       usdCostMicros,
       idempotencyKey: keyResult.data,
