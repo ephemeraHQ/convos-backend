@@ -1,5 +1,6 @@
 import type { Request, Response } from "express";
-import { getSpendableBalance, isSpendAllowed } from "@/payments/spendable";
+import { config } from "@/payments/credits/config";
+import { getSpendableBalance } from "@/payments/spendable";
 import { prisma } from "@/utils/prisma";
 
 /**
@@ -33,7 +34,7 @@ export const creditsByIdGetHandler = async (
     }
 
     const balance = await getSpendableBalance(accountId);
-    const allowed = await isSpendAllowed(accountId);
+    const allowed = balance >= config.reservedMaxTurnCredits;
     req.log.info(
       { accountId, balance: balance.toString(), allowed },
       "credits.read.served",
