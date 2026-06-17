@@ -1,6 +1,6 @@
 import type { Request, Response } from "express";
-import { getBalance } from "@/payments";
-import { isAllowedFromBalance } from "@/payments/credits/policy";
+import { config } from "@/payments/credits/config";
+import { getSpendableBalance } from "@/payments/spendable";
 import { prisma } from "@/utils/prisma";
 
 /**
@@ -33,8 +33,8 @@ export const creditsByIdGetHandler = async (
       return;
     }
 
-    const balance = await getBalance(accountId);
-    const allowed = isAllowedFromBalance(balance);
+    const balance = await getSpendableBalance(accountId);
+    const allowed = balance >= config.reservedMaxTurnCredits;
     req.log.info(
       { accountId, balance: balance.toString(), allowed },
       "credits.read.served",

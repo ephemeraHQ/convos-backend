@@ -9,7 +9,7 @@ import {
   verifyAndDecodeTransaction,
 } from "@/subscriptions/jws-verifier";
 import { mapNotificationToUpdate } from "@/subscriptions/notification-mapping";
-import { applyNotification } from "@/subscriptions/repository";
+import { applyNotification, BillingProvider } from "@/subscriptions/repository";
 
 const bodySchema = z
   .object({
@@ -148,6 +148,7 @@ export async function appleSsnHandler(req: Request, res: Response) {
 
   try {
     const result = await applyNotification({
+      provider: BillingProvider.apple,
       originalTransactionId,
       transactionId,
       notificationUUID,

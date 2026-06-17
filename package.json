@@ -61,6 +61,8 @@
     "express": "^5.0.1",
     "express-rate-limit": "^7.5.0",
     "firebase-admin": "^13.4.0",
+    "google-auth-library": "^10.6.2",
+    "googleapis": "^172.0.0",
     "helmet": "^8.0.0",
     "jose": "^5.10.0",
     "jsonwebtoken": "^9.0.3",

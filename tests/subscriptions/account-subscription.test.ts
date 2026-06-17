@@ -63,7 +63,7 @@ const tokenFor = async (accountId: string) =>
 
 const wipe = async () => {
   if (createdAccountIds.length === 0) return;
-  await prisma.appleReceipt.deleteMany({
+  await prisma.billingReceipt.deleteMany({
     where: { subscription: { accountId: { in: createdAccountIds } } },
   });
   await prisma.subscription.deleteMany({
@@ -91,6 +91,7 @@ afterEach(async () => {
 type ErrorBody = { error?: string };
 type VerifyBody = {
   subscription: {
+    provider: string;
     tier: string;
     period: string;
     status: string;
@@ -150,6 +151,7 @@ describe("GET /v2/accounts/me/subscription", () => {
       .post("/v2/accounts/me/subscription/verify")
       .set("X-Convos-AuthToken", token)
       .send({
+        platform: "apple",
         jwsRepresentation: await signTransaction({
           appAccountToken: "11111111-2222-3333-4444-555555555555",
         }),
@@ -160,6 +162,7 @@ describe("GET /v2/accounts/me/subscription", () => {
       .set("X-Convos-AuthToken", token);
     expect(res.status).toBe(200);
     expect(res.body).toEqual({
+      provider: "apple",
       tier: "plus",
       period: "monthly",
       status: "active",
@@ -178,7 +181,10 @@ describe("POST /v2/accounts/me/subscription/verify", () => {
     const res = await request(makeApp())
       .post("/v2/accounts/me/subscription/verify")
       .set("X-Convos-AuthToken", token)
-      .send({ jwsRepresentation: await signTransaction({}) });
+      .send({
+        platform: "apple",
+        jwsRepresentation: await signTransaction({}),
+      });
     expect(res.status).toBe(403);
   });
 
@@ -201,6 +207,7 @@ describe("POST /v2/accounts/me/subscription/verify", () => {
       .post("/v2/accounts/me/subscription/verify")
       .set("X-Convos-AuthToken", token)
       .send({
+        platform: "apple",
         jwsRepresentation: await signTransaction({}),
         appAccountToken: "11111111-2222-3333-4444-555555555555",
       });
@@ -214,7 +221,7 @@ describe("POST /v2/accounts/me/subscription/verify", () => {
     const res = await request(makeApp())
       .post("/v2/accounts/me/subscription/verify")
       .set("X-Convos-AuthToken", token)
-      .send({ jwsRepresentation: "garbage.not.jws" });
+      .send({ platform: "apple", jwsRepresentation: "garbage.not.jws" });
     expect(res.status).toBe(400);
     expect((res.body as ErrorBody).error).toBe("Invalid signed transaction");
   });
@@ -227,6 +234,7 @@ describe("POST /v2/accounts/me/subscription/verify", () => {
       .post("/v2/accounts/me/subscription/verify")
       .set("X-Convos-AuthToken", token)
       .send({
+        platform: "apple",
         jwsRepresentation: await signTransaction({
           appAccountToken: undefined,
         }),
@@ -243,6 +251,7 @@ describe("POST /v2/accounts/me/subscription/verify", () => {
       .post("/v2/accounts/me/subscription/verify")
       .set("X-Convos-AuthToken", token)
       .send({
+        platform: "apple",
         jwsRepresentation: await signTransaction({
           productId: "app.bogus.sku",
         }),
@@ -259,6 +268,7 @@ describe("POST /v2/accounts/me/subscription/verify", () => {
       .post("/v2/accounts/me/subscription/verify")
       .set("X-Convos-AuthToken", token)
       .send({
+        platform: "apple",
         jwsRepresentation: await signTransaction({
           productId: "app.convos.subs.annual",
           appAccountToken: "11111111-2222-3333-4444-555555555555",
@@ -267,6 +277,7 @@ describe("POST /v2/accounts/me/subscription/verify", () => {
     expect(res.status).toBe(200);
     const body = res.body as VerifyBody;
     expect(body.subscription).toEqual({
+      provider: "apple",
       tier: "plus",
       period: "annual",
       status: "active",
@@ -277,7 +288,12 @@ describe("POST /v2/accounts/me/subscription/verify", () => {
     });
 
     const persisted = await prisma.subscription.findUnique({
-      where: { originalTransactionId: "2000000000000001" },
+      where: {
+        subscription_apple_otx_unique: {
+          provider: "apple",
+          originalTransactionId: "2000000000000001",
+        },
+      },
     });
     expect(persisted?.accountId).toBe(accountId);
     expect(persisted?.appAccountToken).toBe(
@@ -294,6 +310,7 @@ describe("POST /v2/accounts/me/subscription/verify", () => {
       .post("/v2/accounts/me/subscription/verify")
       .set("X-Convos-AuthToken", token)
       .send({
+        platform: "apple",
         jwsRepresentation: await signTransaction({
           appAccountToken: "11111111-2222-3333-4444-555555555555",
           offerType: 1, // INTRODUCTORY_OFFER
@@ -313,6 +330,7 @@ describe("POST /v2/accounts/me/subscription/verify", () => {
       .post("/v2/accounts/me/subscription/verify")
       .set("X-Convos-AuthToken", token)
       .send({
+        platform: "apple",
         jwsRepresentation: await signTransaction({
           appAccountToken: "11111111-2222-3333-4444-555555555555",
           expiresDate: Date.now() - 60_000,
@@ -330,6 +348,7 @@ describe("POST /v2/accounts/me/subscription/verify", () => {
     const accountId = await newAccount();
     const token = await tokenFor(accountId);
     const body = {
+      platform: "apple",
       jwsRepresentation: await signTransaction({
         appAccountToken: "11111111-2222-3333-4444-555555555555",
       }),
@@ -345,7 +364,7 @@ describe("POST /v2/accounts/me/subscription/verify", () => {
       .send(body);
 
     expect(res2.status).toBe(200);
-    const receipts = await prisma.appleReceipt.findMany({
+    const receipts = await prisma.billingReceipt.findMany({
       where: { transactionId: "2000000000000001" },
     });
     expect(receipts).toHaveLength(1);
@@ -362,6 +381,7 @@ describe("POST /v2/accounts/me/subscription/verify", () => {
       .post("/v2/accounts/me/subscription/verify")
       .set("X-Convos-AuthToken", tokenA)
       .send({
+        platform: "apple",
         jwsRepresentation: await signTransaction({
           appAccountToken: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
         }),
@@ -375,6 +395,7 @@ describe("POST /v2/accounts/me/subscription/verify", () => {
       .post("/v2/accounts/me/subscription/verify")
       .set("X-Convos-AuthToken", tokenB)
       .send({
+        platform: "apple",
         jwsRepresentation: await signTransaction({
           appAccountToken: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
           transactionId: "2000000000000002",
@@ -386,7 +407,12 @@ describe("POST /v2/accounts/me/subscription/verify", () => {
 
     // Persisted sub stays bound to accountA.
     const persisted = await prisma.subscription.findUnique({
-      where: { originalTransactionId: "2000000000000001" },
+      where: {
+        subscription_apple_otx_unique: {
+          provider: "apple",
+          originalTransactionId: "2000000000000001",
+        },
+      },
     });
     expect(persisted?.accountId).toBe(accountA);
   });

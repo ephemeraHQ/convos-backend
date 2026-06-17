@@ -15,6 +15,7 @@ import {
 } from "@/subscriptions/jws-verifier";
 import {
   AppleEnv,
+  BillingProvider,
   SUBSCRIPTION_TIER_PLUS,
   SubscriptionPeriod,
   SubscriptionStatus,
@@ -59,7 +60,7 @@ const newAccount = async () => {
 
 const wipe = async () => {
   if (createdAccountIds.length === 0) return;
-  await prisma.appleReceipt.deleteMany({
+  await prisma.billingReceipt.deleteMany({
     where: { subscription: { accountId: { in: createdAccountIds } } },
   });
   await prisma.subscription.deleteMany({
@@ -134,6 +135,7 @@ const seedSubscription = async (
 ) => {
   const accountId = await newAccount();
   const { subscription } = await upsertFromVerify({
+    provider: BillingProvider.apple,
     accountId,
     appAccountToken: "00000000-0000-0000-0000-000000000001",
     productId: "app.convos.subs.monthly",
@@ -225,7 +227,7 @@ describe("POST /v2/webhooks/apple/ssn", () => {
     );
     expect(updated?.status).toBe(SubscriptionStatus.active);
 
-    const receipts = await prisma.appleReceipt.findMany({
+    const receipts = await prisma.billingReceipt.findMany({
       where: { subscriptionId: subscription.id },
       orderBy: [{ receivedAt: "asc" }, { transactionId: "asc" }],
     });
@@ -509,7 +511,7 @@ describe("POST /v2/webhooks/apple/ssn", () => {
     expect(res.status).toBe(200);
     expect((res.body as AckBody).applied).toBe(false);
 
-    const receipts = await prisma.appleReceipt.findMany({
+    const receipts = await prisma.billingReceipt.findMany({
       where: {
         subscriptionId: subscription.id,
         transactionId: "3000000000000090",
@@ -538,7 +540,7 @@ describe("POST /v2/webhooks/apple/ssn", () => {
     expect((res.body as AckBody).applied).toBe(false);
 
     // No AppleReceipt should have been written (we skipped before applyNotification).
-    const receipts = await prisma.appleReceipt.findMany({
+    const receipts = await prisma.billingReceipt.findMany({
       where: { transactionId: "3000000000000100" },
     });
     expect(receipts).toHaveLength(0);

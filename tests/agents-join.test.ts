@@ -37,7 +37,7 @@ const TEST_ACCOUNT_HEADER = "x-test-account-id";
 // noise; instead default a placeholder accountId so every test mirrors
 // production's authenticated-only contract, and let individual tests
 // override identity via a header.
-const DEFAULT_TEST_ACCOUNT_ID = "default-test-account";
+const DEFAULT_TEST_ACCOUNT_ID = "11111111-1111-4111-8111-111111111111";
 function testAccountMiddleware(
   req: Request,
   res: ExpressResponse,
@@ -721,7 +721,9 @@ describe("agents join (assistant API)", () => {
           const body = JSON.parse(init.body as string) as {
             ownerAccountId?: string;
           };
-          expect(body.ownerAccountId).toBe("user-bare");
+          expect(body.ownerAccountId).toBe(
+            "44444444-4444-4444-8444-444444444444",
+          );
           return Promise.resolve(
             jsonResponse(200, { instanceId: "inst-bare" }),
           );
@@ -731,7 +733,10 @@ describe("agents join (assistant API)", () => {
         );
       };
 
-      const res = await post({ slug: "x" }, { accountId: "user-bare" });
+      const res = await post(
+        { slug: "x" },
+        { accountId: "44444444-4444-4444-8444-444444444444" },
+      );
       expect(res.status).toBe(200);
     });
 
@@ -746,7 +751,9 @@ describe("agents join (assistant API)", () => {
             template: Record<string, unknown>;
             ownerAccountId?: string;
           };
-          expect(body.ownerAccountId).toBe("user-1");
+          expect(body.ownerAccountId).toBe(
+            "55555555-5555-4555-8555-555555555555",
+          );
           // Full AgentTemplate JSON (including prompt) rides as a single
           // top-level field. No `name`/`instructions`/`metadata` split.
           expect(body.template).toBeDefined();
@@ -765,7 +772,7 @@ describe("agents join (assistant API)", () => {
 
       const res = await post(
         { slug: "x", templateId: template.id },
-        { accountId: "user-1" },
+        { accountId: "55555555-5555-4555-8555-555555555555" },
       );
       expect(res.status).toBe(200);
     });
@@ -800,7 +807,7 @@ describe("agents join (assistant API)", () => {
           name: "Custom Name",
           profileImage: "https://cdn.example.com/custom.png",
         },
-        { accountId: "user-1" },
+        { accountId: "55555555-5555-4555-8555-555555555555" },
       );
       expect(res.status).toBe(200);
     });
@@ -810,7 +817,7 @@ describe("agents join (assistant API)", () => {
 
       const res = await post(
         { slug: "x", templateId: "33333333-3333-4333-8333-333333333333" },
-        { accountId: "user-1" },
+        { accountId: "55555555-5555-4555-8555-555555555555" },
       );
       expect(res.status).toBe(404);
       const data = (await res.json()) as { error: string };
@@ -824,7 +831,7 @@ describe("agents join (assistant API)", () => {
 
       const res = await post(
         { slug: "x", templateId: "33333333-3333-4333-8333-333333333333" },
-        { accountId: "user-1" },
+        { accountId: "55555555-5555-4555-8555-555555555555" },
       );
       expect(res.status).toBe(410);
       const data = (await res.json()) as { error: string };
@@ -842,7 +849,7 @@ describe("agents join (assistant API)", () => {
 
       const res = await post(
         { slug: "x", templateId: "33333333-3333-4333-8333-333333333333" },
-        { accountId: "user-1" },
+        { accountId: "55555555-5555-4555-8555-555555555555" },
       );
       expect(res.status).toBe(500);
       const data = (await res.json()) as { error: string };
@@ -852,7 +859,10 @@ describe("agents join (assistant API)", () => {
     test("draft template: owner can use it", async () => {
       __setTemplateFinderForTests(() =>
         Promise.resolve(
-          baseTemplate({ status: "draft", ownerAccountId: "user-1" }),
+          baseTemplate({
+            status: "draft",
+            ownerAccountId: "55555555-5555-4555-8555-555555555555",
+          }),
         ),
       );
 
@@ -867,7 +877,7 @@ describe("agents join (assistant API)", () => {
 
       const res = await post(
         { slug: "x", templateId: "33333333-3333-4333-8333-333333333333" },
-        { accountId: "user-1" },
+        { accountId: "55555555-5555-4555-8555-555555555555" },
       );
       expect(res.status).toBe(200);
     });
@@ -881,7 +891,7 @@ describe("agents join (assistant API)", () => {
 
       const res = await post(
         { slug: "x", templateId: "33333333-3333-4333-8333-333333333333" },
-        { accountId: "user-1" },
+        { accountId: "55555555-5555-4555-8555-555555555555" },
       );
       expect(res.status).toBe(403);
       const data = (await res.json()) as { error: string };
@@ -896,7 +906,7 @@ describe("agents join (assistant API)", () => {
           templateId: "33333333-3333-4333-8333-333333333333",
           options: { onboarding: "agent-builder" },
         },
-        { accountId: "user-1" },
+        { accountId: "55555555-5555-4555-8555-555555555555" },
       );
       expect(res.status).toBe(400);
       const data = (await res.json()) as { error: string };
@@ -927,9 +937,54 @@ describe("agents join (assistant API)", () => {
           templateId: "33333333-3333-4333-8333-333333333333",
           options: { onboarding: "first-impression" },
         },
-        { accountId: "user-1" },
+        { accountId: "55555555-5555-4555-8555-555555555555" },
       );
       expect(res.status).toBe(200);
+    });
+
+    test("dispatch body carries the joining user's uuid ownerAccountId", async () => {
+      let capturedBody: Record<string, unknown> | null = null;
+      mockFetchImpl = (url, init) => {
+        if (init?.method === "POST") {
+          capturedBody = JSON.parse(init.body as string) as Record<
+            string,
+            unknown
+          >;
+          return Promise.resolve(
+            jsonResponse(200, { instanceId: "inst-uuid-owner" }),
+          );
+        }
+        return Promise.resolve(
+          jsonResponse(200, {
+            instanceId: "inst-uuid-owner",
+            joinStatus: "starting",
+            inboxId: "inbox-uuid-owner",
+          }),
+        );
+      };
+
+      const res = await post({ conversationId: "abcdef1234567890" });
+      expect(res.status).toBe(200);
+      expect(capturedBody).not.toBeNull();
+      expect(capturedBody!.ownerAccountId).toBe(DEFAULT_TEST_ACCOUNT_ID);
+    });
+
+    test("refuses to dispatch when accountId is not a uuid", async () => {
+      let fetchCalled = false;
+      mockFetchImpl = () => {
+        fetchCalled = true;
+        return Promise.reject(new Error("should not dispatch"));
+      };
+
+      const res = await post(
+        { conversationId: "abcdef1234567890" },
+        { accountId: "not-a-uuid" },
+      );
+      expect(res.status).toBe(500);
+      const data = (await res.json()) as { success: boolean; error: string };
+      expect(data.success).toBe(false);
+      expect(data.error).toBe("JOIN_DISPATCH_INVALID");
+      expect(fetchCalled).toBe(false);
     });
   });
 

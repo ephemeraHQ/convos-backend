@@ -4,49 +4,42 @@ import { z } from "zod";
 import { pickCollisionFreeId } from "@/api/v2/agent-templates/lib/pick-collision-free-id";
 import { serializeAgentTemplate } from "@/api/v2/agent-templates/lib/serialize-agent-template";
 import { revalidateTemplate } from "@/api/v2/agent-templates/services/revalidate-dashboard";
+import { accountIdSchema } from "@/utils/account-id";
 import { getEffectiveOwnerId } from "@/utils/auth-helpers";
 import { prisma } from "@/utils/prisma";
 import { validateSlug } from "@/utils/reserved-slugs";
 
-const bodySchema = z
-  .object({
-    agentName: z.string().trim().min(1),
-    avatarUrl: z.string().nullable().optional(),
-    category: z.string().nullable().optional(),
-    connections: z.array(z.string()).optional(),
-    description: z.string().nullable().optional(),
-    emoji: z.string().nullable().optional(),
-    featured: z.boolean().optional(),
-    prompt: z
-      .string()
-      .max(50_000, {
-        message: "prompt exceeds maximum length of 50_000 characters",
-      })
-      .refine((value) => value.trim().length > 0, {
-        message: "prompt is required",
-      }),
-    slug: z.string().optional(),
-    tools: z.array(z.string()).optional(),
-    // Asserted owner — honoured only when the caller is agent-key-auth'd;
-    // ignored for JWT (the JWT account always wins) and anonymous. Mirrors
-    // the generations POST endpoint's owner-assertion contract so a trusted
-    // agent runtime can attribute a created template to the user it's acting
-    // on behalf of rather than the ADMIN seed account.
-    ownerAccountId: z.string().uuid().optional(),
-    // Provenance for forks. When a row is created as a copy of an existing
-    // template (e.g. the runtime forking a catalog template a group adopted),
-    // this records the source id. The FK (`forkedFromId → AgentTemplate.id`,
-    // ON DELETE SET NULL) is the canonical check — a dangling reference fails
-    // the insert and maps to the same 400 as a bad ownerAccountId below.
-    forkedFromId: z.string().uuid().optional(),
-  })
-  // .passthrough() (not .strict()) is intentional: create accepts a full
-  // AgentTemplate-shaped body and silently IGNORES the fields it derives
-  // server-side (status, version, firstPublishedAt, …) instead of 400ing, so a
-  // caller can POST a serialized template verbatim. The "ignores server-pinned
-  // fields" test pins this. (generations-post.ts uses .strict() because its
-  // body is a bespoke request envelope, not a template — different by design.)
-  .passthrough();
+const bodySchema = z.object({
+  agentName: z.string().trim().min(1),
+  avatarUrl: z.string().nullable().optional(),
+  category: z.string().nullable().optional(),
+  connections: z.array(z.string()).optional(),
+  description: z.string().nullable().optional(),
+  emoji: z.string().nullable().optional(),
+  featured: z.boolean().optional(),
+  prompt: z
+    .string()
+    .max(50_000, {
+      message: "prompt exceeds maximum length of 50_000 characters",
+    })
+    .refine((value) => value.trim().length > 0, {
+      message: "prompt is required",
+    }),
+  slug: z.string().optional(),
+  tools: z.array(z.string()).optional(),
+  // Asserted owner — honoured only when the caller is agent-key-auth'd;
+  // ignored for JWT (the JWT account always wins) and anonymous. Mirrors
+  // the generations POST endpoint's owner-assertion contract so a trusted
+  // agent runtime can attribute a created template to the user it's acting
+  // on behalf of rather than the ADMIN seed account.
+  ownerAccountId: accountIdSchema.optional(),
+  // Provenance for forks. When a row is created as a copy of an existing
+  // template (e.g. the runtime forking a catalog template a group adopted),
+  // this records the source id. The FK (`forkedFromId → AgentTemplate.id`,
+  // ON DELETE SET NULL) is the canonical check — a dangling reference fails
+  // the insert and maps to the same 400 as a bad ownerAccountId below.
+  forkedFromId: z.string().uuid().optional(),
+});
 
 type CreateBody = z.infer<typeof bodySchema>;
 

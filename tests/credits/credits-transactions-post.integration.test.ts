@@ -1,5 +1,8 @@
+import { LedgerReason } from "@prisma/client";
 import type { Express } from "express";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { getBalance } from "@/payments";
+import { prisma } from "@/utils/prisma";
 import {
   agentRequest,
   buildCreditsApp,
@@ -8,6 +11,7 @@ import {
   installAgentApiKeyOverride,
   seedAccount,
   seedBalance,
+  seedPlusMonthlySubscription,
 } from "./helpers";
 
 let app: Express;
@@ -136,6 +140,26 @@ describe("POST /v2/accounts/:accountId/credits/transactions", () => {
     );
     expect(res.status).toBe(404);
     expect((res.body as { code: string }).code).toBe("account_not_found");
+  });
+
+  it("subscriber consume records usage without moving raw balance, never 402", async () => {
+    const accountId = await seedAccount();
+    tracker.push(accountId);
+    await seedPlusMonthlySubscription(accountId);
+
+    const res = await agentRequest(app).post(
+      `/v2/accounts/${accountId}/credits/transactions`,
+      `sub-${accountId}`,
+      { usdCostMicros: "1000000", requestId: "req-sub" },
+    );
+    expect(res.status).toBe(200);
+    // Raw balance untouched (record-only).
+    expect(await getBalance(accountId)).toBe(0n);
+    const row = await prisma.creditLedger.findFirst({
+      where: { accountId, reason: LedgerReason.consume },
+    });
+    expect(row).not.toBeNull();
+    expect(row?.delta).toBe(-2000n);
   });
 
   // PR-A unique constraint is still (accountId, idempotencyKey). PR-B swaps it
