@@ -12,5 +12,6 @@ declare namespace Express {
     jwtMetadata?: {
       notificationExtensionOnly?: boolean;
     };
+    actorEmail?: string;
   }
 }
