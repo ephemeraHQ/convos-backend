@@ -15,7 +15,10 @@
  */
 
 import { z } from "zod";
-import { BUILD_ATTACHMENTS_MAX_COUNT } from "@/config";
+import {
+  BUILD_ATTACHMENTS_MAX_COUNT,
+  BUILD_ATTACHMENTS_MAX_TOTAL_BYTES,
+} from "@/config";
 import { AppError } from "@/utils/errors";
 import {
   classifyMime,
@@ -42,10 +45,15 @@ export const attachmentRefSchema = z
 export type AttachmentRef = z.infer<typeof attachmentRefSchema>;
 
 /** The whole `attachments` field: an optional array capped at the per-
- *  generation count. */
+ *  generation count, with object keys required to be unique. */
 export const attachmentsArraySchema = z
   .array(attachmentRefSchema)
-  .max(BUILD_ATTACHMENTS_MAX_COUNT)
+  .max(BUILD_ATTACHMENTS_MAX_COUNT, {
+    message: `At most ${BUILD_ATTACHMENTS_MAX_COUNT} attachments allowed`,
+  })
+  .refine((arr) => new Set(arr.map((a) => a.objectKey)).size === arr.length, {
+    message: "Duplicate attachment objectKey",
+  })
   .optional();
 
 /** Thrown when an attachment is rejected by moderation. Carried distinctly so
@@ -76,9 +84,10 @@ export interface ResolveOpts {
   moderate: boolean;
 }
 
-type OneResult =
+type OneResult = { byteLength: number } & (
   | { kind: "attachment"; attachment: ResolvedAttachment }
-  | { kind: "transcript"; transcript: string };
+  | { kind: "transcript"; transcript: string }
+);
 
 async function resolveOne(
   ref: AttachmentRef,
@@ -113,7 +122,7 @@ async function resolveOne(
         );
       }
     }
-    return { kind: "transcript", transcript };
+    return { kind: "transcript", transcript, byteLength: bytes.length };
   }
 
   if (kind === "image" && opts.moderate) {
@@ -131,6 +140,7 @@ async function resolveOne(
     const mime = normalizeMime(ref.mimeType);
     return {
       kind: "attachment",
+      byteLength: bytes.length,
       attachment: {
         kind: "image",
         mimeType: mime,
@@ -140,6 +150,7 @@ async function resolveOne(
   }
   return {
     kind: "attachment",
+    byteLength: bytes.length,
     attachment: {
       kind: "pdf",
       filename: ref.filename || "document.pdf",
@@ -174,6 +185,16 @@ export async function resolveAttachments(
 ): Promise<ResolvedInputs> {
   if (_override) return _override(refs, opts);
   const results = await Promise.all(refs.map((ref) => resolveOne(ref, opts)));
+  // Defense-in-depth: re-check the aggregate byte size executor-side. The submit
+  // path already enforces this against HeadObject sizes; this guards against a
+  // content-swap between submit and resolve and keeps the per-file check above.
+  const totalBytes = results.reduce((sum, r) => sum + r.byteLength, 0);
+  if (totalBytes > BUILD_ATTACHMENTS_MAX_TOTAL_BYTES) {
+    throw new AppError(
+      400,
+      `Attachments exceed the total size limit of ${BUILD_ATTACHMENTS_MAX_TOTAL_BYTES} bytes`,
+    );
+  }
   const attachments: ResolvedAttachment[] = [];
   const transcripts: string[] = [];
   for (const r of results) {

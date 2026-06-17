@@ -236,10 +236,15 @@ export const BUILD_ATTACHMENTS_MAX_COUNT = Math.min(
 // caps are class-specific (image vs pdf vs audio) and live in
 // services/build-attachments.ts, set against real vision-model ceilings.
 // 100 MiB fits a full batch either way: 9 images (9 × 10 MiB) or 4 pdf/audio
-// (4 × 25 MiB).
-export const BUILD_ATTACHMENTS_MAX_TOTAL_BYTES = parsePositiveInt(
-  process.env.BUILD_ATTACHMENTS_MAX_TOTAL_BYTES,
+// (4 × 25 MiB). Clamped to the default so an env override can only lower it,
+// never raise the executor's worst-case memory footprint (mirrors the count
+// clamp above).
+export const BUILD_ATTACHMENTS_MAX_TOTAL_BYTES = Math.min(
   100 * 1024 * 1024,
+  parsePositiveInt(
+    process.env.BUILD_ATTACHMENTS_MAX_TOTAL_BYTES,
+    100 * 1024 * 1024,
+  ),
 );
 
 // Audio-capable model that transcribes voice attachments to text before

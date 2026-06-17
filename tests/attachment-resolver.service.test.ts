@@ -7,6 +7,7 @@
 import { afterEach, expect, test, vi } from "vitest";
 import {
   AttachmentModerationError,
+  attachmentsArraySchema,
   resolveAttachments,
 } from "@/api/v2/agent-templates/services/attachment-resolver";
 import { __resetImageModerationForTests } from "@/api/v2/agent-templates/services/image-moderation";
@@ -164,12 +165,46 @@ test("over-cap image → throws before any moderation", async () => {
   expect(spy).not.toHaveBeenCalled();
 });
 
+test("aggregate over the total cap → throws (executor-side re-check)", async () => {
+  // Each PDF is under the 25 MiB per-file cap, but 5 × 24 MiB = 120 MiB blows
+  // the 100 MiB aggregate cap. The stub reuses one buffer, so only 24 MiB is
+  // actually allocated.
+  stubBytes(new Uint8Array(24 * 1024 * 1024));
+  const refs = Array.from({ length: 5 }, (_, i) => ({
+    objectKey: `build/doc-${i}.pdf`,
+    mimeType: "application/pdf",
+  }));
+  await expect(resolveAttachments(refs, { moderate: false })).rejects.toThrow(
+    /total size limit/,
+  );
+});
+
 test("unsupported mime → throws", async () => {
   await expect(
     resolveAttachments([{ objectKey: "build/x.gif", mimeType: "image/gif" }], {
       moderate: false,
     }),
   ).rejects.toThrow(/Unsupported/);
+});
+
+test("attachmentsArraySchema rejects duplicate objectKeys", () => {
+  const dup = [
+    { objectKey: "build/a.png", mimeType: "image/png" },
+    { objectKey: "build/a.png", mimeType: "image/png" },
+  ];
+  const res = attachmentsArraySchema.safeParse(dup);
+  expect(res.success).toBe(false);
+  if (!res.success) {
+    expect(res.error.issues[0].message).toMatch(/Duplicate attachment/);
+  }
+});
+
+test("attachmentsArraySchema accepts distinct objectKeys", () => {
+  const ok = [
+    { objectKey: "build/a.png", mimeType: "image/png" },
+    { objectKey: "build/b.png", mimeType: "image/png" },
+  ];
+  expect(attachmentsArraySchema.safeParse(ok).success).toBe(true);
 });
 
 test("mixed batch resolves images/pdfs as blocks and audio as transcripts", async () => {

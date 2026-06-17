@@ -853,11 +853,12 @@ export async function generationsPostHandler(req: Request, res: Response) {
       }
       if (totalBytes > BUILD_ATTACHMENTS_MAX_TOTAL_BYTES) {
         // The 400 reports the total only; log the per-attachment breakdown so
-        // an over-cap submission can be traced to the offending objects.
+        // an over-cap submission can be traced. Log a short key prefix rather
+        // than the full objectKey to avoid leaking the bucket reference.
         req.log.warn(
           {
             attachments: heads.map((h, i) => ({
-              objectKey: coalesced.attachments[i].objectKey,
+              objectKeyPrefix: coalesced.attachments[i].objectKey.slice(0, 16),
               size: h.contentLength,
             })),
             totalBytes,

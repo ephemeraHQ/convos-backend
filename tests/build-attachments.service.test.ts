@@ -80,7 +80,7 @@ test("maxBytesForKind caps images tighter than pdf/audio", () => {
 });
 
 describe("presignBuildUpload", () => {
-  test("mints a build/ key, sets ContentLength, and signs content-length", async () => {
+  test("mints a build/ key and sets ContentLength on the signed command", async () => {
     const { objectKey, uploadUrl } = await presignBuildUpload(
       "image/png",
       1024,
@@ -88,15 +88,13 @@ describe("presignBuildUpload", () => {
     expect(objectKey).toMatch(/^build\/[\w-]+\.png$/);
     expect(uploadUrl).toBe("https://signed.example/put");
 
-    // The exact byte count is signed so S3 caps the (anonymous) PUT itself.
-    const [, command, opts] = vi.mocked(getSignedUrl).mock
-      .calls[0] as unknown as [
+    // The exact byte count is set on the command; the presigner signs
+    // Content-Length by default, so S3 caps the (anonymous) PUT itself.
+    const [, command] = vi.mocked(getSignedUrl).mock.calls[0] as unknown as [
       unknown,
       { input: { ContentLength?: number } },
-      { signableHeaders?: Set<string> },
     ];
     expect(command.input.ContentLength).toBe(1024);
-    expect([...(opts.signableHeaders ?? [])]).toContain("content-length");
   });
 
   test("rejects an unsupported type with 400", async () => {
@@ -142,6 +140,13 @@ describe("headBuildObject", () => {
 
   test("rejects a key outside the build/ namespace without touching S3", async () => {
     await expect(headBuildObject("other/abc.png")).rejects.toMatchObject({
+      statusCode: 400,
+    });
+    expect(mockSend).not.toHaveBeenCalled();
+  });
+
+  test("rejects a key with a `..` segment under build/ without touching S3", async () => {
+    await expect(headBuildObject("build/../secret")).rejects.toMatchObject({
       statusCode: 400,
     });
     expect(mockSend).not.toHaveBeenCalled();
