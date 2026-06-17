@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, test } from "vitest";
 import {
   applyNotification,
-  findByOriginalTransactionId,
+  BillingProvider,
+  findAppleByOriginalTransactionId,
   findCurrentByAccountId,
   findReceiptByTransactionId,
   serializeUserSubscription,
@@ -10,7 +11,7 @@ import {
   SubscriptionPeriod,
   SubscriptionStatus,
   upsertFromVerify,
-  type VerifyInput,
+  type AppleVerifyInput,
 } from "@/subscriptions/repository";
 import { prisma } from "@/utils/prisma";
 
@@ -33,7 +34,10 @@ const fixedDates = {
   currentPeriodEnd: new Date("2026-06-01T00:00:00.000Z"),
 };
 
-const verifyInput = (overrides: Partial<VerifyInput>): VerifyInput => ({
+const verifyInput = (
+  overrides: Partial<AppleVerifyInput>,
+): AppleVerifyInput => ({
+  provider: BillingProvider.apple,
   accountId: overrides.accountId ?? "",
   appAccountToken:
     overrides.appAccountToken ?? "11111111-2222-3333-4444-555555555555",
@@ -57,7 +61,7 @@ const verifyInput = (overrides: Partial<VerifyInput>): VerifyInput => ({
 
 const wipeForAccounts = async (accountIds: string[]) => {
   if (accountIds.length === 0) return;
-  await prisma.appleReceipt.deleteMany({
+  await prisma.billingReceipt.deleteMany({
     where: { subscription: { accountId: { in: accountIds } } },
   });
   await prisma.subscription.deleteMany({
@@ -86,7 +90,10 @@ describe("upsertFromVerify", () => {
     expect(subscription.status).toBe(SubscriptionStatus.active);
     expect(receiptCreated).toBe(true);
 
-    const receipt = await findReceiptByTransactionId("tx-1");
+    const receipt = await findReceiptByTransactionId(
+      BillingProvider.apple,
+      "tx-1",
+    );
     expect(receipt).not.toBeNull();
     expect(receipt?.subscriptionId).toBe(subscription.id);
     expect(receipt?.notificationType).toBe("VERIFY");
@@ -106,7 +113,7 @@ describe("upsertFromVerify", () => {
     expect(second.receiptCreated).toBe(false);
     expect(second.subscription.id).toBe(first.subscription.id);
 
-    const receipts = await prisma.appleReceipt.findMany({
+    const receipts = await prisma.billingReceipt.findMany({
       where: { transactionId: "tx-2" },
     });
     expect(receipts).toHaveLength(1);
@@ -144,7 +151,7 @@ describe("upsertFromVerify", () => {
       "2026-07-01T00:00:00.000Z",
     );
 
-    const receipts = await prisma.appleReceipt.findMany({
+    const receipts = await prisma.billingReceipt.findMany({
       where: { subscriptionId: newer.subscription.id },
     });
     expect(receipts.map((r) => r.transactionId).sort()).toEqual([
@@ -180,7 +187,7 @@ describe("upsertFromVerify", () => {
     );
     expect(renewed.receiptCreated).toBe(true);
 
-    const receipts = await prisma.appleReceipt.findMany({
+    const receipts = await prisma.billingReceipt.findMany({
       where: { subscriptionId: first.subscription.id },
       orderBy: [{ receivedAt: "asc" }, { transactionId: "asc" }],
     });
@@ -220,7 +227,7 @@ describe("upsertFromVerify", () => {
     const mismatch = caught as SubscriptionAccountMismatchError;
     expect(mismatch.existingAccountId).toBe(accountA);
     expect(mismatch.attemptedAccountId).toBe(accountB);
-    expect(mismatch.originalTransactionId).toBe(otid);
+    expect(mismatch.providerSubscriptionId).toBe(otid);
 
     // Account A keeps ownership of the row; account B persisted nothing.
     const forA = await findCurrentByAccountId(accountA);
@@ -229,7 +236,10 @@ describe("upsertFromVerify", () => {
     expect(await findCurrentByAccountId(accountB)).toBeNull();
 
     // No AppleReceipt was created for account B's losing verify.
-    const receiptB = await findReceiptByTransactionId("tx-mismatch-b");
+    const receiptB = await findReceiptByTransactionId(
+      BillingProvider.apple,
+      "tx-mismatch-b",
+    );
     expect(receiptB).toBeNull();
   });
 
@@ -250,7 +260,7 @@ describe("upsertFromVerify", () => {
     expect(a.subscription.id).toBe(b.subscription.id);
     expect(a.subscription.accountId).toBe(accountId);
 
-    const receipts = await prisma.appleReceipt.findMany({
+    const receipts = await prisma.billingReceipt.findMany({
       where: { transactionId: "tx-concurrent-same" },
     });
     expect(receipts).toHaveLength(1);
@@ -294,7 +304,7 @@ describe("upsertFromVerify", () => {
     const winner = fulfilled[0].subscription.accountId;
     expect([accountA, accountB]).toContain(winner);
 
-    const persisted = await findByOriginalTransactionId(otid);
+    const persisted = await findAppleByOriginalTransactionId(otid);
     expect(persisted?.accountId).toBe(winner);
   });
 });
@@ -361,6 +371,7 @@ describe("findCurrentByAccountId", () => {
 describe("applyNotification", () => {
   test("returns unknown_subscription when originalTransactionId has no row", async () => {
     const result = await applyNotification({
+      provider: BillingProvider.apple,
       originalTransactionId: "otid-missing",
       transactionId: "tx-missing",
       notificationUUID: "notif-missing",
@@ -382,6 +393,7 @@ describe("applyNotification", () => {
     );
 
     const result = await applyNotification({
+      provider: BillingProvider.apple,
       originalTransactionId: "otid-apply",
       transactionId: "tx-apply-2",
       notificationUUID: "notif-apply-2",
@@ -402,7 +414,10 @@ describe("applyNotification", () => {
       );
     }
 
-    const receipt = await findReceiptByTransactionId("tx-apply-2");
+    const receipt = await findReceiptByTransactionId(
+      BillingProvider.apple,
+      "tx-apply-2",
+    );
     expect(receipt?.notificationType).toBe("DID_FAIL_TO_RENEW");
     expect(receipt?.notificationSubtype).toBe("GRACE_PERIOD");
   });
@@ -418,6 +433,7 @@ describe("applyNotification", () => {
     );
 
     const first = await applyNotification({
+      provider: BillingProvider.apple,
       originalTransactionId: "otid-replay",
       transactionId: "tx-replay-1",
       notificationUUID: "notif-replay-1",
@@ -430,6 +446,7 @@ describe("applyNotification", () => {
     // Same notificationUUID → replayed. The state update would have been a no-op
     // anyway, but the point is no second AppleReceipt row.
     const second = await applyNotification({
+      provider: BillingProvider.apple,
       originalTransactionId: "otid-replay",
       transactionId: "tx-replay-1",
       notificationUUID: "notif-replay-1",
@@ -443,7 +460,7 @@ describe("applyNotification", () => {
       expect(second.subscription.status).toBe(SubscriptionStatus.active);
     }
 
-    const receipts = await prisma.appleReceipt.findMany({
+    const receipts = await prisma.billingReceipt.findMany({
       where: { transactionId: "tx-replay-1" },
     });
     expect(receipts).toHaveLength(1);
@@ -460,6 +477,7 @@ describe("applyNotification", () => {
     );
 
     const first = await applyNotification({
+      provider: BillingProvider.apple,
       originalTransactionId: "otid-same-tx-different-uuid",
       transactionId: "tx-shared",
       notificationUUID: "notif-shared-a",
@@ -470,6 +488,7 @@ describe("applyNotification", () => {
     expect(first.kind).toBe("applied");
 
     const second = await applyNotification({
+      provider: BillingProvider.apple,
       originalTransactionId: "otid-same-tx-different-uuid",
       transactionId: "tx-shared",
       notificationUUID: "notif-shared-b",
@@ -479,18 +498,18 @@ describe("applyNotification", () => {
     });
     expect(second.kind).toBe("applied");
 
-    const receipts = await prisma.appleReceipt.findMany({
+    const receipts = await prisma.billingReceipt.findMany({
       where: { transactionId: "tx-shared" },
-      orderBy: { notificationUUID: "asc" },
+      orderBy: { externalNotificationId: "asc" },
     });
-    expect(receipts.map((r) => r.notificationUUID)).toEqual([
+    expect(receipts.map((r) => r.externalNotificationId)).toEqual([
       "notif-shared-a",
       "notif-shared-b",
     ]);
   });
 });
 
-describe("findByOriginalTransactionId", () => {
+describe("findAppleByOriginalTransactionId", () => {
   test("returns the matching subscription", async () => {
     const accountId = await newAccount();
     const { subscription } = await upsertFromVerify(
@@ -500,12 +519,12 @@ describe("findByOriginalTransactionId", () => {
         transactionId: "tx-find",
       }),
     );
-    const found = await findByOriginalTransactionId("otid-find");
+    const found = await findAppleByOriginalTransactionId("otid-find");
     expect(found?.id).toBe(subscription.id);
   });
 
   test("returns null when not found", async () => {
-    expect(await findByOriginalTransactionId("nope")).toBeNull();
+    expect(await findAppleByOriginalTransactionId("nope")).toBeNull();
   });
 });
 
@@ -527,6 +546,7 @@ describe("serializeUserSubscription", () => {
       }),
     );
     expect(serializeUserSubscription(subscription)).toEqual({
+      provider: BillingProvider.apple,
       tier: SUBSCRIPTION_TIER_PLUS,
       period: SubscriptionPeriod.annual,
       status: SubscriptionStatus.trial,

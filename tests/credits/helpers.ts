@@ -15,6 +15,7 @@ import { pinoMiddleware } from "@/middleware/pino";
 import { grant } from "@/payments";
 import {
   AppleEnv,
+  BillingProvider,
   SUBSCRIPTION_TIER_PLUS,
   SubscriptionPeriod,
   SubscriptionStatus,
@@ -85,6 +86,7 @@ export const seedPlusMonthlySubscription = async (
   const start = new Date(now - 5 * DAY_MS);
   const end = new Date(now + 25 * DAY_MS);
   await upsertFromVerify({
+    provider: BillingProvider.apple,
     accountId,
     appAccountToken: randomUUID(),
     productId: "app.convos.subs.monthly",
@@ -110,6 +112,7 @@ export const seedExpiredSubscription = async (
   const start = new Date(now - 35 * DAY_MS);
   const end = new Date(now - 5 * DAY_MS);
   await upsertFromVerify({
+    provider: BillingProvider.apple,
     accountId,
     appAccountToken: randomUUID(),
     productId: "app.convos.subs.monthly",
@@ -130,7 +133,7 @@ export const seedExpiredSubscription = async (
 
 export const cleanupAccounts = async (accountIds: string[]): Promise<void> => {
   for (const accountId of accountIds) {
-    await prisma.appleReceipt.deleteMany({
+    await prisma.billingReceipt.deleteMany({
       where: { subscription: { accountId } },
     });
     await prisma.subscription.deleteMany({ where: { accountId } });

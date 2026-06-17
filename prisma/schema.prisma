@@ -342,9 +342,15 @@ enum AppleEnv {
   production
 }
 
+enum BillingProvider {
+  apple
+  googlePlay
+}
+
 model Subscription {
   id                    String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   accountId             String             @db.Uuid
+  provider              BillingProvider
   productId             String
   // Plain string column (no Postgres enum). Application code defines
   // the valid set in src/subscriptions/tiers.ts. Currently only `plus`
@@ -354,60 +360,80 @@ model Subscription {
   period                SubscriptionPeriod
   status                SubscriptionStatus
   // Apple's stable per-subscription-line identifier (constant across renewals
-  // and tier upgrades within a subscription group).
-  originalTransactionId String             @unique
+  // and tier upgrades within a subscription group). Nullable: Google rows
+  // identify themselves by purchaseToken instead.
+  originalTransactionId String?
   // UUID our client generates per-purchase and passes to StoreKit; Apple
   // echoes it back on every receipt/notification. Lets us bind an Apple
   // subscription to the signed-in `accountId` without storing Apple IDs.
-  // Reassigned (not duplicated) when the same Apple sub is verified from a
-  // different device's accountId — see PRD §6.4.
-  appAccountToken       String             @unique @db.Uuid
+  appAccountToken       String?            @db.Uuid
+  // Google Play purchaseToken. Per-purchase opaque token; rotated by Play on
+  // upgrade/downgrade (the new purchase carries the old one in
+  // linkedPurchaseToken).
+  purchaseToken         String?
+  linkedPurchaseToken   String?
+  // Google Play obfuscatedExternalAccountId — analog of Apple's
+  // appAccountToken. Android client sets it via
+  // BillingFlowParams.Builder.setObfuscatedAccountId at purchase time.
+  obfuscatedAccountId   String?
   startedAt             DateTime
   currentPeriodStart    DateTime
   currentPeriodEnd      DateTime
-  // Mirrors Apple's `autoRenewStatus` (1 → true, 0 → false). Updated by
-  // DID_CHANGE_RENEWAL_STATUS notifications.
+  // Mirrors Apple's `autoRenewStatus` / Google's `autoRenewingEnabled`.
   willRenew             Boolean            @default(true)
   // True while the active period is an introductory offer (free trial or
-  // pay-as-you-go). Derived at verify time from the JWS `offerType`.
+  // pay-as-you-go). Derived at verify time from the JWS `offerType` (Apple)
+  // or the active line item's offer tags (Google).
   isInTrial             Boolean            @default(false)
   cancelledAt           DateTime?
   gracePeriodEnd        DateTime?
-  environment           AppleEnv
+  // Apple-only: which Apple environment the sub came from. Null for Google.
+  environment           AppleEnv?
   createdAt             DateTime           @default(now())
   updatedAt             DateTime           @updatedAt
 
-  account  Account        @relation(fields: [accountId], references: [id])
-  receipts AppleReceipt[]
+  account  Account          @relation(fields: [accountId], references: [id])
+  receipts BillingReceipt[]
 
+  // Per-provider uniqueness. Postgres treats NULLs as distinct in unique
+  // indexes, so an Apple row (purchaseToken=NULL) and a Google row
+  // (originalTransactionId=NULL) don't collide here.
+  @@unique([provider, originalTransactionId], name: "subscription_apple_otx_unique")
+  @@unique([provider, appAccountToken], name: "subscription_apple_aat_unique")
+  @@unique([provider, purchaseToken], name: "subscription_play_token_unique")
+  @@unique([provider, obfuscatedAccountId], name: "subscription_play_oid_unique")
   @@index([accountId])
+  @@index([accountId, provider])
   @@index([status, currentPeriodEnd])
 }
 
-model AppleReceipt {
-  id                  String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  subscriptionId      String   @db.Uuid
-  // Explicit dedupe key. VERIFY rows use the transactionId; S2S rows use
-  // Apple's notificationUUID so distinct events sharing a transactionId are
-  // not collapsed.
-  idempotencyKey      String   @unique
-  // Apple's stable retry identifier for App Store Server Notifications v2.
-  // Null for direct verify receipts, which are not Apple notifications.
-  notificationUUID    String?  @unique
-  // Per-transaction identifier (each renewal mints a new transactionId while
-  // keeping the same originalTransactionId). Not unique: multiple Apple
-  // notificationUUIDs can reference the same transaction.
-  transactionId       String
-  notificationType    String
-  notificationSubtype String?
-  // Raw JWS from Apple, kept for audit + replay against the verifier if we
-  // ever need to re-process a notification with updated business logic.
-  signedPayload       String   @db.Text
-  receivedAt          DateTime @default(now())
+model BillingReceipt {
+  id                     String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  subscriptionId         String          @db.Uuid
+  provider               BillingProvider
+  // Explicit dedupe key. Apple verify rows use `apple-verify:{transactionId}`;
+  // Apple S2S rows use `apple-ssn:{notificationUUID}`; Google verify rows use
+  // `play-verify:{orderId|purchaseToken}`; Google RTDN rows use
+  // `play-rtdn:{messageId}`.
+  idempotencyKey         String          @unique
+  // Generic external dedup id — Apple notificationUUID or Pub/Sub messageId.
+  // Null for direct verify receipts.
+  externalNotificationId String?         @unique
+  // Per-transaction identifier. Apple: transactionId (each renewal mints a
+  // new one). Google: latestOrderId from the fetched purchase. Not unique:
+  // multiple notifications can reference the same transaction.
+  transactionId          String
+  notificationType       String
+  notificationSubtype    String?
+  // Raw payload from the provider — Apple JWS or the Google purchase JSON /
+  // RTDN envelope. Kept for audit + replay.
+  signedPayload          String          @db.Text
+  receivedAt             DateTime        @default(now())
 
   subscription Subscription @relation(fields: [subscriptionId], references: [id])
 
   @@index([transactionId])
+  @@index([provider, transactionId])
   @@index([subscriptionId, receivedAt])
 }
 

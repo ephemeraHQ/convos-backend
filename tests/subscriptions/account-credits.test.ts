@@ -8,6 +8,7 @@ import { pinoMiddleware } from "@/middleware/pino";
 import { getSpendableBalance } from "@/payments/spendable";
 import {
   AppleEnv,
+  BillingProvider,
   SUBSCRIPTION_TIER_PLUS,
   SubscriptionPeriod,
   SubscriptionStatus,
@@ -60,7 +61,7 @@ const tokenFor = async (accountId: string) =>
 
 const wipe = async () => {
   if (createdAccountIds.length === 0) return;
-  await prisma.appleReceipt.deleteMany({
+  await prisma.billingReceipt.deleteMany({
     where: { subscription: { accountId: { in: createdAccountIds } } },
   });
   await prisma.subscription.deleteMany({
@@ -86,6 +87,7 @@ afterEach(async () => {
 
 const seedPlusMonthly = async (accountId: string) =>
   upsertFromVerify({
+    provider: BillingProvider.apple,
     accountId,
     appAccountToken: `${accountId.slice(0, 8)}-2222-3333-4444-555555555555`,
     productId: "app.convos.subs.monthly",
@@ -185,6 +187,7 @@ describe("GET /v2/accounts/me/credits", () => {
   test("expired subscription status returns free-tier daily-cap credits", async () => {
     const accountId = await newAccount();
     await upsertFromVerify({
+      provider: BillingProvider.apple,
       accountId,
       appAccountToken: "99999999-2222-3333-4444-555555555555",
       productId: "app.convos.subs.monthly",
@@ -216,6 +219,7 @@ describe("GET /v2/accounts/me/credits", () => {
     const accountId = await newAccount();
     const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000);
     await upsertFromVerify({
+      provider: BillingProvider.apple,
       accountId,
       appAccountToken: "88888888-2222-3333-4444-555555555555",
       productId: "app.convos.subs.monthly",
@@ -290,6 +294,7 @@ describe("GET /v2/accounts/me/credits", () => {
   test("Plus annual: monthlyGrant = 12 × monthly amount", async () => {
     const accountId = await newAccount();
     await upsertFromVerify({
+      provider: BillingProvider.apple,
       accountId,
       appAccountToken: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
       productId: "app.convos.subs.annual",
@@ -379,6 +384,7 @@ describe("GET /v2/accounts/me/credits — free-tier (no subscription)", () => {
     await prisma.subscription.create({
       data: {
         accountId,
+        provider: BillingProvider.apple,
         productId: "app.convos.subs.monthly",
         tier: SUBSCRIPTION_TIER_PLUS,
         period: SubscriptionPeriod.monthly,

@@ -4,14 +4,28 @@ import {
 } from "@apple/app-store-server-library";
 import type { Request, Response } from "express";
 import { z } from "zod";
+import {
+  acknowledgePurchase,
+  fetchSubscriptionPurchaseV2,
+  type SubscriptionPurchaseV2,
+} from "@/subscriptions/google-play/play-api";
+import {
+  deriveStatusFromPurchase,
+  extractObfuscatedAccountId,
+  extractPeriodWindow,
+  extractProductId,
+} from "@/subscriptions/google-play/status";
 import { verifyAndDecodeTransaction } from "@/subscriptions/jws-verifier";
 import { productMapping } from "@/subscriptions/product-mapping";
 import {
   AppleEnv,
+  BillingProvider,
   serializeUserSubscription,
   SubscriptionAccountMismatchError,
   SubscriptionStatus,
   upsertFromVerify,
+  type AppleVerifyInput,
+  type GooglePlayVerifyInput,
   type VerifyInput,
 } from "@/subscriptions/repository";
 import { deriveSubscriptionStatusFromTransaction } from "@/subscriptions/status";
@@ -20,17 +34,32 @@ import { AppError } from "@/utils/errors";
 const uuidPattern =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-// Body intentionally takes ONLY the JWS. appAccountToken is extracted from
-// the verified payload — the iOS client created it, passed it to StoreKit
-// at purchase time, and Apple now echoes it in every receipt. Reading it
-// from the JWS (vs trusting a separate request field) eliminates a session-
-// stealing vector where a leaked JWS could be replayed under a different
-// caller's account.
-const bodySchema = z
+// Discriminated body. Apple branch takes ONLY the JWS — appAccountToken is
+// extracted from the verified payload (iOS set it at StoreKit purchase time).
+// Reading it from the JWS rather than trusting a body field eliminates a
+// session-stealing vector where a leaked JWS could be replayed under a
+// different caller's account. Same principle on the Google branch: the
+// obfuscatedExternalAccountId comes from the server-fetched purchase, not
+// the request body.
+const appleBodySchema = z
   .object({
+    platform: z.literal("apple"),
     jwsRepresentation: z.string().min(1),
   })
   .strict();
+
+const playBodySchema = z
+  .object({
+    platform: z.literal("googlePlay"),
+    purchaseToken: z.string().min(1),
+    productId: z.string().min(1),
+  })
+  .strict();
+
+const bodySchema = z.discriminatedUnion("platform", [
+  appleBodySchema,
+  playBodySchema,
+]);
 
 const requireField = <T>(value: T | undefined | null, field: string): T => {
   if (value === undefined || value === null) {
@@ -49,17 +78,18 @@ const mapEnvironment = (raw: string | Environment | undefined): AppleEnv => {
   return AppleEnv.sandbox;
 };
 
-const buildVerifyInput = (
+const buildAppleInput = (
   accountId: string,
   appAccountToken: string,
   payload: JWSTransactionDecodedPayload,
   signedPayload: string,
-): VerifyInput => {
+): AppleVerifyInput => {
   const productId = requireField(payload.productId, "productId");
   const { tier, period } = productMapping(productId);
   const status = deriveSubscriptionStatusFromTransaction(payload);
 
   return {
+    provider: BillingProvider.apple,
     accountId,
     appAccountToken,
     productId,
@@ -90,24 +120,66 @@ const buildVerifyInput = (
   };
 };
 
-export async function subscriptionVerifyHandler(req: Request, res: Response) {
-  const accountId = res.locals.accountId as string;
-
-  const parsed = bodySchema.safeParse(req.body);
-  if (!parsed.success) {
-    res.status(400).json({
-      error: "Invalid request body",
-      details: parsed.error.issues,
-    });
-    return;
+const buildPlayInput = (
+  accountId: string,
+  body: z.infer<typeof playBodySchema>,
+  purchase: SubscriptionPurchaseV2,
+): GooglePlayVerifyInput => {
+  const fetchedProductId = extractProductId(purchase);
+  if (fetchedProductId !== body.productId) {
+    // Reject mismatch so a malicious client can't claim a higher tier than
+    // Play actually recorded.
+    throw new AppError(
+      400,
+      `productId mismatch: client sent "${body.productId}", Google Play returned "${fetchedProductId}"`,
+    );
   }
+  const { tier, period } = productMapping(fetchedProductId);
+  const obfuscatedAccountId = extractObfuscatedAccountId(purchase);
+  if (!obfuscatedAccountId) {
+    throw new AppError(
+      400,
+      "Google Play purchase has no obfuscatedExternalAccountId — Android client must set it via BillingFlowParams.Builder.setObfuscatedAccountId",
+    );
+  }
+  const status = deriveStatusFromPurchase(purchase);
+  const window = extractPeriodWindow(purchase);
+  const startedAt = purchase.startTime
+    ? new Date(purchase.startTime)
+    : window.currentPeriodStart;
+  const playOrderId = purchase.latestOrderId ?? body.purchaseToken;
+  const lineItem = purchase.lineItems?.[0];
+  const willRenew = lineItem?.autoRenewingPlan?.autoRenewEnabled !== false;
+  return {
+    provider: BillingProvider.googlePlay,
+    accountId,
+    obfuscatedAccountId,
+    productId: fetchedProductId,
+    tier,
+    period,
+    status,
+    purchaseToken: body.purchaseToken,
+    linkedPurchaseToken: purchase.linkedPurchaseToken ?? null,
+    playOrderId,
+    startedAt,
+    currentPeriodStart: window.currentPeriodStart,
+    currentPeriodEnd: window.currentPeriodEnd,
+    willRenew,
+    isInTrial: status === SubscriptionStatus.trial,
+    signedPayload: JSON.stringify(purchase),
+  };
+};
 
+const handleAppleBranch = async (
+  req: Request,
+  res: Response,
+  accountId: string,
+  body: z.infer<typeof appleBodySchema>,
+): Promise<VerifyInput | null> => {
   let decoded: JWSTransactionDecodedPayload;
   try {
-    decoded = await verifyAndDecodeTransaction(parsed.data.jwsRepresentation);
+    decoded = await verifyAndDecodeTransaction(body.jwsRepresentation);
   } catch (err) {
-    // VerificationException carries `.status` (enum), not `.message`.
-    // See apple-ssn.ts for the rationale.
     req.log.warn(
       {
         accountId,
@@ -126,12 +198,9 @@ export async function subscriptionVerifyHandler(req: Request, res: Response) {
       "JWS transaction verification failed",
     );
     res.status(400).json({ error: "Invalid signed transaction" });
-    return;
+    return null;
   }
 
-  // JWS chain verified against Apple Root CA G2/G3 and signature is valid.
-  // Log the decoded transaction shape so sandbox testing can confirm what
-  // Apple is sending (no JWS / PII fields).
   req.log.info(
     {
       accountId,
@@ -146,10 +215,6 @@ export async function subscriptionVerifyHandler(req: Request, res: Response) {
     "subscription.verify.jws_decoded",
   );
 
-  // appAccountToken comes from the verified JWS — iOS set it at purchase
-  // time via StoreKit. Apple persists it; subsequent receipts echo it back.
-  // Reject if Apple's payload doesn't carry one (would mean a misconfigured
-  // client or a non-subscription product).
   const appAccountToken = decoded.appAccountToken;
   if (!appAccountToken || !uuidPattern.test(appAccountToken)) {
     req.log.warn(
@@ -163,53 +228,171 @@ export async function subscriptionVerifyHandler(req: Request, res: Response) {
     res
       .status(400)
       .json({ error: "Apple transaction has no valid appAccountToken" });
-    return;
+    return null;
   }
 
-  let input: VerifyInput;
   try {
-    input = buildVerifyInput(
+    return buildAppleInput(
       accountId,
       appAccountToken,
       decoded,
-      parsed.data.jwsRepresentation,
+      body.jwsRepresentation,
     );
   } catch (err) {
     if (err instanceof AppError) {
       res.status(err.statusCode).json({ error: err.message });
-      return;
+      return null;
     }
     throw err;
   }
+};
+
+const handlePlayBranch = async (
+  req: Request,
+  res: Response,
+  accountId: string,
+  body: z.infer<typeof playBodySchema>,
+): Promise<{
+  input: GooglePlayVerifyInput;
+  purchase: SubscriptionPurchaseV2;
+} | null> => {
+  let purchase: SubscriptionPurchaseV2;
+  try {
+    purchase = await fetchSubscriptionPurchaseV2(body.purchaseToken);
+  } catch (err) {
+    const statusCode =
+      err instanceof AppError
+        ? err.statusCode
+        : err &&
+            typeof err === "object" &&
+            "code" in err &&
+            (err as { code?: number }).code === 404
+          ? 400
+          : 502;
+    req.log.warn(
+      {
+        accountId,
+        errMessage: err instanceof Error ? err.message : String(err),
+      },
+      "subscription.verify.play_api_fetch_failed",
+    );
+    res
+      .status(statusCode)
+      .json({ error: "Failed to fetch Google Play purchase" });
+    return null;
+  }
+
+  req.log.info(
+    {
+      accountId,
+      productId: purchase.lineItems?.[0]?.productId,
+      subscriptionState: purchase.subscriptionState,
+      acknowledgementState: purchase.acknowledgementState,
+    },
+    "subscription.verify.play_purchase_fetched",
+  );
+
+  try {
+    const input = buildPlayInput(accountId, body, purchase);
+    return { input, purchase };
+  } catch (err) {
+    if (err instanceof AppError) {
+      res.status(err.statusCode).json({ error: err.message });
+      return null;
+    }
+    throw err;
+  }
+};
+
+const ackPlayIfPending = async (
+  req: Request,
+  productId: string,
+  purchaseToken: string,
+  purchase: SubscriptionPurchaseV2,
+) => {
+  if (purchase.acknowledgementState !== "ACKNOWLEDGEMENT_STATE_PENDING") {
+    return;
+  }
+  try {
+    await acknowledgePurchase(productId, purchaseToken);
+  } catch (err) {
+    // Don't fail the response — but log loudly: unacked purchases are voided
+    // by Play after 3 days. Ops should catch this in logs and remediate.
+    req.log.error(
+      {
+        productId,
+        errMessage: err instanceof Error ? err.message : String(err),
+      },
+      "subscription.verify.play_ack_failed",
+    );
+  }
+};
+
+export async function subscriptionVerifyHandler(req: Request, res: Response) {
+  const accountId = res.locals.accountId as string;
+
+  const parsed = bodySchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({
+      error: "Invalid request body",
+      details: parsed.error.issues,
+    });
+    return;
+  }
+
+  let input: VerifyInput;
+  let playPurchase: SubscriptionPurchaseV2 | null = null;
+
+  if (parsed.data.platform === "apple") {
+    const built = await handleAppleBranch(req, res, accountId, parsed.data);
+    if (!built) return;
+    input = built;
+  } else {
+    const built = await handlePlayBranch(req, res, accountId, parsed.data);
+    if (!built) return;
+    input = built.input;
+    playPurchase = built.purchase;
+  }
 
   // Strict ownership is enforced inside upsertFromVerify's transaction
-  // (atomic with the upsert, so two concurrent verifies for the same
-  // originalTransactionId from different accounts cannot both succeed). A
-  // re-verify from a different signed-in account is rejected here to block a
-  // class of session-stealing attacks where a leaked JWS could be replayed
-  // under a different caller's account. Cross-account transfer (rare: user
-  // signs up fresh on a new Convos account using the same Apple ID) becomes
-  // a support operation, not a code path.
+  // (atomic with the upsert). A re-verify from a different signed-in account
+  // is rejected to block session-stealing where a leaked receipt/token could
+  // be replayed under a different caller's account. Cross-account transfer
+  // is a support operation, not a code path.
   try {
     const { subscription } = await upsertFromVerify(input);
 
-    // Subscription credit allotments are derived from the Subscription row
-    // + per-tier config at read time (see GET /v2/accounts/me/credits); we
-    // intentionally do NOT write a grant() ledger row on verify. grant() is
-    // reserved for additive credits — top-ups, NUX trial, manual ops, promo.
+    // Subscription credit allotments are derived from the Subscription row +
+    // per-tier config at read time (see GET /v2/accounts/me/credits). We do
+    // NOT write a grant() ledger row on verify. grant() is reserved for
+    // additive credits — top-ups, NUX trial, manual ops, promo.
     req.log.info(
       {
         accountId,
         subscriptionId: subscription.id,
+        provider: subscription.provider,
         productId: subscription.productId,
         tier: subscription.tier,
         period: subscription.period,
         status: subscription.status,
-        originalTransactionId: subscription.originalTransactionId,
-        environment: subscription.environment,
       },
       "subscription.verify.applied",
     );
+
+    // Fire-and-forget Play acknowledgement so the response isn't blocked on
+    // a second Google API round-trip.
+    if (
+      input.provider === BillingProvider.googlePlay &&
+      playPurchase !== null
+    ) {
+      void ackPlayIfPending(
+        req,
+        input.productId,
+        input.purchaseToken,
+        playPurchase,
+      );
+    }
+
     res.status(200).json({
       subscription: serializeUserSubscription(subscription),
     });
@@ -220,7 +403,7 @@ export async function subscriptionVerifyHandler(req: Request, res: Response) {
         {
           accountId,
           existingAccountId: error.existingAccountId,
-          originalTransactionId: input.originalTransactionId,
+          providerSubscriptionId: error.providerSubscriptionId,
         },
         "subscription.verify.account_mismatch",
       );
@@ -235,7 +418,7 @@ export async function subscriptionVerifyHandler(req: Request, res: Response) {
         error,
         stack: error instanceof Error ? error.stack : undefined,
         accountId,
-        originalTransactionId: input.originalTransactionId,
+        provider: input.provider,
       },
       "Failed to persist verified subscription",
     );
