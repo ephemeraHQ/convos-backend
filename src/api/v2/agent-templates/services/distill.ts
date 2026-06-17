@@ -40,7 +40,7 @@ const DISTILL_PROMPT = loadDataPrompt("distill-prompt.txt");
 // main generate call — a hung distill must not eat the pipeline's time budget.
 const DISTILL_TIMEOUT_MS = 60_000;
 
-// The schema asks for 6–8 phrases; accept down to this floor after filtering
+// The prompt asks for 6–8 phrases; accept down to this floor after filtering
 // blanks so a near-miss still yields a usable badge rather than failing the
 // (best-effort) stage. Trim anything over the ceiling.
 const MIN_PHRASES = 4;
@@ -132,9 +132,9 @@ async function _distill(
 
   const userContent = buildDistillUserContent(text, attachments, prefill);
 
-  // `any` body so the OpenRouter extensions (per-block cache_control, the
-  // json_schema with min/maxItems) pass through the OpenAI SDK unchanged —
-  // mirrors the main generate call in templateGen.
+  // `any` body so the OpenRouter extension (the per-block cache_control on the
+  // system prompt) passes through the OpenAI SDK unchanged — mirrors the main
+  // generate call in templateGen.
   const body: any = {
     model: getModel(),
     messages: [
@@ -168,8 +168,9 @@ async function _distill(
             progressPhrases: {
               type: "array",
               items: { type: "string" },
-              minItems: 6,
-              maxItems: MAX_PHRASES,
+              // No minItems/maxItems: Anthropic's structured outputs reject any
+              // array minItems other than 0 or 1. The prompt asks for 6–8 and
+              // parseDistillResponse enforces the 4–8 bounds after the fact.
             },
           },
           required: ["agentName", "emoji", "description", "progressPhrases"],
