@@ -12,9 +12,11 @@ import { getServiceConfig } from "@/api/v2/connections/bundles.config";
  *  carried onto the template. Storing the catalog's neutral `id` keeps the
  *  template agnostic to the connection provider — the vendor binding lives only
  *  in the catalog + exec layers. */
-export function resolveConnectionIds(
-  raw: string[] | null | undefined,
-): string[] {
+export function resolveConnectionIds({
+  raw,
+}: {
+  raw: string[] | null | undefined;
+}): string[] {
   if (!raw || raw.length === 0) return [];
   const ids: string[] = [];
   const seen = new Set<string>();
@@ -28,14 +30,17 @@ export function resolveConnectionIds(
   return ids;
 }
 
-/** Overlay the resolved connection ids onto a generated template, replacing the
- *  generator's hardcoded `connections: []`. The bridge that lets downstream
- *  provisioning issue a grant per connection once the agent has an inbox in a
- *  conversation. No-op when nothing connected (keeps the existing []). */
-export function applyConnections<T extends { connections: string[] }>(
-  template: T,
-  connectionIds: string[],
-): T {
-  if (connectionIds.length === 0) return template;
+/** Overlay the resolved connection ids onto a generated template, replacing
+ *  whatever `connections` the generator produced. The bridge that lets
+ *  downstream provisioning issue a grant per connection once the agent has an
+ *  inbox in a conversation. Always stamps `connectionIds` (including `[]`) so a
+ *  model-produced value can't leak onto the template when nothing connected. */
+export function applyConnections<T extends { connections: string[] }>({
+  template,
+  connectionIds,
+}: {
+  template: T;
+  connectionIds: string[];
+}): T {
   return { ...template, connections: connectionIds };
 }

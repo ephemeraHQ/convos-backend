@@ -544,7 +544,7 @@ async function _runPipeline(
   // Connections the caller flagged at submit, normalized to canonical catalog
   // ids. Fed to the generator (drives the capabilities directive so the prompt +
   // welcome lean on the service) and overlaid onto the persisted template below.
-  const connectionIds = resolveConnectionIds(generation.connections);
+  const connectionIds = resolveConnectionIds({ raw: generation.connections });
 
   // Actor-attribution fields shared by every capture site below, plus the
   // PostHog LLM Analytics trace id so the product event joins to the
@@ -699,10 +699,10 @@ async function _runPipeline(
   // value fed into the generator above, so the prompt body agrees with the
   // metadata. Then overlay the resolved connections, replacing the generator's
   // hardcoded `connections: []` so the template records the services it uses.
-  const templateToPersist = applyConnections(
-    applyPrefill(templateResult.template, identity),
+  const templateToPersist = applyConnections({
+    template: applyPrefill(templateResult.template, identity),
     connectionIds,
-  );
+  });
   let persisted: { id: string; slug: string };
   try {
     persisted = await persistTemplate(

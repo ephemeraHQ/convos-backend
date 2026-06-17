@@ -162,7 +162,10 @@ async function runGeneration(
       kind: "ok",
       result: {
         ...result,
-        template: applyConnections(result.template, args.connectionIds),
+        template: applyConnections({
+          template: result.template,
+          connectionIds: args.connectionIds,
+        }),
       },
     };
   } catch (err) {
@@ -260,7 +263,7 @@ export async function generationsEphemeralPostHandler(
       }
     }
   }
-  const connectionIds = resolveConnectionIds(requestedConnections);
+  const connectionIds = resolveConnectionIds({ raw: requestedConnections });
 
   // Abort the upstream generation on the 90s ceiling OR a client disconnect.
   // Unlike the async endpoint (whose executor runs to completion to persist a
