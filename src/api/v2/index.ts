@@ -46,8 +46,8 @@ import invitesV2Router from "./invites/invites.router";
 import { notificationsRouter } from "./notifications/notifications.router";
 import { webhookRouter } from "./notifications/webhook.router";
 import { appleWebhookRouter } from "./subscriptions/apple-webhook.router";
-import { telemetryRouter } from "./telemetry/telemetry.router";
 import { googlePlayWebhookRouter } from "./subscriptions/google-play-webhook.router";
+import { telemetryRouter } from "./telemetry/telemetry.router";
 
 const v2Router = Router();
 
