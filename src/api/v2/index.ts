@@ -35,6 +35,7 @@ import { authRouter } from "./auth/auth.router";
 import { composioRouter } from "./composio/composio.router";
 import { connectionsRouter } from "./connections/connections.router";
 import { servicesGetHandler } from "./connections/handlers/services-get";
+import { creditsAdminRouter } from "./credits-admin/credits-admin.router";
 import { dailyRefillRouter } from "./credits/daily.router";
 import { devRouter } from "./dev/dev.router";
 import { deviceRouter } from "./device/device.router";
@@ -60,6 +61,7 @@ v2Router.use("/agent-templates", agentTemplatesRouter);
 
 v2Router.use("/invites", invitesV2Router);
 
+v2Router.use("/credits-admin", creditsAdminRouter);
 // Invite codes: admin page + API (auth applied per-route inside the router)
 v2Router.use("/invite-codes/admin", inviteCodesAdminRouter);
 // Invite codes: client redemption (JWT-authenticated)
