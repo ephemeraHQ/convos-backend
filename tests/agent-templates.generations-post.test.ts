@@ -603,6 +603,24 @@ describe("POST /generations — connections (open capability flag)", () => {
     );
     expect([200, 202]).toContain(second.status);
   });
+
+  test("same key + casing/duplicate-equivalent connections → dedupes (no spurious 409)", async () => {
+    // connections are a set: the dedupe normalizes to canonical catalog ids, so
+    // a replay differing only by casing or duplicates is the same request and
+    // must dedupe rather than 409.
+    __resetGenerationExecutorForTests(() => Promise.resolve());
+    const first = await post(
+      { ...sampleBody, connections: ["GoogleCalendar", "googlecalendar"] },
+      { headers: withKey("idem-conn-normalized") },
+    );
+    expect(first.status).toBe(202);
+
+    const second = await post(
+      { ...sampleBody, connections: ["googlecalendar"] },
+      { headers: withKey("idem-conn-normalized") },
+    );
+    expect([200, 202]).toContain(second.status);
+  });
 });
 
 describe("POST /generations — SSE mode", () => {

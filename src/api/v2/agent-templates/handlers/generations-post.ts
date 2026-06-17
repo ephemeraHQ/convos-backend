@@ -66,6 +66,7 @@ import {
   writeSseEvent,
   writeSseHeaders,
 } from "@/api/v2/agent-templates/lib/sse";
+import { resolveConnectionIds } from "@/api/v2/agent-templates/lib/template-connections";
 import {
   attachmentsArraySchema,
   type AttachmentRef,
@@ -536,6 +537,16 @@ const dedupeSelect = {
   updatedAt: true,
 } as const;
 
+/** Reduce a raw connections list to the comparable set used for idempotency
+ *  dedupe: canonical catalog ids, deduped (via `resolveConnectionIds`) and
+ *  sorted so the comparison is order-insensitive. The row persists the raw list;
+ *  only this comparison is normalized. */
+function normalizeConnectionsForDedupe(
+  raw: string[] | null | undefined,
+): string[] {
+  return resolveConnectionIds({ raw }).sort();
+}
+
 /** Compare the full idempotent contract — every field that influences
  *  the generator's output or the persisted template's identity. A
  *  mismatch on any of them means the second caller wants a different
@@ -550,11 +561,14 @@ function dedupeBodiesMatch(existing: DedupeRow, body: Body): boolean {
       prefill: existing.prefill,
       builderPrompt: existing.builderPrompt,
       builderModel: existing.builderModel,
-      // Non-nullable array column (defaults to []), so compare against the
-      // body's `?? []` — an omitted `connections` matches a stored []. Rows that
-      // predate this column also read back [], so old idempotency keys replayed
-      // without connections still dedupe instead of 409ing.
-      connections: existing.connections,
+      // Connections are a set: normalize both sides to canonical, deduped,
+      // sorted catalog ids before comparing so semantically equivalent replays
+      // dedupe instead of 409ing — different casing (`GoogleCalendar` vs
+      // `googlecalendar`), duplicates, and ordering all collapse to the same
+      // value the executor would resolve. An omitted list and a stored [] also
+      // match (resolveConnectionIds maps null/undefined → []), so old keys
+      // replayed without connections still dedupe.
+      connections: normalizeConnectionsForDedupe(existing.connections),
     },
     {
       source: body.source,
@@ -563,7 +577,7 @@ function dedupeBodiesMatch(existing: DedupeRow, body: Body): boolean {
       prefill: body.prefill ?? null,
       builderPrompt: body.builderPrompt ?? null,
       builderModel: body.builderModel ?? null,
-      connections: body.connections ?? [],
+      connections: normalizeConnectionsForDedupe(body.connections),
     },
   );
 }

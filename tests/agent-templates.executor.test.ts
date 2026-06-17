@@ -455,8 +455,10 @@ describe("generation-executor", () => {
         connections,
       ) => {
         capturedConnections = connections;
+        // Model emits a non-empty `connections` — the overlay must replace it
+        // with [] (always-stamp), not let the model-produced value leak through.
         return Promise.resolve({
-          template: fakeTemplate,
+          template: { ...fakeTemplate, connections: ["model-produced-leak"] },
           metrics: DEFAULT_TEST_METRICS,
         });
       },
@@ -472,6 +474,8 @@ describe("generation-executor", () => {
     const template = await prisma.agentTemplate.findUnique({
       where: { id: final?.templateId as string },
     });
+    // The model-produced ["model-produced-leak"] must NOT survive — the request
+    // flagged no connections, so the persisted template is stamped [].
     expect(template?.connections).toEqual([]);
   });
 
