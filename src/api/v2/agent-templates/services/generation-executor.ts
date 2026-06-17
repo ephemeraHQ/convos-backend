@@ -27,6 +27,10 @@ import type { Prisma } from "@prisma/client";
 import type { AgentPreview } from "@/api/v2/agent-templates/lib/generation-preview";
 import { pickCollisionFreeId } from "@/api/v2/agent-templates/lib/pick-collision-free-id";
 import {
+  applyConnections,
+  resolveConnectionIds,
+} from "@/api/v2/agent-templates/lib/template-connections";
+import {
   AttachmentModerationError,
   resolveAttachments,
   type AttachmentRef,
@@ -537,6 +541,11 @@ async function _runPipeline(
   // ordinary generations, where the default builder model is used.
   const builderModel = generation.builderModel;
 
+  // Connections the caller flagged at submit, normalized to canonical catalog
+  // ids. Fed to the generator (drives the capabilities directive so the prompt +
+  // welcome lean on the service) and overlaid onto the persisted template below.
+  const connectionIds = resolveConnectionIds({ raw: generation.connections });
+
   // Actor-attribution fields shared by every capture site below, plus the
   // PostHog LLM Analytics trace id so the product event joins to the
   // `$ai_generation` spans the OpenRouter calls emit. Built once: the trace's
@@ -655,6 +664,7 @@ async function _runPipeline(
       trace,
       builderPrompt,
       builderModel,
+      connectionIds,
     );
   } catch (err) {
     // Meter error path
@@ -686,8 +696,13 @@ async function _runPipeline(
   // Overlay the allowlisted identity fields onto the LLM output so the persisted
   // metadata matches the card shown on the early polls verbatim. `identity`
   // is the distilled identity (or the caller's pins where supplied) — the same
-  // value fed into the generator above, so the prompt body agrees with the metadata.
-  const templateToPersist = applyPrefill(templateResult.template, identity);
+  // value fed into the generator above, so the prompt body agrees with the
+  // metadata. Then overlay the resolved connections, replacing the generator's
+  // hardcoded `connections: []` so the template records the services it uses.
+  const templateToPersist = applyConnections({
+    template: applyPrefill(templateResult.template, identity),
+    connectionIds,
+  });
   let persisted: { id: string; slug: string };
   try {
     persisted = await persistTemplate(

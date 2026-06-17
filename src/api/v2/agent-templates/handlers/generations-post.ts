@@ -32,6 +32,7 @@
  *   7. builderPrompt — agent-key only                           → 403
  *   8. builderModel — agent-key only                            → 403
  *   9. builderModel unknown to OpenRouter's catalog             → 400
+ *  9b. connections unknown to the services catalog (open)       → 400
  *  10. Idempotency-Key header present                           → 400
  *  11. Idempotency lookup → existing { source, inputs } match   → respondPerMode
  *  12.                  → existing different body               → 409
@@ -65,6 +66,7 @@ import {
   writeSseEvent,
   writeSseHeaders,
 } from "@/api/v2/agent-templates/lib/sse";
+import { resolveConnectionIds } from "@/api/v2/agent-templates/lib/template-connections";
 import {
   attachmentsArraySchema,
   type AttachmentRef,
@@ -82,6 +84,7 @@ import {
 import { type TraceContext } from "@/api/v2/agent-templates/services/openrouter-client";
 import { isKnownOpenRouterModel } from "@/api/v2/agent-templates/services/openrouter-models";
 import { resolveActor } from "@/api/v2/agent-templates/services/posthog";
+import { getServiceConfig } from "@/api/v2/connections/bundles.config";
 import { BUILD_ATTACHMENTS_MAX_TOTAL_BYTES } from "@/config";
 import { accountIdSchema } from "@/utils/account-id";
 import { getEffectiveOwnerId } from "@/utils/auth-helpers";
@@ -102,6 +105,10 @@ const MAX_BUILDER_PROMPT_LEN = 100_000;
 const MAX_BUILDER_MODEL_LEN = 256;
 const MAX_BODY_BYTES = 40 * 1024 * 1024;
 const MAX_WAIT_MS = 45_000;
+// Connection-slug caps — service ids are short slugs; these just bound an
+// obviously-abusive body. The real gate is the catalog lookup below.
+const MAX_CONNECTION_SLUG_LEN = 64;
+const MAX_CONNECTIONS = 16;
 
 // RFC 4122 UUID format. Version digit is any 1-5 (accepts v4 random,
 // v5 namespaced, etc.); variant nibble is 8/9/a/b.
@@ -240,6 +247,19 @@ const bodySchema = z
     // below (like builderPrompt) — and persisted on the row so the
     // fire-and-forget executor can hand it to the generator.
     builderModel: z.string().min(1).max(MAX_BUILDER_MODEL_LEN).optional(),
+    // Neutral service ids (e.g. ["googlecalendar"]) flagging which external
+    // services the generated agent should use. Caller-pinned and persisted on
+    // the row like `prefill`; the executor appends a capabilities directive to
+    // the generator and overlays these onto the produced template's
+    // `connections`. Open (no privileged gate) — stamping a connection grants
+    // nothing; the grant is issued later, at provisioning. Each id is validated
+    // against the supported-services catalog below (unknown → 400); zod here
+    // only bounds shape/size. Bare slugs on the wire — no `composio:` prefix —
+    // so templates stay agnostic to the connection provider.
+    connections: z
+      .array(z.string().trim().min(1).max(MAX_CONNECTION_SLUG_LEN))
+      .max(MAX_CONNECTIONS)
+      .optional(),
     // Asserted owner — honoured only when the caller is agent-key-auth'd;
     // ignored for JWT (JWT account always wins) and anonymous (falls
     // back to ADMIN). See the owner-resolution block below.
@@ -495,6 +515,7 @@ interface DedupeRow extends GenerationRow {
   prefill: unknown;
   builderPrompt: string | null;
   builderModel: string | null;
+  connections: string[];
 }
 
 const dedupeSelect = {
@@ -505,6 +526,7 @@ const dedupeSelect = {
   prefill: true,
   builderPrompt: true,
   builderModel: true,
+  connections: true,
   status: true,
   templateId: true,
   reply: true,
@@ -514,6 +536,16 @@ const dedupeSelect = {
   createdAt: true,
   updatedAt: true,
 } as const;
+
+/** Reduce a raw connections list to the comparable set used for idempotency
+ *  dedupe: canonical catalog ids, deduped (via `resolveConnectionIds`) and
+ *  sorted so the comparison is order-insensitive. The row persists the raw list;
+ *  only this comparison is normalized. */
+function normalizeConnectionsForDedupe(
+  raw: string[] | null | undefined,
+): string[] {
+  return resolveConnectionIds({ raw }).sort();
+}
 
 /** Compare the full idempotent contract — every field that influences
  *  the generator's output or the persisted template's identity. A
@@ -529,6 +561,14 @@ function dedupeBodiesMatch(existing: DedupeRow, body: Body): boolean {
       prefill: existing.prefill,
       builderPrompt: existing.builderPrompt,
       builderModel: existing.builderModel,
+      // Connections are a set: normalize both sides to canonical, deduped,
+      // sorted catalog ids before comparing so semantically equivalent replays
+      // dedupe instead of 409ing — different casing (`GoogleCalendar` vs
+      // `googlecalendar`), duplicates, and ordering all collapse to the same
+      // value the executor would resolve. An omitted list and a stored [] also
+      // match (resolveConnectionIds maps null/undefined → []), so old keys
+      // replayed without connections still dedupe.
+      connections: normalizeConnectionsForDedupe(existing.connections),
     },
     {
       source: body.source,
@@ -537,6 +577,7 @@ function dedupeBodiesMatch(existing: DedupeRow, body: Body): boolean {
       prefill: body.prefill ?? null,
       builderPrompt: body.builderPrompt ?? null,
       builderModel: body.builderModel ?? null,
+      connections: normalizeConnectionsForDedupe(body.connections),
     },
   );
 }
@@ -779,6 +820,23 @@ export async function generationsPostHandler(req: Request, res: Response) {
     return;
   }
 
+  // 9b. Validate connections against the supported-services catalog — fail-fast
+  //     400 on an unknown service, same shape as the builderModel check. Open
+  //     (no agent-API-key gate): unlike builderPrompt/builderModel, stamping a
+  //     connection grants nothing — it only produces a template that records it
+  //     uses the service. The real authz boundary is grant issuance + exec, both
+  //     downstream.
+  if (body.connections) {
+    for (const serviceId of body.connections) {
+      if (!getServiceConfig(serviceId)) {
+        res.status(400).json({
+          error: `Unknown connection '${serviceId}'`,
+        });
+        return;
+      }
+    }
+  }
+
   // 10. Idempotency-Key required and MUST be a UUID (any RFC 4122 version).
   //    Both the agent API key path and anonymous submissions are owned by
   //    `ADMIN_ACCOUNT_ID`, so they share an idempotency namespace; using
@@ -956,6 +1014,7 @@ export async function generationsPostHandler(req: Request, res: Response) {
           : Prisma.JsonNull,
         builderPrompt: body.builderPrompt ?? null,
         builderModel: body.builderModel ?? null,
+        connections: body.connections ?? [],
         publishStatus: body.publishStatus,
         status: "pending",
       },

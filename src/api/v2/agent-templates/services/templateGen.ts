@@ -27,6 +27,7 @@
 
 import { APIConnectionTimeoutError, APIError, APIUserAbortError } from "openai";
 import { z } from "zod";
+import { getServiceConfig } from "@/api/v2/connections/bundles.config";
 import {
   BUILDER_CLASSIFIER_MODEL,
   BUILDER_EXA_SERVICE_KEY,
@@ -348,6 +349,38 @@ function buildIdentityDirective(prefill?: GenerationPrefill | null): string {
     `\n\nREQUIRED IDENTITY — the user has already pinned part of this assistant's identity. ` +
     `Use these exact values; do NOT substitute different ones: ${parts.join(", ")}. ` +
     closing
+  );
+}
+
+/** Build the user-message addendum that tells the generator which external
+ *  services the agent is connected to, so the prompt, instructions, and WELCOME
+ *  MESSAGE lean on those capabilities (e.g. "you can view and edit the group's
+ *  calendar events"). Copy is sourced from the catalog — `displayName` plus each
+ *  live bundle's `title`/`description` — so it tracks the same blessed services
+ *  the grant + exec layers use. Returns "" when nothing resolves (the handler
+ *  validates against the same catalog, so unknown ids never reach here; the
+ *  guard is defensive). */
+function buildCapabilitiesDirective(connections?: string[] | null): string {
+  if (!connections || connections.length === 0) return "";
+  const lines: string[] = [];
+  for (const serviceId of connections) {
+    const svc = getServiceConfig(serviceId);
+    if (!svc) continue;
+    const caps = svc.bundles
+      .filter((b) => !b.deprecated)
+      .map((b) => `${b.title.en} (${b.description.en})`)
+      .join(", ");
+    lines.push(caps ? `${svc.displayName.en} — ${caps}` : svc.displayName.en);
+  }
+  if (lines.length === 0) return "";
+  const many = lines.length > 1;
+  return (
+    `\n\nCONNECTED CAPABILITIES — the user has connected this assistant to the ` +
+    `following external service${many ? "s" : ""}, and it can use ${many ? "them" : "it"} ` +
+    `live in the group chat. Write the prompt, the instructions, and the WELCOME ` +
+    `MESSAGE so the assistant actively leans on ${many ? "these capabilities" : "this capability"} ` +
+    `(don't just mention ${many ? "them" : "it"} — make ${many ? "them" : "it"} central to what it does):\n` +
+    lines.map((l) => `- ${l}`).join("\n")
   );
 }
 
@@ -1312,6 +1345,7 @@ export async function generateTemplate(
   trace?: TraceContext,
   systemPromptOverride?: string | null,
   modelOverride?: string | null,
+  connections?: string[] | null,
 ): Promise<GenerationResult> {
   // Backward compat: string input = text
   const opts: GenerateTemplateInput =
@@ -1457,21 +1491,26 @@ export async function generateTemplate(
     userContent = `Create an assistant based on the following content:\n\n---\n${extracted}\n---`;
   }
 
-  // Caller-pinned identity: fold the already-chosen name/emoji into the user
-  // message so the model writes agentName, the prompt body, all self-references,
-  // and the WELCOME MESSAGE as this named assistant. Without this the model
-  // invents its own identity and the persist-stage applyPrefill overlay leaves
-  // the card's name at odds with the prompt the assistant actually runs on.
-  const identityDirective = buildIdentityDirective(prefill);
-  if (identityDirective) {
+  // Fold two user-message addenda into the directive text:
+  //   - Caller-pinned identity (name/emoji), so the model writes agentName, the
+  //     prompt body, every self-reference, and the WELCOME MESSAGE as this named
+  //     assistant. Without it the model invents its own identity and the
+  //     persist-stage applyPrefill overlay leaves the card's name at odds with
+  //     the prompt the assistant actually runs on.
+  //   - Connected capabilities, so the prompt + welcome lean on the external
+  //     services the agent has access to (the grant itself is issued later).
+  // Both ride the same trailing-edge slot; each already opens with `\n\n`.
+  const userDirective =
+    buildIdentityDirective(prefill) + buildCapabilitiesDirective(connections);
+  if (userDirective) {
     if (typeof userContent === "string") {
-      userContent = `${userContent}${identityDirective}`;
+      userContent = `${userContent}${userDirective}`;
     } else if (
       Array.isArray(userContent) &&
       userContent[0]?.type === "text" &&
       typeof userContent[0].text === "string"
     ) {
-      userContent[0].text = `${userContent[0].text}${identityDirective}`;
+      userContent[0].text = `${userContent[0].text}${userDirective}`;
     }
   }
 
@@ -1739,6 +1778,7 @@ let _generateTemplateOverride:
       trace?: TraceContext,
       systemPromptOverride?: string | null,
       modelOverride?: string | null,
+      connections?: string[] | null,
     ) => Promise<GenerationResult>)
   | null = null;
 
@@ -1752,6 +1792,7 @@ export function __resetGenerateTemplateForTests(
         trace?: TraceContext,
         systemPromptOverride?: string | null,
         modelOverride?: string | null,
+        connections?: string[] | null,
       ) => Promise<GenerationResult>)
     | null,
 ) {
@@ -1772,6 +1813,10 @@ export function __resetGenerateTemplateForTests(
  *
  * Optional `modelOverride` similarly swaps the builder model for the main
  * generation call; omitted on the production generation path.
+ *
+ * Optional `connections` are the neutral service ids the agent is connected to;
+ * they drive the capabilities directive appended to the user message so the
+ * generated prompt/welcome lean on those services.
  */
 export async function callGenerateTemplate(
   input: GenerateTemplateInput | string,
@@ -1780,6 +1825,7 @@ export async function callGenerateTemplate(
   trace?: TraceContext,
   systemPromptOverride?: string | null,
   modelOverride?: string | null,
+  connections?: string[] | null,
 ): Promise<GenerationResult> {
   if (_generateTemplateOverride) {
     return _generateTemplateOverride(
@@ -1789,6 +1835,7 @@ export async function callGenerateTemplate(
       trace,
       systemPromptOverride,
       modelOverride,
+      connections,
     );
   }
   return generateTemplate(
@@ -1798,6 +1845,7 @@ export async function callGenerateTemplate(
     trace,
     systemPromptOverride,
     modelOverride,
+    connections,
   );
 }
 
