@@ -20,8 +20,6 @@
     "migrate:deploy": "prisma migrate deploy",
     "migrate:dev": "prisma migrate dev",
     "prisma:generate": "rimraf prisma/generated/zod && prisma generate",
-    "sku:apply": "tsx --env-file-if-exists=.env scripts/sku/apply.ts --all --apply",
-    "sku:diff": "tsx --env-file-if-exists=.env scripts/sku/apply.ts --all --dry-run",
     "start": "node --enable-source-maps --env-file-if-exists=.env --import @opentelemetry/instrumentation/hook.mjs --import ./dist/instrumentation.js dist/index.js",
     "test": "vitest run",
     "test:local": "pnpm prisma migrate reset --force && vitest run",
@@ -70,7 +68,6 @@
     "mime-types": "^2.1.35",
     "openai": "^6.38.0",
     "path-to-regexp": "^8.3.0",
-    "picocolors": "^1.1.1",
     "pino": "^9.6.0",
     "pino-http": "^10.4.0",
     "pino-pretty": "^13.0.0",
@@ -83,7 +80,6 @@
     "uint8array-extras": "^1.4.0",
     "uuid": "^11.0.5",
     "viem": "^2.23.2",
-    "yaml": "^2.9.0",
     "zod": "^3.25.76"
   },
   "devDependencies": {
