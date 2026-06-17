@@ -443,3 +443,17 @@ model TelemetryBatch {
 
   @@index([receivedAt])
 }
+
+model AdminAudit {
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  accountId      String   @db.Uuid
+  actorEmail     String
+  action         String
+  deltaCredits   BigInt
+  reason         String
+  idempotencyKey String
+  createdAt      DateTime @default(now())
+
+  @@index([accountId, createdAt])
+  @@index([actorEmail, createdAt])
+}
