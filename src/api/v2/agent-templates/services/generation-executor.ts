@@ -28,6 +28,7 @@ import {
   buildDeterministicFallback,
   composeReply,
 } from "@/api/v2/agent-templates/services/compose-reply";
+import { redactTemplatePii } from "@/api/v2/agent-templates/services/moderation";
 import { type TraceContext } from "@/api/v2/agent-templates/services/openrouter-client";
 import {
   capturePostHog,
@@ -565,7 +566,41 @@ async function _runPipeline(
   // the LLM output so the persisted metadata matches the caller's pinned values
   // verbatim. This is the exact-match floor; the same `prefill` was also fed
   // into the generator above so the prompt body agrees with the metadata.
-  const templateToPersist = applyPrefill(templateResult.template, prefill);
+  const merged = applyPrefill(templateResult.template, prefill);
+
+  // PII redaction stage — scrub personal data from the generated template
+  // before it is persisted as a shareable artifact. Fails CLOSED: a scan error
+  // fails the generation rather than persisting (and later sharing/cloning)
+  // un-scanned content. Only the free-text fields are scanned; the rest of the
+  // template is carried through unchanged.
+  let templateToPersist: typeof merged;
+  try {
+    const redaction = await redactTemplatePii(
+      {
+        agentName: merged.agentName,
+        description: merged.description,
+        prompt: merged.prompt,
+      },
+      signal,
+      trace,
+    );
+    templateToPersist = {
+      ...merged,
+      agentName: redaction.fields.agentName ?? merged.agentName,
+      description: redaction.fields.description ?? merged.description,
+      prompt: redaction.fields.prompt ?? merged.prompt,
+    };
+  } catch (err) {
+    capturePostHog({
+      ...templateResult.metrics,
+      ...base,
+      outcome: "failed",
+    });
+    throw new Error(
+      `PII redaction stage failed: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+
   let persisted: { id: string; slug: string };
   try {
     persisted = await persistTemplate(

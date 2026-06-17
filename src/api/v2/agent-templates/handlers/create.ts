@@ -3,6 +3,10 @@ import type { Request, Response } from "express";
 import { z } from "zod";
 import { pickCollisionFreeId } from "@/api/v2/agent-templates/lib/pick-collision-free-id";
 import { serializeAgentTemplate } from "@/api/v2/agent-templates/lib/serialize-agent-template";
+import {
+  redactTemplatePii,
+  type RedactableFields,
+} from "@/api/v2/agent-templates/services/moderation";
 import { revalidateTemplate } from "@/api/v2/agent-templates/services/revalidate-dashboard";
 import { accountIdSchema } from "@/utils/account-id";
 import { getEffectiveOwnerId } from "@/utils/auth-helpers";
@@ -168,10 +172,34 @@ export async function createHandler(req: Request, res: Response) {
     return;
   }
 
+  // PII redaction — scrub personal data from the content fields before the row
+  // is persisted (and later shared/cloned). Fails CLOSED: a scan error rejects
+  // the create rather than persisting un-scanned content.
+  let redacted: RedactableFields;
+  try {
+    ({ fields: redacted } = await redactTemplatePii({
+      agentName: parsed.data.agentName,
+      description: parsed.data.description ?? undefined,
+      prompt: parsed.data.prompt,
+    }));
+  } catch (error) {
+    req.log.error(
+      { error, stack: error instanceof Error ? error.stack : undefined },
+      "PII redaction failed for agent template create",
+    );
+    res.status(502).json({ error: "Content scan failed, please retry" });
+    return;
+  }
+
   try {
     const id = await pickCollisionFreeId({ baseSlug: validation.slug });
     const template = await createTemplateRow({
-      body: parsed.data,
+      body: {
+        ...parsed.data,
+        agentName: redacted.agentName ?? parsed.data.agentName,
+        description: redacted.description ?? parsed.data.description,
+        prompt: redacted.prompt ?? parsed.data.prompt,
+      },
       id,
       slug: validation.slug,
       ownerAccountId,
