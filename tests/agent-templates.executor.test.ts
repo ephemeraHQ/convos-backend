@@ -19,7 +19,10 @@ import {
   __resetAttachmentResolverForTests,
   AttachmentModerationError,
 } from "@/api/v2/agent-templates/services/attachment-resolver";
-import { __resetDistillForTests } from "@/api/v2/agent-templates/services/distill";
+import {
+  __resetDistillForTests,
+  type DistillInput,
+} from "@/api/v2/agent-templates/services/distill";
 import {
   __resetGenerationExecutorForTests,
   __setExecutorTimeoutMsForTests,
@@ -221,6 +224,61 @@ describe("generation-executor", () => {
     // Distill never produced anything, so the preview columns stay null.
     expect(final?.preview).toBeNull();
     expect(final?.progressPhrases).toBeNull();
+  });
+
+  test("image-only input still runs distill (vision) and writes the preview", async () => {
+    // The resolver yields one image block and no transcripts, so the executor
+    // has no text — distill must still run, fed the image, and write a preview.
+    __resetAttachmentResolverForTests(() =>
+      Promise.resolve({
+        attachments: [
+          {
+            kind: "image",
+            mimeType: "image/png",
+            dataUri: "data:image/png;base64,AAAA",
+          },
+        ],
+        transcripts: [],
+      }),
+    );
+
+    let distillInput: DistillInput | undefined;
+    __resetDistillForTests((input) => {
+      distillInput = input;
+      return Promise.resolve(
+        makeFakeDistill({
+          agentName: fakeTemplate.agentName,
+          emoji: fakeTemplate.emoji,
+          description: fakeTemplate.description,
+        }),
+      );
+    });
+    installFakeTemplate();
+
+    const gen = await prisma.agentTemplateGeneration.create({
+      data: {
+        ownerAccountId: ADMIN_ACCOUNT_ID,
+        source: TEST_SOURCE,
+        idempotencyKey: "image-only-distill",
+        inputs: {
+          attachments: [{ objectKey: "build/x.png", mimeType: "image/png" }],
+        },
+        status: "pending",
+      },
+    });
+
+    await executeGeneration(gen.id);
+
+    // Distill ran with the image attachment and no text.
+    expect(distillInput?.text).toBeFalsy();
+    expect(distillInput?.attachments).toHaveLength(1);
+
+    const final = await prisma.agentTemplateGeneration.findUnique({
+      where: { id: gen.id },
+    });
+    expect(final?.status).toBe("done");
+    const preview = final?.preview as { agentName?: string } | null;
+    expect(preview?.agentName).toBe(fakeTemplate.agentName);
   });
 
   test("threads the row's builderPrompt to the generator as the system-prompt override", async () => {

@@ -28,6 +28,7 @@ import {
   getModel,
   sanitizeEmojiField,
   type GenerationPrefill,
+  type ResolvedAttachment,
 } from "./templateGen";
 
 // Loaded once at module init (same convention as the generator's SYSTEM_PROMPT).
@@ -52,6 +53,18 @@ export interface DistillResult {
   progressPhrases: string[];
 }
 
+/** What to distill an identity from. At least one of `text` / `attachments`
+ *  must be present. */
+export interface DistillInput {
+  /** The user's text directive, including any voice transcripts the executor
+   *  folded in. Optional — an image/PDF-only build distills from the files. */
+  text?: string;
+  /** Resolved image/PDF blocks. Sent to the vision-capable builder model so a
+   *  bare image/PDF build still yields an identity card. Audio never reaches
+   *  here — it's transcribed into `text` upstream. */
+  attachments?: ResolvedAttachment[];
+}
+
 // ---------------------------------------------------------------------------
 // Config + test seams (mirror templateGen's override pattern)
 // ---------------------------------------------------------------------------
@@ -73,7 +86,7 @@ export function __setDistillApiKeyOverrideForTests(
 }
 
 type DistillFn = (
-  text: string,
+  input: DistillInput,
   signal?: AbortSignal,
   prefill?: GenerationPrefill | null,
   trace?: TraceContext,
@@ -92,13 +105,13 @@ export function __resetDistillForTests(override: DistillFn | null): void {
 // Public entrypoint
 // ---------------------------------------------------------------------------
 
-export const distill: DistillFn = (text, signal, prefill, trace) => {
-  if (_distillOverride) return _distillOverride(text, signal, prefill, trace);
-  return _distill(text, signal, prefill, trace);
+export const distill: DistillFn = (input, signal, prefill, trace) => {
+  if (_distillOverride) return _distillOverride(input, signal, prefill, trace);
+  return _distill(input, signal, prefill, trace);
 };
 
 async function _distill(
-  text: string,
+  input: DistillInput,
   signal: AbortSignal | undefined,
   prefill: GenerationPrefill | null | undefined,
   trace: TraceContext | undefined,
@@ -111,10 +124,13 @@ async function _distill(
     throw new Error("BUILDER_OPENROUTER_API_KEY not configured");
   }
 
-  const userContent =
-    `Design an agent for this group based on the following request:\n\n` +
-    `---\n${text}\n---` +
-    buildPinnedIdentityNote(prefill);
+  const text = input.text?.trim();
+  const attachments = input.attachments ?? [];
+  if (!text && attachments.length === 0) {
+    throw new Error("Distill called with neither text nor attachments");
+  }
+
+  const userContent = buildDistillUserContent(text, attachments, prefill);
 
   // `any` body so the OpenRouter extensions (per-block cache_control, the
   // json_schema with min/maxItems) pass through the OpenAI SDK unchanged —
@@ -185,6 +201,63 @@ async function _distill(
 // ---------------------------------------------------------------------------
 // Helpers — exported for testing
 // ---------------------------------------------------------------------------
+
+/** Build the distill user message: a plain string for a text-only build, or a
+ *  multimodal block array (a directive + the image/PDF blocks) for a build that
+ *  carries attachments, so the vision-capable builder model can distill an
+ *  identity from a bare image/PDF. Mirrors the block layout the generate stage
+ *  uses (`image_url` for images, native `file` blocks for PDFs). */
+function buildDistillUserContent(
+  text: string | undefined,
+  attachments: ResolvedAttachment[],
+  prefill: GenerationPrefill | null | undefined,
+): string | any[] {
+  const pinned = buildPinnedIdentityNote(prefill);
+
+  if (attachments.length === 0) {
+    return (
+      `Design an agent for this group based on the following request:\n\n` +
+      `---\n${text ?? ""}\n---` +
+      pinned
+    );
+  }
+
+  const intro = text
+    ? `Design an agent for this group based on the following request and the ` +
+      `attached files:\n\n---\n${text}\n---`
+    : `Design an agent for this group based on the attached ` +
+      `${describeDistillFiles(attachments)}. Infer the agent's purpose and ` +
+      `personality from them.`;
+
+  return [
+    { type: "text", text: `${intro}${pinned}` },
+    // Preserve the caller's mixed image/PDF order in the content blocks.
+    ...attachments.map((attachment) =>
+      attachment.kind === "image"
+        ? { type: "image_url", image_url: { url: attachment.dataUri } }
+        : {
+            type: "file",
+            file: {
+              filename: attachment.filename,
+              file_data: attachment.dataUri,
+            },
+          },
+    ),
+  ];
+}
+
+/** Short noun phrase for the attached files, for the image/PDF-only directive. */
+function describeDistillFiles(attachments: ResolvedAttachment[]): string {
+  const images = attachments.filter((a) => a.kind === "image").length;
+  const pdfs = attachments.filter((a) => a.kind === "pdf").length;
+  const noun = (n: number, singular: string) =>
+    `${n} ${singular}${n === 1 ? "" : "s"}`;
+  if (images > 0 && pdfs > 0) {
+    return `files (${noun(images, "image")} and ${noun(pdfs, "document")})`;
+  }
+  if (pdfs > 0) return noun(pdfs, "document");
+  return noun(images, "image");
+}
 
 /** When the caller pinned part of the identity, tell the model to keep those
  *  exact values and fit the rest (phrases, description) around them. The

@@ -609,18 +609,24 @@ async function _runPipeline(
   // 3b. Distill stage (best-effort). Derive the agent's identity + the
   // build-narration progressPhrases up front and write them to the row so the
   // poll endpoints surface a `preview` card + `progressPhrases` on the early
-  // 202s, before the slow generate stage finishes. Skipped for the twitter path
-  // (nothing polls a progress card) and for inputs with no usable text (a bare
-  // pdf/image has nothing to distill from). A failure here never fails the
-  // generation: the build still produces the full template; the 202s just won't
-  // carry phrases / a card. The distilled identity (caller pins win) also feeds
-  // the generate + persist below, so the final template matches the card shown
-  // on the early polls.
+  // 202s, before the slow generate stage finishes. Runs whenever there's
+  // something to distill from — text and/or image/PDF attachments (the
+  // vision-capable builder model distills a bare image/PDF straight from the
+  // files); only the twitter path is skipped, since nothing polls a progress
+  // card there. A failure here never fails the generation: the build still
+  // produces the full template; the 202s just won't carry phrases / a card. The
+  // distilled identity (caller pins win) also feeds the generate + persist
+  // below, so the final template matches the card shown on the early polls.
   const distillText = effectiveText?.trim();
   let identity: TemplatePrefill | null = prefill;
-  if (distillText && !twitterContext) {
+  if ((distillText || resolved.attachments.length > 0) && !twitterContext) {
     try {
-      const distilled = await distill(distillText, signal, prefill, trace);
+      const distilled = await distill(
+        { text: distillText, attachments: resolved.attachments },
+        signal,
+        prefill,
+        trace,
+      );
       identity = {
         agentName: firstNonEmpty(prefill?.agentName, distilled.agentName),
         emoji: firstNonEmpty(prefill?.emoji, distilled.emoji),
