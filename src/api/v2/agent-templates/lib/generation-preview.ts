@@ -12,6 +12,11 @@
  * gate `previewResponseFields` on non-terminal status.
  */
 
+import {
+  GENERATION_ESTIMATE_MS,
+  GENERATION_ESTIMATE_WITH_ATTACHMENTS_MS,
+} from "@/config";
+
 /** The draft agent surfaced as `preview` on in-progress poll responses — the
  *  provisional identity card shown while the build runs. Only the identity is
  *  ever populated; the full agent arrives via the real template (`templateId`)
@@ -20,6 +25,25 @@ export interface AgentPreview {
   agentName?: string;
   emoji?: string;
   description?: string;
+}
+
+/** True when the generation's `inputs` carry at least one binary attachment.
+ *  Reads the raw JSON column (typed `unknown` at the Prisma boundary). */
+function hasAttachments(inputs: unknown): boolean {
+  if (!inputs || typeof inputs !== "object") return false;
+  const attachments = (inputs as { attachments?: unknown }).attachments;
+  return Array.isArray(attachments) && attachments.length > 0;
+}
+
+/** Rough estimate (ms) of how long this build will take, surfaced as
+ *  `estimatedDurationMs` on the in-progress (202) responses so a client can
+ *  size its progress indicator. Attachments raise the estimate (fetch +
+ *  moderation + multimodal overhead). Both values are env-tunable. Call only
+ *  for non-terminal rows — the terminal 200 carries no estimate. */
+export function estimatedDurationMs(inputs: unknown): number {
+  return hasAttachments(inputs)
+    ? GENERATION_ESTIMATE_WITH_ATTACHMENTS_MS
+    : GENERATION_ESTIMATE_MS;
 }
 
 /**

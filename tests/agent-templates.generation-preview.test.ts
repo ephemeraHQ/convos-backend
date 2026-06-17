@@ -8,7 +8,14 @@
  */
 
 import { describe, expect, test } from "vitest";
-import { previewResponseFields } from "@/api/v2/agent-templates/lib/generation-preview";
+import {
+  estimatedDurationMs,
+  previewResponseFields,
+} from "@/api/v2/agent-templates/lib/generation-preview";
+import {
+  GENERATION_ESTIMATE_MS,
+  GENERATION_ESTIMATE_WITH_ATTACHMENTS_MS,
+} from "@/config";
 
 describe("previewResponseFields — preview", () => {
   test("drops non-object preview (null, string, number, array)", () => {
@@ -84,5 +91,33 @@ describe("previewResponseFields — progressPhrases", () => {
     expect(
       previewResponseFields(undefined, []).progressPhrases,
     ).toBeUndefined();
+  });
+});
+
+describe("estimatedDurationMs", () => {
+  test("text-only inputs get the base estimate", () => {
+    expect(estimatedDurationMs({ text: "an idea" })).toBe(
+      GENERATION_ESTIMATE_MS,
+    );
+    expect(estimatedDurationMs({ attachments: [] })).toBe(
+      GENERATION_ESTIMATE_MS,
+    );
+  });
+
+  test("inputs with attachments get the larger estimate", () => {
+    expect(
+      estimatedDurationMs({
+        attachments: [{ objectKey: "build/a.png", mimeType: "image/png" }],
+      }),
+    ).toBe(GENERATION_ESTIMATE_WITH_ATTACHMENTS_MS);
+  });
+
+  test("malformed / missing inputs fall back to the base estimate", () => {
+    expect(estimatedDurationMs(null)).toBe(GENERATION_ESTIMATE_MS);
+    expect(estimatedDurationMs(undefined)).toBe(GENERATION_ESTIMATE_MS);
+    expect(estimatedDurationMs("nope")).toBe(GENERATION_ESTIMATE_MS);
+    expect(estimatedDurationMs({ attachments: "not-an-array" })).toBe(
+      GENERATION_ESTIMATE_MS,
+    );
   });
 });

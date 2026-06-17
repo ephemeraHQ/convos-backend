@@ -26,6 +26,7 @@ import {
   __resetGenerateTemplateForTests,
   DEFAULT_TEST_METRICS,
 } from "@/api/v2/agent-templates/services/templateGen";
+import { GENERATION_ESTIMATE_MS } from "@/config";
 import { __setAgentAssetsApiKeyOverrideForTests } from "@/middleware/agentAuth";
 import { ADMIN_ACCOUNT_ID } from "@/utils/constants";
 import { createJwtToken } from "@/utils/jwt";
@@ -295,9 +296,13 @@ describe("POST /generations — happy path", () => {
     const body = (await res.json()) as {
       generationId: string;
       status: string;
+      estimatedDurationMs?: number;
     };
     expect(typeof body.generationId).toBe("string");
     expect(body.status).toBe("pending");
+    // The fresh-submit 202 carries the build-time estimate even before the
+    // executor writes any preview (text-only inputs → the base estimate).
+    expect(body.estimatedDurationMs).toBe(GENERATION_ESTIMATE_MS);
 
     const row = await prisma.agentTemplateGeneration.findUnique({
       where: { id: body.generationId },

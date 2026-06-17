@@ -198,6 +198,20 @@ export const GENERATION_EXECUTOR_TIMEOUT_MS = parsePositiveInt(
   5 * 60 * 1000,
 );
 
+// Rough client-facing estimate of how long a build takes, surfaced as
+// `estimatedDurationMs` on the in-progress (202) poll responses so a client can
+// size its progress indicator without measuring. Text-only builds run ~20s on
+// the live builder model (p90); attachments add fetch + moderation + multimodal
+// overhead, so a build carrying any is estimated at ~30s. Env-tunable.
+export const GENERATION_ESTIMATE_MS = parsePositiveInt(
+  process.env.GENERATION_ESTIMATE_MS,
+  20_000,
+);
+export const GENERATION_ESTIMATE_WITH_ATTACHMENTS_MS = parsePositiveInt(
+  process.env.GENERATION_ESTIMATE_WITH_ATTACHMENTS_MS,
+  30_000,
+);
+
 // ---------------------------------------------------------------------------
 // Agent-build attachments (private-bucket upload → backend fetch)
 // ---------------------------------------------------------------------------

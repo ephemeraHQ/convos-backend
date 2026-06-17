@@ -25,6 +25,10 @@ import {
   __resetGenerateTemplateForTests,
   DEFAULT_TEST_METRICS,
 } from "@/api/v2/agent-templates/services/templateGen";
+import {
+  GENERATION_ESTIMATE_MS,
+  GENERATION_ESTIMATE_WITH_ATTACHMENTS_MS,
+} from "@/config";
 import { __setAgentAssetsApiKeyOverrideForTests } from "@/middleware/agentAuth";
 import { ADMIN_ACCOUNT_ID } from "@/utils/constants";
 import { createJwtToken } from "@/utils/jwt";
@@ -141,6 +145,7 @@ const insertGeneration = (
     idempotencyKey: string;
     preview: unknown;
     progressPhrases: unknown;
+    inputs: Prisma.InputJsonValue;
   }> = {},
 ) =>
   prisma.agentTemplateGeneration.create({
@@ -149,7 +154,7 @@ const insertGeneration = (
       source: TEST_SOURCE,
       idempotencyKey:
         overrides.idempotencyKey ?? `get-test-${Date.now()}-${Math.random()}`,
-      inputs: { text: "test" },
+      inputs: overrides.inputs ?? { text: "test" },
       status: overrides.status ?? "pending",
       templateId: overrides.templateId ?? null,
       error: overrides.error ?? null,
@@ -179,10 +184,30 @@ describe("GET /generations/:id", () => {
       generationId: string;
       status: string;
       templateId?: string;
+      estimatedDurationMs?: number;
     };
     expect(body.generationId).toBe(gen.id);
     expect(body.status).toBe("pending");
     expect(body.templateId).toBeUndefined();
+    // Text-only inputs → the base build-time estimate.
+    expect(body.estimatedDurationMs).toBe(GENERATION_ESTIMATE_MS);
+  });
+
+  test("running row with attachments returns the larger estimatedDurationMs", async () => {
+    const gen = await insertGeneration({
+      status: "running",
+      inputs: {
+        text: "make it",
+        attachments: [{ objectKey: "build/a.png", mimeType: "image/png" }],
+      },
+    });
+
+    const res = await get(gen.id);
+    expect(res.status).toBe(202);
+    const body = (await res.json()) as { estimatedDurationMs?: number };
+    expect(body.estimatedDurationMs).toBe(
+      GENERATION_ESTIMATE_WITH_ATTACHMENTS_MS,
+    );
   });
 
   test("running row returns 202 with progressPhrases + preview (identity)", async () => {
@@ -244,11 +269,13 @@ describe("GET /generations/:id", () => {
       templateId?: string;
       preview?: unknown;
       progressPhrases?: unknown;
+      estimatedDurationMs?: number;
     };
     expect(body.status).toBe("done");
     expect(body.templateId).toBe(template.id);
     expect(body.preview).toBeUndefined();
     expect(body.progressPhrases).toBeUndefined();
+    expect(body.estimatedDurationMs).toBeUndefined();
   });
 
   test("failed row returns 200 with error string", async () => {

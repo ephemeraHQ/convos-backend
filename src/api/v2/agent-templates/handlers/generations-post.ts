@@ -14,12 +14,13 @@
  *     generation is non-terminal; terminal frame is `event: result` (done) or
  *     `event: error` (failed). HTTP status is always 200 in SSE mode.
  *
- * Response bodies carry `progressPhrases` + the `preview` (the draft agent's
- * identity) while the build runs; both drop off the terminal 200, which carries
- * `templateId` (the client fetches the real template for the full fields). A
- * fresh submit returns before the executor has written them, so the immediate
- * 202 omits both; a poll (or an idempotent replay of an in-flight row) surfaces
- * them.
+ * Response bodies carry `progressPhrases`, the `preview` (the draft agent's
+ * identity), and `estimatedDurationMs` (a rough build-time estimate) while the
+ * build runs; all drop off the terminal 200, which carries `templateId` (the
+ * client fetches the real template for the full fields). `estimatedDurationMs`
+ * rides every in-progress 202, including the fresh submit; `preview` /
+ * `progressPhrases` only appear once the executor has written them (a poll, or
+ * an idempotent replay of an in-flight row).
  *
  * Submit-time validation order (each check returns and short-circuits):
  *   1. Content-Length > 40 MB                                   → 413
@@ -55,6 +56,7 @@ import { Prisma } from "@prisma/client";
 import type { Request, Response } from "express";
 import { z } from "zod";
 import {
+  estimatedDurationMs,
   previewResponseFields,
   type AgentPreview,
 } from "@/api/v2/agent-templates/lib/generation-preview";
@@ -339,6 +341,7 @@ interface GenerationRow {
   error: string | null;
   preview: unknown;
   progressPhrases: unknown;
+  inputs: unknown;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -351,6 +354,7 @@ interface GenerationResponse {
   error?: string;
   preview?: AgentPreview;
   progressPhrases?: string[];
+  estimatedDurationMs?: number;
   createdAt: string;
   updatedAt: string;
 }
@@ -362,11 +366,12 @@ function toResponse(row: GenerationRow): GenerationResponse {
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   };
-  // `preview` (the draft agent) + `progressPhrases` ride only the in-progress
-  // 202s; the terminal 200 hands back `templateId` (the client fetches the real
-  // template) / `error` instead.
+  // `preview` (the draft agent), `progressPhrases`, and the build-duration
+  // estimate ride only the in-progress 202s; the terminal 200 hands back
+  // `templateId` (the client fetches the real template) / `error` instead.
   if (!isTerminal(row.status)) {
     Object.assign(out, previewResponseFields(row.preview, row.progressPhrases));
+    out.estimatedDurationMs = estimatedDurationMs(row.inputs);
   }
   if (row.templateId) out.templateId = row.templateId;
   if (row.reply) out.reply = { text: row.reply };
@@ -388,6 +393,7 @@ async function fetchOwnedGeneration(
       error: true,
       preview: true,
       progressPhrases: true,
+      inputs: true,
       createdAt: true,
       updatedAt: true,
     },
@@ -484,7 +490,6 @@ async function streamUntilTerminal(args: {
  *  pinned prefills). */
 interface DedupeRow extends GenerationRow {
   source: string;
-  inputs: unknown;
   twitterContext: unknown;
   prefill: unknown;
   builderPrompt: string | null;
@@ -960,6 +965,7 @@ export async function generationsPostHandler(req: Request, res: Response) {
         error: true,
         preview: true,
         progressPhrases: true,
+        inputs: true,
         createdAt: true,
         updatedAt: true,
       },

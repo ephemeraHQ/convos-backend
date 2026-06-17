@@ -5,12 +5,13 @@
  * terminal via `?wait_ms=N` (capped at 45_000, polled every 500 ms).
  *
  * HTTP status is the in-progress/terminal signal:
- *   - 202 while `pending`/`running` — body carries `progressPhrases` and the
+ *   - 202 while `pending`/`running` — body carries `progressPhrases`, the
  *     `preview` (the draft agent's identity: agentName/emoji/description) as
- *     they fill in.
- *   - 200 once `done`/`failed` — `preview`/`progressPhrases` drop off; the body
- *     carries `templateId` (the client fetches the real template for the full
- *     fields) or `error`.
+ *     they fill in, and `estimatedDurationMs` (a rough build-time estimate the
+ *     client can size a progress indicator against).
+ *   - 200 once `done`/`failed` — `preview`/`progressPhrases`/`estimatedDurationMs`
+ *     drop off; the body carries `templateId` (the client fetches the real
+ *     template for the full fields) or `error`.
  *
  * Visibility:
  *   - The generation ID itself is the capability — anyone with the UUID
@@ -21,7 +22,7 @@
  * Response shape:
  *   {
  *     generationId, status,
- *     templateId?, error?, preview?, progressPhrases?,
+ *     templateId?, error?, preview?, progressPhrases?, estimatedDurationMs?,
  *     createdAt, updatedAt
  *   }
  *
@@ -31,6 +32,7 @@
 
 import type { Request, Response } from "express";
 import {
+  estimatedDurationMs,
   previewResponseFields,
   type AgentPreview,
 } from "@/api/v2/agent-templates/lib/generation-preview";
@@ -79,6 +81,7 @@ interface GenerationRow {
   error: string | null;
   preview: unknown;
   progressPhrases: unknown;
+  inputs: unknown;
   expiresAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
@@ -92,6 +95,7 @@ interface GenerationResponse {
   error?: string;
   preview?: AgentPreview;
   progressPhrases?: string[];
+  estimatedDurationMs?: number;
   createdAt: string;
   updatedAt: string;
 }
@@ -109,11 +113,12 @@ function toResponse(row: GenerationRow): GenerationResponse {
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   };
-  // `preview` (the draft agent) + `progressPhrases` ride only the in-progress
-  // 202s; the terminal 200 hands back `templateId` (the client fetches the real
-  // template) / `error` instead.
+  // `preview` (the draft agent), `progressPhrases`, and the build-duration
+  // estimate ride only the in-progress 202s; the terminal 200 hands back
+  // `templateId` (the client fetches the real template) / `error` instead.
   if (!isTerminal(row.status)) {
     Object.assign(out, previewResponseFields(row.preview, row.progressPhrases));
+    out.estimatedDurationMs = estimatedDurationMs(row.inputs);
   }
   if (row.templateId) out.templateId = row.templateId;
   if (row.reply) out.reply = { text: row.reply };
@@ -132,6 +137,7 @@ async function fetchRow(generationId: string): Promise<GenerationRow | null> {
       error: true,
       preview: true,
       progressPhrases: true,
+      inputs: true,
       expiresAt: true,
       createdAt: true,
       updatedAt: true,
