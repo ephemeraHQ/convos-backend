@@ -13,6 +13,13 @@ import { jsonMiddleware } from "@/middleware/json";
 import { noRouteMiddleware } from "@/middleware/noRoute";
 import { pinoMiddleware } from "@/middleware/pino";
 import { grant } from "@/payments";
+import {
+  AppleEnv,
+  SUBSCRIPTION_TIER_PLUS,
+  SubscriptionPeriod,
+  SubscriptionStatus,
+  upsertFromVerify,
+} from "@/subscriptions/repository";
 import { prisma } from "@/utils/prisma";
 
 export const TEST_AGENT_API_KEY =
@@ -69,8 +76,64 @@ export const seedBalance = async (
   });
 };
 
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+export const seedPlusMonthlySubscription = async (
+  accountId: string,
+): Promise<void> => {
+  const now = Date.now();
+  const start = new Date(now - 5 * DAY_MS);
+  const end = new Date(now + 25 * DAY_MS);
+  await upsertFromVerify({
+    accountId,
+    appAccountToken: randomUUID(),
+    productId: "app.convos.subs.monthly",
+    tier: SUBSCRIPTION_TIER_PLUS,
+    period: SubscriptionPeriod.monthly,
+    status: SubscriptionStatus.active,
+    originalTransactionId: `otid-${accountId}`,
+    transactionId: `tx-${accountId}`,
+    startedAt: start,
+    currentPeriodStart: start,
+    currentPeriodEnd: end,
+    willRenew: true,
+    isInTrial: false,
+    environment: AppleEnv.sandbox,
+    signedPayload: "stub.jws",
+  });
+};
+
+export const seedExpiredSubscription = async (
+  accountId: string,
+): Promise<void> => {
+  const now = Date.now();
+  const start = new Date(now - 35 * DAY_MS);
+  const end = new Date(now - 5 * DAY_MS);
+  await upsertFromVerify({
+    accountId,
+    appAccountToken: randomUUID(),
+    productId: "app.convos.subs.monthly",
+    tier: SUBSCRIPTION_TIER_PLUS,
+    period: SubscriptionPeriod.monthly,
+    status: SubscriptionStatus.expired,
+    originalTransactionId: `otid-exp-${accountId}`,
+    transactionId: `tx-exp-${accountId}`,
+    startedAt: start,
+    currentPeriodStart: start,
+    currentPeriodEnd: end,
+    willRenew: false,
+    isInTrial: false,
+    environment: AppleEnv.sandbox,
+    signedPayload: "stub.jws",
+  });
+};
+
 export const cleanupAccounts = async (accountIds: string[]): Promise<void> => {
   for (const accountId of accountIds) {
+    await prisma.appleReceipt.deleteMany({
+      where: { subscription: { accountId } },
+    });
+    await prisma.subscription.deleteMany({ where: { accountId } });
     await prisma.creditLedger.deleteMany({ where: { accountId } });
     await prisma.userCredits.deleteMany({ where: { accountId } });
     await prisma.account.deleteMany({ where: { id: accountId } });

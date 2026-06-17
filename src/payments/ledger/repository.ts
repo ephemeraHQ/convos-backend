@@ -19,6 +19,7 @@ export interface ApplyDeltaInput {
   note?: string;
   grantKindId?: GrantKindId;
   floorCheck?: { minBalance: bigint };
+  recordOnly?: boolean;
 }
 
 export interface ApplyDeltaResult {
@@ -159,6 +160,25 @@ const lockOrCreateBalance = async (
   return rows[0]?.balance ?? 0n;
 };
 
+const buildLedgerData = (input: ApplyDeltaInput, balanceAfter: bigint) => ({
+  accountId: input.accountId,
+  delta: input.delta,
+  reason: input.reason,
+  idempotencyKey: input.idempotencyKey,
+  scope: input.scope,
+  balanceAfter,
+  usdCostMicros: input.usdCostMicros ?? null,
+  markupRate:
+    input.markupRate !== undefined
+      ? new Prisma.Decimal(input.markupRate.toString())
+      : null,
+  creditsPerDollar: input.creditsPerDollar ?? null,
+  model: input.model ?? null,
+  requestId: input.requestId ?? null,
+  note: input.note ?? null,
+  grantKindId: input.grantKindId ?? null,
+});
+
 /**
  * Run the ledger mutation inside an existing transaction. Caller owns the tx.
  * Use this when the caller needs to perform additional reads/writes inside the
@@ -172,6 +192,27 @@ export const applyDeltaWithTx = async (
   input: ApplyDeltaInput,
 ): Promise<ApplyDeltaResult> => {
   assertIdempotencyKey(input.idempotencyKey);
+
+  if (input.recordOnly) {
+    if (input.floorCheck) {
+      throw new Error("recordOnly is incompatible with floorCheck");
+    }
+    const existing = await tx.userCredits.findUnique({
+      where: { accountId: input.accountId },
+      select: { balance: true },
+    });
+    const current = existing?.balance ?? 0n;
+    const created = await tx.creditLedger.create({
+      data: buildLedgerData(input, current),
+    });
+    return {
+      ledgerId: created.id,
+      replayed: false,
+      newBalance: current,
+      balanceAfter: current,
+    };
+  }
+
   const before = await lockOrCreateBalance(tx, input.accountId);
   const after = before + input.delta;
 
@@ -196,24 +237,7 @@ export const applyDeltaWithTx = async (
   }
 
   const created = await tx.creditLedger.create({
-    data: {
-      accountId: input.accountId,
-      delta: input.delta,
-      reason: input.reason,
-      idempotencyKey: input.idempotencyKey,
-      scope: input.scope, // written on every row
-      balanceAfter: after, // written on every row
-      usdCostMicros: input.usdCostMicros ?? null,
-      markupRate:
-        input.markupRate !== undefined
-          ? new Prisma.Decimal(input.markupRate.toString())
-          : null,
-      creditsPerDollar: input.creditsPerDollar ?? null,
-      model: input.model ?? null,
-      requestId: input.requestId ?? null,
-      note: input.note ?? null,
-      grantKindId: input.grantKindId ?? null,
-    },
+    data: buildLedgerData(input, after),
   });
 
   return {

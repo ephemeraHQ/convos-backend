@@ -1,5 +1,10 @@
+import { randomUUID } from "node:crypto";
+import { LedgerReason, SubscriptionPeriod } from "@prisma/client";
 import type { Express } from "express";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { tierGrant } from "@/subscriptions/tier-config";
+import { SUBSCRIPTION_TIER_PLUS } from "@/subscriptions/tiers";
+import { prisma } from "@/utils/prisma";
 import {
   agentRequest,
   buildCreditsApp,
@@ -8,6 +13,7 @@ import {
   installAgentApiKeyOverride,
   seedAccount,
   seedBalance,
+  seedPlusMonthlySubscription,
 } from "./helpers";
 
 let app: Express;
@@ -63,5 +69,51 @@ describe("GET /v2/accounts/:accountId/credits", () => {
     const res = await agentRequest(app).get("/v2/accounts/not-a-uuid/credits");
     expect(res.status).toBe(400);
     expect((res.body as { code: string }).code).toBe("invalid_account_id");
+  });
+
+  it("entitled subscriber → allowed with derived balance, even with no UserCredits row", async () => {
+    const accountId = await seedAccount();
+    tracker.push(accountId);
+    await seedPlusMonthlySubscription(accountId);
+
+    const perPeriod = tierGrant(
+      SUBSCRIPTION_TIER_PLUS,
+      SubscriptionPeriod.monthly,
+    ).perPeriod;
+
+    const res = await agentRequest(app).get(
+      `/v2/accounts/${accountId}/credits`,
+    );
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({
+      accountId,
+      balance: String(perPeriod),
+      allowed: true,
+    });
+  });
+
+  it("entitled subscriber over cap → not allowed", async () => {
+    const accountId = await seedAccount();
+    tracker.push(accountId);
+    await seedPlusMonthlySubscription(accountId);
+    const perPeriod = tierGrant(
+      SUBSCRIPTION_TIER_PLUS,
+      SubscriptionPeriod.monthly,
+    ).perPeriod;
+    await prisma.creditLedger.create({
+      data: {
+        accountId,
+        delta: BigInt(-(perPeriod + 10)),
+        reason: LedgerReason.consume,
+        idempotencyKey: `c-${randomUUID()}`,
+        scope: "transaction",
+      },
+    });
+
+    const res = await agentRequest(app).get(
+      `/v2/accounts/${accountId}/credits`,
+    );
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ accountId, balance: "0", allowed: false });
   });
 });

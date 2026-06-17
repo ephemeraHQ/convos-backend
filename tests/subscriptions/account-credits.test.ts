@@ -5,6 +5,7 @@ import { afterEach, beforeAll, describe, expect, test, vi } from "vitest";
 import { accountsMeRouter } from "@/api/v2/accounts/accountsMeRouter";
 import { authMiddleware } from "@/middleware/auth";
 import { pinoMiddleware } from "@/middleware/pino";
+import { getSpendableBalance } from "@/payments/spendable";
 import {
   AppleEnv,
   SUBSCRIPTION_TIER_PLUS,
@@ -256,6 +257,7 @@ describe("GET /v2/accounts/me/credits", () => {
     const body = res.body as BalanceBody;
     expect(body.monthlyGrantUsed).toBe(500);
     expect(body.balance).toBe(2500 - 500);
+    expect(BigInt(body.balance)).toBe(await getSpendableBalance(accountId));
   });
 
   test("consumes before currentPeriodStart do NOT count (previous period burn)", async () => {

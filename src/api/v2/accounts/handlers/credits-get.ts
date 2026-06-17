@@ -1,39 +1,18 @@
-import { LedgerReason } from "@prisma/client";
 import type { Request, Response } from "express";
 import { getBalance } from "@/payments";
 import { config } from "@/payments/credits/config";
 import { startOfNextUtcDay } from "@/payments/daily-refill/utc";
+import { sumPeriodConsumes } from "@/payments/spendable";
 import { findCurrentByAccountId } from "@/subscriptions/repository";
 import { isEntitledSubscription } from "@/subscriptions/status";
 import { tierGrant } from "@/subscriptions/tier-config";
 import { requireSubscriptionTier } from "@/subscriptions/tiers";
-import { prisma } from "@/utils/prisma";
 
 const MONTH_LABEL_FORMATTER = new Intl.DateTimeFormat("en-US", {
   month: "long",
   year: "numeric",
   timeZone: "UTC",
 });
-
-const sumPeriodConsumes = async (
-  accountId: string,
-  since: Date,
-): Promise<number> => {
-  const agg = await prisma.creditLedger.aggregate({
-    where: {
-      accountId,
-      reason: LedgerReason.consume,
-      createdAt: { gte: since },
-    },
-    _sum: { delta: true },
-  });
-  // delta is negative for consume entries; we want the absolute total.
-  const sum = agg._sum.delta;
-  if (sum === null) return 0;
-  // BigInt → number; cap negativity and convert.
-  const positive = sum < 0n ? -sum : sum;
-  return Number(positive);
-};
 
 /**
  * GET /v2/accounts/me/credits — returns the iOS `CreditBalance` shape:
