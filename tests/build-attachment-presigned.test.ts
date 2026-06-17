@@ -66,7 +66,7 @@ test("missing contentType → 400", async () => {
 
 test("unsupported contentType → 400", async () => {
   const res = mockRes();
-  await call(res, { contentType: "image/webp" });
+  await call(res, { contentType: "image/webp", contentLength: "1024" });
   expect(res.statusCode).toBe(400);
 });
 

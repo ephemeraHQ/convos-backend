@@ -199,8 +199,11 @@ export async function headBuildObject(
     const res = await client.send(
       new HeadObjectCommand({ Bucket: bucket, Key: objectKey }),
     );
+    if (res.ContentLength == null) {
+      throw new AppError(400, `Attachment size unavailable: ${objectKey}`);
+    }
     return {
-      contentLength: res.ContentLength ?? 0,
+      contentLength: res.ContentLength,
       contentType: res.ContentType ?? null,
     };
   } catch (err) {

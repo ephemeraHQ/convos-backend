@@ -227,9 +227,9 @@ export const PRIVATE_ASSETS_BUCKET = (
 
 // Max attachments per generation. The Convos multi-attachment message tops out
 // at 9, so that's the ceiling here too.
-export const BUILD_ATTACHMENTS_MAX_COUNT = parsePositiveInt(
-  process.env.BUILD_ATTACHMENTS_MAX_COUNT,
+export const BUILD_ATTACHMENTS_MAX_COUNT = Math.min(
   9,
+  parsePositiveInt(process.env.BUILD_ATTACHMENTS_MAX_COUNT, 9),
 );
 
 // Aggregate cap across all attachments on one generation (bytes). Per-file
