@@ -63,6 +63,22 @@ export const agentAssetPreAuthLimiter = rateLimit({
   message: { error: "Too many agent auth attempts, please try again later" },
 });
 
+// Rate limiting for the build-attachment presigned-URL endpoint
+// (GET /api/v2/agent-templates/attachments/presigned). Each request mints an
+// S3 PUT capability token and the endpoint is optional-auth, so it needs a
+// tighter per-IP cap than the global 1000/5min — comfortably above the handful
+// of presigns a real multi-attachment build needs, far below a useful abuse rate.
+export const buildAttachmentPresignedLimiter = rateLimit({
+  windowMs: 60 * 1000, // 1 minute
+  limit: 20,
+  keyGenerator: (req) => req.ip || "unknown",
+  legacyHeaders: false,
+  standardHeaders: "draft-8",
+  message: {
+    error: "Too many attachment upload requests, please try again later",
+  },
+});
+
 // Rate limiting for invite code redemption (5 attempts per 15 minutes per IP)
 export const inviteCodeRedeemLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes

@@ -15,7 +15,14 @@
  */
 
 import { afterAll, afterEach, beforeAll, describe, expect, test } from "vitest";
-import { __resetDistillForTests } from "@/api/v2/agent-templates/services/distill";
+import {
+  __resetAttachmentResolverForTests,
+  AttachmentModerationError,
+} from "@/api/v2/agent-templates/services/attachment-resolver";
+import {
+  __resetDistillForTests,
+  type DistillInput,
+} from "@/api/v2/agent-templates/services/distill";
 import {
   __resetGenerationExecutorForTests,
   __setExecutorTimeoutMsForTests,
@@ -112,6 +119,7 @@ beforeAll(() => {
 afterEach(async () => {
   __resetGenerateTemplateForTests(null);
   __resetDistillForTests(null);
+  __resetAttachmentResolverForTests(null);
   __setExecutorTimeoutMsForTests(null);
   __resetGenerationExecutorForTests(null);
   await cleanupGenerations();
@@ -216,6 +224,61 @@ describe("generation-executor", () => {
     // Distill never produced anything, so the preview columns stay null.
     expect(final?.preview).toBeNull();
     expect(final?.progressPhrases).toBeNull();
+  });
+
+  test("image-only input still runs distill (vision) and writes the preview", async () => {
+    // The resolver yields one image block and no transcripts, so the executor
+    // has no text — distill must still run, fed the image, and write a preview.
+    __resetAttachmentResolverForTests(() =>
+      Promise.resolve({
+        attachments: [
+          {
+            kind: "image",
+            mimeType: "image/png",
+            dataUri: "data:image/png;base64,AAAA",
+          },
+        ],
+        transcripts: [],
+      }),
+    );
+
+    let distillInput: DistillInput | undefined;
+    __resetDistillForTests((input) => {
+      distillInput = input;
+      return Promise.resolve(
+        makeFakeDistill({
+          agentName: fakeTemplate.agentName,
+          emoji: fakeTemplate.emoji,
+          description: fakeTemplate.description,
+        }),
+      );
+    });
+    installFakeTemplate();
+
+    const gen = await prisma.agentTemplateGeneration.create({
+      data: {
+        ownerAccountId: ADMIN_ACCOUNT_ID,
+        source: TEST_SOURCE,
+        idempotencyKey: "image-only-distill",
+        inputs: {
+          attachments: [{ objectKey: "build/x.png", mimeType: "image/png" }],
+        },
+        status: "pending",
+      },
+    });
+
+    await executeGeneration(gen.id);
+
+    // Distill ran with the image attachment and no text.
+    expect(distillInput?.text).toBeFalsy();
+    expect(distillInput?.attachments).toHaveLength(1);
+
+    const final = await prisma.agentTemplateGeneration.findUnique({
+      where: { id: gen.id },
+    });
+    expect(final?.status).toBe("done");
+    const preview = final?.preview as { agentName?: string } | null;
+    expect(preview?.agentName).toBe(fakeTemplate.agentName);
   });
 
   test("threads the row's builderPrompt to the generator as the system-prompt override", async () => {
@@ -345,14 +408,26 @@ describe("generation-executor", () => {
     __resetPostHogForTests((props) => {
       capturedProps = props;
     });
+    // Stub attachment resolution so the executor doesn't reach S3/Rekognition.
+    __resetAttachmentResolverForTests(() =>
+      Promise.resolve({
+        attachments: [
+          {
+            kind: "image",
+            mimeType: "image/png",
+            dataUri: "data:image/png;base64,AAAA",
+          },
+        ],
+        transcripts: [],
+      }),
+    );
     const gen = await prisma.agentTemplateGeneration.create({
       data: {
         ownerAccountId: ADMIN_ACCOUNT_ID,
         source: TEST_SOURCE,
         idempotencyKey: "file-plus-intent",
         inputs: {
-          imageBase64: "AAAA",
-          mimeType: "image/png",
+          attachments: [{ objectKey: "build/img.png", mimeType: "image/png" }],
           text: "make a cooking agent",
         },
         status: "pending",
@@ -361,16 +436,81 @@ describe("generation-executor", () => {
 
     await executeGeneration(gen.id);
     __resetPostHogForTests(() => {}); // restore the no-op for later tests
+    __resetAttachmentResolverForTests(null);
 
-    // The directive must survive coalescing — generateTemplate uses it as the
-    // file's "User's intent:" rather than dropping it.
-    expect(capturedInput).toMatchObject({
-      imageBase64: "AAAA",
-      text: "make a cooking agent",
+    // The directive must survive into the generator input alongside the image
+    // block (generateTemplate uses it as the files' "User's intent:").
+    expect(capturedInput).toMatchObject({ text: "make a cooking agent" });
+    expect(
+      (capturedInput as { attachments?: unknown[] }).attachments,
+    ).toHaveLength(1);
+    // The accompanying directive must NOT flip the analytics classification: a
+    // file submission is reported by its kind ("image"), not "text".
+    expect(capturedProps?.inputType).toBe("image");
+  });
+
+  test("a voice transcript is folded into the generator's text input", async () => {
+    let capturedInput: unknown;
+    __resetGenerateTemplateForTests((input) => {
+      capturedInput = input;
+      return Promise.resolve({
+        template: fakeTemplate,
+        metrics: DEFAULT_TEST_METRICS,
+      });
     });
-    // ...and `text` now riding on the object must NOT flip the analytics
-    // classification: a file is still reported as imageBase64, not "text".
-    expect(capturedProps?.inputType).toBe("imageBase64");
+    // Resolver returns no content blocks, just a transcript (audio path).
+    __resetAttachmentResolverForTests(() =>
+      Promise.resolve({ attachments: [], transcripts: ["spoken note"] }),
+    );
+    const gen = await prisma.agentTemplateGeneration.create({
+      data: {
+        ownerAccountId: ADMIN_ACCOUNT_ID,
+        source: TEST_SOURCE,
+        idempotencyKey: "audio-fold",
+        inputs: {
+          text: "base directive",
+          attachments: [{ objectKey: "build/v.m4a", mimeType: "audio/mp4" }],
+        },
+        status: "pending",
+      },
+    });
+
+    await executeGeneration(gen.id);
+    __resetAttachmentResolverForTests(null);
+
+    const text = (capturedInput as { text?: string }).text ?? "";
+    expect(text).toContain("base directive");
+    expect(text).toContain("spoken note");
+    const row = await prisma.agentTemplateGeneration.findUnique({
+      where: { id: gen.id },
+    });
+    expect(row?.status).toBe("done");
+  });
+
+  test("an attachment blocked by moderation → terminal failed", async () => {
+    __resetAttachmentResolverForTests(() =>
+      Promise.reject(new AttachmentModerationError("Explicit", "build/a.png")),
+    );
+    const gen = await prisma.agentTemplateGeneration.create({
+      data: {
+        ownerAccountId: ADMIN_ACCOUNT_ID,
+        source: TEST_SOURCE,
+        idempotencyKey: "att-blocked",
+        inputs: {
+          attachments: [{ objectKey: "build/a.png", mimeType: "image/png" }],
+        },
+        status: "pending",
+      },
+    });
+
+    await executeGeneration(gen.id);
+    __resetAttachmentResolverForTests(null);
+
+    const row = await prisma.agentTemplateGeneration.findUnique({
+      where: { id: gen.id },
+    });
+    expect(row?.status).toBe("failed");
+    expect(row?.error?.toLowerCase()).toContain("moderation");
   });
 
   test("non-sluggable agentName falls back to a safe default slug", async () => {

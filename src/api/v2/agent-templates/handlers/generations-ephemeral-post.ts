@@ -36,6 +36,12 @@ import {
   startSseStream,
   writeSseEvent,
 } from "@/api/v2/agent-templates/lib/sse";
+import {
+  attachmentsArraySchema,
+  resolveAttachments,
+  type AttachmentRef,
+} from "@/api/v2/agent-templates/services/attachment-resolver";
+import { classifyMime } from "@/api/v2/agent-templates/services/build-attachments";
 import { isKnownOpenRouterModel } from "@/api/v2/agent-templates/services/openrouter-models";
 import {
   callGenerateTemplate,
@@ -43,6 +49,7 @@ import {
   type GenerationPrefill,
   type GenerationResult,
 } from "@/api/v2/agent-templates/services/templateGen";
+import { AppError } from "@/utils/errors";
 
 // One synchronous generation, kept under typical edge/proxy request ceilings.
 const EPHEMERAL_TIMEOUT_MS = 90_000;
@@ -57,7 +64,6 @@ function getTimeoutMs(): number {
 }
 
 const MAX_TEXT_LEN = 50_000;
-const MAX_BASE64_LEN = 35_000_000;
 const MAX_BUILDER_PROMPT_LEN = 100_000;
 // Model-override cap — OpenRouter model ids are short slugs; this just bounds
 // an obviously-abusive value (matches the async endpoint's builderModel cap).
@@ -69,10 +75,7 @@ const inputsSchema = z
     idea: z.string().optional(),
     content: z.string().optional(),
     url: z.string().optional(),
-    pdfBase64: z.string().optional(),
-    mimeType: z.string().optional(),
-    filename: z.string().optional(),
-    imageBase64: z.string().optional(),
+    attachments: attachmentsArraySchema,
   })
   .strict();
 
@@ -92,33 +95,6 @@ const bodySchema = z
     prefill: prefillSchema.optional(),
   })
   .strict();
-
-// Mirror the async endpoint's coalescing: pick the first non-whitespace
-// text-bearing field, and let a file (pdf/image) define the input type.
-function coalesce(
-  inputs: z.infer<typeof inputsSchema>,
-): GenerateTemplateInput | null {
-  const text = [inputs.text, inputs.idea, inputs.content, inputs.url].find(
-    (v): v is string => typeof v === "string" && v.trim().length > 0,
-  );
-  if (inputs.pdfBase64) {
-    return {
-      pdfBase64: inputs.pdfBase64,
-      mimeType: inputs.mimeType || "application/pdf",
-      filename: inputs.filename || "document.pdf",
-      ...(text ? { text } : {}),
-    };
-  }
-  if (inputs.imageBase64) {
-    return {
-      imageBase64: inputs.imageBase64,
-      mimeType: inputs.mimeType || "image/png",
-      ...(text ? { text } : {}),
-    };
-  }
-  if (text) return { text };
-  return null;
-}
 
 // ---------------------------------------------------------------------------
 // Generation
@@ -200,31 +176,32 @@ export async function generationsEphemeralPostHandler(
     return;
   }
 
-  const coalesced = coalesce(parsed.data.inputs);
-  if (!coalesced) {
+  // Text directive + attachment references, mirroring the async endpoint minus
+  // the persistence/idempotency machinery.
+  const inputs = parsed.data.inputs;
+  const textInput = [inputs.text, inputs.idea, inputs.content, inputs.url].find(
+    (v): v is string => typeof v === "string" && v.trim().length > 0,
+  );
+  const attachmentRefs: AttachmentRef[] = inputs.attachments ?? [];
+  if (!textInput && attachmentRefs.length === 0) {
     res.status(400).json({
-      error:
-        "inputs must include one of text, idea, content, url, pdfBase64, or imageBase64",
+      error: "inputs must include text or at least one attachment",
     });
     return;
   }
-  if (coalesced.text && coalesced.text.length > MAX_TEXT_LEN) {
+  if (textInput && textInput.length > MAX_TEXT_LEN) {
     res.status(400).json({
       error: `Text exceeds maximum length of ${MAX_TEXT_LEN} characters`,
     });
     return;
   }
-  if (coalesced.pdfBase64 && coalesced.pdfBase64.length > MAX_BASE64_LEN) {
-    res.status(400).json({
-      error: `PDF base64 exceeds maximum length of ${MAX_BASE64_LEN} characters`,
-    });
-    return;
-  }
-  if (coalesced.imageBase64 && coalesced.imageBase64.length > MAX_BASE64_LEN) {
-    res.status(400).json({
-      error: `Image base64 exceeds maximum length of ${MAX_BASE64_LEN} characters`,
-    });
-    return;
+  for (const att of attachmentRefs) {
+    if (!classifyMime(att.mimeType)) {
+      res.status(400).json({
+        error: `Unsupported attachment type: ${att.mimeType}`,
+      });
+      return;
+    }
   }
 
   const prefill: GenerationPrefill | null = parsed.data.prefill ?? null;
@@ -259,8 +236,55 @@ export async function generationsEphemeralPostHandler(
     abort.abort();
   });
 
+  // Resolve attachments to LLM content (fetch bytes, transcribe audio). The
+  // admin caller is trusted and nothing is persisted, so binary moderation is
+  // skipped. Resolution failures (unfetchable / oversize / unsupported) 4xx
+  // before any model spend; a mid-resolve disconnect bails silently.
+  let input: GenerateTemplateInput;
+  try {
+    const resolved = await resolveAttachments(attachmentRefs, {
+      signal: abort.signal,
+      moderate: false,
+    });
+    const effectiveText =
+      [textInput, ...resolved.transcripts]
+        .filter((t): t is string => !!t && t.trim().length > 0)
+        .join("\n\n") || undefined;
+    input = {
+      ...(effectiveText ? { text: effectiveText } : {}),
+      ...(resolved.attachments.length
+        ? { attachments: resolved.attachments }
+        : {}),
+    };
+  } catch (err) {
+    if (abort.signal.aborted) {
+      // The client is gone — nothing to write.
+      if (res.writableEnded || res.destroyed) return;
+      // A timeout aborts via `timeoutSignal`; surface it like the generation
+      // timeout path rather than leaving the client hanging.
+      if (timeoutSignal.aborted) {
+        res.status(504).json({ error: "Generation timed out" });
+        return;
+      }
+      return; // client hung up mid-resolve
+    }
+    if (err instanceof AppError) {
+      res.status(err.statusCode).json({ error: err.message });
+      return;
+    }
+    req.log.error(
+      { err },
+      "[ephemeral-generation] attachment resolution failed",
+    );
+    res.status(400).json({
+      error:
+        err instanceof Error ? err.message : "Failed to resolve attachments",
+    });
+    return;
+  }
+
   const generationArgs = {
-    input: coalesced,
+    input,
     signal: abort.signal,
     timeoutSignal,
     prefill,

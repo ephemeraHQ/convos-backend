@@ -14,18 +14,19 @@
  *     generation is non-terminal; terminal frame is `event: result` (done) or
  *     `event: error` (failed). HTTP status is always 200 in SSE mode.
  *
- * Response bodies carry `progressPhrases` + the `preview` (the draft agent's
- * identity) while the build runs; both drop off the terminal 200, which carries
- * `templateId` (the client fetches the real template for the full fields). A
- * fresh submit returns before the executor has written them, so the immediate
- * 202 omits both; a poll (or an idempotent replay of an in-flight row) surfaces
- * them.
+ * Response bodies carry `progressPhrases`, the `preview` (the draft agent's
+ * identity), and `estimatedDurationMs` (a rough build-time estimate) while the
+ * build runs; all drop off the terminal 200, which carries `templateId` (the
+ * client fetches the real template for the full fields). `estimatedDurationMs`
+ * rides every in-progress 202, including the fresh submit; `preview` /
+ * `progressPhrases` only appear once the executor has written them (a poll, or
+ * an idempotent replay of an in-flight row).
  *
  * Submit-time validation order (each check returns and short-circuits):
  *   1. Content-Length > 40 MB                                   → 413
- *   2. Body shape (zod)                                         → 400
- *   3. Coalesced inputs present                                 → 400
- *   4. Input length limits (text ≤ 50k, base64 ≤ 35M)           → 400
+ *   2. Body shape (zod, incl. attachment count cap)             → 400
+ *   3. Coalesced inputs present (text or ≥1 attachment)         → 400
+ *   4. Text length ≤ 50k + attachment type allowlist           → 400
  *   5. Owner resolution (auth account or admin fallback)
  *   6. twitterContext — agent-key only                          → 403
  *   7. builderPrompt — agent-key only                           → 403
@@ -34,9 +35,10 @@
  *  10. Idempotency-Key header present                           → 400
  *  11. Idempotency lookup → existing { source, inputs } match   → respondPerMode
  *  12.                  → existing different body               → 409
- *  13. Content moderation (universal)                           → 422 (content)
- *  14. Twitter intent moderation (when twitterContext present)  → 422 (intent)
- *  15. Persist row + fire executor + respondPerMode
+ *  13. Attachment bytes — existence + size caps (fresh submit)  → 400
+ *  14. Content moderation (text only)                           → 422 (content)
+ *  15. Twitter intent moderation (when twitterContext present)  → 422 (intent)
+ *  16. Persist row + fire executor + respondPerMode
  *
  * Idempotent replays go through the SAME respondPerMode path as the original
  * submit, so a retry with `Accept: text/event-stream` or `?wait_ms=` honours
@@ -54,6 +56,7 @@ import { Prisma } from "@prisma/client";
 import type { Request, Response } from "express";
 import { z } from "zod";
 import {
+  estimatedDurationMs,
   previewResponseFields,
   type AgentPreview,
 } from "@/api/v2/agent-templates/lib/generation-preview";
@@ -62,6 +65,15 @@ import {
   writeSseEvent,
   writeSseHeaders,
 } from "@/api/v2/agent-templates/lib/sse";
+import {
+  attachmentsArraySchema,
+  type AttachmentRef,
+} from "@/api/v2/agent-templates/services/attachment-resolver";
+import {
+  classifyMime,
+  headBuildObject,
+  maxBytesForKind,
+} from "@/api/v2/agent-templates/services/build-attachments";
 import { executeGeneration } from "@/api/v2/agent-templates/services/generation-executor";
 import {
   checkContent,
@@ -70,9 +82,11 @@ import {
 import { type TraceContext } from "@/api/v2/agent-templates/services/openrouter-client";
 import { isKnownOpenRouterModel } from "@/api/v2/agent-templates/services/openrouter-models";
 import { resolveActor } from "@/api/v2/agent-templates/services/posthog";
+import { BUILD_ATTACHMENTS_MAX_TOTAL_BYTES } from "@/config";
 import { accountIdSchema } from "@/utils/account-id";
 import { getEffectiveOwnerId } from "@/utils/auth-helpers";
 import { ADMIN_ACCOUNT_ID } from "@/utils/constants";
+import { AppError } from "@/utils/errors";
 import { prisma } from "@/utils/prisma";
 
 // ---------------------------------------------------------------------------
@@ -80,7 +94,6 @@ import { prisma } from "@/utils/prisma";
 // ---------------------------------------------------------------------------
 
 const MAX_TEXT_LEN = 50_000;
-const MAX_BASE64_LEN = 35_000_000;
 // Builder/system prompt override cap — generous (the canonical file prompt is
 // ~12k tokens) but bounds an obviously-abusive body.
 const MAX_BUILDER_PROMPT_LEN = 100_000;
@@ -117,18 +130,16 @@ function nextPollIntervalMs(attempt: number): number {
 // Body schema
 // ---------------------------------------------------------------------------
 
-/** Inputs to the template generator. Coalescing priority:
- *  pdfBase64 → imageBase64 → text → idea → content → url */
+/** Inputs to the template generator: a text directive and/or binary
+ *  attachments (image / PDF / voice) referenced by presigned-upload object key.
+ *  Legacy text aliases (idea/content/url) are coalesced into `text`. */
 const inputsSchema = z
   .object({
     text: z.string().optional(),
     idea: z.string().optional(),
     content: z.string().optional(),
     url: z.string().optional(),
-    pdfBase64: z.string().optional(),
-    mimeType: z.string().optional(),
-    filename: z.string().optional(),
-    imageBase64: z.string().optional(),
+    attachments: attachmentsArraySchema,
   })
   .strict();
 
@@ -244,10 +255,12 @@ export type TemplatePrefill = z.infer<typeof TemplatePrefillSchema>;
 // Coalescing — for length validation; also used in executor at runtime
 // ---------------------------------------------------------------------------
 
-type CoalescedInput =
-  | { kind: "text"; text: string }
-  | { kind: "pdfBase64"; pdfBase64: string; text?: string }
-  | { kind: "imageBase64"; imageBase64: string; text?: string };
+interface CoalescedInput {
+  /** The user's text directive, if any (legacy idea/content/url folded in). */
+  text?: string;
+  /** Binary attachment references, in submission order. */
+  attachments: AttachmentRef[];
+}
 
 function coalesceInputs(inputs: Inputs): CoalescedInput | null {
   // Pick the first text-bearing field whose content is non-whitespace.
@@ -259,23 +272,9 @@ function coalesceInputs(inputs: Inputs): CoalescedInput | null {
     (value): value is string =>
       typeof value === "string" && value.trim().length > 0,
   );
-  // The text rides along on file paths too — it's the user's directive for the
-  // attached file — so carry it through for length validation, mirroring the
-  // executor's coalescing.
-  if (inputs.pdfBase64)
-    return {
-      kind: "pdfBase64",
-      pdfBase64: inputs.pdfBase64,
-      ...(text ? { text } : {}),
-    };
-  if (inputs.imageBase64)
-    return {
-      kind: "imageBase64",
-      imageBase64: inputs.imageBase64,
-      ...(text ? { text } : {}),
-    };
-  if (text) return { kind: "text", text };
-  return null;
+  const attachments = inputs.attachments ?? [];
+  if (!text && attachments.length === 0) return null;
+  return { ...(text ? { text } : {}), attachments };
 }
 
 // ---------------------------------------------------------------------------
@@ -343,6 +342,7 @@ interface GenerationRow {
   error: string | null;
   preview: unknown;
   progressPhrases: unknown;
+  inputs: unknown;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -355,6 +355,7 @@ interface GenerationResponse {
   error?: string;
   preview?: AgentPreview;
   progressPhrases?: string[];
+  estimatedDurationMs?: number;
   createdAt: string;
   updatedAt: string;
 }
@@ -366,11 +367,12 @@ function toResponse(row: GenerationRow): GenerationResponse {
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   };
-  // `preview` (the draft agent) + `progressPhrases` ride only the in-progress
-  // 202s; the terminal 200 hands back `templateId` (the client fetches the real
-  // template) / `error` instead.
+  // `preview` (the draft agent), `progressPhrases`, and the build-duration
+  // estimate ride only the in-progress 202s; the terminal 200 hands back
+  // `templateId` (the client fetches the real template) / `error` instead.
   if (!isTerminal(row.status)) {
     Object.assign(out, previewResponseFields(row.preview, row.progressPhrases));
+    out.estimatedDurationMs = estimatedDurationMs(row.inputs);
   }
   if (row.templateId) out.templateId = row.templateId;
   if (row.reply) out.reply = { text: row.reply };
@@ -392,6 +394,7 @@ async function fetchOwnedGeneration(
       error: true,
       preview: true,
       progressPhrases: true,
+      inputs: true,
       createdAt: true,
       updatedAt: true,
     },
@@ -488,7 +491,6 @@ async function streamUntilTerminal(args: {
  *  pinned prefills). */
 interface DedupeRow extends GenerationRow {
   source: string;
-  inputs: unknown;
   twitterContext: unknown;
   prefill: unknown;
   builderPrompt: string | null;
@@ -645,38 +647,27 @@ export async function generationsPostHandler(req: Request, res: Response) {
   const coalesced = coalesceInputs(body.inputs);
   if (!coalesced) {
     res.status(400).json({
-      error:
-        "inputs must include one of text, idea, content, url, pdfBase64, or imageBase64",
+      error: "inputs must include text or at least one attachment",
     });
     return;
   }
 
-  // 4. Length limits
-  // `coalesced.text` is set on the text path AND on file paths that carry an
-  // intent directive, so cap it regardless of kind.
+  // 4. Cheap input validation: text length + attachment type allowlist. The
+  // count cap is enforced by the schema; size + existence need S3 and are
+  // checked below, only on fresh submits (after the idempotency dedupe).
   if (coalesced.text !== undefined && coalesced.text.length > MAX_TEXT_LEN) {
     res.status(400).json({
       error: `Text exceeds maximum length of ${MAX_TEXT_LEN} characters`,
     });
     return;
   }
-  if (
-    coalesced.kind === "pdfBase64" &&
-    coalesced.pdfBase64.length > MAX_BASE64_LEN
-  ) {
-    res.status(400).json({
-      error: `PDF base64 exceeds maximum length of ${MAX_BASE64_LEN} characters`,
-    });
-    return;
-  }
-  if (
-    coalesced.kind === "imageBase64" &&
-    coalesced.imageBase64.length > MAX_BASE64_LEN
-  ) {
-    res.status(400).json({
-      error: `Image base64 exceeds maximum length of ${MAX_BASE64_LEN} characters`,
-    });
-    return;
+  for (const att of coalesced.attachments) {
+    if (!classifyMime(att.mimeType)) {
+      res.status(400).json({
+        error: `Unsupported attachment type: ${att.mimeType}`,
+      });
+      return;
+    }
   }
 
   // 5. Owner account. Three branches:
@@ -730,6 +721,30 @@ export async function generationsPostHandler(req: Request, res: Response) {
       error: "twitterContext requires agent API key authentication",
     });
     return;
+  }
+
+  // A whitespace-only `idea` is treated as absent so a valid `inputs.text`
+  // still satisfies the intent check (and feeds the classifier) instead of
+  // being shadowed by `??`.
+  const twitterIdea =
+    typeof body.twitterContext?.idea === "string" &&
+    body.twitterContext.idea.trim().length > 0
+      ? body.twitterContext.idea
+      : undefined;
+
+  // 6a. The twitter intent classifier needs text to run on, so a twitter
+  //     submission must carry either `inputs.text` or `twitterContext.idea`.
+  //     Checked here — before any S3/LLM work — so a text-less twitter request
+  //     fails fast rather than after fetching attachment bytes.
+  if (body.twitterContext) {
+    const intentText = twitterIdea ?? coalesced.text;
+    if (!intentText || intentText.trim().length === 0) {
+      res.status(400).json({
+        error:
+          "twitterContext.idea or inputs.text required for twitter intent check",
+      });
+      return;
+    }
   }
 
   // 7. builderPrompt overrides the canonical generator system prompt — an
@@ -808,6 +823,66 @@ export async function generationsPostHandler(req: Request, res: Response) {
     return;
   }
 
+  // 12a. Validate attachment bytes — existence + per-file/aggregate size — so
+  // over-cap / unfetchable references fail fast with a 4xx instead of reaching
+  // the async executor. One HeadObject per key (parallel). Only fresh submits
+  // reach here; the idempotency dedupe above already returned for replays.
+  if (coalesced.attachments.length > 0) {
+    try {
+      const heads = await Promise.all(
+        coalesced.attachments.map((att) => headBuildObject(att.objectKey)),
+      );
+      let totalBytes = 0;
+      for (let i = 0; i < heads.length; i++) {
+        const att = coalesced.attachments[i];
+        const kind = classifyMime(att.mimeType);
+        if (!kind) {
+          // Already validated in step 4; this keeps the type narrow.
+          res.status(400).json({
+            error: `Unsupported attachment type: ${att.mimeType}`,
+          });
+          return;
+        }
+        const size = heads[i].contentLength;
+        if (size > maxBytesForKind(kind)) {
+          res.status(400).json({
+            error: `Attachment ${att.filename ?? att.objectKey} exceeds the ${kind} size limit`,
+          });
+          return;
+        }
+        totalBytes += size;
+      }
+      if (totalBytes > BUILD_ATTACHMENTS_MAX_TOTAL_BYTES) {
+        // The 400 reports the total only; log the per-attachment breakdown so
+        // an over-cap submission can be traced. Log a short key prefix rather
+        // than the full objectKey to avoid leaking the bucket reference.
+        req.log.warn(
+          {
+            attachments: heads.map((h, i) => ({
+              objectKeyPrefix: coalesced.attachments[i].objectKey.slice(0, 16),
+              size: h.contentLength,
+            })),
+            totalBytes,
+            limit: BUILD_ATTACHMENTS_MAX_TOTAL_BYTES,
+          },
+          "Aggregate attachment size exceeded",
+        );
+        res.status(400).json({
+          error: `Attachments exceed the total size limit of ${BUILD_ATTACHMENTS_MAX_TOTAL_BYTES} bytes`,
+        });
+        return;
+      }
+    } catch (err) {
+      if (err instanceof AppError) {
+        res.status(err.statusCode).json({ error: err.message });
+        return;
+      }
+      req.log.error({ err }, "[generations-post] Attachment validation failed");
+      res.status(500).json({ error: "Failed to validate attachments" });
+      return;
+    }
+  }
+
   // Pre-generate the generation id (same uuid format as the column default) so
   // the moderation LLM calls share a PostHog LLM Analytics trace with the
   // generation that follows. Passed as `id` to the create() below, and used as
@@ -834,32 +909,24 @@ export async function generationsPostHandler(req: Request, res: Response) {
     },
   };
 
-  // 13. Content moderation gate (universal)
-  const moderationInput =
-    coalesced.kind === "text"
-      ? coalesced.text
-      : `[binary input: ${coalesced.kind}, ${coalesced.kind === "pdfBase64" ? coalesced.pdfBase64.length : coalesced.imageBase64.length} bytes]`;
-  const moderation = await checkContent(moderationInput, moderationTrace);
-  if (!moderation.allowed) {
-    res.status(422).json({
-      reason: moderation.reason || "blocked",
-      category: "content",
-    });
-    return;
-  }
-
-  // 14. Twitter intent gate — only when twitterContext is present
-  if (body.twitterContext) {
-    const intentInput =
-      body.twitterContext.idea ??
-      (coalesced.kind === "text" ? coalesced.text : "");
-    if (!intentInput || intentInput.trim().length === 0) {
-      res.status(400).json({
-        error:
-          "twitterContext.idea or inputs.text required for twitter intent check",
+  // 13. Content moderation gate — text only. Binary attachments are moderated
+  // off the request path in the executor's resolve stage (Rekognition for
+  // images, a transcript check for audio), surfacing as a terminal `failed`.
+  if (coalesced.text) {
+    const moderation = await checkContent(coalesced.text, moderationTrace);
+    if (!moderation.allowed) {
+      res.status(422).json({
+        reason: moderation.reason || "blocked",
+        category: "content",
       });
       return;
     }
+  }
+
+  // 14. Twitter intent gate — only when twitterContext is present. The
+  //     presence of usable intent text was already enforced in step 6a.
+  if (body.twitterContext) {
+    const intentInput = twitterIdea ?? coalesced.text ?? "";
     const intent = await checkTwitterIntent(intentInput, moderationTrace);
     if (!intent.allowed) {
       res.status(422).json({
@@ -900,6 +967,7 @@ export async function generationsPostHandler(req: Request, res: Response) {
         error: true,
         preview: true,
         progressPhrases: true,
+        inputs: true,
         createdAt: true,
         updatedAt: true,
       },

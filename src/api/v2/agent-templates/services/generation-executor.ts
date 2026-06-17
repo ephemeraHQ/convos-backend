@@ -27,6 +27,13 @@ import type { Prisma } from "@prisma/client";
 import type { AgentPreview } from "@/api/v2/agent-templates/lib/generation-preview";
 import { pickCollisionFreeId } from "@/api/v2/agent-templates/lib/pick-collision-free-id";
 import {
+  AttachmentModerationError,
+  resolveAttachments,
+  type AttachmentRef,
+  type ResolvedInputs,
+} from "@/api/v2/agent-templates/services/attachment-resolver";
+import { classifyMime } from "@/api/v2/agent-templates/services/build-attachments";
+import {
   buildDeterministicFallback,
   composeReply,
 } from "@/api/v2/agent-templates/services/compose-reply";
@@ -107,10 +114,9 @@ interface GenerationInputs {
   idea?: string;
   content?: string;
   url?: string;
-  pdfBase64?: string;
-  imageBase64?: string;
-  mimeType?: string;
-  filename?: string;
+  /** Presigned-upload references to the binary attachments (image / PDF /
+   *  voice). Validated at submit; resolved to bytes here. */
+  attachments?: AttachmentRef[];
 }
 
 interface TwitterContext {
@@ -182,7 +188,7 @@ interface PostHogActorSource {
 function postHogBase(args: {
   generation: PostHogActorSource;
   requestId: string;
-  inputType: "text" | "pdfBase64" | "imageBase64";
+  inputType: "text" | "image" | "pdf" | "audio" | "mixed";
 }): Pick<
   PostHogCaptureProperties,
   | "requestId"
@@ -214,38 +220,31 @@ function postHogBase(args: {
 }
 
 // ---------------------------------------------------------------------------
-// Input coalescing — same priority as today's generate-template handler
+// Input modality summary — for PostHog metering
 // ---------------------------------------------------------------------------
 
-function coalesceInputs(
-  inputs: GenerationInputs,
-): GenerateTemplateInput | null {
-  // The user's typed text is their intent/directive for an attached file —
-  // generateTemplate appends it as "User's intent: …" on the pdf/image paths —
-  // so it must survive coalescing there too, not just on the text-only path.
-  // `.find` (not a `||` chain) so a truthy-but-whitespace field can't mask a
-  // real one behind it.
-  const text = [inputs.text, inputs.idea, inputs.content, inputs.url].find(
-    (value): value is string =>
-      typeof value === "string" && value.trim().length > 0,
-  );
-  if (inputs.pdfBase64) {
-    return {
-      pdfBase64: inputs.pdfBase64,
-      mimeType: inputs.mimeType || "application/pdf",
-      filename: inputs.filename || "document.pdf",
-      ...(text ? { text } : {}),
-    };
+/** Collapse the submitted inputs into one modality tag. Attachments win over an
+ *  accompanying text directive (which is auxiliary intent, not the source
+ *  material), matching the pre-attachment behaviour where a file's type was the
+ *  classification. A single attachment kind reports that kind; multiple distinct
+ *  kinds (e.g. image + pdf) report "mixed"; no attachments report "text". Audio
+ *  counts as "audio" even though its transcript folds into text downstream — the
+ *  metric reflects what the caller sent, not how it was processed. */
+function summarizeInputType(
+  textInput: string | undefined,
+  attachments: AttachmentRef[],
+): "text" | "image" | "pdf" | "audio" | "mixed" {
+  if (attachments.length === 0) return "text";
+  const kinds = new Set<string>();
+  for (const a of attachments) {
+    const kind = classifyMime(a.mimeType);
+    if (kind) kinds.add(kind);
   }
-  if (inputs.imageBase64) {
-    return {
-      imageBase64: inputs.imageBase64,
-      mimeType: inputs.mimeType || "image/png",
-      ...(text ? { text } : {}),
-    };
+  if (kinds.size === 0) return "text";
+  if (kinds.size === 1) {
+    return [...kinds][0] as "image" | "pdf" | "audio";
   }
-  if (text) return { text };
-  return null;
+  return "mixed";
 }
 
 // ---------------------------------------------------------------------------
@@ -504,23 +503,21 @@ async function _runPipeline(
     );
   }
 
-  // 3. Generate stage
+  // 3. Resolve inputs — the user's text directive + any attachment references.
   const inputs = generation.inputs as GenerationInputs;
-  const coalesced = coalesceInputs(inputs);
-  if (!coalesced) {
+  const textInput = [inputs.text, inputs.idea, inputs.content, inputs.url].find(
+    (value): value is string =>
+      typeof value === "string" && value.trim().length > 0,
+  );
+  const attachmentRefs = inputs.attachments ?? [];
+  if (!textInput && attachmentRefs.length === 0) {
     throw new Error(
-      "No usable input — provide one of text, idea, content, url, pdfBase64, or imageBase64",
+      "No usable input — provide text or at least one attachment",
     );
   }
-  // File presence determines the input type. `text` may now ALSO be present on
-  // the pdf/image paths (the user's intent directive), so it's checked LAST — a
-  // bare text submission is the only shape with no pdf/image key.
-  const inputType: "text" | "pdfBase64" | "imageBase64" =
-    "pdfBase64" in coalesced
-      ? "pdfBase64"
-      : "imageBase64" in coalesced
-        ? "imageBase64"
-        : "text";
+
+  // Input modality summary for metering, derived from what the caller sent.
+  const inputType = summarizeInputType(textInput, attachmentRefs);
 
   // Caller-pinned prefill is read up front so it can be fed INTO the generator
   // (so the produced prompt + welcome use the pinned name), not just overlaid
@@ -561,21 +558,75 @@ async function _runPipeline(
     },
   };
 
-  // 3a. Distill stage (best-effort). Derive the agent's identity + the
+  // 3a. Resolve attachments off the request path: fetch bytes from the private
+  // bucket, moderate images (Rekognition) + transcribe/moderate audio, and
+  // build the image/PDF content blocks. A failure here — unfetchable, oversize,
+  // unsupported, or moderation-blocked — fails the generation. For binary that
+  // surfaces as a terminal `failed` (not a submit-time 422): Rekognition over N
+  // images and audio transcription are too slow to gate the POST synchronously.
+  let resolved: ResolvedInputs;
+  try {
+    resolved = await resolveAttachments(attachmentRefs, {
+      signal,
+      trace,
+      moderate: true,
+    });
+  } catch (err) {
+    capturePostHog({
+      model: getModel(),
+      promptTokens: 0,
+      completionTokens: 0,
+      latencyMs: 0,
+      ...base,
+      outcome: "failed",
+    });
+    throw new Error(
+      err instanceof AttachmentModerationError
+        ? `Attachment moderation blocked: ${err.reason}`
+        : `Attachment stage failed: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+    );
+  }
+
+  // Voice transcripts are user text — fold them into the directive so distill
+  // and the text path see them, leaving the generator to handle only the
+  // image/PDF blocks.
+  const effectiveText =
+    [textInput, ...resolved.transcripts]
+      .filter((t): t is string => !!t && t.trim().length > 0)
+      .join("\n\n") || undefined;
+  if (!effectiveText && resolved.attachments.length === 0) {
+    throw new Error("No usable input after resolving attachments");
+  }
+  const generateInput: GenerateTemplateInput = {
+    ...(effectiveText ? { text: effectiveText } : {}),
+    ...(resolved.attachments.length
+      ? { attachments: resolved.attachments }
+      : {}),
+  };
+
+  // 3b. Distill stage (best-effort). Derive the agent's identity + the
   // build-narration progressPhrases up front and write them to the row so the
   // poll endpoints surface a `preview` card + `progressPhrases` on the early
-  // 202s, before the slow generate stage finishes. Skipped for the twitter path
-  // (nothing polls a progress card) and for inputs with no usable text (a bare
-  // pdf/image has nothing to distill from). A failure here never fails the
-  // generation: the build still produces the full template; the 202s just won't
-  // carry phrases / a card. The distilled identity (caller pins win) also feeds
-  // the generate + persist below, so the final template matches the card shown
-  // on the early polls.
-  const distillText = coalesced.text?.trim();
+  // 202s, before the slow generate stage finishes. Runs whenever there's
+  // something to distill from — text and/or image/PDF attachments (the
+  // vision-capable builder model distills a bare image/PDF straight from the
+  // files); only the twitter path is skipped, since nothing polls a progress
+  // card there. A failure here never fails the generation: the build still
+  // produces the full template; the 202s just won't carry phrases / a card. The
+  // distilled identity (caller pins win) also feeds the generate + persist
+  // below, so the final template matches the card shown on the early polls.
+  const distillText = effectiveText?.trim();
   let identity: TemplatePrefill | null = prefill;
-  if (distillText && !twitterContext) {
+  if ((distillText || resolved.attachments.length > 0) && !twitterContext) {
     try {
-      const distilled = await distill(distillText, signal, prefill, trace);
+      const distilled = await distill(
+        { text: distillText, attachments: resolved.attachments },
+        signal,
+        prefill,
+        trace,
+      );
       identity = {
         agentName: firstNonEmpty(prefill?.agentName, distilled.agentName),
         emoji: firstNonEmpty(prefill?.emoji, distilled.emoji),
@@ -598,7 +649,7 @@ async function _runPipeline(
   let templateResult: Awaited<ReturnType<typeof callGenerateTemplate>>;
   try {
     templateResult = await callGenerateTemplate(
-      coalesced,
+      generateInput,
       signal,
       identity,
       trace,

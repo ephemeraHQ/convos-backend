@@ -56,8 +56,9 @@ export interface PostHogCaptureProperties extends GenerationMetrics {
    *  `$device_id` cookie). Used as a fallback actor identifier when the
    *  user hasn't authenticated. */
   clientDeviceId?: string;
-  /** Input type used for generation: "text", "pdfBase64", or "imageBase64". */
-  inputType?: string;
+  /** Input modality summary for the generation: "text", "image", "pdf",
+   *  "audio", or "mixed" (more than one of those). */
+  inputType?: "text" | "image" | "pdf" | "audio" | "mixed";
   /** Terminal outcome: "done" or "failed". */
   outcome?: "done" | "failed";
   /** How the request was authenticated. Optional — present only when known. */
