@@ -23,11 +23,14 @@
  * overrides the per-generation timeout.
  */
 
+import type { Prisma } from "@prisma/client";
+import type { AgentPreview } from "@/api/v2/agent-templates/lib/generation-preview";
 import { pickCollisionFreeId } from "@/api/v2/agent-templates/lib/pick-collision-free-id";
 import {
   buildDeterministicFallback,
   composeReply,
 } from "@/api/v2/agent-templates/services/compose-reply";
+import { distill } from "@/api/v2/agent-templates/services/distill";
 import { type TraceContext } from "@/api/v2/agent-templates/services/openrouter-client";
 import {
   capturePostHog,
@@ -124,6 +127,15 @@ interface TemplatePrefill {
   agentName?: string;
   emoji?: string;
   description?: string;
+}
+
+/** First trimmed, non-empty value of (a, b), else undefined. Used to merge the
+ *  distilled identity with the caller's pins (caller wins) while dropping the
+ *  empties distill can return (e.g. an emoji the sanitizer rejected) so they
+ *  don't overlay a blank over the generator's own value. */
+function firstNonEmpty(a?: string, b?: string): string | undefined {
+  const v = (a ?? "").trim() || (b ?? "").trim();
+  return v || undefined;
 }
 
 function applyPrefill<
@@ -350,6 +362,27 @@ async function tryClaim(generationId: string): Promise<boolean> {
   return claim.count === 1;
 }
 
+/** Write the in-progress poll fields (the distilled identity `preview` + the
+ *  `progressPhrases`) while the build runs, so the poll endpoints can surface
+ *  them on 202s. Both land in one update. Guarded on status='running' like the
+ *  terminal writes: the stuck-row sweep may have flipped the row to failed
+ *  between claim and here, in which case the 0-row update is a harmless no-op.
+ *  Best-effort — never throws into the pipeline (callers wrap it). The handlers
+ *  drop both fields on the terminal 200, so markDone leaves them untouched. */
+async function writeRunningPreview(
+  generationId: string,
+  preview: AgentPreview,
+  progressPhrases: string[],
+): Promise<void> {
+  await prisma.agentTemplateGeneration.updateMany({
+    where: { id: generationId, status: "running" },
+    data: {
+      preview: preview as unknown as Prisma.InputJsonValue,
+      progressPhrases,
+    },
+  });
+}
+
 /** Mark a generation `done`. Conditional on status='running' so a pipeline
  *  that finishes AFTER the per-generation timeout already fired markFailed
  *  no-ops instead of resurrecting the row. Returns true if the row was
@@ -494,6 +527,11 @@ async function _runPipeline(
   // onto the metadata at persist below.
   const prefill = generation.prefill as TemplatePrefill | null;
 
+  // Twitter context, read up front: the distill stage below skips the twitter
+  // path (no client polls a progress card there), and the ComposeReply stage
+  // further down consumes it.
+  const twitterContext = generation.twitterContext as TwitterContext | null;
+
   // Optional caller-supplied builder/system prompt override (admin dashboard).
   // null for ordinary generations, where the canonical prompt is used.
   const builderPrompt = generation.builderPrompt;
@@ -523,13 +561,46 @@ async function _runPipeline(
     },
   };
 
+  // 3a. Distill stage (best-effort). Derive the agent's identity + the
+  // build-narration progressPhrases up front and write them to the row so the
+  // poll endpoints surface a `preview` card + `progressPhrases` on the early
+  // 202s, before the slow generate stage finishes. Skipped for the twitter path
+  // (nothing polls a progress card) and for inputs with no usable text (a bare
+  // pdf/image has nothing to distill from). A failure here never fails the
+  // generation: the build still produces the full template; the 202s just won't
+  // carry phrases / a card. The distilled identity (caller pins win) also feeds
+  // the generate + persist below, so the final template matches the card shown
+  // on the early polls.
+  const distillText = coalesced.text?.trim();
+  let identity: TemplatePrefill | null = prefill;
+  if (distillText && !twitterContext) {
+    try {
+      const distilled = await distill(distillText, signal, prefill, trace);
+      identity = {
+        agentName: firstNonEmpty(prefill?.agentName, distilled.agentName),
+        emoji: firstNonEmpty(prefill?.emoji, distilled.emoji),
+        description: firstNonEmpty(prefill?.description, distilled.description),
+      };
+      await writeRunningPreview(
+        generationId,
+        identity,
+        distilled.progressPhrases,
+      );
+    } catch (err) {
+      logger.warn(
+        { err, generationId },
+        "[generation-executor] Distill stage failed; proceeding without preview",
+      );
+    }
+  }
+
   const startTime = performance.now();
   let templateResult: Awaited<ReturnType<typeof callGenerateTemplate>>;
   try {
     templateResult = await callGenerateTemplate(
       coalesced,
       signal,
-      prefill,
+      identity,
       trace,
       builderPrompt,
       builderModel,
@@ -561,11 +632,11 @@ async function _runPipeline(
       `Invalid initial publishStatus: "archived" — must be draft, unlisted, or published`,
     );
   }
-  // Caller-pinned prefill: overlay the allowlisted AgentTemplate fields onto
-  // the LLM output so the persisted metadata matches the caller's pinned values
-  // verbatim. This is the exact-match floor; the same `prefill` was also fed
-  // into the generator above so the prompt body agrees with the metadata.
-  const templateToPersist = applyPrefill(templateResult.template, prefill);
+  // Overlay the allowlisted identity fields onto the LLM output so the persisted
+  // metadata matches the card shown on the early polls verbatim. `identity`
+  // is the distilled identity (or the caller's pins where supplied) — the same
+  // value fed into the generator above, so the prompt body agrees with the metadata.
+  const templateToPersist = applyPrefill(templateResult.template, identity);
   let persisted: { id: string; slug: string };
   try {
     persisted = await persistTemplate(
@@ -588,7 +659,6 @@ async function _runPipeline(
   //    composeReply has its own fallback on LLM failure, so this stage
   //    never throws; worst case we get the deterministic fallback string.
   let replyText: string | null = null;
-  const twitterContext = generation.twitterContext as TwitterContext | null;
   if (twitterContext) {
     const firstSentence = firstSentenceOf(
       templateToPersist.description || templateToPersist.prompt,
@@ -630,6 +700,10 @@ async function _runPipeline(
   // list. The template was created microseconds ago by this same execution and
   // nothing else can hold a reference yet (generation.templateId is still NULL
   // because markDone no-opped), so the delete is safe.
+  //
+  // The terminal 200 carries `templateId` (the client fetches the real template
+  // for the full fields), not `preview`/`progressPhrases` — so markDone leaves
+  // those running columns untouched; the handlers simply omit them once terminal.
   const claimed = await markDone(generationId, persisted.id, replyText);
   if (!claimed) {
     try {

@@ -1,3 +1,4 @@
+import type { DistillResult } from "@/api/v2/agent-templates/services/distill";
 import type { GeneratedTemplate } from "@/api/v2/agent-templates/services/templateGen";
 
 /**
@@ -24,5 +25,27 @@ export const makeFakeTemplate = (
   emoji: "🧪",
   tools: [],
   connections: [],
+  ...overrides,
+});
+
+/**
+ * Build a `DistillResult` fixture for tests that exercise the real executor.
+ * Install it via `__resetDistillForTests(() => Promise.resolve(makeFakeDistill()))`
+ * so the distill stage is deterministic and never fires a real OpenRouter call.
+ */
+export const makeFakeDistill = (
+  overrides: Partial<DistillResult> = {},
+): DistillResult => ({
+  agentName: "Distilled Agent",
+  emoji: "✨",
+  description: "a distilled description",
+  progressPhrases: [
+    "Writing how it thinks",
+    "Shaping its voice",
+    "Teaching it group manners",
+    "Wiring its tools",
+    "Setting its check-ins",
+    "Drafting its hello",
+  ],
   ...overrides,
 });

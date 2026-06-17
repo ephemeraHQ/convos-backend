@@ -15,6 +15,7 @@
  */
 
 import { afterAll, afterEach, beforeAll, describe, expect, test } from "vitest";
+import { __resetDistillForTests } from "@/api/v2/agent-templates/services/distill";
 import {
   __resetGenerationExecutorForTests,
   __setExecutorTimeoutMsForTests,
@@ -30,7 +31,10 @@ import {
 } from "@/api/v2/agent-templates/services/templateGen";
 import { ADMIN_ACCOUNT_ID } from "@/utils/constants";
 import { prisma } from "@/utils/prisma";
-import { makeFakeTemplate } from "./agent-templates.generation.helpers";
+import {
+  makeFakeDistill,
+  makeFakeTemplate,
+} from "./agent-templates.generation.helpers";
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -107,6 +111,7 @@ beforeAll(() => {
 
 afterEach(async () => {
   __resetGenerateTemplateForTests(null);
+  __resetDistillForTests(null);
   __setExecutorTimeoutMsForTests(null);
   __resetGenerationExecutorForTests(null);
   await cleanupGenerations();
@@ -145,6 +150,72 @@ describe("generation-executor", () => {
     expect(template?.ownerAccountId).toBe(ADMIN_ACCOUNT_ID);
     expect(template?.status).toBe("draft");
     expect(template?.firstPublishedAt).toBeNull();
+  });
+
+  test("distill writes the running preview (identity) + progressPhrases before generate", async () => {
+    // Distill returns the SAME identity as the generated template so the
+    // identity overlay is a no-op and cleanup-by-agentName still applies.
+    __resetDistillForTests(() =>
+      Promise.resolve(
+        makeFakeDistill({
+          agentName: fakeTemplate.agentName,
+          emoji: fakeTemplate.emoji,
+          description: fakeTemplate.description,
+        }),
+      ),
+    );
+    const gen = await createPendingGeneration("distill-preview");
+
+    // The generate mock runs AFTER the distill stage's running-preview write,
+    // so reading the row here captures the in-progress preview columns.
+    let midRun: { preview: unknown; progressPhrases: unknown } | undefined;
+    __resetGenerateTemplateForTests(async () => {
+      const row = await prisma.agentTemplateGeneration.findUnique({
+        where: { id: gen.id },
+        select: { preview: true, progressPhrases: true },
+      });
+      midRun = { preview: row?.preview, progressPhrases: row?.progressPhrases };
+      return { template: fakeTemplate, metrics: DEFAULT_TEST_METRICS };
+    });
+
+    await executeGeneration(gen.id);
+
+    // Running write: preview is the distilled identity; progressPhrases is the array.
+    const midPreview = midRun?.preview as {
+      agentName?: string;
+      prompt?: string;
+    };
+    expect(midPreview.agentName).toBe(fakeTemplate.agentName);
+    // preview is identity-only — never the prompt.
+    expect(midPreview.prompt).toBeUndefined();
+    expect((midRun?.progressPhrases as string[]).length).toBeGreaterThanOrEqual(
+      4,
+    );
+
+    // Terminal: the generation completes with a templateId. The preview columns
+    // aren't cleared (the handlers omit them on the 200), so don't assert them here.
+    const final = await prisma.agentTemplateGeneration.findUnique({
+      where: { id: gen.id },
+    });
+    expect(final?.status).toBe("done");
+    expect(final?.templateId).toBeTruthy();
+  });
+
+  test("distill failure does not fail the generation (still done, no preview written)", async () => {
+    __resetDistillForTests(() => Promise.reject(new Error("distill boom")));
+    installFakeTemplate();
+    const gen = await createPendingGeneration("distill-failure");
+
+    await executeGeneration(gen.id);
+
+    const final = await prisma.agentTemplateGeneration.findUnique({
+      where: { id: gen.id },
+    });
+    expect(final?.status).toBe("done");
+    expect(final?.templateId).toBeTruthy();
+    // Distill never produced anything, so the preview columns stay null.
+    expect(final?.preview).toBeNull();
+    expect(final?.progressPhrases).toBeNull();
   });
 
   test("threads the row's builderPrompt to the generator as the system-prompt override", async () => {

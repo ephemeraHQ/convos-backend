@@ -14,6 +14,13 @@
  *     generation is non-terminal; terminal frame is `event: result` (done) or
  *     `event: error` (failed). HTTP status is always 200 in SSE mode.
  *
+ * Response bodies carry `progressPhrases` + the `preview` (the draft agent's
+ * identity) while the build runs; both drop off the terminal 200, which carries
+ * `templateId` (the client fetches the real template for the full fields). A
+ * fresh submit returns before the executor has written them, so the immediate
+ * 202 omits both; a poll (or an idempotent replay of an in-flight row) surfaces
+ * them.
+ *
  * Submit-time validation order (each check returns and short-circuits):
  *   1. Content-Length > 40 MB                                   → 413
  *   2. Body shape (zod)                                         → 400
@@ -46,6 +53,10 @@ import { randomUUID } from "node:crypto";
 import { Prisma } from "@prisma/client";
 import type { Request, Response } from "express";
 import { z } from "zod";
+import {
+  previewResponseFields,
+  type AgentPreview,
+} from "@/api/v2/agent-templates/lib/generation-preview";
 import {
   startSseStream,
   writeSseEvent,
@@ -330,6 +341,8 @@ interface GenerationRow {
   templateId: string | null;
   reply: string | null;
   error: string | null;
+  preview: unknown;
+  progressPhrases: unknown;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -340,6 +353,8 @@ interface GenerationResponse {
   templateId?: string;
   reply?: { text: string };
   error?: string;
+  preview?: AgentPreview;
+  progressPhrases?: string[];
   createdAt: string;
   updatedAt: string;
 }
@@ -351,6 +366,12 @@ function toResponse(row: GenerationRow): GenerationResponse {
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   };
+  // `preview` (the draft agent) + `progressPhrases` ride only the in-progress
+  // 202s; the terminal 200 hands back `templateId` (the client fetches the real
+  // template) / `error` instead.
+  if (!isTerminal(row.status)) {
+    Object.assign(out, previewResponseFields(row.preview, row.progressPhrases));
+  }
   if (row.templateId) out.templateId = row.templateId;
   if (row.reply) out.reply = { text: row.reply };
   if (row.error) out.error = row.error;
@@ -369,6 +390,8 @@ async function fetchOwnedGeneration(
       templateId: true,
       reply: true,
       error: true,
+      preview: true,
+      progressPhrases: true,
       createdAt: true,
       updatedAt: true,
     },
@@ -484,6 +507,8 @@ const dedupeSelect = {
   templateId: true,
   reply: true,
   error: true,
+  preview: true,
+  progressPhrases: true,
   createdAt: true,
   updatedAt: true,
 } as const;
@@ -873,6 +898,8 @@ export async function generationsPostHandler(req: Request, res: Response) {
         templateId: true,
         reply: true,
         error: true,
+        preview: true,
+        progressPhrases: true,
         createdAt: true,
         updatedAt: true,
       },

@@ -143,6 +143,7 @@ export interface OpenRouterChatOptions {
   stage:
     | "selector"
     | "classifier"
+    | "distill"
     | "generate"
     | "moderation"
     | "twitter-intent"
