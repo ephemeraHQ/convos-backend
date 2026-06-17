@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { meGuard } from "@/api/v2/accounts/middleware/meGuard";
 import { accountViewGetHandler } from "./handlers/account-view-get";
+import { adjustPostHandler } from "./handlers/adjust-post";
 import { grantPostHandler } from "./handlers/grant-post";
 import { searchGetHandler } from "./handlers/search-get";
 import { cfAccessHeaderMiddleware } from "./middleware/cf-access";
@@ -21,4 +22,11 @@ creditsAdminRouter.post(
   cfAccessHeaderMiddleware,
   meGuard,
   grantPostHandler,
+);
+
+creditsAdminRouter.post(
+  "/accounts/:accountId/adjust",
+  cfAccessHeaderMiddleware,
+  meGuard,
+  adjustPostHandler,
 );
