@@ -116,6 +116,7 @@ beforeAll(() => {
 afterEach(async () => {
   __resetGenerateTemplateForTests(null);
   __resetDistillForTests(null);
+  __resetAttachmentResolverForTests(null);
   __setExecutorTimeoutMsForTests(null);
   __resetGenerationExecutorForTests(null);
   await cleanupGenerations();

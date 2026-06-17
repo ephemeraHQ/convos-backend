@@ -164,4 +164,21 @@ describe("getBuildObjectBytes", () => {
     });
     expect(mockSend).not.toHaveBeenCalled();
   });
+
+  test("missing object → AppError 400", async () => {
+    mockSend.mockRejectedValueOnce({
+      name: "NoSuchKey",
+      $metadata: { httpStatusCode: 404 },
+    });
+    await expect(
+      getBuildObjectBytes("build/missing.png"),
+    ).rejects.toMatchObject({ statusCode: 400 });
+  });
+
+  test("object with no Body → AppError 400", async () => {
+    mockSend.mockResolvedValueOnce({ Body: null });
+    await expect(getBuildObjectBytes("build/empty.png")).rejects.toMatchObject({
+      statusCode: 400,
+    });
+  });
 });

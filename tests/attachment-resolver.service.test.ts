@@ -150,7 +150,7 @@ test("audio transcript blocked by content moderation → error", async () => {
 });
 
 test("over-cap image → throws before any moderation", async () => {
-  stubBytes(new Uint8Array(6 * 1024 * 1024)); // > 5 MB image cap
+  stubBytes(new Uint8Array(11 * 1024 * 1024)); // > 10 MB image cap
   const spy = vi.fn(() => Promise.resolve({ allowed: true }));
   __resetImageModerationForTests(spy);
   await expect(

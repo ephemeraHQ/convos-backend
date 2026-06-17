@@ -16,6 +16,7 @@
 
 import { z } from "zod";
 import { BUILD_ATTACHMENTS_MAX_COUNT } from "@/config";
+import { AppError } from "@/utils/errors";
 import {
   classifyMime,
   getBuildObjectBytes,
@@ -85,12 +86,13 @@ async function resolveOne(
 ): Promise<OneResult> {
   const kind = classifyMime(ref.mimeType);
   if (!kind) {
-    throw new Error(`Unsupported attachment type: ${ref.mimeType}`);
+    throw new AppError(400, `Unsupported attachment type: ${ref.mimeType}`);
   }
 
   const bytes = await getBuildObjectBytes(ref.objectKey);
   if (bytes.length > maxBytesForKind(kind)) {
-    throw new Error(
+    throw new AppError(
+      400,
       `Attachment ${ref.objectKey} exceeds the ${kind} size limit`,
     );
   }
