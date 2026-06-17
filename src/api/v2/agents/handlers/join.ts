@@ -32,6 +32,19 @@ export function __setTemplateFinderForTests(
   _templateFinder = finder ?? defaultTemplateFinder;
 }
 
+const timezoneSchema = z
+  .string()
+  .min(1)
+  .max(64)
+  .refine((value) => {
+    try {
+      Intl.DateTimeFormat("en-US", { timeZone: value });
+      return true;
+    } catch {
+      return false;
+    }
+  }, "timezone must be a valid IANA timezone identifier");
+
 // Per-join assistant-shaping knobs, forwarded onto convos-assistants'
 // free-form `metadata: Record<string, unknown>` bag. Each field is only
 // stamped onto metadata when the caller explicitly passes it — we do
@@ -71,7 +84,7 @@ const bodySchema = z
     name: z.string().min(1).max(256).optional(),
     profileImage: z.string().min(1).max(2048).optional(),
     options: optionsSchema.optional(),
-    timezone: z.string().min(1).max(64).optional(),
+    timezone: timezoneSchema.optional(),
   })
   .strict()
   .refine((b) => (b.slug === undefined) !== (b.conversationId === undefined), {
@@ -140,7 +153,7 @@ const dispatchBodySchema = z
     template: z.record(z.string(), z.unknown()).nullable(),
     ownerAccountId: accountIdSchema,
     options: optionsSchema.optional(),
-    timezone: z.string().min(1).max(64).optional(),
+    timezone: timezoneSchema.optional(),
   })
   .strict()
   .refine(
