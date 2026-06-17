@@ -109,7 +109,9 @@ function requireBucket(): { bucket: string; client: S3Client } {
 const BUILD_KEY_RE = /^build\/[A-Za-z0-9._/-]+$/;
 
 function assertBuildKey(objectKey: string): void {
-  if (!BUILD_KEY_RE.test(objectKey)) {
+  // Reject `..` path segments defensively (not a real S3 escape, but keeps keys
+  // canonical) in addition to the prefix/charset check.
+  if (!BUILD_KEY_RE.test(objectKey) || objectKey.split("/").includes("..")) {
     throw new AppError(400, `Invalid attachment objectKey: ${objectKey}`);
   }
 }
@@ -173,11 +175,13 @@ export async function presignBuildUpload(
     ContentType: contentType,
     ContentLength: contentLength,
   });
+  // `Content-Length` is signed by the presigner by default, so S3 enforces the
+  // exact capped size — the client must send exactly these many bytes or the
+  // signature won't match. (A `signableHeaders: new Set(["content-length"])`
+  // option was removed: it is redundant here since content-length is already in
+  // the default signed-header set, verified as `content-length;host` either way.)
   const uploadUrl = await getSignedUrl(client, command, {
     expiresIn: 3600,
-    // Sign content-length so S3 enforces the body matches the capped size; the
-    // client must send exactly this many bytes or the signature won't match.
-    signableHeaders: new Set(["content-length"]),
   });
   return { objectKey, uploadUrl };
 }
