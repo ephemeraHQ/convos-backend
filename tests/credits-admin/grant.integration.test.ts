@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { LedgerReason } from "@prisma/client";
 import type { Express } from "express";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
-import { __setCfAccessDevFallbackForTests } from "@/api/v2/credits-admin/middleware/cf-access";
+import { CF_IDENTITY_SENTINEL } from "@/api/v2/credits-admin/middleware/cf-identity";
 import { getBalance } from "@/payments";
 import { prisma } from "@/utils/prisma";
 import {
@@ -19,7 +19,6 @@ describe("POST /api/v2/credits-admin/accounts/:accountId/grant", () => {
     app = buildCreditsAdminApp();
   });
   afterEach(async () => {
-    __setCfAccessDevFallbackForTests(undefined);
     await cleanupAdminAccounts(tracker);
     tracker.length = 0;
   });
@@ -46,11 +45,11 @@ describe("POST /api/v2/credits-admin/accounts/:accountId/grant", () => {
     });
     expect(ledger?.grantKindId).toBe("manual");
     expect(ledger?.reason).toBe(LedgerReason.grant);
-    expect(ledger?.note).toBe("admin:admin@convos.test — support top-up");
+    expect(ledger?.note).toBe(`admin:${CF_IDENTITY_SENTINEL} — support top-up`);
 
     const audit = await prisma.adminAudit.findMany({ where: { accountId } });
     expect(audit).toHaveLength(1);
-    expect(audit[0].actorEmail).toBe("admin@convos.test");
+    expect(audit[0].actorEmail).toBe(CF_IDENTITY_SENTINEL);
     expect(audit[0].action).toBe("grant");
     expect(audit[0].deltaCredits).toBe(500_000n);
     expect(audit[0].reason).toBe("support top-up");
@@ -126,11 +125,10 @@ describe("POST /api/v2/credits-admin/accounts/:accountId/grant", () => {
     expect(await prisma.adminAudit.count({ where: { accountId } })).toBe(0);
   });
 
-  it("non-dev: missing CF Access header → 401, no write", async () => {
-    __setCfAccessDevFallbackForTests(false);
+  it("missing admin token → 401, no write", async () => {
     const accountId = await seedAccount();
     tracker.push(accountId);
-    const res = await adminRequest(app, null).post(
+    const res = await adminRequest(app, false).post(
       `/api/v2/credits-admin/accounts/${accountId}/grant`,
       {
         credits: 100,
@@ -141,23 +139,6 @@ describe("POST /api/v2/credits-admin/accounts/:accountId/grant", () => {
     expect(res.status).toBe(401);
     expect(await getBalance(accountId)).toBe(0n);
     expect(await prisma.adminAudit.count({ where: { accountId } })).toBe(0);
-  });
-
-  it("dev fallback: missing header → uses fallback label, audit written", async () => {
-    __setCfAccessDevFallbackForTests(true);
-    const accountId = await seedAccount();
-    tracker.push(accountId);
-    const res = await adminRequest(app, null).post(
-      `/api/v2/credits-admin/accounts/${accountId}/grant`,
-      {
-        credits: 100,
-        reason: "devrun",
-        idempotencyKey: `admin_grant_${randomUUID()}`,
-      },
-    );
-    expect(res.status).toBe(200);
-    const audit = await prisma.adminAudit.findFirst({ where: { accountId } });
-    expect(audit?.actorEmail).toBe("local-dev@convos.invalid");
   });
 
   it("unknown account → 404", async () => {

@@ -1,8 +1,8 @@
 import express, { type Express } from "express";
 import { generateKeyPair, SignJWT, type KeyLike } from "jose";
 import supertest from "supertest";
-import { __setCfIdentityForTests } from "@/api/v2/credits-admin/middleware/cf-identity";
 import { creditsAdminRouter } from "@/api/v2/credits-admin/credits-admin.router";
+import { __setCfIdentityForTests } from "@/api/v2/credits-admin/middleware/cf-identity";
 import { errorHandlerMiddleware } from "@/middleware/errorHandler";
 import { jsonMiddleware } from "@/middleware/json";
 import { noRouteMiddleware } from "@/middleware/noRoute";
@@ -59,7 +59,7 @@ export const seedCfIdentity = async (
   if (!_cfKeys) _cfKeys = await generateKeyPair("RS256");
   const { privateKey, publicKey } = _cfKeys;
   __setCfIdentityForTests({
-    resolver: async () => publicKey,
+    resolver: () => Promise.resolve(publicKey),
     aud,
     requireIdentity: false,
   });
@@ -72,7 +72,9 @@ export const seedCfIdentity = async (
       .sign(privateKey);
 };
 
-export const clearCfIdentity = (): void => __setCfIdentityForTests(undefined);
+export const clearCfIdentity = (): void => {
+  __setCfIdentityForTests(undefined);
+};
 
 export const seedSiweAuthMethod = async (
   accountId: string,

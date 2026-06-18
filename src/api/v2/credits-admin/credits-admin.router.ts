@@ -6,33 +6,36 @@ import { adminPageHandler } from "./handlers/admin-page";
 import { auditGetHandler } from "./handlers/audit-get";
 import { grantPostHandler } from "./handlers/grant-post";
 import { searchGetHandler } from "./handlers/search-get";
-import { cfAccessHeaderMiddleware } from "./middleware/cf-access";
+import { attachActorIdentity } from "./middleware/cf-identity";
+import { creditsAdminTokenAuth } from "./middleware/token-auth";
 
 export const creditsAdminRouter = Router();
 
+// Public shell — authenticates client-side (Bearer), leaks no data server-side.
 creditsAdminRouter.get("/", adminPageHandler);
 
-creditsAdminRouter.get("/search", cfAccessHeaderMiddleware, searchGetHandler);
-
-creditsAdminRouter.get("/audit", cfAccessHeaderMiddleware, auditGetHandler);
-
+// Reads — token gate only (no audit write).
+creditsAdminRouter.get("/search", creditsAdminTokenAuth, searchGetHandler);
+creditsAdminRouter.get("/audit", creditsAdminTokenAuth, auditGetHandler);
 creditsAdminRouter.get(
   "/accounts/:accountId",
-  cfAccessHeaderMiddleware,
+  creditsAdminTokenAuth,
   meGuard,
   accountViewGetHandler,
 );
 
+// Audited mutations — token gate, then verified CF identity, then UUID guard.
 creditsAdminRouter.post(
   "/accounts/:accountId/grant",
-  cfAccessHeaderMiddleware,
+  creditsAdminTokenAuth,
+  attachActorIdentity,
   meGuard,
   grantPostHandler,
 );
-
 creditsAdminRouter.post(
   "/accounts/:accountId/adjust",
-  cfAccessHeaderMiddleware,
+  creditsAdminTokenAuth,
+  attachActorIdentity,
   meGuard,
   adjustPostHandler,
 );

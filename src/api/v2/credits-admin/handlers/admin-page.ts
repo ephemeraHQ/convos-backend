@@ -1,14 +1,10 @@
 import crypto from "node:crypto";
 import type { Request, Response } from "express";
 import { config } from "@/payments/credits/config";
-import { resolveActorEmail } from "../middleware/cf-access";
 
 export const adminPageHandler = (req: Request, res: Response): void => {
   const nonce = crypto.randomBytes(16).toString("base64");
-  const resolved = resolveActorEmail(
-    req.header("Cf-Access-Authenticated-User-Email"),
-  );
-  const adminEmail = resolved.email ?? "unknown";
+  const adminEmail: string = res.locals.actorEmail ?? "unknown";
   const creditsPerUsd = Number(config.creditsPerDollar);
 
   res.setHeader("Content-Type", "text/html; charset=utf-8");

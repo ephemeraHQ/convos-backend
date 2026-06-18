@@ -1,14 +1,17 @@
 import { randomUUID } from "node:crypto";
 import type { Express } from "express";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
+import { CF_IDENTITY_SENTINEL } from "@/api/v2/credits-admin/middleware/cf-identity";
 import { getBalance } from "@/payments";
 import { prisma } from "@/utils/prisma";
 import {
   adminRequest,
   buildCreditsAdminApp,
   cleanupAdminAccounts,
+  clearCfIdentity,
   seedAccount,
   seedBalance,
+  seedCfIdentity,
 } from "./helpers";
 
 describe("POST /api/v2/credits-admin/accounts/:accountId/adjust", () => {
@@ -18,6 +21,7 @@ describe("POST /api/v2/credits-admin/accounts/:accountId/adjust", () => {
     app = buildCreditsAdminApp();
   });
   afterEach(async () => {
+    clearCfIdentity();
     await cleanupAdminAccounts(tracker);
     tracker.length = 0;
   });
@@ -46,7 +50,7 @@ describe("POST /api/v2/credits-admin/accounts/:accountId/adjust", () => {
     const ledger = await prisma.creditLedger.findFirst({
       where: { accountId, idempotencyKey },
     });
-    expect(ledger?.note).toBe("admin:admin@convos.test — correction up");
+    expect(ledger?.note).toBe(`admin:${CF_IDENTITY_SENTINEL} — correction up`);
   });
 
   it("negative delta within floor: applies down", async () => {
@@ -133,5 +137,53 @@ describe("POST /api/v2/credits-admin/accounts/:accountId/adjust", () => {
     expect(res2.body).toMatchObject({ replayed: true });
     expect(await getBalance(accountId)).toBe(1_100n);
     expect(await prisma.adminAudit.count({ where: { accountId } })).toBe(1);
+  });
+
+  it("401 without admin token → no write", async () => {
+    const accountId = await seedAccount();
+    tracker.push(accountId);
+    await seedBalance(accountId, 1_000n);
+    const res = await adminRequest(app, false).post(
+      `/api/v2/credits-admin/accounts/${accountId}/adjust`,
+      { delta: 10, reason: "x", idempotencyKey: `admin_adjust_${accountId}_a` },
+    );
+    expect(res.status).toBe(401);
+    expect(await getBalance(accountId)).toBe(1_000n);
+    expect(await prisma.adminAudit.count({ where: { accountId } })).toBe(0);
+  });
+
+  it("records sentinel actor when no CF assertion", async () => {
+    const accountId = await seedAccount();
+    tracker.push(accountId);
+    await seedBalance(accountId, 1_000n);
+    const res = await adminRequest(app).post(
+      `/api/v2/credits-admin/accounts/${accountId}/adjust`,
+      { delta: 10, reason: "x", idempotencyKey: `admin_adjust_${accountId}_b` },
+    );
+    expect(res.status).toBe(200);
+    const row = await prisma.adminAudit.findFirst({
+      where: { accountId, idempotencyKey: `admin_adjust_${accountId}_b` },
+    });
+    expect(row?.actorEmail).toBe(CF_IDENTITY_SENTINEL);
+  });
+
+  it("records verified email when CF assertion valid", async () => {
+    const accountId = await seedAccount();
+    tracker.push(accountId);
+    await seedBalance(accountId, 1_000n);
+    const sign = await seedCfIdentity();
+    const assertion = await sign("ops@convos.xyz");
+    const res = await adminRequest(app)
+      .post(`/api/v2/credits-admin/accounts/${accountId}/adjust`, {
+        delta: 10,
+        reason: "x",
+        idempotencyKey: `admin_adjust_${accountId}_c`,
+      })
+      .set("Cf-Access-Jwt-Assertion", assertion);
+    expect(res.status).toBe(200);
+    const row = await prisma.adminAudit.findFirst({
+      where: { accountId, idempotencyKey: `admin_adjust_${accountId}_c` },
+    });
+    expect(row?.actorEmail).toBe("ops@convos.xyz");
   });
 });
