@@ -13,6 +13,9 @@ CREATE TABLE "AdminAudit" (
 );
 
 -- CreateIndex
+CREATE UNIQUE INDEX "AdminAudit_accountId_idempotencyKey_key" ON "AdminAudit"("accountId", "idempotencyKey");
+
+-- CreateIndex
 CREATE INDEX "AdminAudit_accountId_createdAt_idx" ON "AdminAudit"("accountId", "createdAt");
 
 -- CreateIndex

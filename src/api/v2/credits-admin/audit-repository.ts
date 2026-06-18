@@ -11,7 +11,16 @@ export const writeAdminAudit = async (args: {
   reason: string;
   idempotencyKey: string;
 }): Promise<void> => {
-  await prisma.adminAudit.create({ data: args });
+  await prisma.adminAudit.upsert({
+    where: {
+      accountId_idempotencyKey: {
+        accountId: args.accountId,
+        idempotencyKey: args.idempotencyKey,
+      },
+    },
+    update: {},
+    create: args,
+  });
 };
 
 const AUDIT_LIST_LIMIT = 50;

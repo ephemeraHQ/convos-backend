@@ -41,16 +41,14 @@ export const adjustPostHandler = async (
       note: `admin:${actorEmail} — ${reason}`,
     });
 
-    if (!result.replayed) {
-      await writeAdminAudit({
-        accountId,
-        actorEmail,
-        action: "adjust",
-        deltaCredits: BigInt(delta),
-        reason,
-        idempotencyKey,
-      });
-    }
+    await writeAdminAudit({
+      accountId,
+      actorEmail,
+      action: "adjust",
+      deltaCredits: BigInt(delta),
+      reason,
+      idempotencyKey,
+    });
 
     res.status(200).json({
       applied: true,

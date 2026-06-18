@@ -93,6 +93,25 @@ describe("POST /api/v2/credits-admin/accounts/:accountId/grant", () => {
     expect(audit).toHaveLength(1);
   });
 
+  it("replay re-creates a missing audit row (idempotent upsert closes the gap)", async () => {
+    const accountId = await seedAccount();
+    tracker.push(accountId);
+    const idempotencyKey = `admin_grant_${randomUUID()}`;
+    const body = { credits: 100, reason: "recover", idempotencyKey };
+    await adminRequest(app).post(
+      `/api/v2/credits-admin/accounts/${accountId}/grant`,
+      body,
+    );
+    await prisma.adminAudit.deleteMany({ where: { accountId } });
+    const res = await adminRequest(app).post(
+      `/api/v2/credits-admin/accounts/${accountId}/grant`,
+      body,
+    );
+    expect(res.body).toMatchObject({ replayed: true });
+    const audit = await prisma.adminAudit.findMany({ where: { accountId } });
+    expect(audit).toHaveLength(1);
+  });
+
   it("missing reason → 400, no ledger/audit write", async () => {
     const accountId = await seedAccount();
     tracker.push(accountId);

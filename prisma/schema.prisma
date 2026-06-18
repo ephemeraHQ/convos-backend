@@ -454,6 +454,7 @@ model AdminAudit {
   idempotencyKey String
   createdAt      DateTime @default(now())
 
+  @@unique([accountId, idempotencyKey])
   @@index([accountId, createdAt])
   @@index([actorEmail, createdAt])
 }

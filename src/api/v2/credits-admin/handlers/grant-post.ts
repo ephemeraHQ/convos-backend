@@ -39,16 +39,14 @@ export const grantPostHandler = async (
       requestId: idempotencyKey,
     });
 
-    if (!result.replayed) {
-      await writeAdminAudit({
-        accountId,
-        actorEmail,
-        action: "grant",
-        deltaCredits: BigInt(credits),
-        reason,
-        idempotencyKey,
-      });
-    }
+    await writeAdminAudit({
+      accountId,
+      actorEmail,
+      action: "grant",
+      deltaCredits: BigInt(credits),
+      reason,
+      idempotencyKey,
+    });
 
     res.status(200).json({
       applied: true,
