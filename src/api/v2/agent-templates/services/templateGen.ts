@@ -27,6 +27,7 @@
 
 import { APIConnectionTimeoutError, APIError, APIUserAbortError } from "openai";
 import { z } from "zod";
+import { getServiceConfig } from "@/api/v2/connections/bundles.config";
 import {
   BUILDER_CLASSIFIER_MODEL,
   BUILDER_EXA_SERVICE_KEY,
@@ -291,23 +292,26 @@ export const DEFAULT_TEST_METRICS: GenerationMetrics = {
   latencyMs: 1500,
 };
 
+/** One attachment resolved to LLM-ready content by the executor — the bytes are
+ *  already fetched from the private bucket and base64-encoded into a `data:` URI
+ *  (off the client request path, never a public URL). Audio is NOT here: it's
+ *  transcribed to text upstream and folded into `text`. */
+export type ResolvedAttachment =
+  | { kind: "image"; mimeType: string; dataUri: string }
+  | { kind: "pdf"; filename: string; dataUri: string };
+
 export interface GenerateTemplateInput {
-  /** What the user typed in the composer. When sent alone, URL-shaped
-   *  text is auto-extracted; everything else flows through the standard
-   *  text generation path. When sent alongside a file (pdfBase64 /
-   *  imageBase64), the file is the source material and `text` is the
-   *  user's intent / directive about how to use it. The HTTP route
-   *  handler coalesces legacy `idea` / `content` / `url` fields from
-   *  older clients into this single field at the API boundary. */
+  /** What the user typed in the composer, plus any transcribed voice notes the
+   *  executor folded in. When sent alone, URL-shaped text is auto-extracted and
+   *  everything else flows through the standard text path. When sent alongside
+   *  attachments, the files are the source material and `text` is the user's
+   *  intent / directive about how to use them. The HTTP route handler coalesces
+   *  legacy `idea` / `content` / `url` fields into this single field at the API
+   *  boundary. */
   text?: string;
-  /** Base64-encoded PDF content. */
-  pdfBase64?: string;
-  /** Base64-encoded image content. */
-  imageBase64?: string;
-  /** MIME type for images (e.g. "image/png"). */
-  mimeType?: string;
-  /** Optional filename for the uploaded document. */
-  filename?: string;
+  /** Image / PDF attachments, resolved to data URIs. Images become `image_url`
+   *  vision blocks; PDFs become native `file` blocks. */
+  attachments?: ResolvedAttachment[];
 }
 
 /** Caller-pinned identity fields (mirror of the generation row's `prefill`
@@ -346,6 +350,53 @@ function buildIdentityDirective(prefill?: GenerationPrefill | null): string {
     `Use these exact values; do NOT substitute different ones: ${parts.join(", ")}. ` +
     closing
   );
+}
+
+/** Build the user-message addendum that tells the generator which external
+ *  services the agent is connected to, so the prompt, instructions, and WELCOME
+ *  MESSAGE lean on those capabilities (e.g. "you can view and edit the group's
+ *  calendar events"). Copy is sourced from the catalog — `displayName` plus each
+ *  live bundle's `title`/`description` — so it tracks the same blessed services
+ *  the grant + exec layers use. Returns "" when nothing resolves (the handler
+ *  validates against the same catalog, so unknown ids never reach here; the
+ *  guard is defensive). */
+function buildCapabilitiesDirective(connections?: string[] | null): string {
+  if (!connections || connections.length === 0) return "";
+  const lines: string[] = [];
+  for (const serviceId of connections) {
+    const svc = getServiceConfig(serviceId);
+    if (!svc) continue;
+    const caps = svc.bundles
+      .filter((b) => !b.deprecated)
+      .map((b) => `${b.title.en} (${b.description.en})`)
+      .join(", ");
+    lines.push(caps ? `${svc.displayName.en} — ${caps}` : svc.displayName.en);
+  }
+  if (lines.length === 0) return "";
+  const many = lines.length > 1;
+  return (
+    `\n\nCONNECTED CAPABILITIES — the user has connected this assistant to the ` +
+    `following external service${many ? "s" : ""}, and it can use ${many ? "them" : "it"} ` +
+    `live in the group chat. Write the prompt, the instructions, and the WELCOME ` +
+    `MESSAGE so the assistant actively leans on ${many ? "these capabilities" : "this capability"} ` +
+    `(don't just mention ${many ? "them" : "it"} — make ${many ? "them" : "it"} central to what it does):\n` +
+    lines.map((l) => `- ${l}`).join("\n")
+  );
+}
+
+/** Lead instruction for the multimodal path, phrased for the actual mix of
+ *  attached files so the model knows whether it's looking at images, reading
+ *  documents, or both. */
+function describeAttachments(imageCount: number, pdfCount: number): string {
+  const noun = (n: number, singular: string) =>
+    `${n} ${singular}${n === 1 ? "" : "s"}`;
+  if (imageCount > 0 && pdfCount > 0) {
+    return `Create an assistant based on the attached files (${noun(imageCount, "image")} and ${noun(pdfCount, "document")}). Use all of them together to infer the topic, purpose, and audience.`;
+  }
+  if (pdfCount > 0) {
+    return `Create an assistant based on the content of the attached ${pdfCount === 1 ? "document" : `${pdfCount} documents`}.`;
+  }
+  return `Create an assistant based on what you see in the attached ${imageCount === 1 ? "image" : `${imageCount} images`}. Infer the topic, purpose, and audience from the visual content.`;
 }
 
 // ---------------------------------------------------------------------------
@@ -1294,6 +1345,7 @@ export async function generateTemplate(
   trace?: TraceContext,
   systemPromptOverride?: string | null,
   modelOverride?: string | null,
+  connections?: string[] | null,
 ): Promise<GenerationResult> {
   // Backward compat: string input = text
   const opts: GenerateTemplateInput =
@@ -1331,34 +1383,43 @@ export async function generateTemplate(
   // and content classifier keep their configured models.
   const model = modelOverride?.trim() || getModel();
 
-  if (opts.imageBase64) {
-    // Image path: send as image_url for vision models
-    const mime = opts.mimeType || "image/png";
+  const attachments = opts.attachments ?? [];
+
+  if (attachments.length > 0) {
+    // Multimodal path: text directive + N image/PDF blocks. Images go to the
+    // vision model as `image_url`; PDFs as native `file` blocks. The executor
+    // already fetched the bytes and built each data URI, so this just lays out
+    // the blocks. The URL/GitHub/passthrough logic below is text-only and
+    // doesn't apply when files are attached.
+    const images = attachments.filter(
+      (a): a is Extract<ResolvedAttachment, { kind: "image" }> =>
+        a.kind === "image",
+    );
+    const pdfs = attachments.filter(
+      (a): a is Extract<ResolvedAttachment, { kind: "pdf" }> =>
+        a.kind === "pdf",
+    );
     userContent = [
       {
         type: "text",
-        text: `Create an assistant based on what you see in this image. Infer the topic, purpose, and audience from the visual content.${intentNote}`,
+        text: `${describeAttachments(images.length, pdfs.length)}${intentNote}`,
       },
-      {
-        type: "image_url",
-        image_url: { url: `data:${mime};base64,${opts.imageBase64}` },
-      },
-    ];
-  } else if (opts.pdfBase64) {
-    // PDF path: native support via OpenRouter
-    const filename = opts.filename || "document.pdf";
-    userContent = [
-      {
-        type: "text",
-        text: `Create an assistant based on the content of this PDF document.${intentNote}`,
-      },
-      {
-        type: "file",
-        file: {
-          filename,
-          file_data: `data:application/pdf;base64,${opts.pdfBase64}`,
-        },
-      },
+      // Map the original `attachments` array (not the filtered ones) so a mixed
+      // image/PDF order from the caller is preserved in the content blocks.
+      ...attachments.map((attachment) =>
+        attachment.kind === "image"
+          ? {
+              type: "image_url",
+              image_url: { url: attachment.dataUri },
+            }
+          : {
+              type: "file",
+              file: {
+                filename: attachment.filename,
+                file_data: attachment.dataUri,
+              },
+            },
+      ),
     ];
   } else {
     // Text path: idea, content, or URL
@@ -1430,21 +1491,26 @@ export async function generateTemplate(
     userContent = `Create an assistant based on the following content:\n\n---\n${extracted}\n---`;
   }
 
-  // Caller-pinned identity: fold the already-chosen name/emoji into the user
-  // message so the model writes agentName, the prompt body, all self-references,
-  // and the WELCOME MESSAGE as this named assistant. Without this the model
-  // invents its own identity and the persist-stage applyPrefill overlay leaves
-  // the card's name at odds with the prompt the assistant actually runs on.
-  const identityDirective = buildIdentityDirective(prefill);
-  if (identityDirective) {
+  // Fold two user-message addenda into the directive text:
+  //   - Caller-pinned identity (name/emoji), so the model writes agentName, the
+  //     prompt body, every self-reference, and the WELCOME MESSAGE as this named
+  //     assistant. Without it the model invents its own identity and the
+  //     persist-stage applyPrefill overlay leaves the card's name at odds with
+  //     the prompt the assistant actually runs on.
+  //   - Connected capabilities, so the prompt + welcome lean on the external
+  //     services the agent has access to (the grant itself is issued later).
+  // Both ride the same trailing-edge slot; each already opens with `\n\n`.
+  const userDirective =
+    buildIdentityDirective(prefill) + buildCapabilitiesDirective(connections);
+  if (userDirective) {
     if (typeof userContent === "string") {
-      userContent = `${userContent}${identityDirective}`;
+      userContent = `${userContent}${userDirective}`;
     } else if (
       Array.isArray(userContent) &&
       userContent[0]?.type === "text" &&
       typeof userContent[0].text === "string"
     ) {
-      userContent[0].text = `${userContent[0].text}${identityDirective}`;
+      userContent[0].text = `${userContent[0].text}${userDirective}`;
     }
   }
 
@@ -1712,6 +1778,7 @@ let _generateTemplateOverride:
       trace?: TraceContext,
       systemPromptOverride?: string | null,
       modelOverride?: string | null,
+      connections?: string[] | null,
     ) => Promise<GenerationResult>)
   | null = null;
 
@@ -1725,6 +1792,7 @@ export function __resetGenerateTemplateForTests(
         trace?: TraceContext,
         systemPromptOverride?: string | null,
         modelOverride?: string | null,
+        connections?: string[] | null,
       ) => Promise<GenerationResult>)
     | null,
 ) {
@@ -1745,6 +1813,10 @@ export function __resetGenerateTemplateForTests(
  *
  * Optional `modelOverride` similarly swaps the builder model for the main
  * generation call; omitted on the production generation path.
+ *
+ * Optional `connections` are the neutral service ids the agent is connected to;
+ * they drive the capabilities directive appended to the user message so the
+ * generated prompt/welcome lean on those services.
  */
 export async function callGenerateTemplate(
   input: GenerateTemplateInput | string,
@@ -1753,6 +1825,7 @@ export async function callGenerateTemplate(
   trace?: TraceContext,
   systemPromptOverride?: string | null,
   modelOverride?: string | null,
+  connections?: string[] | null,
 ): Promise<GenerationResult> {
   if (_generateTemplateOverride) {
     return _generateTemplateOverride(
@@ -1762,6 +1835,7 @@ export async function callGenerateTemplate(
       trace,
       systemPromptOverride,
       modelOverride,
+      connections,
     );
   }
   return generateTemplate(
@@ -1771,6 +1845,7 @@ export async function callGenerateTemplate(
     trace,
     systemPromptOverride,
     modelOverride,
+    connections,
   );
 }
 

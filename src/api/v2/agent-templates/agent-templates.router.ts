@@ -4,6 +4,8 @@ import {
   optionalAuthOrAgentApiKeyAuth,
 } from "@/middleware/agentAuth";
 import { requireAccount } from "@/middleware/auth";
+import { buildAttachmentPresignedLimiter } from "@/middleware/rateLimit";
+import { buildAttachmentPresignedHandler } from "./handlers/build-attachment-presigned";
 import { createHandler } from "./handlers/create";
 import { deleteHandler } from "./handlers/delete";
 import { detailHandler } from "./handlers/detail";
@@ -51,6 +53,19 @@ agentTemplatesRouter.get(
   "/generations/:generationId",
   optionalAuthOrAgentApiKeyAuth,
   generationsGetHandler,
+);
+
+// Presigned PUT for a generation attachment (image / PDF / voice) → the private
+// bucket. Mounted before /:idOrUrlSlug so the wildcard doesn't capture
+// "attachments" as a slug-or-id. Optional auth, like the generation endpoint.
+// Auth runs before the limiter so it can read the resolved identity from
+// res.locals and exempt the agent-API-key caller (the bot) — the per-IP cap
+// then applies to everyone else (anonymous + signed-in JWT callers).
+agentTemplatesRouter.get(
+  "/attachments/presigned",
+  optionalAuthOrAgentApiKeyAuth,
+  buildAttachmentPresignedLimiter,
+  buildAttachmentPresignedHandler,
 );
 
 // Aggregate counts for the dashboard facet rail. Mounted before /:idOrUrlSlug

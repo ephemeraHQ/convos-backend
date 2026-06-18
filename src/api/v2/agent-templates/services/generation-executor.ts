@@ -23,11 +23,25 @@
  * overrides the per-generation timeout.
  */
 
+import type { Prisma } from "@prisma/client";
+import type { AgentPreview } from "@/api/v2/agent-templates/lib/generation-preview";
 import { pickCollisionFreeId } from "@/api/v2/agent-templates/lib/pick-collision-free-id";
+import {
+  applyConnections,
+  resolveConnectionIds,
+} from "@/api/v2/agent-templates/lib/template-connections";
+import {
+  AttachmentModerationError,
+  resolveAttachments,
+  type AttachmentRef,
+  type ResolvedInputs,
+} from "@/api/v2/agent-templates/services/attachment-resolver";
+import { classifyMime } from "@/api/v2/agent-templates/services/build-attachments";
 import {
   buildDeterministicFallback,
   composeReply,
 } from "@/api/v2/agent-templates/services/compose-reply";
+import { distill } from "@/api/v2/agent-templates/services/distill";
 import { redactTemplatePii } from "@/api/v2/agent-templates/services/moderation";
 import { type TraceContext } from "@/api/v2/agent-templates/services/openrouter-client";
 import {
@@ -105,10 +119,9 @@ interface GenerationInputs {
   idea?: string;
   content?: string;
   url?: string;
-  pdfBase64?: string;
-  imageBase64?: string;
-  mimeType?: string;
-  filename?: string;
+  /** Presigned-upload references to the binary attachments (image / PDF /
+   *  voice). Validated at submit; resolved to bytes here. */
+  attachments?: AttachmentRef[];
 }
 
 interface TwitterContext {
@@ -125,6 +138,15 @@ interface TemplatePrefill {
   agentName?: string;
   emoji?: string;
   description?: string;
+}
+
+/** First trimmed, non-empty value of (a, b), else undefined. Used to merge the
+ *  distilled identity with the caller's pins (caller wins) while dropping the
+ *  empties distill can return (e.g. an emoji the sanitizer rejected) so they
+ *  don't overlay a blank over the generator's own value. */
+function firstNonEmpty(a?: string, b?: string): string | undefined {
+  const v = (a ?? "").trim() || (b ?? "").trim();
+  return v || undefined;
 }
 
 function applyPrefill<
@@ -171,7 +193,7 @@ interface PostHogActorSource {
 function postHogBase(args: {
   generation: PostHogActorSource;
   requestId: string;
-  inputType: "text" | "pdfBase64" | "imageBase64";
+  inputType: "text" | "image" | "pdf" | "audio" | "mixed";
 }): Pick<
   PostHogCaptureProperties,
   | "requestId"
@@ -203,38 +225,31 @@ function postHogBase(args: {
 }
 
 // ---------------------------------------------------------------------------
-// Input coalescing — same priority as today's generate-template handler
+// Input modality summary — for PostHog metering
 // ---------------------------------------------------------------------------
 
-function coalesceInputs(
-  inputs: GenerationInputs,
-): GenerateTemplateInput | null {
-  // The user's typed text is their intent/directive for an attached file —
-  // generateTemplate appends it as "User's intent: …" on the pdf/image paths —
-  // so it must survive coalescing there too, not just on the text-only path.
-  // `.find` (not a `||` chain) so a truthy-but-whitespace field can't mask a
-  // real one behind it.
-  const text = [inputs.text, inputs.idea, inputs.content, inputs.url].find(
-    (value): value is string =>
-      typeof value === "string" && value.trim().length > 0,
-  );
-  if (inputs.pdfBase64) {
-    return {
-      pdfBase64: inputs.pdfBase64,
-      mimeType: inputs.mimeType || "application/pdf",
-      filename: inputs.filename || "document.pdf",
-      ...(text ? { text } : {}),
-    };
+/** Collapse the submitted inputs into one modality tag. Attachments win over an
+ *  accompanying text directive (which is auxiliary intent, not the source
+ *  material), matching the pre-attachment behaviour where a file's type was the
+ *  classification. A single attachment kind reports that kind; multiple distinct
+ *  kinds (e.g. image + pdf) report "mixed"; no attachments report "text". Audio
+ *  counts as "audio" even though its transcript folds into text downstream — the
+ *  metric reflects what the caller sent, not how it was processed. */
+function summarizeInputType(
+  textInput: string | undefined,
+  attachments: AttachmentRef[],
+): "text" | "image" | "pdf" | "audio" | "mixed" {
+  if (attachments.length === 0) return "text";
+  const kinds = new Set<string>();
+  for (const a of attachments) {
+    const kind = classifyMime(a.mimeType);
+    if (kind) kinds.add(kind);
   }
-  if (inputs.imageBase64) {
-    return {
-      imageBase64: inputs.imageBase64,
-      mimeType: inputs.mimeType || "image/png",
-      ...(text ? { text } : {}),
-    };
+  if (kinds.size === 0) return "text";
+  if (kinds.size === 1) {
+    return [...kinds][0] as "image" | "pdf" | "audio";
   }
-  if (text) return { text };
-  return null;
+  return "mixed";
 }
 
 // ---------------------------------------------------------------------------
@@ -349,6 +364,27 @@ async function tryClaim(generationId: string): Promise<boolean> {
     data: { status: "running" },
   });
   return claim.count === 1;
+}
+
+/** Write the in-progress poll fields (the distilled identity `preview` + the
+ *  `progressPhrases`) while the build runs, so the poll endpoints can surface
+ *  them on 202s. Both land in one update. Guarded on status='running' like the
+ *  terminal writes: the stuck-row sweep may have flipped the row to failed
+ *  between claim and here, in which case the 0-row update is a harmless no-op.
+ *  Best-effort — never throws into the pipeline (callers wrap it). The handlers
+ *  drop both fields on the terminal 200, so markDone leaves them untouched. */
+async function writeRunningPreview(
+  generationId: string,
+  preview: AgentPreview,
+  progressPhrases: string[],
+): Promise<void> {
+  await prisma.agentTemplateGeneration.updateMany({
+    where: { id: generationId, status: "running" },
+    data: {
+      preview: preview as unknown as Prisma.InputJsonValue,
+      progressPhrases,
+    },
+  });
 }
 
 /** Mark a generation `done`. Conditional on status='running' so a pipeline
@@ -472,28 +508,31 @@ async function _runPipeline(
     );
   }
 
-  // 3. Generate stage
+  // 3. Resolve inputs — the user's text directive + any attachment references.
   const inputs = generation.inputs as GenerationInputs;
-  const coalesced = coalesceInputs(inputs);
-  if (!coalesced) {
+  const textInput = [inputs.text, inputs.idea, inputs.content, inputs.url].find(
+    (value): value is string =>
+      typeof value === "string" && value.trim().length > 0,
+  );
+  const attachmentRefs = inputs.attachments ?? [];
+  if (!textInput && attachmentRefs.length === 0) {
     throw new Error(
-      "No usable input — provide one of text, idea, content, url, pdfBase64, or imageBase64",
+      "No usable input — provide text or at least one attachment",
     );
   }
-  // File presence determines the input type. `text` may now ALSO be present on
-  // the pdf/image paths (the user's intent directive), so it's checked LAST — a
-  // bare text submission is the only shape with no pdf/image key.
-  const inputType: "text" | "pdfBase64" | "imageBase64" =
-    "pdfBase64" in coalesced
-      ? "pdfBase64"
-      : "imageBase64" in coalesced
-        ? "imageBase64"
-        : "text";
+
+  // Input modality summary for metering, derived from what the caller sent.
+  const inputType = summarizeInputType(textInput, attachmentRefs);
 
   // Caller-pinned prefill is read up front so it can be fed INTO the generator
   // (so the produced prompt + welcome use the pinned name), not just overlaid
   // onto the metadata at persist below.
   const prefill = generation.prefill as TemplatePrefill | null;
+
+  // Twitter context, read up front: the distill stage below skips the twitter
+  // path (no client polls a progress card there), and the ComposeReply stage
+  // further down consumes it.
+  const twitterContext = generation.twitterContext as TwitterContext | null;
 
   // Optional caller-supplied builder/system prompt override (admin dashboard).
   // null for ordinary generations, where the canonical prompt is used.
@@ -502,6 +541,11 @@ async function _runPipeline(
   // Optional caller-supplied model override (admin dashboard). null for
   // ordinary generations, where the default builder model is used.
   const builderModel = generation.builderModel;
+
+  // Connections the caller flagged at submit, normalized to canonical catalog
+  // ids. Fed to the generator (drives the capabilities directive so the prompt +
+  // welcome lean on the service) and overlaid onto the persisted template below.
+  const connectionIds = resolveConnectionIds({ raw: generation.connections });
 
   // Actor-attribution fields shared by every capture site below, plus the
   // PostHog LLM Analytics trace id so the product event joins to the
@@ -524,16 +568,104 @@ async function _runPipeline(
     },
   };
 
+  // 3a. Resolve attachments off the request path: fetch bytes from the private
+  // bucket, moderate images (Rekognition) + transcribe/moderate audio, and
+  // build the image/PDF content blocks. A failure here — unfetchable, oversize,
+  // unsupported, or moderation-blocked — fails the generation. For binary that
+  // surfaces as a terminal `failed` (not a submit-time 422): Rekognition over N
+  // images and audio transcription are too slow to gate the POST synchronously.
+  let resolved: ResolvedInputs;
+  try {
+    resolved = await resolveAttachments(attachmentRefs, {
+      signal,
+      trace,
+      moderate: true,
+    });
+  } catch (err) {
+    capturePostHog({
+      model: getModel(),
+      promptTokens: 0,
+      completionTokens: 0,
+      latencyMs: 0,
+      ...base,
+      outcome: "failed",
+    });
+    throw new Error(
+      err instanceof AttachmentModerationError
+        ? `Attachment moderation blocked: ${err.reason}`
+        : `Attachment stage failed: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+    );
+  }
+
+  // Voice transcripts are user text — fold them into the directive so distill
+  // and the text path see them, leaving the generator to handle only the
+  // image/PDF blocks.
+  const effectiveText =
+    [textInput, ...resolved.transcripts]
+      .filter((t): t is string => !!t && t.trim().length > 0)
+      .join("\n\n") || undefined;
+  if (!effectiveText && resolved.attachments.length === 0) {
+    throw new Error("No usable input after resolving attachments");
+  }
+  const generateInput: GenerateTemplateInput = {
+    ...(effectiveText ? { text: effectiveText } : {}),
+    ...(resolved.attachments.length
+      ? { attachments: resolved.attachments }
+      : {}),
+  };
+
+  // 3b. Distill stage (best-effort). Derive the agent's identity + the
+  // build-narration progressPhrases up front and write them to the row so the
+  // poll endpoints surface a `preview` card + `progressPhrases` on the early
+  // 202s, before the slow generate stage finishes. Runs whenever there's
+  // something to distill from — text and/or image/PDF attachments (the
+  // vision-capable builder model distills a bare image/PDF straight from the
+  // files); only the twitter path is skipped, since nothing polls a progress
+  // card there. A failure here never fails the generation: the build still
+  // produces the full template; the 202s just won't carry phrases / a card. The
+  // distilled identity (caller pins win) also feeds the generate + persist
+  // below, so the final template matches the card shown on the early polls.
+  const distillText = effectiveText?.trim();
+  let identity: TemplatePrefill | null = prefill;
+  if ((distillText || resolved.attachments.length > 0) && !twitterContext) {
+    try {
+      const distilled = await distill(
+        { text: distillText, attachments: resolved.attachments },
+        signal,
+        prefill,
+        trace,
+      );
+      identity = {
+        agentName: firstNonEmpty(prefill?.agentName, distilled.agentName),
+        emoji: firstNonEmpty(prefill?.emoji, distilled.emoji),
+        description: firstNonEmpty(prefill?.description, distilled.description),
+      };
+      await writeRunningPreview(
+        generationId,
+        identity,
+        distilled.progressPhrases,
+      );
+    } catch (err) {
+      logger.warn(
+        { err, generationId },
+        "[generation-executor] Distill stage failed; proceeding without preview",
+      );
+    }
+  }
+
   const startTime = performance.now();
   let templateResult: Awaited<ReturnType<typeof callGenerateTemplate>>;
   try {
     templateResult = await callGenerateTemplate(
-      coalesced,
+      generateInput,
       signal,
-      prefill,
+      identity,
       trace,
       builderPrompt,
       builderModel,
+      connectionIds,
     );
   } catch (err) {
     // Meter error path
@@ -562,11 +694,16 @@ async function _runPipeline(
       `Invalid initial publishStatus: "archived" — must be draft, unlisted, or published`,
     );
   }
-  // Caller-pinned prefill: overlay the allowlisted AgentTemplate fields onto
-  // the LLM output so the persisted metadata matches the caller's pinned values
-  // verbatim. This is the exact-match floor; the same `prefill` was also fed
-  // into the generator above so the prompt body agrees with the metadata.
-  const merged = applyPrefill(templateResult.template, prefill);
+  // Overlay the allowlisted identity fields onto the LLM output so the persisted
+  // metadata matches the card shown on the early polls verbatim. `identity`
+  // is the distilled identity (or the caller's pins where supplied) — the same
+  // value fed into the generator above, so the prompt body agrees with the
+  // metadata. Then overlay the resolved connections, replacing the generator's
+  // hardcoded `connections: []` so the template records the services it uses.
+  const merged = applyConnections({
+    template: applyPrefill(templateResult.template, identity),
+    connectionIds,
+  });
 
   // PII redaction stage — scrub personal data from the generated template
   // before it is persisted as a shareable artifact. Fails CLOSED: a scan error
@@ -623,7 +760,6 @@ async function _runPipeline(
   //    composeReply has its own fallback on LLM failure, so this stage
   //    never throws; worst case we get the deterministic fallback string.
   let replyText: string | null = null;
-  const twitterContext = generation.twitterContext as TwitterContext | null;
   if (twitterContext) {
     const firstSentence = firstSentenceOf(
       templateToPersist.description || templateToPersist.prompt,
@@ -665,6 +801,10 @@ async function _runPipeline(
   // list. The template was created microseconds ago by this same execution and
   // nothing else can hold a reference yet (generation.templateId is still NULL
   // because markDone no-opped), so the delete is safe.
+  //
+  // The terminal 200 carries `templateId` (the client fetches the real template
+  // for the full fields), not `preview`/`progressPhrases` — so markDone leaves
+  // those running columns untouched; the handlers simply omit them once terminal.
   const claimed = await markDone(generationId, persisted.id, replyText);
   if (!claimed) {
     try {

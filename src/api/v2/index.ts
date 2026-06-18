@@ -35,6 +35,7 @@ import { authRouter } from "./auth/auth.router";
 import { composioRouter } from "./composio/composio.router";
 import { connectionsRouter } from "./connections/connections.router";
 import { servicesGetHandler } from "./connections/handlers/services-get";
+import { creditsAdminRouter } from "./credits-admin/credits-admin.router";
 import { dailyRefillRouter } from "./credits/daily.router";
 import { devRouter } from "./dev/dev.router";
 import { deviceRouter } from "./device/device.router";
@@ -46,6 +47,7 @@ import invitesV2Router from "./invites/invites.router";
 import { notificationsRouter } from "./notifications/notifications.router";
 import { webhookRouter } from "./notifications/webhook.router";
 import { appleWebhookRouter } from "./subscriptions/apple-webhook.router";
+import { googlePlayWebhookRouter } from "./subscriptions/google-play-webhook.router";
 import { telemetryRouter } from "./telemetry/telemetry.router";
 
 const v2Router = Router();
@@ -59,6 +61,7 @@ v2Router.use("/agent-templates", agentTemplatesRouter);
 
 v2Router.use("/invites", invitesV2Router);
 
+v2Router.use("/credits-admin", creditsAdminRouter);
 // Invite codes: admin page + API (auth applied per-route inside the router)
 v2Router.use("/invite-codes/admin", inviteCodesAdminRouter);
 // Invite codes: client redemption (JWT-authenticated)
@@ -146,6 +149,8 @@ v2Router.use("/notifications/xmtp", webhookRouter);
 v2Router.use("/notifications", authMiddleware, notificationsRouter);
 // No auth: Apple authenticates via JWS signature, verified inside the handler.
 v2Router.use("/webhooks/apple", appleWebhookRouter);
+// No auth: Google authenticates via OIDC bearer, verified inside the handler.
+v2Router.use("/webhooks/google-play", googlePlayWebhookRouter);
 
 // Auth check endpoint - allows NSE tokens for diagnostics
 v2Router.get("/auth-check", authMiddlewareAllowNSE, (_req, res) => {

@@ -54,11 +54,12 @@ const sseApiKeyHeaders = {
 const noKeyHeaders = { "Content-Type": "application/json" };
 
 // Records the args the generator was called with, so a test can assert the
-// overrides are forwarded: builderPrompt as the 5th param (systemPromptOverride)
-// and builderModel as the 6th (modelOverride).
+// overrides are forwarded: builderPrompt as the 5th param (systemPromptOverride),
+// builderModel as the 6th (modelOverride), and connections as the 7th.
 let lastCall: {
   systemPromptOverride?: string | null;
   modelOverride?: string | null;
+  connections?: string[] | null;
 } | null = null;
 
 let baseURL: string;
@@ -95,8 +96,9 @@ beforeEach(() => {
       _trace,
       systemPromptOverride,
       modelOverride,
+      connections,
     ) => {
-      lastCall = { systemPromptOverride, modelOverride };
+      lastCall = { systemPromptOverride, modelOverride, connections };
       return Promise.resolve({
         template: fakeTemplate,
         metrics: DEFAULT_TEST_METRICS,
@@ -137,7 +139,7 @@ describe("POST /generations/ephemeral — validation", () => {
     const res = await post({ inputs: {} });
     expect(res.status).toBe(400);
     const body = (await res.json()) as { error: string };
-    expect(body.error.toLowerCase()).toContain("one of");
+    expect(body.error.toLowerCase()).toContain("attachment");
   });
 });
 
@@ -185,6 +187,44 @@ describe("POST /generations/ephemeral — builderModel (privileged override)", (
     expect(res.status).toBe(400);
     const body = (await res.json()) as { error: string };
     expect(body.error).toContain("is not a valid OpenRouter model");
+  });
+});
+
+describe("POST /generations/ephemeral — connections", () => {
+  test("unknown connection → 400", async () => {
+    const res = await post({
+      inputs: { idea: "x" },
+      connections: ["not_a_real_service"],
+    });
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toContain("Unknown connection");
+  });
+
+  test("valid connections are forwarded to the generator and overlaid onto the returned template", async () => {
+    const res = await post({
+      inputs: { idea: "a scheduling helper" },
+      // Mixed case + duplicate to exercise catalog normalization + dedupe.
+      connections: ["GoogleCalendar", "googlecalendar"],
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      template: { connections: string[] };
+    };
+    // Normalized canonical id forwarded to the generator (7th param)...
+    expect(lastCall?.connections).toEqual(["googlecalendar"]);
+    // ...and overlaid onto the returned (non-persisted) template.
+    expect(body.template.connections).toEqual(["googlecalendar"]);
+  });
+
+  test("no connections → generator gets [] and template stays empty", async () => {
+    const res = await post({ inputs: { idea: "a scheduling helper" } });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      template: { connections: string[] };
+    };
+    expect(lastCall?.connections).toEqual([]);
+    expect(body.template.connections).toEqual([]);
   });
 });
 

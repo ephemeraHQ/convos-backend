@@ -28,7 +28,7 @@
  * `@preset/...` alias, which PostHog can't price) to keep cost resolving.
  */
 
-/* eslint-disable @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access */
+/* eslint-disable @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-argument */
 
 import { randomUUID } from "node:crypto";
 import { OpenAI as PostHogOpenAI } from "@posthog/ai/openai";
@@ -143,11 +143,13 @@ export interface OpenRouterChatOptions {
   stage:
     | "selector"
     | "classifier"
+    | "distill"
     | "generate"
     | "moderation"
     | "twitter-intent"
     | "compose-reply"
-    | "pii-redaction";
+    | "pii-redaction"
+    | "transcribe";
   body: OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming;
   /** External cancellation (e.g. the executor's per-generation timeout). */
   signal?: AbortSignal;

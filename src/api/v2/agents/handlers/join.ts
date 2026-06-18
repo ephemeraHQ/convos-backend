@@ -32,6 +32,19 @@ export function __setTemplateFinderForTests(
   _templateFinder = finder ?? defaultTemplateFinder;
 }
 
+const timezoneSchema = z
+  .string()
+  .min(1)
+  .max(64)
+  .refine((value) => {
+    try {
+      Intl.DateTimeFormat("en-US", { timeZone: value });
+      return true;
+    } catch {
+      return false;
+    }
+  }, "timezone must be a valid IANA timezone identifier");
+
 // Per-join assistant-shaping knobs, forwarded onto convos-assistants'
 // free-form `metadata: Record<string, unknown>` bag. Each field is only
 // stamped onto metadata when the caller explicitly passes it — we do
@@ -71,6 +84,7 @@ const bodySchema = z
     name: z.string().min(1).max(256).optional(),
     profileImage: z.string().min(1).max(2048).optional(),
     options: optionsSchema.optional(),
+    timezone: timezoneSchema.optional(),
   })
   .strict()
   .refine((b) => (b.slug === undefined) !== (b.conversationId === undefined), {
@@ -139,6 +153,7 @@ const dispatchBodySchema = z
     template: z.record(z.string(), z.unknown()).nullable(),
     ownerAccountId: accountIdSchema,
     options: optionsSchema.optional(),
+    timezone: timezoneSchema.optional(),
   })
   .strict()
   .refine(
@@ -380,8 +395,15 @@ export async function joinHandler(req: Request, res: Response) {
     return;
   }
 
-  const { slug, conversationId, templateId, name, profileImage, options } =
-    parsed.data;
+  const {
+    slug,
+    conversationId,
+    templateId,
+    name,
+    profileImage,
+    options,
+    timezone,
+  } = parsed.data;
   // Avoid logging the raw slug (it's a join-token granting conversation
   // access) and the raw `options` (caller-controlled input). Log only the
   // public `templateId` reference + option keys so volumes/cardinality
@@ -575,6 +597,9 @@ export async function joinHandler(req: Request, res: Response) {
     };
     if (Object.keys(upstreamOptions).length > 0) {
       dispatchBody.options = upstreamOptions;
+    }
+    if (timezone !== undefined) {
+      dispatchBody.timezone = timezone;
     }
 
     const dispatchParse = dispatchBodySchema.safeParse(dispatchBody);

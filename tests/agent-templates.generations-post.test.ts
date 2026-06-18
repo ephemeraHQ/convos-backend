@@ -26,6 +26,7 @@ import {
   __resetGenerateTemplateForTests,
   DEFAULT_TEST_METRICS,
 } from "@/api/v2/agent-templates/services/templateGen";
+import { GENERATION_ESTIMATE_MS } from "@/config";
 import { __setAgentAssetsApiKeyOverrideForTests } from "@/middleware/agentAuth";
 import { ADMIN_ACCOUNT_ID } from "@/utils/constants";
 import { createJwtToken } from "@/utils/jwt";
@@ -178,7 +179,7 @@ describe("POST /generations — validation", () => {
     );
     expect(res.status).toBe(400);
     const body = (await res.json()) as { error: string };
-    expect(body.error.toLowerCase()).toContain("one of");
+    expect(body.error.toLowerCase()).toContain("attachment");
   });
 
   test("text exceeds 50_000 chars → 400", async () => {
@@ -190,12 +191,19 @@ describe("POST /generations — validation", () => {
     expect(res.status).toBe(400);
   });
 
-  test("intent text exceeds 50_000 chars on a file path → 400", async () => {
-    // The intent text rides along with an attached file (the generator uses it
-    // as the file's directive), so it's length-capped on the file path too.
+  test("intent text exceeds 50_000 chars on an attachment path → 400", async () => {
+    // The intent text rides along with an attachment (the generator uses it as
+    // the files' directive), so it's length-capped there too — and the check
+    // fires before any S3 work, so the unfetchable objectKey is never touched.
     const tooLong = "a".repeat(50_001);
     const res = await post(
-      { source: TEST_SOURCE, inputs: { imageBase64: "AAAA", text: tooLong } },
+      {
+        source: TEST_SOURCE,
+        inputs: {
+          attachments: [{ objectKey: "build/x.png", mimeType: "image/png" }],
+          text: tooLong,
+        },
+      },
       { headers: withKey("v4-file-intent") },
     );
     expect(res.status).toBe(400);
@@ -288,9 +296,13 @@ describe("POST /generations — happy path", () => {
     const body = (await res.json()) as {
       generationId: string;
       status: string;
+      estimatedDurationMs?: number;
     };
     expect(typeof body.generationId).toBe("string");
     expect(body.status).toBe("pending");
+    // The fresh-submit 202 carries the build-time estimate even before the
+    // executor writes any preview (text-only inputs → the base estimate).
+    expect(body.estimatedDurationMs).toBe(GENERATION_ESTIMATE_MS);
 
     const row = await prisma.agentTemplateGeneration.findUnique({
       where: { id: body.generationId },
@@ -515,6 +527,99 @@ describe("POST /generations — builderModel (privileged override)", () => {
       { headers: withKey("idem-builder-model-diff") },
     );
     expect(second.status).toBe(409);
+  });
+});
+
+describe("POST /generations — connections (open capability flag)", () => {
+  test("unknown connection → 400", async () => {
+    const res = await post(
+      { ...sampleBody, connections: ["not_a_real_service"] },
+      { headers: withKey("conn-unknown") },
+    );
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toContain("Unknown connection");
+  });
+
+  test("valid connections → 202 and persist raw on the row (no auth gate)", async () => {
+    __resetGenerationExecutorForTests(() => Promise.resolve());
+    // Anonymous (no agent key): unlike builderPrompt/builderModel, stamping a
+    // connection grants nothing, so it is NOT restricted to agent-key callers.
+    const res = await post(
+      { ...sampleBody, connections: ["googlecalendar"] },
+      {
+        headers: {
+          "Content-Type": "application/json",
+          "Idempotency-Key": stableUuid("conn-ok-anon"),
+        },
+      },
+    );
+    expect(res.status).toBe(202);
+    const body = (await res.json()) as { generationId: string };
+    const row = await prisma.agentTemplateGeneration.findUnique({
+      where: { id: body.generationId },
+    });
+    expect(row?.connections).toEqual(["googlecalendar"]);
+  });
+
+  test("no connections → row.connections defaults to []", async () => {
+    __resetGenerationExecutorForTests(() => Promise.resolve());
+    const res = await post(sampleBody, { headers: withKey("conn-absent") });
+    expect(res.status).toBe(202);
+    const body = (await res.json()) as { generationId: string };
+    const row = await prisma.agentTemplateGeneration.findUnique({
+      where: { id: body.generationId },
+    });
+    expect(row?.connections).toEqual([]);
+  });
+
+  test("same key + different connections → 409", async () => {
+    // connections influence the generator's output (capabilities directive) and
+    // the persisted template, so they are part of the idempotent contract.
+    __resetGenerationExecutorForTests(() => Promise.resolve());
+    const first = await post(
+      { ...sampleBody, connections: ["googlecalendar"] },
+      { headers: withKey("idem-conn-diff") },
+    );
+    expect(first.status).toBe(202);
+
+    const second = await post(sampleBody, {
+      headers: withKey("idem-conn-diff"),
+    });
+    expect(second.status).toBe(409);
+  });
+
+  test("same key + same connections → dedupes (no spurious 409)", async () => {
+    __resetGenerationExecutorForTests(() => Promise.resolve());
+    const first = await post(
+      { ...sampleBody, connections: ["googlecalendar"] },
+      { headers: withKey("idem-conn-match") },
+    );
+    expect(first.status).toBe(202);
+
+    const second = await post(
+      { ...sampleBody, connections: ["googlecalendar"] },
+      { headers: withKey("idem-conn-match") },
+    );
+    expect([200, 202]).toContain(second.status);
+  });
+
+  test("same key + casing/duplicate-equivalent connections → dedupes (no spurious 409)", async () => {
+    // connections are a set: the dedupe normalizes to canonical catalog ids, so
+    // a replay differing only by casing or duplicates is the same request and
+    // must dedupe rather than 409.
+    __resetGenerationExecutorForTests(() => Promise.resolve());
+    const first = await post(
+      { ...sampleBody, connections: ["GoogleCalendar", "googlecalendar"] },
+      { headers: withKey("idem-conn-normalized") },
+    );
+    expect(first.status).toBe(202);
+
+    const second = await post(
+      { ...sampleBody, connections: ["googlecalendar"] },
+      { headers: withKey("idem-conn-normalized") },
+    );
+    expect([200, 202]).toContain(second.status);
   });
 });
 

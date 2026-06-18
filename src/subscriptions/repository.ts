@@ -1,8 +1,9 @@
 import {
+  BillingProvider,
   Prisma,
   SubscriptionStatus,
   type AppleEnv,
-  type AppleReceipt,
+  type BillingReceipt,
   type Subscription,
   type SubscriptionPeriod,
 } from "@prisma/client";
@@ -17,10 +18,11 @@ import {
 } from "@/subscriptions/tiers";
 import { prisma } from "@/utils/prisma";
 
-export type { Subscription, AppleReceipt, SubscriptionTier };
+export type { Subscription, BillingReceipt, SubscriptionTier };
 export { SUBSCRIPTION_TIER_PLUS };
 export {
   AppleEnv,
+  BillingProvider,
   SubscriptionPeriod,
   SubscriptionStatus,
 } from "@prisma/client";
@@ -29,6 +31,9 @@ export {
  * Find the subscription a caller would see as "current" — preferring an
  * active/trial/grace/billing-retry row, otherwise falling back to the most
  * recent expired/revoked one so the UI can still show recent state.
+ *
+ * Cross-provider tiebreaker: when an account holds both an Apple and a Google
+ * row, the entitled one with the later `currentPeriodEnd` wins naturally.
  *
  * Returns null only when the account has never had a subscription.
  */
@@ -46,20 +51,55 @@ export const findCurrentByAccountId = async (
   });
 };
 
-export const findByOriginalTransactionId = async (
+export const findAppleByOriginalTransactionId = async (
   originalTransactionId: string,
 ): Promise<Subscription | null> =>
-  prisma.subscription.findUnique({ where: { originalTransactionId } });
+  prisma.subscription.findUnique({
+    where: {
+      subscription_apple_otx_unique: {
+        provider: BillingProvider.apple,
+        originalTransactionId,
+      },
+    },
+  });
+
+/**
+ * Find a Google Play subscription by its current purchaseToken. Play rotates
+ * the token on upgrade/downgrade and carries the predecessor in
+ * `linkedPurchaseToken`; this resolver falls through to that secondary index
+ * so we can locate the row both before and after the rotation lands.
+ */
+export const findPlayByPurchaseToken = async (
+  purchaseToken: string,
+): Promise<Subscription | null> => {
+  const direct = await prisma.subscription.findUnique({
+    where: {
+      subscription_play_token_unique: {
+        provider: BillingProvider.googlePlay,
+        purchaseToken,
+      },
+    },
+  });
+  if (direct) return direct;
+  return prisma.subscription.findFirst({
+    where: {
+      provider: BillingProvider.googlePlay,
+      linkedPurchaseToken: purchaseToken,
+    },
+  });
+};
 
 export const findReceiptByTransactionId = async (
+  provider: BillingProvider,
   transactionId: string,
-): Promise<AppleReceipt | null> =>
-  prisma.appleReceipt.findFirst({
-    where: { transactionId },
+): Promise<BillingReceipt | null> =>
+  prisma.billingReceipt.findFirst({
+    where: { provider, transactionId },
     orderBy: { receivedAt: "asc" },
   });
 
-export type VerifyInput = {
+export type AppleVerifyInput = {
+  provider: typeof BillingProvider.apple;
   accountId: string;
   appAccountToken: string;
   productId: string;
@@ -77,22 +117,45 @@ export type VerifyInput = {
   signedPayload: string;
 };
 
+export type GooglePlayVerifyInput = {
+  provider: typeof BillingProvider.googlePlay;
+  accountId: string;
+  obfuscatedAccountId: string;
+  productId: string;
+  tier: SubscriptionTier;
+  period: SubscriptionPeriod;
+  status: SubscriptionStatus;
+  purchaseToken: string;
+  linkedPurchaseToken?: string | null;
+  /** Google's per-order id from the fetched purchase. Used as the audit
+   *  receipt's transactionId and to build the idempotency key. */
+  playOrderId: string;
+  startedAt: Date;
+  currentPeriodStart: Date;
+  currentPeriodEnd: Date;
+  willRenew: boolean;
+  isInTrial: boolean;
+  signedPayload: string;
+};
+
+export type VerifyInput = AppleVerifyInput | GooglePlayVerifyInput;
+
 export type VerifyResult = {
   subscription: Subscription;
-  /** True when this transactionId was new (first time we've seen it). */
+  /** True when this provider transaction was new (first time we've seen it). */
   receiptCreated: boolean;
 };
 
 /**
  * Thrown by upsertFromVerify when a caller authenticates as account B but
- * the persisted Subscription for the same originalTransactionId is owned by
+ * the persisted Subscription for the same provider+identifier is owned by
  * account A. The handler maps this to HTTP 409.
  */
 export class SubscriptionAccountMismatchError extends Error {
   constructor(
     public readonly existingAccountId: string,
     public readonly attemptedAccountId: string,
-    public readonly originalTransactionId: string,
+    public readonly providerSubscriptionId: string,
   ) {
     super("Subscription belongs to a different account");
     this.name = "SubscriptionAccountMismatchError";
@@ -100,11 +163,167 @@ export class SubscriptionAccountMismatchError extends Error {
   }
 }
 
-const verifyIdempotencyKey = (transactionId: string) =>
+const appleVerifyIdempotencyKey = (transactionId: string) =>
   `apple-verify:${transactionId}`;
 
-const notificationIdempotencyKey = (notificationUUID: string) =>
+const playVerifyIdempotencyKey = (orderIdOrToken: string) =>
+  `play-verify:${orderIdOrToken}`;
+
+const appleNotificationIdempotencyKey = (notificationUUID: string) =>
   `apple-ssn:${notificationUUID}`;
+
+const playRtdnIdempotencyKey = (messageId: string) => `play-rtdn:${messageId}`;
+
+const providerSubscriptionId = (input: VerifyInput): string =>
+  input.provider === BillingProvider.apple
+    ? input.originalTransactionId
+    : input.purchaseToken;
+
+const findExistingForVerify = async (
+  tx: Prisma.TransactionClient,
+  input: VerifyInput,
+): Promise<Subscription | null> => {
+  if (input.provider === BillingProvider.apple) {
+    return tx.subscription.findUnique({
+      where: {
+        subscription_apple_otx_unique: {
+          provider: BillingProvider.apple,
+          originalTransactionId: input.originalTransactionId,
+        },
+      },
+    });
+  }
+  const direct = await tx.subscription.findUnique({
+    where: {
+      subscription_play_token_unique: {
+        provider: BillingProvider.googlePlay,
+        purchaseToken: input.purchaseToken,
+      },
+    },
+  });
+  if (direct || !input.linkedPurchaseToken) return direct;
+  // Play rotates purchaseToken on upgrade/downgrade. When the rotated row
+  // hasn't landed yet, the predecessor token still indexes the existing row.
+  return tx.subscription.findUnique({
+    where: {
+      subscription_play_token_unique: {
+        provider: BillingProvider.googlePlay,
+        purchaseToken: input.linkedPurchaseToken,
+      },
+    },
+  });
+};
+
+const reReadAfterRace = async (
+  input: VerifyInput,
+): Promise<Subscription | null> => {
+  if (input.provider === BillingProvider.apple) {
+    return prisma.subscription.findUnique({
+      where: {
+        subscription_apple_otx_unique: {
+          provider: BillingProvider.apple,
+          originalTransactionId: input.originalTransactionId,
+        },
+      },
+    });
+  }
+  const direct = await prisma.subscription.findUnique({
+    where: {
+      subscription_play_token_unique: {
+        provider: BillingProvider.googlePlay,
+        purchaseToken: input.purchaseToken,
+      },
+    },
+  });
+  if (direct || !input.linkedPurchaseToken) return direct;
+  return prisma.subscription.findUnique({
+    where: {
+      subscription_play_token_unique: {
+        provider: BillingProvider.googlePlay,
+        purchaseToken: input.linkedPurchaseToken,
+      },
+    },
+  });
+};
+
+const verifyReceiptShape = (input: VerifyInput) => {
+  if (input.provider === BillingProvider.apple) {
+    return {
+      idempotencyKey: appleVerifyIdempotencyKey(input.transactionId),
+      transactionId: input.transactionId,
+      notificationType: "VERIFY",
+    };
+  }
+  return {
+    idempotencyKey: playVerifyIdempotencyKey(input.playOrderId),
+    transactionId: input.playOrderId,
+    notificationType: "VERIFY",
+  };
+};
+
+const subscriptionCreateData = (
+  input: VerifyInput,
+): Prisma.SubscriptionUncheckedCreateInput => {
+  const base = {
+    accountId: input.accountId,
+    provider: input.provider,
+    productId: input.productId,
+    tier: input.tier,
+    period: input.period,
+    status: input.status,
+    startedAt: input.startedAt,
+    currentPeriodStart: input.currentPeriodStart,
+    currentPeriodEnd: input.currentPeriodEnd,
+    willRenew: input.willRenew,
+    isInTrial: input.isInTrial,
+  };
+  if (input.provider === BillingProvider.apple) {
+    return {
+      ...base,
+      originalTransactionId: input.originalTransactionId,
+      appAccountToken: input.appAccountToken,
+      environment: input.environment,
+    };
+  }
+  return {
+    ...base,
+    purchaseToken: input.purchaseToken,
+    linkedPurchaseToken: input.linkedPurchaseToken ?? null,
+    obfuscatedAccountId: input.obfuscatedAccountId,
+  };
+};
+
+const subscriptionUpdateData = (
+  input: VerifyInput,
+): Prisma.SubscriptionUncheckedUpdateInput => {
+  const base = {
+    productId: input.productId,
+    tier: input.tier,
+    period: input.period,
+    status: input.status,
+    currentPeriodStart: input.currentPeriodStart,
+    currentPeriodEnd: input.currentPeriodEnd,
+    willRenew: input.willRenew,
+    isInTrial: input.isInTrial,
+  };
+  if (input.provider === BillingProvider.apple) {
+    return {
+      ...base,
+      appAccountToken: input.appAccountToken,
+      environment: input.environment,
+    };
+  }
+  return {
+    ...base,
+    // purchaseToken rotates on upgrade/downgrade. If the caller is verifying
+    // a new token whose linkedPurchaseToken matches our existing
+    // purchaseToken, the new token wins and the old one is kept on
+    // linkedPurchaseToken so we can still resolve replays.
+    purchaseToken: input.purchaseToken,
+    linkedPurchaseToken: input.linkedPurchaseToken ?? null,
+    obfuscatedAccountId: input.obfuscatedAccountId,
+  };
+};
 
 /**
  * Idempotent verify upsert. Single tx that:
@@ -113,43 +332,41 @@ const notificationIdempotencyKey = (notificationUUID: string) =>
  *      caller's. Doing this read inside the transaction (rather than in the
  *      handler) closes a TOCTOU window between an outer ownership check and
  *      the update below — under READ COMMITTED two concurrent verifies for
- *      the same originalTransactionId could otherwise both see no conflict
+ *      the same providerSubscriptionId could otherwise both see no conflict
  *      and the second overwrite the first's accountId.
- *   2. Short-circuits exact VERIFY replays (same transactionId) before
- *      mutating Subscription state.
+ *   2. Short-circuits exact VERIFY replays (same provider+transactionId/
+ *      orderId) before mutating Subscription state.
  *   3. Updates the existing Subscription's mutable fields (tier upgrades,
- *      state transitions, renewal window) or creates it if new. Stale JWS
- *      replays do not roll currentPeriodEnd backwards.
- *   4. Records the AppleReceipt audit row keyed by idempotencyKey.
+ *      state transitions, renewal window) or creates it if new. Stale replays
+ *      do not roll currentPeriodEnd backwards.
+ *   4. Records the BillingReceipt audit row keyed by idempotencyKey.
  *
  * The outer try/catch handles a remaining race window: when no row yet
  * exists, two cold-start verifies can both pass the ownership check
  * (existing === null) and both reach Subscription.create. Postgres
- * serializes them via the unique constraint on originalTransactionId; the
- * loser's tx rolls back with P2002 and lands here. We re-read the now-
- * committed row and either return idempotently (same accountId) or surface
- * the mismatch (different accountId won).
+ * serializes them via the composite unique index; the loser's tx rolls back
+ * with P2002 and lands here. We re-read the now-committed row and either
+ * return idempotently (same accountId) or surface the mismatch.
  */
 export const upsertFromVerify = async (
   input: VerifyInput,
 ): Promise<VerifyResult> => {
+  const externalId = providerSubscriptionId(input);
   try {
     return await prisma.$transaction(async (tx) => {
-      const existing = await tx.subscription.findUnique({
-        where: { originalTransactionId: input.originalTransactionId },
-      });
+      const existing = await findExistingForVerify(tx, input);
 
       if (existing && existing.accountId !== input.accountId) {
         throw new SubscriptionAccountMismatchError(
           existing.accountId,
           input.accountId,
-          input.originalTransactionId,
+          externalId,
         );
       }
 
-      const idempotencyKey = verifyIdempotencyKey(input.transactionId);
-      const existingReceipt = await tx.appleReceipt.findUnique({
-        where: { idempotencyKey },
+      const receiptShape = verifyReceiptShape(input);
+      const existingReceipt = await tx.billingReceipt.findUnique({
+        where: { idempotencyKey: receiptShape.idempotencyKey },
         include: { subscription: true },
       });
 
@@ -160,9 +377,9 @@ export const upsertFromVerify = async (
         };
       }
 
-      // A valid but old transaction JWS can arrive after a later renewal/webhook.
-      // Keep the audit row, but do not roll the subscription's entitlement window
-      // or status backwards.
+      // A valid but old transaction can arrive after a later renewal/webhook.
+      // Keep the audit row, but do not roll the subscription's entitlement
+      // window or status backwards.
       const isStaleVerify =
         existing !== null && input.currentPeriodEnd < existing.currentPeriodEnd;
 
@@ -171,43 +388,19 @@ export const upsertFromVerify = async (
           ? existing
           : await tx.subscription.update({
               where: { id: existing.id },
-              data: {
-                appAccountToken: input.appAccountToken,
-                productId: input.productId,
-                tier: input.tier,
-                period: input.period,
-                status: input.status,
-                currentPeriodStart: input.currentPeriodStart,
-                currentPeriodEnd: input.currentPeriodEnd,
-                willRenew: input.willRenew,
-                isInTrial: input.isInTrial,
-                environment: input.environment,
-              },
+              data: subscriptionUpdateData(input),
             })
         : await tx.subscription.create({
-            data: {
-              accountId: input.accountId,
-              appAccountToken: input.appAccountToken,
-              productId: input.productId,
-              tier: input.tier,
-              period: input.period,
-              status: input.status,
-              originalTransactionId: input.originalTransactionId,
-              startedAt: input.startedAt,
-              currentPeriodStart: input.currentPeriodStart,
-              currentPeriodEnd: input.currentPeriodEnd,
-              willRenew: input.willRenew,
-              isInTrial: input.isInTrial,
-              environment: input.environment,
-            },
+            data: subscriptionCreateData(input),
           });
 
-      await tx.appleReceipt.create({
+      await tx.billingReceipt.create({
         data: {
           subscriptionId: subscription.id,
-          idempotencyKey,
-          transactionId: input.transactionId,
-          notificationType: "VERIFY",
+          provider: input.provider,
+          idempotencyKey: receiptShape.idempotencyKey,
+          transactionId: receiptShape.transactionId,
+          notificationType: receiptShape.notificationType,
           signedPayload: input.signedPayload,
         },
       });
@@ -219,15 +412,13 @@ export const upsertFromVerify = async (
       err instanceof Prisma.PrismaClientKnownRequestError &&
       err.code === "P2002"
     ) {
-      const current = await prisma.subscription.findUnique({
-        where: { originalTransactionId: input.originalTransactionId },
-      });
+      const current = await reReadAfterRace(input);
       if (current) {
         if (current.accountId !== input.accountId) {
           throw new SubscriptionAccountMismatchError(
             current.accountId,
             input.accountId,
-            input.originalTransactionId,
+            externalId,
           );
         }
         return { subscription: current, receiptCreated: false };
@@ -247,9 +438,13 @@ export type NotificationStateUpdate = {
   gracePeriodEnd?: Date | null;
   productId?: string;
   tier?: SubscriptionTier;
+  /** Google-only: Play rotates purchaseToken on upgrade/downgrade. */
+  purchaseToken?: string;
+  linkedPurchaseToken?: string | null;
 };
 
-export type ApplyNotificationInput = {
+export type AppleApplyNotificationInput = {
+  provider: typeof BillingProvider.apple;
   originalTransactionId: string;
   transactionId: string;
   notificationUUID: string;
@@ -259,39 +454,83 @@ export type ApplyNotificationInput = {
   update: NotificationStateUpdate;
 };
 
+export type GooglePlayApplyNotificationInput = {
+  provider: typeof BillingProvider.googlePlay;
+  /** Lookup key — the purchaseToken from the RTDN payload. */
+  purchaseToken: string;
+  /** Audit transactionId — Google's latestOrderId from the refreshed purchase. */
+  playOrderId: string;
+  /** Pub/Sub messageId; used as the externalNotificationId for replay dedup. */
+  messageId: string;
+  notificationType: string;
+  notificationSubtype?: string | null;
+  signedPayload: string;
+  update: NotificationStateUpdate;
+};
+
+export type ApplyNotificationInput =
+  | AppleApplyNotificationInput
+  | GooglePlayApplyNotificationInput;
+
 export type ApplyNotificationResult =
   | { kind: "replayed"; subscription: Subscription }
   | { kind: "applied"; subscription: Subscription }
   | { kind: "unknown_subscription" };
 
+const notificationLookup = (
+  input: ApplyNotificationInput,
+): Promise<Subscription | null> => {
+  if (input.provider === BillingProvider.apple) {
+    return findAppleByOriginalTransactionId(input.originalTransactionId);
+  }
+  return findPlayByPurchaseToken(input.purchaseToken);
+};
+
+const notificationReceiptShape = (input: ApplyNotificationInput) => {
+  if (input.provider === BillingProvider.apple) {
+    return {
+      idempotencyKey: appleNotificationIdempotencyKey(input.notificationUUID),
+      externalNotificationId: input.notificationUUID,
+      transactionId: input.transactionId,
+    };
+  }
+  return {
+    idempotencyKey: playRtdnIdempotencyKey(input.messageId),
+    externalNotificationId: input.messageId,
+    transactionId: input.playOrderId,
+  };
+};
+
 /**
- * Apply an Apple S2S notification atomically:
- *   1. Look up the subscription by originalTransactionId. If unknown, return
- *      "unknown_subscription" — the caller decides how to recover (typically
- *      fetching from the App Store Server API and bootstrapping a row).
- *   2. Insert the AppleReceipt row keyed on Apple's notificationUUID. A P2002
- *      unique violation means Apple retried the same notification — we return
- *      "replayed" with the current sub state and do not re-apply changes.
+ * Apply a provider notification atomically:
+ *   1. Look up the subscription by provider-specific identifier. If unknown,
+ *      return "unknown_subscription" — the caller decides how to recover
+ *      (typically ack and let /verify create the row).
+ *   2. Insert the BillingReceipt row keyed on the provider's external
+ *      notification id. A P2002 unique violation means the provider retried
+ *      the same notification — we return "replayed" with the current sub
+ *      state and do not re-apply changes.
  *   3. Apply the state update to the Subscription row.
  */
 export const applyNotification = async (
   input: ApplyNotificationInput,
 ): Promise<ApplyNotificationResult> => {
-  const subscription = await prisma.subscription.findUnique({
-    where: { originalTransactionId: input.originalTransactionId },
-  });
+  const subscription = await notificationLookup(input);
   if (!subscription) {
     return { kind: "unknown_subscription" };
   }
 
+  const receiptShape = notificationReceiptShape(input);
+
   try {
     return await prisma.$transaction(async (tx) => {
-      await tx.appleReceipt.create({
+      await tx.billingReceipt.create({
         data: {
           subscriptionId: subscription.id,
-          idempotencyKey: notificationIdempotencyKey(input.notificationUUID),
-          notificationUUID: input.notificationUUID,
-          transactionId: input.transactionId,
+          provider: input.provider,
+          idempotencyKey: receiptShape.idempotencyKey,
+          externalNotificationId: receiptShape.externalNotificationId,
+          transactionId: receiptShape.transactionId,
           notificationType: input.notificationType,
           notificationSubtype: input.notificationSubtype ?? null,
           signedPayload: input.signedPayload,
@@ -322,6 +561,7 @@ export const applyNotification = async (
 };
 
 export type UserSubscriptionDto = {
+  provider: BillingProvider;
   tier: SubscriptionTier;
   period: SubscriptionPeriod;
   status: SubscriptionStatus;
@@ -336,6 +576,7 @@ export const serializeUserSubscription = (
 ): UserSubscriptionDto => {
   const status = effectiveSubscriptionStatus(subscription);
   return {
+    provider: subscription.provider,
     tier: requireSubscriptionTier(subscription.tier),
     period: subscription.period,
     status,

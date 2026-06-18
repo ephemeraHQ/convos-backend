@@ -51,6 +51,7 @@ async function seedActiveSubscription(accountId: string): Promise<void> {
   await prisma.subscription.create({
     data: {
       accountId,
+      provider: "apple",
       productId: "com.example.plus.monthly",
       tier: "plus",
       period: "monthly",
@@ -131,6 +132,7 @@ describe("runDailyRefill — eligibility", () => {
     await prisma.subscription.create({
       data: {
         accountId,
+        provider: "apple",
         productId: "com.example.plus.monthly",
         tier: "plus",
         period: "monthly",

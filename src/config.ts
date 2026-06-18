@@ -205,6 +205,70 @@ export const GENERATION_EXECUTOR_TIMEOUT_MS = parsePositiveInt(
   5 * 60 * 1000,
 );
 
+// Rough client-facing estimate of how long a build takes, surfaced as
+// `estimatedDurationMs` on the in-progress (202) poll responses so a client can
+// size its progress indicator without measuring. Text-only builds run ~20s on
+// the live builder model (p90); attachments add fetch + moderation + multimodal
+// overhead, so a build carrying any is estimated at ~30s. Env-tunable.
+export const GENERATION_ESTIMATE_MS = parsePositiveInt(
+  process.env.GENERATION_ESTIMATE_MS,
+  20_000,
+);
+export const GENERATION_ESTIMATE_WITH_ATTACHMENTS_MS = parsePositiveInt(
+  process.env.GENERATION_ESTIMATE_WITH_ATTACHMENTS_MS,
+  30_000,
+);
+
+// ---------------------------------------------------------------------------
+// Agent-build attachments (private-bucket upload → backend fetch)
+// ---------------------------------------------------------------------------
+// Private S3 bucket the builder uploads generation attachments to (images,
+// PDFs, voice). Distinct from PUBLIC_ASSETS_BUCKET: the backend reads these
+// bytes itself for generation + moderation, so the content never gets a
+// public CDN URL. Unset → the attachment endpoints return 503 (mirrors the
+// public presigned handler). Named generically (not BUILD_*) because it's the
+// same private bucket other private-content features target.
+export const PRIVATE_ASSETS_BUCKET = (
+  process.env.PRIVATE_ASSETS_BUCKET || ""
+).trim();
+
+// Max attachments per generation. The Convos multi-attachment message tops out
+// at 9, so that's the ceiling here too.
+export const BUILD_ATTACHMENTS_MAX_COUNT = Math.min(
+  9,
+  parsePositiveInt(process.env.BUILD_ATTACHMENTS_MAX_COUNT, 9),
+);
+
+// Aggregate cap across all attachments on one generation (bytes). Per-file
+// caps are class-specific (image vs pdf vs audio) and live in
+// services/build-attachments.ts, set against real vision-model ceilings.
+// 100 MiB fits a full batch either way: 9 images (9 × 10 MiB) or 4 pdf/audio
+// (4 × 25 MiB). Clamped to the default so an env override can only lower it,
+// never raise the executor's worst-case memory footprint (mirrors the count
+// clamp above).
+export const BUILD_ATTACHMENTS_MAX_TOTAL_BYTES = Math.min(
+  100 * 1024 * 1024,
+  parsePositiveInt(
+    process.env.BUILD_ATTACHMENTS_MAX_TOTAL_BYTES,
+    100 * 1024 * 1024,
+  ),
+);
+
+// Audio-capable model that transcribes voice attachments to text before
+// generation (the builder model can't take audio). Override per-env; the
+// concrete format support (e.g. m4a) depends on the chosen model.
+export const BUILD_TRANSCRIBE_MODEL =
+  process.env.BUILD_TRANSCRIBE_MODEL?.trim() || "google/gemini-3.1-flash-lite";
+
+// Minimum Rekognition label confidence (%) to treat an image attachment as
+// unsafe — AWS's recommended default for a block decision, tunable per-env
+// without a deploy. Clamped to 1–100 (it's a percentage); out-of-range or
+// non-numeric values fall back to the default.
+export const IMAGE_MODERATION_MIN_CONFIDENCE = Math.min(
+  100,
+  parsePositiveInt(process.env.IMAGE_MODERATION_MIN_CONFIDENCE, 60),
+);
+
 // Server-side wait knobs for POST /api/v2/agents/join — the handler blocks
 // while the upstream assistant workflow boots a fresh container. Override
 // via env in tests / staging to shrink the wait.

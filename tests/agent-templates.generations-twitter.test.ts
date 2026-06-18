@@ -11,7 +11,15 @@
  *   - composeReply LLM failure → deterministic fallback text still written
  */
 
-import { afterAll, afterEach, beforeAll, describe, expect, test } from "vitest";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  describe,
+  expect,
+  test,
+  vi,
+} from "vitest";
 import {
   __resetComposeReplyForTests,
   buildDeterministicFallback,
@@ -38,6 +46,41 @@ import {
   validAgentAssetsApiKey,
 } from "./agent-templates.cross.helpers";
 import { makeFakeTemplate } from "./agent-templates.generation.helpers";
+
+// S3 is mocked so attachment-bearing submits clear the existence/size check
+// (step 12a) without real S3. HeadObject returns a size well under every cap;
+// no other S3 op is exercised on the submit path.
+vi.mock("@aws-sdk/client-s3", () => ({
+  S3Client: class {
+    send(cmd: { constructor: { name: string } }) {
+      if (cmd.constructor.name === "HeadObjectCommand") {
+        return Promise.resolve({
+          ContentLength: 1_000,
+          ContentType: "image/png",
+        });
+      }
+      return Promise.resolve({});
+    }
+  },
+  PutObjectCommand: class {
+    input: unknown;
+    constructor(input: unknown) {
+      this.input = input;
+    }
+  },
+  HeadObjectCommand: class {
+    input: unknown;
+    constructor(input: unknown) {
+      this.input = input;
+    }
+  },
+  GetObjectCommand: class {
+    input: unknown;
+    constructor(input: unknown) {
+      this.input = input;
+    }
+  },
+}));
 
 const TEST_PORT = 4078;
 const TEST_SOURCE = "generations-twitter-test";
@@ -173,25 +216,34 @@ describe("POST /generations — twitterContext validation", () => {
     expect(res.status).toBe(400);
   });
 
-  test("twitterContext + binary-only inputs (no text, no idea) → 400", async () => {
-    // When the caller sends twitterContext but provides only a pdfBase64 or
-    // imageBase64 input AND no `twitterContext.idea`, there's no text for the
-    // intent moderation check to operate on. The handler should reject with
-    // 400 rather than send the placeholder "[binary input: ...]" string to
-    // the intent classifier.
+  test("twitterContext + attachment-only inputs (no text, no idea) → builds", async () => {
+    // An attachment is itself a deliberate build request, so a twitter
+    // submission carrying one is exempt from the text-required check (step 6a)
+    // and the intent classifier (step 14). Intent is forced to reject here to
+    // prove it's skipped, not merely passing.
+    __resetTwitterIntentForTests(() =>
+      Promise.resolve({ allowed: false, reason: "not_agent_request" }),
+    );
+    __resetGenerationExecutorForTests(() => Promise.resolve());
     const body = {
       source: TEST_SOURCE,
-      inputs: { pdfBase64: "JVBERi0xLjQK" }, // minimal pdf base64 stub
+      inputs: {
+        attachments: [{ objectKey: "build/photo.png", mimeType: "image/png" }],
+      },
       twitterContext: {
         twitterHandle: "@some_user",
         tweetId: "1789432100123456789",
-        // no `idea`
+        // no text, no idea — the photo is the request
       },
     };
-    const res = await post(body, { headers: withKey("tw-binary-no-idea") });
-    expect(res.status).toBe(400);
-    const errBody = (await res.json()) as { error: string };
-    expect(errBody.error.toLowerCase()).toContain("twittercontext.idea");
+    const res = await post(body, { headers: withKey("tw-attachment-only") });
+    expect(res.status).toBe(202);
+
+    const rows = await prisma.agentTemplateGeneration.findMany({
+      where: { source: TEST_SOURCE, ownerAccountId: ADMIN_ACCOUNT_ID },
+    });
+    expect(rows).toHaveLength(1);
+    expect(rows[0].twitterContext).toBeTruthy();
   });
 });
 
@@ -259,6 +311,37 @@ describe("POST /generations — twitter intent moderation", () => {
     expect(res.status).toBe(422);
     const body = (await res.json()) as { reason: string; category: string };
     expect(body.category).toBe("content");
+    expect(intentCalls).toBe(0);
+  });
+
+  test("attachment present → intent gate skipped (photo is the request)", async () => {
+    // A photo mention whose only text is the photo's own t.co link would be
+    // classified not_agent_request, but the attachment makes intent moot — the
+    // gate is skipped entirely (not just passed), so the build proceeds.
+    let intentCalls = 0;
+    __resetTwitterIntentForTests(() => {
+      intentCalls += 1;
+      return Promise.resolve({ allowed: false, reason: "not_agent_request" });
+    });
+    __resetGenerationExecutorForTests(() => Promise.resolve());
+
+    const res = await post(
+      {
+        source: TEST_SOURCE,
+        inputs: {
+          text: "https://t.co/y8VfTXPY7f",
+          attachments: [
+            { objectKey: "build/photo.png", mimeType: "image/png" },
+          ],
+        },
+        twitterContext: {
+          twitterHandle: "@some_user",
+          tweetId: "1789432100123456789",
+        },
+      },
+      { headers: withKey("tw-attachment-skips-intent") },
+    );
+    expect(res.status).toBe(202);
     expect(intentCalls).toBe(0);
   });
 });

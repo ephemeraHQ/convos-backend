@@ -2,8 +2,9 @@
  * Tests for GET /api/v2/agent-templates/generations/:generationId
  *
  * Covers:
- *   - Happy path: terminal row returns full state with templateId
- *   - Pending row returns 200 with status=pending and no templateId
+ *   - Pending/running row returns 202 (in-progress signal)
+ *   - Running row surfaces progressPhrases + preview (the draft identity)
+ *   - Terminal row returns 200 with templateId; preview/progressPhrases dropped
  *   - wait_ms long-polls until terminal
  *   - wait_ms with invalid value → 400
  *   - Cross-account access → 404 (no existence leak)
@@ -11,7 +12,9 @@
  *   - Not found → 404
  */
 
+import { Prisma } from "@prisma/client";
 import { afterAll, afterEach, beforeAll, describe, expect, test } from "vitest";
+import { __resetDistillForTests } from "@/api/v2/agent-templates/services/distill";
 import {
   __resetGenerationExecutorForTests,
   executeGeneration,
@@ -22,6 +25,10 @@ import {
   __resetGenerateTemplateForTests,
   DEFAULT_TEST_METRICS,
 } from "@/api/v2/agent-templates/services/templateGen";
+import {
+  GENERATION_ESTIMATE_MS,
+  GENERATION_ESTIMATE_WITH_ATTACHMENTS_MS,
+} from "@/config";
 import { __setAgentAssetsApiKeyOverrideForTests } from "@/middleware/agentAuth";
 import { ADMIN_ACCOUNT_ID } from "@/utils/constants";
 import { createJwtToken } from "@/utils/jwt";
@@ -30,7 +37,10 @@ import {
   startAgentTemplatesServer,
   validAgentAssetsApiKey,
 } from "./agent-templates.cross.helpers";
-import { makeFakeTemplate } from "./agent-templates.generation.helpers";
+import {
+  makeFakeDistill,
+  makeFakeTemplate,
+} from "./agent-templates.generation.helpers";
 
 const TEST_PORT = 4076;
 const TEST_SOURCE = "generations-get-test";
@@ -50,6 +60,18 @@ beforeAll(async () => {
   __setAgentAssetsApiKeyOverrideForTests(validAgentAssetsApiKey);
   __resetPostHogForTests(() => {});
   __resetModerationForTests(() => Promise.resolve({ allowed: true }));
+  // Match the generated template's identity so the executor's overlay is a
+  // no-op and the agentName-based cleanup applies (the long-poll test runs the
+  // real executor).
+  __resetDistillForTests(() =>
+    Promise.resolve(
+      makeFakeDistill({
+        agentName: fakeTemplate.agentName,
+        emoji: fakeTemplate.emoji,
+        description: fakeTemplate.description,
+      }),
+    ),
+  );
   __resetGenerateTemplateForTests(() =>
     Promise.resolve({
       template: fakeTemplate,
@@ -82,6 +104,7 @@ afterEach(async () => {
 
 afterAll(async () => {
   __resetGenerateTemplateForTests(null);
+  __resetDistillForTests(null);
   __resetPostHogForTests(null);
   __resetModerationForTests(null);
   await prisma.account.delete({ where: { id: OTHER_ACCOUNT_ID } }).catch(() => {
@@ -120,6 +143,9 @@ const insertGeneration = (
     error: string | null;
     expiresAt: Date | null;
     idempotencyKey: string;
+    preview: unknown;
+    progressPhrases: unknown;
+    inputs: Prisma.InputJsonValue;
   }> = {},
 ) =>
   prisma.agentTemplateGeneration.create({
@@ -128,11 +154,19 @@ const insertGeneration = (
       source: TEST_SOURCE,
       idempotencyKey:
         overrides.idempotencyKey ?? `get-test-${Date.now()}-${Math.random()}`,
-      inputs: { text: "test" },
+      inputs: overrides.inputs ?? { text: "test" },
       status: overrides.status ?? "pending",
       templateId: overrides.templateId ?? null,
       error: overrides.error ?? null,
       expiresAt: overrides.expiresAt ?? null,
+      preview:
+        overrides.preview === undefined
+          ? Prisma.JsonNull
+          : (overrides.preview as Prisma.InputJsonValue),
+      progressPhrases:
+        overrides.progressPhrases === undefined
+          ? Prisma.JsonNull
+          : (overrides.progressPhrases as Prisma.InputJsonValue),
     },
   });
 
@@ -141,22 +175,69 @@ const insertGeneration = (
 // ---------------------------------------------------------------------------
 
 describe("GET /generations/:id", () => {
-  test("pending row returns 200 with status=pending and no templateId", async () => {
+  test("pending row returns 202 with status=pending and no templateId", async () => {
     const gen = await insertGeneration({ status: "pending" });
 
     const res = await get(gen.id);
-    expect(res.status).toBe(200);
+    expect(res.status).toBe(202);
     const body = (await res.json()) as {
       generationId: string;
       status: string;
       templateId?: string;
+      estimatedDurationMs?: number;
     };
     expect(body.generationId).toBe(gen.id);
     expect(body.status).toBe("pending");
     expect(body.templateId).toBeUndefined();
+    // Text-only inputs → the base build-time estimate.
+    expect(body.estimatedDurationMs).toBe(GENERATION_ESTIMATE_MS);
   });
 
-  test("terminal done row returns 200 with templateId", async () => {
+  test("running row with attachments returns the larger estimatedDurationMs", async () => {
+    const gen = await insertGeneration({
+      status: "running",
+      inputs: {
+        text: "make it",
+        attachments: [{ objectKey: "build/a.png", mimeType: "image/png" }],
+      },
+    });
+
+    const res = await get(gen.id);
+    expect(res.status).toBe(202);
+    const body = (await res.json()) as { estimatedDurationMs?: number };
+    expect(body.estimatedDurationMs).toBe(
+      GENERATION_ESTIMATE_WITH_ATTACHMENTS_MS,
+    );
+  });
+
+  test("running row returns 202 with progressPhrases + preview (identity)", async () => {
+    const gen = await insertGeneration({
+      status: "running",
+      preview: {
+        agentName: "Wave Boss",
+        emoji: "🏄",
+        description: "surf crew",
+      },
+      progressPhrases: ["Writing how it thinks", "Shaping its voice"],
+    });
+
+    const res = await get(gen.id);
+    expect(res.status).toBe(202);
+    const body = (await res.json()) as {
+      status: string;
+      progressPhrases?: string[];
+      preview?: { agentName?: string; description?: string };
+    };
+    expect(body.status).toBe("running");
+    expect(body.progressPhrases).toEqual([
+      "Writing how it thinks",
+      "Shaping its voice",
+    ]);
+    expect(body.preview?.agentName).toBe("Wave Boss");
+    expect(body.preview?.description).toBe("surf crew");
+  });
+
+  test("terminal done row returns 200 with templateId, dropping preview + progressPhrases", async () => {
     const template = await prisma.agentTemplate.create({
       data: {
         ownerAccountId: ADMIN_ACCOUNT_ID,
@@ -166,10 +247,18 @@ describe("GET /generations/:id", () => {
         status: "draft",
       },
     });
+    // The row still carries the running preview columns — the handler must omit
+    // them on the terminal 200 (the client fetches the template by templateId).
     const gen = await insertGeneration({
       status: "done",
       templateId: template.id,
       expiresAt: new Date(Date.now() + 60_000),
+      preview: {
+        agentName: "Wave Boss",
+        emoji: "🏄",
+        description: "surf crew",
+      },
+      progressPhrases: ["Writing how it thinks"],
     });
 
     const res = await get(gen.id);
@@ -178,9 +267,15 @@ describe("GET /generations/:id", () => {
       generationId: string;
       status: string;
       templateId?: string;
+      preview?: unknown;
+      progressPhrases?: unknown;
+      estimatedDurationMs?: number;
     };
     expect(body.status).toBe("done");
     expect(body.templateId).toBe(template.id);
+    expect(body.preview).toBeUndefined();
+    expect(body.progressPhrases).toBeUndefined();
+    expect(body.estimatedDurationMs).toBeUndefined();
   });
 
   test("failed row returns 200 with error string", async () => {
@@ -197,16 +292,16 @@ describe("GET /generations/:id", () => {
     expect(body.error).toContain("kaboom");
   });
 
-  test("cross-account access → 200 (generation ID is the capability)", async () => {
+  test("cross-account access → 202 (generation ID is the capability)", async () => {
     // The GET status endpoint is public — anyone with the UUID can read
     // the row. This matches anonymous-submission semantics: callers get
     // the ID handed back from POST and poll status without minting a
-    // token.
+    // token. A pending row is in-progress, so the status is 202.
     const gen = await insertGeneration({ status: "pending" });
 
     const headers = await otherAccountHeaders();
     const res = await get(gen.id, { headers });
-    expect(res.status).toBe(200);
+    expect(res.status).toBe(202);
     const body = (await res.json()) as { generationId: string };
     expect(body.generationId).toBe(gen.id);
   });
