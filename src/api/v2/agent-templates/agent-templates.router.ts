@@ -59,8 +59,8 @@ agentTemplatesRouter.get(
 // bucket. Mounted before /:idOrUrlSlug so the wildcard doesn't capture
 // "attachments" as a slug-or-id. Optional auth, like the generation endpoint.
 // Auth runs before the limiter so it can read the resolved identity from
-// res.locals and exempt authenticated callers — the per-IP cap then applies
-// only to anonymous capability-token minting.
+// res.locals and exempt the agent-API-key caller (the bot) — the per-IP cap
+// then applies to everyone else (anonymous + signed-in JWT callers).
 agentTemplatesRouter.get(
   "/attachments/presigned",
   optionalAuthOrAgentApiKeyAuth,

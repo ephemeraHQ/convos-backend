@@ -65,19 +65,22 @@ export const agentAssetPreAuthLimiter = rateLimit({
 
 // Rate limiting for the build-attachment presigned-URL endpoint
 // (GET /api/v2/agent-templates/attachments/presigned). Each request mints an
-// S3 PUT capability token. The cap targets ANONYMOUS minting: authenticated
-// callers are accountable, so they're exempted via `skip` and only anonymous
-// traffic is held to this per-IP cap. The exemption requires the auth
-// middleware to run BEFORE this limiter so `res.locals` carries the resolved
-// identity (see the route wiring in agent-templates.router.ts).
+// S3 PUT capability token, and there's no global ceiling behind this — only the
+// per-kind size cap and the object lifecycle bound an abuser — so the per-IP cap
+// is the blast-radius limit on unbounded minting. Only the agent-API-key caller
+// (the twitter bot, which mints up to 9 presigns per multi-photo mention behind
+// one egress IP) is exempted via `skip`; anonymous and signed-in (JWT) callers
+// stay capped. The exemption requires the auth middleware to run BEFORE this
+// limiter so `res.locals` carries the resolved identity (see the route wiring in
+// agent-templates.router.ts).
 export const buildAttachmentPresignedLimiter = rateLimit({
   windowMs: 60 * 1000, // 1 minute
   limit: 20,
   keyGenerator: (req) => req.ip || "unknown",
-  // Authenticated callers bypass the cap. `res.locals.accountId` is set for
-  // both the agent-API-key path (→ ADMIN, e.g. the twitter bot) and the JWT
-  // path; it stays undefined for anonymous requests, which remain limited.
-  skip: (_req, res) => Boolean(res.locals.accountId),
+  // Only the agent-API-key caller bypasses the cap. `res.locals.isApiKeyListener`
+  // is set exclusively on that path (→ ADMIN_ACCOUNT_ID); anonymous and JWT
+  // callers keep `isApiKeyListener` falsy and stay subject to the per-IP limit.
+  skip: (_req, res) => res.locals.isApiKeyListener === true,
   legacyHeaders: false,
   standardHeaders: "draft-8",
   message: {
