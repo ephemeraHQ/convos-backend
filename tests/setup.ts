@@ -1,6 +1,8 @@
 // vi.mock for firebase-admin lives in __mocks__/ + per-test-file vi.mock()
 // declarations.
 
+import { afterAll } from "vitest";
+
 // Local dev: load DATABASE_URL (and any other vars) from .env when the shell
 // hasn't already provided it. CI sets DATABASE_URL as a real env var, so this
 // no-ops there. vitest does not read .env on its own, unlike the prisma CLI.
@@ -77,3 +79,8 @@ process.env.PAYMENTS_CRON_API_KEY =
 // number is set by ops via env in each deploy environment.
 process.env.PAYMENTS_GRANT_PLUS_MONTHLY =
   process.env.PAYMENTS_GRANT_PLUS_MONTHLY || "2500";
+
+afterAll(async () => {
+  const { prisma } = await import("@/utils/prisma");
+  await prisma.$disconnect();
+});
