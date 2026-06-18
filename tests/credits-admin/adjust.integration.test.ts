@@ -120,10 +120,12 @@ describe("POST /api/v2/credits-admin/accounts/:accountId/adjust", () => {
       reason: "dup",
       idempotencyKey: `admin_adjust_${randomUUID()}`,
     };
-    await adminRequest(app).post(
+    const res1 = await adminRequest(app).post(
       `/api/v2/credits-admin/accounts/${accountId}/adjust`,
       body,
     );
+    expect(res1.status).toBe(200);
+    expect(res1.body).toMatchObject({ replayed: false });
     const res2 = await adminRequest(app).post(
       `/api/v2/credits-admin/accounts/${accountId}/adjust`,
       body,

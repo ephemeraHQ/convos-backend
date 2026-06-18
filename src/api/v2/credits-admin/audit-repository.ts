@@ -31,7 +31,7 @@ export const listAdminAuditByAccount = async (
 ): Promise<AdminAudit[]> => {
   return prisma.adminAudit.findMany({
     where: { accountId },
-    orderBy: { createdAt: "desc" },
+    orderBy: [{ createdAt: "desc" }, { id: "desc" }],
     take: limit,
   });
 };

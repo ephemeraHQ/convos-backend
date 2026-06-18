@@ -78,10 +78,12 @@ describe("POST /api/v2/credits-admin/accounts/:accountId/grant", () => {
     tracker.push(accountId);
     const idempotencyKey = `admin_grant_${randomUUID()}`;
     const body = { credits: 1_000, reason: "dup", idempotencyKey };
-    await adminRequest(app).post(
+    const res1 = await adminRequest(app).post(
       `/api/v2/credits-admin/accounts/${accountId}/grant`,
       body,
     );
+    expect(res1.status).toBe(200);
+    expect(res1.body).toMatchObject({ replayed: false });
     const res2 = await adminRequest(app).post(
       `/api/v2/credits-admin/accounts/${accountId}/grant`,
       body,

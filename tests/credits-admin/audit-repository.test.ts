@@ -38,9 +38,13 @@ describe("AdminAudit repository", () => {
 
     const rows = await listAdminAuditByAccount(accountId);
     expect(rows).toHaveLength(2);
-    expect(rows[0].reason).toBe("second");
-    expect(rows[0].action).toBe("adjust");
-    expect(rows[0].deltaCredits).toBe(-100n);
-    expect(rows[1].reason).toBe("first");
+    expect(rows[0].createdAt.getTime()).toBeGreaterThanOrEqual(
+      rows[1].createdAt.getTime(),
+    );
+    const first = rows.find((r) => r.reason === "first");
+    const second = rows.find((r) => r.reason === "second");
+    expect(first?.action).toBe("grant");
+    expect(second?.action).toBe("adjust");
+    expect(second?.deltaCredits).toBe(-100n);
   });
 });
