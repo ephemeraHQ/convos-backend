@@ -63,6 +63,18 @@ export const attachActorIdentity = async (
     return;
   }
 
+  // Domain configured but AUD missing is a partial misconfig. jose treats an
+  // empty `audience` as "no audience check", so a validly-signed token issued
+  // for a DIFFERENT Access application would verify here and stamp an
+  // attacker-chosen-but-valid email on the audit row. Fail closed (500) rather
+  // than attribute a wrong actor — set CF_ACCESS_TEAM_DOMAIN and CF_ACCESS_AUD
+  // together.
+  if (!aud) {
+    req.log.error("cf_identity.aud_misconfigured");
+    res.status(500).json({ code: "server_error" });
+    return;
+  }
+
   const assertion = (req.header(ASSERTION_HEADER) ?? "").trim();
   if (!assertion) {
     if (requireIdentity) {
@@ -75,14 +87,10 @@ export const attachActorIdentity = async (
     return;
   }
 
-  // Domain set but AUD forgotten: every real Cloudflare token will fail the
-  // audience check below (fail-closed). Surface it so the misconfig is
-  // diagnosable instead of looking like a stream of invalid assertions.
-  if (!aud) req.log.warn("cf_identity.aud_unset");
-
   try {
     // clockTolerance guards against minor node/CF clock skew spuriously
-    // rejecting (and thus 401-blocking) an otherwise-valid admin action.
+    // rejecting (and thus 401-blocking) an otherwise-valid admin action. `aud`
+    // is guaranteed non-empty here (checked above).
     const { payload } = await jwtVerify(assertion, resolver, {
       audience: aud,
       clockTolerance: 30,

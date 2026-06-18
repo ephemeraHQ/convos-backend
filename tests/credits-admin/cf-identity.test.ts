@@ -109,6 +109,13 @@ describe("attachActorIdentity", () => {
     expect(res.status).toBe(401);
   });
 
+  it("config present + aud unset → 500 misconfig (fail closed)", async () => {
+    __setCfIdentityForTests({ resolver, aud: "", requireIdentity: false });
+    const token = await signAssertion({ email: "borja@convos.xyz" }, "any-aud");
+    const res = await supertest(app).get("/probe").set(ASSERTION_HEADER, token);
+    expect(res.status).toBe(500);
+  });
+
   it("valid assertion → verified email, 200", async () => {
     __setCfIdentityForTests({ resolver, aud: AUD, requireIdentity: false });
     const token = await signAssertion({ email: "borja@convos.xyz" });
