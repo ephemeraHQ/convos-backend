@@ -65,13 +65,22 @@ export const agentAssetPreAuthLimiter = rateLimit({
 
 // Rate limiting for the build-attachment presigned-URL endpoint
 // (GET /api/v2/agent-templates/attachments/presigned). Each request mints an
-// S3 PUT capability token and the endpoint is optional-auth, so it needs a
-// tighter per-IP cap than the global 1000/5min — comfortably above the handful
-// of presigns a real multi-attachment build needs, far below a useful abuse rate.
+// S3 PUT capability token, and there's no global ceiling behind this — only the
+// per-kind size cap and the object lifecycle bound an abuser — so the per-IP cap
+// is the blast-radius limit on unbounded minting. Only the agent-API-key caller
+// (the twitter bot, which mints up to 9 presigns per multi-photo mention behind
+// one egress IP) is exempted via `skip`; anonymous and signed-in (JWT) callers
+// stay capped. The exemption requires the auth middleware to run BEFORE this
+// limiter so `res.locals` carries the resolved identity (see the route wiring in
+// agent-templates.router.ts).
 export const buildAttachmentPresignedLimiter = rateLimit({
   windowMs: 60 * 1000, // 1 minute
   limit: 20,
   keyGenerator: (req) => req.ip || "unknown",
+  // Only the agent-API-key caller bypasses the cap. `res.locals.isApiKeyListener`
+  // is set exclusively on that path (→ ADMIN_ACCOUNT_ID); anonymous and JWT
+  // callers keep `isApiKeyListener` falsy and stay subject to the per-IP limit.
+  skip: (_req, res) => res.locals.isApiKeyListener === true,
   legacyHeaders: false,
   standardHeaders: "draft-8",
   message: {
