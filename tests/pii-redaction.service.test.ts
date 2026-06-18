@@ -10,6 +10,7 @@
 
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import {
+  __resetPiiRedactionForTests,
   __setBuilderApiKeyOverrideForTests,
   __setPiiModelOverrideForTests,
   applyFindings,
@@ -31,6 +32,9 @@ function completion(obj: unknown): any {
 
 describe("redactTemplatePii", () => {
   beforeEach(() => {
+    // Opt out of the global no-op redaction stub (tests/setup.ts) so these
+    // tests exercise the real redactTemplatePii against the mocked client.
+    __resetPiiRedactionForTests(null);
     __setBuilderApiKeyOverrideForTests("test-key");
     __setPiiModelOverrideForTests("test-model");
     mockCall.mockReset();
