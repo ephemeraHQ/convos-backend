@@ -2,9 +2,8 @@ import crypto from "node:crypto";
 import type { Request, Response } from "express";
 import { config } from "@/payments/credits/config";
 
-export const adminPageHandler = (req: Request, res: Response): void => {
+export const adminPageHandler = (_req: Request, res: Response): void => {
   const nonce = crypto.randomBytes(16).toString("base64");
-  const adminEmail: string = res.locals.actorEmail ?? "unknown";
   const creditsPerUsd = Number(config.creditsPerDollar);
 
   res.setHeader("Content-Type", "text/html; charset=utf-8");
@@ -14,7 +13,7 @@ export const adminPageHandler = (req: Request, res: Response): void => {
     "Content-Security-Policy",
     `default-src 'self'; script-src 'nonce-${nonce}'; style-src 'unsafe-inline'`,
   );
-  res.send(buildHTML(nonce, adminEmail, creditsPerUsd));
+  res.send(buildHTML(nonce, creditsPerUsd));
 };
 
 function safeScriptJson(value: unknown): string {
@@ -23,11 +22,7 @@ function safeScriptJson(value: unknown): string {
     .replace(/>/g, "\\u003e");
 }
 
-function buildHTML(
-  nonce: string,
-  adminEmail: string,
-  creditsPerUsd: number,
-): string {
+function buildHTML(nonce: string, creditsPerUsd: number): string {
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -77,7 +72,7 @@ function buildHTML(
 </head>
 <body>
 <h1>💳 Credits Admin</h1>
-<div class="identity">Acting as <strong id="admin-email"></strong> (Cloudflare Access)</div>
+<div class="identity">Authenticated via admin token · <button id="clear-token" class="btn-secondary" style="padding:2px 10px;font-size:12px">Lock</button></div>
 
 <div class="card">
   <h2>Find account</h2>
@@ -143,17 +138,39 @@ function buildHTML(
 <div class="toast" id="toast"></div>
 
 <script nonce="${nonce}">
-  var ADMIN_EMAIL = ${safeScriptJson(adminEmail)};
   var CREDITS_PER_USD = ${safeScriptJson(creditsPerUsd)};
   var currentAccountId = null;
-  document.getElementById("admin-email").textContent = ADMIN_EMAIL;
+
+  function getToken() {
+    var t = sessionStorage.getItem("credits_admin_token");
+    if (!t) {
+      t = window.prompt("Admin token");
+      if (t) sessionStorage.setItem("credits_admin_token", t);
+    }
+    return t || "";
+  }
+  function clearToken() {
+    sessionStorage.removeItem("credits_admin_token");
+    toast("Token cleared", "success");
+  }
+  document.getElementById("clear-token").addEventListener("click", clearToken);
 
   function apiBase() { return window.location.origin + "/api/v2/credits-admin"; }
   function apiFetch(path, opts) {
     opts = opts || {};
-    return fetch(apiBase() + path, Object.assign({ credentials: "include" }, opts, {
-      headers: Object.assign({ "Content-Type": "application/json" }, opts.headers || {})
-    }));
+    var token = getToken();
+    return fetch(apiBase() + path, Object.assign({}, opts, {
+      headers: Object.assign(
+        { "Content-Type": "application/json", "Authorization": "Bearer " + token },
+        opts.headers || {},
+      ),
+    })).then(function (r) {
+      if (r.status === 401) {
+        sessionStorage.removeItem("credits_admin_token");
+        toast("Auth failed — re-enter token", "error");
+      }
+      return r;
+    });
   }
   function toast(msg, type) {
     var el = document.getElementById("toast");
@@ -271,8 +288,7 @@ function buildHTML(
     var key = newKey("admin_grant");
     confirmModal(
       "Grant <strong>" + fmtCredits(credits) + "</strong> credits " + esc(usdHint(credits)) +
-      " to <code>" + esc(currentAccountId) + "</code>.<br>Reason: " + esc(reason) +
-      "<br>Acting as: " + esc(ADMIN_EMAIL),
+      " to <code>" + esc(currentAccountId) + "</code>.<br>Reason: " + esc(reason),
       function (close) {
         apiFetch("/accounts/" + encodeURIComponent(currentAccountId) + "/grant", {
           method: "POST",
@@ -297,8 +313,7 @@ function buildHTML(
     var key = newKey("admin_adjust");
     confirmModal(
       "Adjust ledger by <strong>" + (delta > 0 ? "+" : "") + fmtCredits(delta) + "</strong> credits " + esc(usdHint(Math.abs(delta))) +
-      " on <code>" + esc(currentAccountId) + "</code>.<br>Reason: " + esc(reason) +
-      "<br>Acting as: " + esc(ADMIN_EMAIL),
+      " on <code>" + esc(currentAccountId) + "</code>.<br>Reason: " + esc(reason),
       function (close) {
         apiFetch("/accounts/" + encodeURIComponent(currentAccountId) + "/adjust", {
           method: "POST",
