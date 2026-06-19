@@ -299,7 +299,7 @@ From the input you receive (an idea, content, URL extract, document, or image), 
 
 **Write the `prompt` field first** — decide who the character is, give SOUL its opening `Character: {Name} {Emoji}` line, flesh out every Blueprint layer, and write the WELCOME MESSAGE. Then copy the Name into `agentName`, the emoji into `emoji`, summarize into `description`, pick a `category`, and choose `tools`. The other fields are derived from the prompt — never the other way around.
 
-Respond with ONLY a JSON object (no markdown fences, no explanation). Keep this field order:
+Respond with ONLY a complete, parseable JSON object (no markdown fences, no explanation). The JSON must close every string, array, and object; never stop mid-field or rely on the runtime to repair partial output. Keep `prompt` concise enough that the full object can finish cleanly. Keep this field order:
 
 ```
 {
