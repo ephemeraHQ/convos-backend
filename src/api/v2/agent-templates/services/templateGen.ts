@@ -9,7 +9,9 @@
  * pool's asymmetry preserved verbatim).
  *
  * OpenRouter raw fetch to https://openrouter.ai/api/v1/chat/completions with
- * strict response_format json_schema, temp 0.7, no max_tokens.
+ * strict response_format json_schema, temp 0.7, no max_tokens. If the provider
+ * returns truncated/malformed JSON despite structured output, retry once at a
+ * lower temperature with an explicit concise-JSON reminder.
  * Helper calls run at temp 0.2 without response_format: the GitHub-instructions
  * selector uses the main model; the content-classifier uses the cheap
  * BUILDER_CLASSIFIER_MODEL and passes content through on two routes: it is
@@ -90,6 +92,11 @@ const DEFAULT_MODEL = "anthropic/claude-opus-4.8-fast";
 // so the same wallclock cap covers both. If the runtime ever streams chunks
 // from upstream, that path needs a separate per-chunk inactivity timer.
 const OPENROUTER_TIMEOUT_MS = 120_000;
+const GENERATE_JSON_RETRY_TEMPERATURE = 0.2;
+const GENERATE_JSON_RETRY_DIRECTIVE =
+  "Retry the same generation. Return only one valid JSON object matching the " +
+  "schema. Keep the prompt concise enough to fit completely; do not include " +
+  "markdown fences or commentary.";
 
 // ---------------------------------------------------------------------------
 // LLM error classification
@@ -126,6 +133,37 @@ function describeLlmError(err: unknown): string {
   }
   if (isHttpStatusError(err)) return `HTTP ${err.status}`;
   return err instanceof Error ? err.message : String(err);
+}
+
+function isJsonParseFailure(err: unknown): boolean {
+  return (
+    err instanceof Error &&
+    /^Failed to parse (?:LLM response as JSON|extracted JSON):/.test(
+      err.message,
+    )
+  );
+}
+
+function summarizeLlmContent(content: string): Record<string, unknown> {
+  return {
+    contentLength: content.length,
+    contentStart: content.slice(0, 300),
+    contentEnd: content.slice(Math.max(0, content.length - 300)),
+  };
+}
+
+function buildGenerateRetryBody(reqBody: any): any {
+  return {
+    ...reqBody,
+    temperature: GENERATE_JSON_RETRY_TEMPERATURE,
+    messages: [
+      ...reqBody.messages,
+      {
+        role: "user",
+        content: GENERATE_JSON_RETRY_DIRECTIVE,
+      },
+    ],
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -1617,10 +1655,10 @@ export async function generateTemplate(
     }
     throw err;
   }
-  const latencyMs = Math.round(performance.now() - t0);
-  const promptTokens = Number(data?.usage?.prompt_tokens ?? 0);
-  const completionTokens = Number(data?.usage?.completion_tokens ?? 0);
-  const responseModel = String(data?.model ?? model);
+  let latencyMs = Math.round(performance.now() - t0);
+  let promptTokens = Number(data?.usage?.prompt_tokens ?? 0);
+  let completionTokens = Number(data?.usage?.completion_tokens ?? 0);
+  let responseModel = String(data?.model ?? model);
   console.log(
     `[templateGen] generate ok: model=${responseModel}, latencyMs=${latencyMs}, prompt=${promptTokens}, completion=${completionTokens}`,
   );
@@ -1638,7 +1676,96 @@ export async function generateTemplate(
     throw new Error("No content in LLM response");
   }
 
-  const parsed = parseTemplateResponse(content);
+  let parsed: Omit<GeneratedTemplate, "connections">;
+  try {
+    parsed = parseTemplateResponse(content);
+  } catch (err) {
+    if (!isJsonParseFailure(err)) throw err;
+
+    const finishReason = data?.choices?.[0]?.finish_reason;
+    console.warn("[templateGen] Invalid LLM JSON; retrying generate once", {
+      model: responseModel,
+      finishReason,
+      error: err instanceof Error ? err.message : String(err),
+      ...summarizeLlmContent(content),
+    });
+
+    const retryStarted = performance.now();
+    let retryData: any;
+    try {
+      retryData = await openRouterChatCompletion({
+        apiKey,
+        stage: "generate",
+        body: buildGenerateRetryBody(reqBody),
+        signal: externalSignal,
+        timeoutMs: OPENROUTER_TIMEOUT_MS,
+        trace,
+      });
+    } catch (retryErr) {
+      if (isTimeoutOrAbort(retryErr)) {
+        throw new AppError(
+          504,
+          `OpenRouter request timed out after ${OPENROUTER_TIMEOUT_MS}ms`,
+        );
+      }
+      if (isHttpStatusError(retryErr)) {
+        console.error(
+          "[templateGen] OpenRouter retry error:",
+          retryErr.status,
+          retryErr.message.slice(0, 500),
+        );
+        throw new Error(`OpenRouter API error ${retryErr.status}`);
+      }
+      throw retryErr;
+    }
+
+    if (retryData?.error) {
+      throw new Error(
+        `LLM error after JSON retry: ${retryData.error.message || "unknown"}`,
+      );
+    }
+
+    const retryContent = retryData?.choices?.[0]?.message?.content;
+    const retryFinishReason = retryData?.choices?.[0]?.finish_reason;
+    const retryModel = String(retryData?.model ?? responseModel);
+    if (!retryContent) {
+      console.error(
+        "[templateGen] Empty LLM retry response:",
+        JSON.stringify(retryData).slice(0, 500),
+      );
+      throw new Error("No content in LLM retry response");
+    }
+
+    try {
+      parsed = parseTemplateResponse(retryContent);
+    } catch (retryParseErr) {
+      console.error("[templateGen] Invalid LLM JSON after retry", {
+        model: retryModel,
+        finishReason: retryFinishReason,
+        error:
+          retryParseErr instanceof Error
+            ? retryParseErr.message
+            : String(retryParseErr),
+        ...summarizeLlmContent(retryContent),
+      });
+      throw new Error(
+        `Invalid structured JSON after retry: ${
+          retryParseErr instanceof Error
+            ? retryParseErr.message
+            : String(retryParseErr)
+        }`,
+      );
+    }
+
+    const retryLatencyMs = Math.round(performance.now() - retryStarted);
+    latencyMs = Math.round(performance.now() - t0);
+    promptTokens = Number(retryData?.usage?.prompt_tokens ?? 0);
+    completionTokens = Number(retryData?.usage?.completion_tokens ?? 0);
+    responseModel = retryModel;
+    console.log(
+      `[templateGen] generate retry ok: model=${retryModel}, latencyMs=${retryLatencyMs}, prompt=${retryData?.usage?.prompt_tokens}, completion=${retryData?.usage?.completion_tokens}`,
+    );
+  }
   // Server-injects connections: [] on every successful return
   const withConnections = { ...parsed, connections: [] as string[] };
   const finalTemplate = appendBrevityRail(withConnections);
