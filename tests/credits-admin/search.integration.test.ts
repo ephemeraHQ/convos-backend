@@ -1,7 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { Express } from "express";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
-import { __setCfAccessDevFallbackForTests } from "@/api/v2/credits-admin/middleware/cf-access";
 import {
   adminRequest,
   buildCreditsAdminApp,
@@ -17,7 +16,6 @@ describe("GET /api/v2/credits-admin/search", () => {
     app = buildCreditsAdminApp();
   });
   afterEach(async () => {
-    __setCfAccessDevFallbackForTests(undefined);
     await cleanupAdminAccounts(tracker);
     tracker.length = 0;
   });
@@ -68,9 +66,8 @@ describe("GET /api/v2/credits-admin/search", () => {
     expect(res.body).toMatchObject({ code: "invalid_request" });
   });
 
-  it("missing CF Access header (non-dev) → 401", async () => {
-    __setCfAccessDevFallbackForTests(false);
-    const res = await adminRequest(app, null).get(
+  it("missing admin token → 401", async () => {
+    const res = await adminRequest(app, false).get(
       "/api/v2/credits-admin/search?key=accountId&value=x",
     );
     expect(res.status).toBe(401);
