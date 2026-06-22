@@ -22,6 +22,10 @@ import {
   upsertFromVerify,
   type SubscriptionTier,
 } from "@/subscriptions/repository";
+import {
+  effectiveSubscriptionStatus,
+  isEntitledSubscription,
+} from "@/subscriptions/status";
 import { prisma } from "@/utils/prisma";
 
 vi.mock("firebase-admin/app");
@@ -235,15 +239,16 @@ describe("POST /v2/webhooks/apple/ssn", () => {
     expect(receipts[1].notificationType).toBe("DID_RENEW");
   });
 
-  test("DID_FAIL_TO_RENEW + GRACE_PERIOD: status → grace, sets gracePeriodEnd", async () => {
+  test("DID_FAIL_TO_RENEW + GRACE_PERIOD: status → grace, sets gracePeriodEnd, ENTITLED within / NOT after", async () => {
     installLocalTestingVerifier();
     const otid = "1000000000000020";
     const { subscription } = await seedSubscription(otid);
 
+    const graceEnd = new Date("2026-06-15T00:00:00.000Z");
     const transactionJws = await signTransaction({
       originalTransactionId: otid,
       transactionId: "3000000000000020",
-      expiresDate: new Date("2026-06-15T00:00:00.000Z").getTime(),
+      expiresDate: graceEnd.getTime(),
     });
     const signedPayload = await signNotification({
       notificationType: "DID_FAIL_TO_RENEW",
@@ -264,12 +269,34 @@ describe("POST /v2/webhooks/apple/ssn", () => {
     expect(updated?.gracePeriodEnd?.toISOString()).toBe(
       "2026-06-15T00:00:00.000Z",
     );
+
+    // Entitlement verdict: a grace row is entitled until gracePeriodEnd, even
+    // though currentPeriodEnd (2026-06-01) has already lapsed.
+    const within = new Date("2026-06-10T00:00:00.000Z");
+    const after = new Date("2026-06-16T00:00:00.000Z");
+    expect(effectiveSubscriptionStatus(updated!, within)).toBe(
+      SubscriptionStatus.grace,
+    );
+    expect(isEntitledSubscription(updated!, within)).toBe(true);
+    expect(isEntitledSubscription(updated!, after)).toBe(false);
+    expect(effectiveSubscriptionStatus(updated!, after)).toBe(
+      SubscriptionStatus.expired,
+    );
   });
 
-  test("DID_FAIL_TO_RENEW + BILLING_RETRY: status → billingRetry", async () => {
+  test("DID_FAIL_TO_RENEW + BILLING_RETRY: status → billingRetry, NOT entitled past currentPeriodEnd, gracePeriodEnd cleared", async () => {
     installLocalTestingVerifier();
     const otid = "1000000000000030";
+    // Seed a row that was previously in grace with a future deadline, to prove
+    // the billing-retry transition clears it (B-N2).
     const { subscription } = await seedSubscription(otid);
+    await prisma.subscription.update({
+      where: { id: subscription.id },
+      data: {
+        status: SubscriptionStatus.grace,
+        gracePeriodEnd: new Date("2026-07-01T00:00:00.000Z"),
+      },
+    });
 
     const signedPayload = await signNotification({
       notificationType: "DID_FAIL_TO_RENEW",
@@ -290,6 +317,17 @@ describe("POST /v2/webhooks/apple/ssn", () => {
       where: { id: subscription.id },
     });
     expect(updated?.status).toBe(SubscriptionStatus.billingRetry);
+    // B-N2: the stale future grace deadline must have been nulled.
+    expect(updated?.gracePeriodEnd).toBeNull();
+
+    // Governed by currentPeriodEnd (2026-06-01) only: entitled within the paid
+    // period, NOT entitled once it lapses — no grace window.
+    expect(
+      isEntitledSubscription(updated!, new Date("2026-05-20T00:00:00.000Z")),
+    ).toBe(true);
+    expect(
+      isEntitledSubscription(updated!, new Date("2026-06-10T00:00:00.000Z")),
+    ).toBe(false);
   });
 
   test("EXPIRED: status → expired, willRenew → false", async () => {

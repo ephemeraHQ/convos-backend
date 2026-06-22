@@ -57,9 +57,18 @@ export const effectiveSubscriptionStatus = (
   }
 
   const nowMs = now.getTime();
+  // active/trial AND billingRetry are governed by the paid period: entitled
+  // only while `now <= currentPeriodEnd`. For billingRetry this is the contract
+  // (Apple status=3, Google onHold/paused are NOT entitled past the paid period
+  // — the retry/hold window is the provider's internal schedule, not extended
+  // access) and it is the backstop against an "entitled forever" row if the
+  // final EXPIRED webhook is dropped. The Phase 7 reconciliation worker is the
+  // secondary safety net. Grace is the ONLY status that extends access past
+  // currentPeriodEnd, governed below by gracePeriodEnd.
   if (
     (subscription.status === SubscriptionStatus.active ||
-      subscription.status === SubscriptionStatus.trial) &&
+      subscription.status === SubscriptionStatus.trial ||
+      subscription.status === SubscriptionStatus.billingRetry) &&
     subscription.currentPeriodEnd.getTime() <= nowMs
   ) {
     return SubscriptionStatus.expired;
@@ -72,15 +81,6 @@ export const effectiveSubscriptionStatus = (
       return SubscriptionStatus.expired;
     }
   }
-
-  // TODO(v1.1): billingRetry has no TTL here — Apple's billing retry window
-  // is up to 60 days, after which they send EXPIRED. If that final webhook
-  // is dropped (network, mis-config, Apple delay), this status persists and
-  // the user stays entitled indefinitely. The Phase 7 reconciliation
-  // worker is the intended safety net, but adding a billingRetryEndsAt
-  // column + a `nowMs > billingRetryEndsAt` check here would be a
-  // self-contained backstop. Not pre-merge-blocking: real billing retries
-  // resolve within hours/days for the vast majority of customers.
 
   return subscription.status;
 };

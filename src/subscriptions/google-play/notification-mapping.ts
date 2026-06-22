@@ -63,6 +63,10 @@ export const mapNotificationToUpdate = (
         currentPeriodEnd: window.currentPeriodEnd,
         willRenew: false,
         cancelledAt: now,
+        // Cancellation is never a grace state: entitlement (if any) rides on
+        // currentPeriodEnd. Clear any prior grace deadline so a stale future
+        // gracePeriodEnd can't keep an otherwise not-entitled row entitled.
+        gracePeriodEnd: null,
       };
     }
     case PlayNotificationType.purchased:
@@ -70,7 +74,14 @@ export const mapNotificationToUpdate = (
       // Handler returns 200 without touching state.
       return null;
     case PlayNotificationType.onHold:
-      return { status: SubscriptionStatus.billingRetry, willRenew: false };
+      // Account hold = billing failed beyond grace. NOT entitled (contract).
+      // Governed by currentPeriodEnd in status.ts; clear any prior grace
+      // deadline so a stale future gracePeriodEnd can't keep the row entitled.
+      return {
+        status: SubscriptionStatus.billingRetry,
+        willRenew: false,
+        gracePeriodEnd: null,
+      };
     case PlayNotificationType.inGracePeriod: {
       const window = extractPeriodWindow(input.purchase);
       return {
@@ -86,7 +97,12 @@ export const mapNotificationToUpdate = (
       return { currentPeriodEnd: window.currentPeriodEnd };
     }
     case PlayNotificationType.paused:
-      return { status: SubscriptionStatus.billingRetry };
+      // User voluntarily paused = NOT entitled (contract). Same as onHold:
+      // governed by currentPeriodEnd, clear any prior grace deadline.
+      return {
+        status: SubscriptionStatus.billingRetry,
+        gracePeriodEnd: null,
+      };
     case PlayNotificationType.pauseScheduleChanged:
       return null;
     case PlayNotificationType.revoked:
@@ -94,6 +110,8 @@ export const mapNotificationToUpdate = (
         status: SubscriptionStatus.revoked,
         willRenew: false,
         cancelledAt: now,
+        // Terminal not-entitled state — clear any grace deadline.
+        gracePeriodEnd: null,
       };
     case PlayNotificationType.expired:
       return {

@@ -512,6 +512,28 @@ const notificationReceiptShape = (input: ApplyNotificationInput) => {
  *      state and do not re-apply changes.
  *   3. Apply the state update to the Subscription row.
  */
+/**
+ * Non-extending clamp on the billing-grace deadline (`gracePeriodEnd`). A
+ * renewal that keeps failing must not push the grace deadline further out
+ * (which would extend free access indefinitely): once a deadline is stamped, a
+ * later grace notification may only pull it in. So when an update sets a new
+ * deadline and the row already has one, keep `min(existing, computed)`.
+ * Clearing the deadline (explicit null, e.g. on renew/expire/revoke/hold) is
+ * always honored. This preserves the "no re-arm" property — a repeated grace
+ * poll can never re-extend an already-granted window.
+ */
+const clampGracePeriodEnd = (
+  existing: Subscription,
+  update: NotificationStateUpdate,
+): NotificationStateUpdate => {
+  const next = update.gracePeriodEnd;
+  const prev = existing.gracePeriodEnd;
+  if (!next || !prev) return update;
+  return next.getTime() <= prev.getTime()
+    ? update
+    : { ...update, gracePeriodEnd: prev };
+};
+
 export const applyNotification = async (
   input: ApplyNotificationInput,
 ): Promise<ApplyNotificationResult> => {
@@ -521,6 +543,7 @@ export const applyNotification = async (
   }
 
   const receiptShape = notificationReceiptShape(input);
+  const update = clampGracePeriodEnd(subscription, input.update);
 
   try {
     return await prisma.$transaction(async (tx) => {
@@ -539,7 +562,7 @@ export const applyNotification = async (
 
       const updated = await tx.subscription.update({
         where: { id: subscription.id },
-        data: input.update,
+        data: update,
       });
 
       return { kind: "applied" as const, subscription: updated };

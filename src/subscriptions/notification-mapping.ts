@@ -84,8 +84,15 @@ export const mapNotificationToUpdate = (
             : {}),
         };
       }
-      // No subtype, or BILLING_RETRY → user is in retry, not in grace.
-      return { status: SubscriptionStatus.billingRetry };
+      // No subtype, or BILLING_RETRY → user is in retry, not in grace. Apple
+      // status=3 is NOT a grace window: access ended at the paid period end
+      // (currentPeriodEnd) and is governed by it. Explicitly clear any prior
+      // gracePeriodEnd so a stale future deadline (set when the row was last in
+      // grace) cannot keep this row entitled past the provider cutoff.
+      return {
+        status: SubscriptionStatus.billingRetry,
+        gracePeriodEnd: null,
+      };
 
     case NotificationTypeV2.GRACE_PERIOD_EXPIRED:
     case NotificationTypeV2.EXPIRED:
@@ -101,6 +108,9 @@ export const mapNotificationToUpdate = (
         status: SubscriptionStatus.revoked,
         willRenew: false,
         cancelledAt: new Date(transaction.signedDate ?? Date.now()),
+        // Terminal not-entitled state — clear any grace deadline so the row
+        // can't read entitled off a stale gracePeriodEnd.
+        gracePeriodEnd: null,
       };
 
     case NotificationTypeV2.DID_CHANGE_RENEWAL_STATUS:

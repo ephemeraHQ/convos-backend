@@ -42,7 +42,7 @@ describe("mapNotificationToUpdate", () => {
     );
   });
 
-  test("CANCELED → willRenew false + cancelledAt = now (status still active until expiry)", () => {
+  test("CANCELED → willRenew false + cancelledAt = now + clears gracePeriodEnd (status still active until expiry)", () => {
     const future = new Date(NOW.getTime() + 86_400_000).toISOString();
     const result = mapNotificationToUpdate({
       notificationType: PlayNotificationType.canceled,
@@ -60,6 +60,33 @@ describe("mapNotificationToUpdate", () => {
     expect(result?.status).toBe(SubscriptionStatus.active);
     expect(result?.willRenew).toBe(false);
     expect(result?.cancelledAt?.toISOString()).toBe(NOW.toISOString());
+    // B-N3: cancellation is never a grace state — a previously-set future
+    // gracePeriodEnd must be cleared so it can't keep a not-entitled row
+    // (e.g. one that has since expired) entitled.
+    expect(result?.gracePeriodEnd).toBeNull();
+  });
+
+  test("CANCELED past expiry → expired + clears a stale future gracePeriodEnd", () => {
+    const past = new Date(NOW.getTime() - 86_400_000).toISOString();
+    const result = mapNotificationToUpdate({
+      notificationType: PlayNotificationType.canceled,
+      purchase: purchase({
+        subscriptionState: PlaySubscriptionState.cancelled,
+        lineItems: [
+          {
+            productId: "app.convos.subs.builder.monthly",
+            expiryTime: past,
+          },
+        ],
+      }),
+      now: NOW,
+    });
+    // Period already ended → derives expired (not entitled).
+    expect(result?.status).toBe(SubscriptionStatus.expired);
+    expect(result?.willRenew).toBe(false);
+    // A stale grace deadline left over from an earlier inGracePeriod must not
+    // survive the cancellation and silently keep the row entitled.
+    expect(result?.gracePeriodEnd).toBeNull();
   });
 
   test("PURCHASED returns null (cold-start branch)", () => {
@@ -72,7 +99,7 @@ describe("mapNotificationToUpdate", () => {
     ).toBeNull();
   });
 
-  test("ON_HOLD → billingRetry", () => {
+  test("ON_HOLD → billingRetry, clears gracePeriodEnd (not entitled; governed by currentPeriodEnd)", () => {
     expect(
       mapNotificationToUpdate({
         notificationType: PlayNotificationType.onHold,
@@ -82,6 +109,21 @@ describe("mapNotificationToUpdate", () => {
     ).toMatchObject({
       status: SubscriptionStatus.billingRetry,
       willRenew: false,
+      // B-N2: a stale future grace deadline must not survive the hold.
+      gracePeriodEnd: null,
+    });
+  });
+
+  test("PAUSED → billingRetry, clears gracePeriodEnd", () => {
+    expect(
+      mapNotificationToUpdate({
+        notificationType: PlayNotificationType.paused,
+        purchase: purchase({}),
+        now: NOW,
+      }),
+    ).toMatchObject({
+      status: SubscriptionStatus.billingRetry,
+      gracePeriodEnd: null,
     });
   });
 
@@ -97,7 +139,7 @@ describe("mapNotificationToUpdate", () => {
     );
   });
 
-  test("REVOKED → revoked + willRenew false + cancelledAt now", () => {
+  test("REVOKED → revoked + willRenew false + cancelledAt now + clears gracePeriodEnd", () => {
     const result = mapNotificationToUpdate({
       notificationType: PlayNotificationType.revoked,
       purchase: purchase({}),
@@ -106,6 +148,7 @@ describe("mapNotificationToUpdate", () => {
     expect(result?.status).toBe(SubscriptionStatus.revoked);
     expect(result?.willRenew).toBe(false);
     expect(result?.cancelledAt?.toISOString()).toBe(NOW.toISOString());
+    expect(result?.gracePeriodEnd).toBeNull();
   });
 
   test("EXPIRED → expired + clear gracePeriodEnd", () => {

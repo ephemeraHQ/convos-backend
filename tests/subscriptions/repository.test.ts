@@ -507,6 +507,124 @@ describe("applyNotification", () => {
       "notif-shared-b",
     ]);
   });
+
+  test("gracePeriodEnd is non-extending: a later grace poll can pull the deadline IN but never push it OUT", async () => {
+    const accountId = await newAccount();
+    await upsertFromVerify(
+      verifyInput({
+        accountId,
+        originalTransactionId: "otid-clamp",
+        transactionId: "tx-clamp-initial",
+      }),
+    );
+
+    // First grace deadline.
+    const first = await applyNotification({
+      provider: BillingProvider.apple,
+      originalTransactionId: "otid-clamp",
+      transactionId: "tx-clamp-1",
+      notificationUUID: "notif-clamp-1",
+      notificationType: "DID_FAIL_TO_RENEW",
+      notificationSubtype: "GRACE_PERIOD",
+      signedPayload: "stub",
+      update: {
+        status: SubscriptionStatus.grace,
+        gracePeriodEnd: new Date("2026-06-15T00:00:00.000Z"),
+      },
+    });
+    expect(first.kind).toBe("applied");
+
+    // A later poll tries to EXTEND the deadline — must be clamped to the prior
+    // (earlier) value so a repeated grace can't re-arm an indefinite window.
+    const extend = await applyNotification({
+      provider: BillingProvider.apple,
+      originalTransactionId: "otid-clamp",
+      transactionId: "tx-clamp-2",
+      notificationUUID: "notif-clamp-2",
+      notificationType: "DID_FAIL_TO_RENEW",
+      notificationSubtype: "GRACE_PERIOD",
+      signedPayload: "stub",
+      update: {
+        status: SubscriptionStatus.grace,
+        gracePeriodEnd: new Date("2026-07-15T00:00:00.000Z"),
+      },
+    });
+    expect(extend.kind).toBe("applied");
+    if (extend.kind === "applied") {
+      expect(extend.subscription.gracePeriodEnd?.toISOString()).toBe(
+        "2026-06-15T00:00:00.000Z",
+      );
+    }
+
+    // A poll that pulls the deadline IN (earlier) is honored.
+    const pullIn = await applyNotification({
+      provider: BillingProvider.apple,
+      originalTransactionId: "otid-clamp",
+      transactionId: "tx-clamp-3",
+      notificationUUID: "notif-clamp-3",
+      notificationType: "DID_FAIL_TO_RENEW",
+      notificationSubtype: "GRACE_PERIOD",
+      signedPayload: "stub",
+      update: {
+        status: SubscriptionStatus.grace,
+        gracePeriodEnd: new Date("2026-06-10T00:00:00.000Z"),
+      },
+    });
+    expect(pullIn.kind).toBe("applied");
+    if (pullIn.kind === "applied") {
+      expect(pullIn.subscription.gracePeriodEnd?.toISOString()).toBe(
+        "2026-06-10T00:00:00.000Z",
+      );
+    }
+  });
+
+  test("B-N2: a not-entitled transition clears a previously-set gracePeriodEnd (explicit null is honored, never clamped)", async () => {
+    const accountId = await newAccount();
+    await upsertFromVerify(
+      verifyInput({
+        accountId,
+        originalTransactionId: "otid-clear",
+        transactionId: "tx-clear-initial",
+      }),
+    );
+
+    // Put the row into grace with a future deadline.
+    const grace = await applyNotification({
+      provider: BillingProvider.apple,
+      originalTransactionId: "otid-clear",
+      transactionId: "tx-clear-1",
+      notificationUUID: "notif-clear-1",
+      notificationType: "DID_FAIL_TO_RENEW",
+      notificationSubtype: "GRACE_PERIOD",
+      signedPayload: "stub",
+      update: {
+        status: SubscriptionStatus.grace,
+        gracePeriodEnd: new Date("2026-07-01T00:00:00.000Z"),
+      },
+    });
+    expect(grace.kind).toBe("applied");
+
+    // Transition to billing-retry (status=3) — the mapping sends an explicit
+    // gracePeriodEnd: null which must be written (not clamped away).
+    const retry = await applyNotification({
+      provider: BillingProvider.apple,
+      originalTransactionId: "otid-clear",
+      transactionId: "tx-clear-2",
+      notificationUUID: "notif-clear-2",
+      notificationType: "DID_FAIL_TO_RENEW",
+      notificationSubtype: "BILLING_RETRY",
+      signedPayload: "stub",
+      update: {
+        status: SubscriptionStatus.billingRetry,
+        gracePeriodEnd: null,
+      },
+    });
+    expect(retry.kind).toBe("applied");
+    if (retry.kind === "applied") {
+      expect(retry.subscription.status).toBe(SubscriptionStatus.billingRetry);
+      expect(retry.subscription.gracePeriodEnd).toBeNull();
+    }
+  });
 });
 
 describe("findAppleByOriginalTransactionId", () => {
