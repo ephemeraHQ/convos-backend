@@ -17,11 +17,18 @@ const AGENT_BUILDER_ONBOARDING = "agent-builder";
 
 type TemplateRow = Awaited<ReturnType<typeof prisma.agentTemplate.findUnique>>;
 type TemplateFinder = (id: string) => Promise<TemplateRow>;
+type GenerationRow = Awaited<
+  ReturnType<typeof prisma.agentTemplateGeneration.findUnique>
+>;
+type GenerationFinder = (id: string) => Promise<GenerationRow>;
 
 const defaultTemplateFinder: TemplateFinder = (id) =>
   prisma.agentTemplate.findUnique({ where: { id } });
+const defaultGenerationFinder: GenerationFinder = (id) =>
+  prisma.agentTemplateGeneration.findUnique({ where: { id } });
 
 let _templateFinder: TemplateFinder = defaultTemplateFinder;
+let _generationFinder: GenerationFinder = defaultGenerationFinder;
 
 // Test seam — substitute the per-id prisma lookup. Mirrors the
 // `__setAssistantConfigOverridesForTests` pattern in `./assistant-config.ts`.
@@ -30,6 +37,12 @@ export function __setTemplateFinderForTests(
   finder: TemplateFinder | null,
 ): void {
   _templateFinder = finder ?? defaultTemplateFinder;
+}
+
+export function __setGenerationFinderForTests(
+  finder: GenerationFinder | null,
+): void {
+  _generationFinder = finder ?? defaultGenerationFinder;
 }
 
 const timezoneSchema = z
@@ -81,6 +94,7 @@ const bodySchema = z
       .transform((v) => v.toLowerCase())
       .optional(),
     templateId: z.string().uuid().optional(),
+    generationId: z.string().uuid().optional(),
     name: z.string().min(1).max(256).optional(),
     profileImage: z.string().min(1).max(2048).optional(),
     options: optionsSchema.optional(),
@@ -91,7 +105,14 @@ const bodySchema = z
     message:
       "Provide exactly one of slug (invite join) or conversationId (direct-add)",
     path: ["conversationId"],
-  });
+  })
+  .refine(
+    (b) => !(b.templateId !== undefined && b.generationId !== undefined),
+    {
+      message: "Provide at most one of templateId or generationId",
+      path: ["generationId"],
+    },
+  );
 
 const FORCE_ERROR_DELAY_MS = 5_000;
 
@@ -151,6 +172,7 @@ const dispatchBodySchema = z
       .max(128)
       .optional(),
     template: z.record(z.string(), z.unknown()).nullable(),
+    generationId: z.string().uuid().optional(),
     ownerAccountId: accountIdSchema,
     options: optionsSchema.optional(),
     timezone: timezoneSchema.optional(),
@@ -399,6 +421,7 @@ export async function joinHandler(req: Request, res: Response) {
     slug,
     conversationId,
     templateId,
+    generationId,
     name,
     profileImage,
     options,
@@ -411,6 +434,7 @@ export async function joinHandler(req: Request, res: Response) {
   req.log.info(
     {
       templateId,
+      generationId,
       optionKeys: options ? Object.keys(options) : [],
     },
     "Agent join request received",
@@ -538,6 +562,48 @@ export async function joinHandler(req: Request, res: Response) {
         return;
       }
     }
+  } else if (generationId !== undefined) {
+    let generation: GenerationRow = null;
+    try {
+      generation = await _generationFinder(generationId);
+    } catch (err) {
+      req.log.error(
+        { err, generationId },
+        "Failed to load agent template generation for join",
+      );
+      res.status(500).json({
+        success: false,
+        error: "GENERATION_LOOKUP_FAILED",
+        message: "Failed to load agent template generation",
+      });
+      return;
+    }
+
+    if (generation === null) {
+      res.status(404).json({
+        success: false,
+        error: "GENERATION_NOT_FOUND",
+        message: "Agent template generation not found",
+      });
+      return;
+    }
+
+    if (generation.ownerAccountId !== joiningUserAccountId) {
+      req.log.warn(
+        {
+          generationId,
+          ownerAccountId: generation.ownerAccountId,
+          callerAccountId: joiningUserAccountId,
+        },
+        "Caller is not the owner of an agent template generation",
+      );
+      res.status(403).json({
+        success: false,
+        error: "GENERATION_FORBIDDEN",
+        message: "Not authorized to use this generation",
+      });
+      return;
+    }
   }
 
   const assistantBaseUrl = assistantApiUrl.replace(/\/+$/, "");
@@ -595,6 +661,9 @@ export async function joinHandler(req: Request, res: Response) {
       template: joinPayload?.template ?? null,
       ownerAccountId: joiningUserAccountId,
     };
+    if (generationId !== undefined) {
+      dispatchBody.generationId = generationId;
+    }
     if (Object.keys(upstreamOptions).length > 0) {
       dispatchBody.options = upstreamOptions;
     }

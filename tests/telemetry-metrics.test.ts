@@ -30,7 +30,7 @@ function makeApp() {
   return app;
 }
 
-const BATCH_ID = "44444444-4444-4444-8444-444444444444";
+const BATCH_ID = "77777777-7777-4777-8777-777777777777";
 
 function makeBody(timeMs = Date.now() - 60_000) {
   const nanos = (n: number) => (BigInt(n) * 1_000_000n).toString();
@@ -225,9 +225,13 @@ describe("POST /telemetry/metrics", () => {
     vi.mocked(forwardMetrics).mockResolvedValue(false);
     const res = await post(makeApp()).send(makeBody());
     expect(res.status).toBe(502);
-    expect(
-      await prisma.telemetryBatch.findUnique({ where: { batchId: BATCH_ID } }),
-    ).toBeNull();
+    await vi.waitFor(async () => {
+      expect(
+        await prisma.telemetryBatch.findUnique({
+          where: { batchId: BATCH_ID },
+        }),
+      ).toBeNull();
+    });
     expect(countTelemetryBatch).toHaveBeenCalledTimes(1);
     expect(countTelemetryBatch).toHaveBeenCalledWith(
       "convos-android",
