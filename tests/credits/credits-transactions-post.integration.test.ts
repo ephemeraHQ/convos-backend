@@ -162,6 +162,65 @@ describe("POST /v2/accounts/:accountId/credits/transactions", () => {
     expect(row?.delta).toBe(-2000n);
   });
 
+  it("subscriber idempotency mismatch: same key + different body → 409", async () => {
+    // Mirrors the non-subscriber 409 test above, but on the entitled-subscriber
+    // consume-split replay path (reconstructReplay). A reused key with a
+    // different usdCostMicros must surface idempotency_mismatch, not a silent
+    // 200 replay.
+    const accountId = await seedAccount();
+    tracker.push(accountId);
+    await seedPlusMonthlySubscription(accountId);
+    const first = await agentRequest(app).post(
+      `/v2/accounts/${accountId}/credits/transactions`,
+      `sub-mismatch-${accountId}`,
+      { usdCostMicros: "1000000", requestId: "req-sub" },
+    );
+    expect(first.status).toBe(200);
+    const res = await agentRequest(app).post(
+      `/v2/accounts/${accountId}/credits/transactions`,
+      `sub-mismatch-${accountId}`,
+      { usdCostMicros: "2000000", requestId: "req-sub" },
+    );
+    expect(res.status).toBe(409);
+    expect((res.body as { code: string }).code).toBe("idempotency_mismatch");
+  });
+
+  it("subscriber replay returns the ORIGINAL balanceAfter snapshot, not a live read", async () => {
+    // The replay must echo the original split's stored balanceAfter even if raw
+    // drifts between the two calls. Seed raw so the consume overflows (writing a
+    // raw leg with a balanceAfter snapshot), capture the first response, mutate
+    // raw, then replay — the replayed body must equal the first, byte-identical.
+    const accountId = await seedAccount();
+    tracker.push(accountId);
+    await seedPlusMonthlySubscription(accountId);
+    await seedBalance(accountId, 5000n);
+    // ~2900 credits: spills past the ~2500 derived allotment into raw, writing a
+    // raw leg with a balanceAfter snapshot (well within the 5000 raw + floor).
+    const body = { usdCostMicros: "1450000", requestId: "req-sub-replay" };
+    const key = `sub-replay-${accountId}`;
+    const first = await agentRequest(app).post(
+      `/v2/accounts/${accountId}/credits/transactions`,
+      key,
+      body,
+    );
+    expect(first.status).toBe(200);
+    // Drift raw between the two calls — a live getBalance() would now differ.
+    await prisma.userCredits.update({
+      where: { accountId },
+      data: { balance: 999_999n },
+    });
+    const second = await agentRequest(app).post(
+      `/v2/accounts/${accountId}/credits/transactions`,
+      key,
+      body,
+    );
+    expect(second.status).toBe(200);
+    expect(second.headers["idempotent-replayed"]).toBe("true");
+    // Original snapshot preserved despite the raw mutation.
+    expect(second.body).toEqual(first.body);
+    expect((second.body as { balance: string }).balance).not.toBe("999999");
+  });
+
   // PR-A unique constraint is still (accountId, idempotencyKey). PR-B swaps it
   // to (accountId, scope, idempotencyKey) which is what makes /transactions vs
   // /grants share-a-key safe. Until then, same-key across routes hits a P2002.

@@ -145,8 +145,14 @@ type TxClient = Prisma.TransactionClient;
  * the row between read and write. Inline raw SQL is the only way to express
  * the atomic upsert+lock semantics here. Inputs are bound parameters, not
  * interpolated — injection-safe.
+ *
+ * Exported as `lockUserCreditsBalance` so callers that need to serialize a
+ * multi-step charge on the account row (e.g. the subscriber consume split in
+ * `spendable.recordConsume`, which reads a period-consumes aggregate then
+ * inserts a derived row) can take the lock FIRST inside their own
+ * `$transaction`, before any race-prone read.
  */
-const lockOrCreateBalance = async (
+export const lockUserCreditsBalance = async (
   tx: TxClient,
   accountId: string,
 ): Promise<bigint> => {
@@ -213,7 +219,7 @@ export const applyDeltaWithTx = async (
     };
   }
 
-  const before = await lockOrCreateBalance(tx, input.accountId);
+  const before = await lockUserCreditsBalance(tx, input.accountId);
   const after = before + input.delta;
 
   if (input.floorCheck && after < input.floorCheck.minBalance) {

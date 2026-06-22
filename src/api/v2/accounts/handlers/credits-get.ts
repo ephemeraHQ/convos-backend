@@ -65,7 +65,21 @@ export async function creditsGetHandler(req: Request, res: Response) {
       subscription.currentPeriodStart,
     );
     const monthlyGrantUsed = Math.min(rawUsed, grant.perPeriod);
-    const balance = grant.perPeriod - monthlyGrantUsed;
+    // Spendable balance = derived subscription allotment + any raw
+    // (admin/promo/signup) credits. The buckets are disjoint, so this can't
+    // double-count; raw is clamped to >= 0 so it never reduces the allotment.
+    // `monthlyGrant`/`monthlyGrantUsed`/`periodLabel` stay derived-only to keep
+    // the iOS contract byte-identical.
+    //
+    // N-N1: compute the sum in BigInt to mirror `getSpendableBalance`
+    // (`BigInt(remaining) + (raw > 0n ? raw : 0n)`) exactly — the two read
+    // paths must not diverge on numeric type. Down-cast to Number only at the
+    // JSON boundary (the iOS `CreditBalance` contract is a number, and the
+    // value is well under 2^53).
+    const rawBalance = await getBalance(accountId);
+    const positiveRaw = rawBalance > 0n ? rawBalance : 0n;
+    const derivedRemaining = BigInt(grant.perPeriod - monthlyGrantUsed);
+    const balance = Number(derivedRemaining + positiveRaw);
 
     res.status(200).json({
       balance,
