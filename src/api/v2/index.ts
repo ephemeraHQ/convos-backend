@@ -37,6 +37,7 @@ import { connectionsRouter } from "./connections/connections.router";
 import { servicesGetHandler } from "./connections/handlers/services-get";
 import { creditsAdminRouter } from "./credits-admin/credits-admin.router";
 import { dailyRefillRouter } from "./credits/daily.router";
+import { reconcileRouter } from "./credits/reconcile.router";
 import { devRouter } from "./dev/dev.router";
 import { deviceRouter } from "./device/device.router";
 import {
@@ -84,6 +85,7 @@ v2Router.use(
   accountsByIdRouter,
 );
 v2Router.use("/credits", dailyRefillRouter);
+v2Router.use("/credits", reconcileRouter);
 v2Router.use("/device", appCheckOnlyMiddleware, deviceRouter);
 v2Router.use(
   "/telemetry",

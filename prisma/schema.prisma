@@ -425,6 +425,11 @@ model Subscription {
   @@index([accountId])
   @@index([accountId, provider])
   @@index([status, currentPeriodEnd])
+  // Backs the reconcile cron's expired/revoked "rescue" scan, which filters on
+  // `status IN (...) AND updatedAt >= rescueFloor`. The `[status,
+  // currentPeriodEnd]` index above can't serve the `updatedAt` bound, so this
+  // avoids a seq-scan over the expired/revoked tail.
+  @@index([status, updatedAt])
 }
 
 model BillingReceipt {
