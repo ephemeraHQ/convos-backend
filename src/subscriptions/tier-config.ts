@@ -30,14 +30,9 @@ const parsePositiveInt = (key: string, raw: string | undefined): number => {
  * branches on `tier` again.
  */
 const monthlyAmount = (): number =>
-  // Falls back to the legacy `PAYMENTS_GRANT_BUILDER_MONTHLY` env var if
-  // the new `PAYMENTS_GRANT_PLUS_MONTHLY` isn't set, so deploys don't
-  // need to be coordinated with the env var rename. Drop the fallback
-  // once all environments set the new name.
   parsePositiveInt(
     "PAYMENTS_GRANT_PLUS_MONTHLY",
-    process.env.PAYMENTS_GRANT_PLUS_MONTHLY ??
-      process.env.PAYMENTS_GRANT_BUILDER_MONTHLY,
+    process.env.PAYMENTS_GRANT_PLUS_MONTHLY,
   );
 
 export type TierGrant = {

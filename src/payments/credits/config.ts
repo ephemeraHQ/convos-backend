@@ -157,9 +157,7 @@ export const loadSignupBonusCredits = (): number => {
 //   period `sub_grant` ledger write. `tierGrant()` (tier-config.ts) reads it
 //   lazily and would 500 on the first subscriber grant if unset; validating it
 //   here makes a missing/non-numeric value fail fast at boot instead. Must be a
-//   positive safe integer. Falls back to the legacy `PAYMENTS_GRANT_BUILDER_
-//   MONTHLY` name to mirror tier-config.ts so deploys don't need a coordinated
-//   rename.
+//   positive safe integer.
 //
 //   Parsing intentionally mirrors tier-config.ts's `Number.parseInt(raw, 10)`
 //   (NOT the stricter `/^-?\d+$/` requireBigInt) so that any value which booted
@@ -170,9 +168,7 @@ export const loadSignupBonusCredits = (): number => {
 //   non-positive) earlier.
 export const loadGrantPlusMonthlyCredits = (): number => {
   const key = "PAYMENTS_GRANT_PLUS_MONTHLY";
-  const raw =
-    process.env.PAYMENTS_GRANT_PLUS_MONTHLY ??
-    process.env.PAYMENTS_GRANT_BUILDER_MONTHLY;
+  const raw = process.env.PAYMENTS_GRANT_PLUS_MONTHLY;
   if (raw === undefined || raw.trim() === "") {
     throw new ValidationError(`${key} not configured`);
   }

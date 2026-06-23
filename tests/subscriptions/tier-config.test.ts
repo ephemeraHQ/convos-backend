@@ -5,22 +5,13 @@ import { SUBSCRIPTION_TIER_PLUS } from "@/subscriptions/tiers";
 
 const snap = () => ({
   plus: process.env.PAYMENTS_GRANT_PLUS_MONTHLY,
-  builder: process.env.PAYMENTS_GRANT_BUILDER_MONTHLY,
 });
 
-const restore = (s: {
-  plus: string | undefined;
-  builder: string | undefined;
-}) => {
+const restore = (s: { plus: string | undefined }) => {
   if (s.plus === undefined) {
     delete process.env.PAYMENTS_GRANT_PLUS_MONTHLY;
   } else {
     process.env.PAYMENTS_GRANT_PLUS_MONTHLY = s.plus;
-  }
-  if (s.builder === undefined) {
-    delete process.env.PAYMENTS_GRANT_BUILDER_MONTHLY;
-  } else {
-    process.env.PAYMENTS_GRANT_BUILDER_MONTHLY = s.builder;
   }
 };
 
@@ -30,7 +21,6 @@ describe("tierGrant", () => {
   beforeEach(() => {
     s = snap();
     process.env.PAYMENTS_GRANT_PLUS_MONTHLY = "2500";
-    delete process.env.PAYMENTS_GRANT_BUILDER_MONTHLY;
   });
 
   afterEach(() => {
@@ -49,17 +39,8 @@ describe("tierGrant", () => {
     ).toBe(2500 * 12);
   });
 
-  test("falls back to legacy PAYMENTS_GRANT_BUILDER_MONTHLY when the new var isn't set", () => {
+  test("missing PAYMENTS_GRANT_PLUS_MONTHLY throws 500", () => {
     delete process.env.PAYMENTS_GRANT_PLUS_MONTHLY;
-    process.env.PAYMENTS_GRANT_BUILDER_MONTHLY = "4321";
-    expect(
-      tierGrant(SUBSCRIPTION_TIER_PLUS, SubscriptionPeriod.monthly).perPeriod,
-    ).toBe(4321);
-  });
-
-  test("missing both env vars throws 500", () => {
-    delete process.env.PAYMENTS_GRANT_PLUS_MONTHLY;
-    delete process.env.PAYMENTS_GRANT_BUILDER_MONTHLY;
     expect(() =>
       tierGrant(SUBSCRIPTION_TIER_PLUS, SubscriptionPeriod.monthly),
     ).toThrow(/PAYMENTS_GRANT_PLUS_MONTHLY/);

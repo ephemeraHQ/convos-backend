@@ -1,23 +1,13 @@
-import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test } from "vitest";
 
 describe("PAYMENTS_GRANT_PLUS_MONTHLY (boot validation)", () => {
   const originalPlus = process.env.PAYMENTS_GRANT_PLUS_MONTHLY;
-  const originalBuilder = process.env.PAYMENTS_GRANT_BUILDER_MONTHLY;
-
-  beforeEach(() => {
-    delete process.env.PAYMENTS_GRANT_BUILDER_MONTHLY;
-  });
 
   afterEach(() => {
     if (originalPlus === undefined) {
       delete process.env.PAYMENTS_GRANT_PLUS_MONTHLY;
     } else {
       process.env.PAYMENTS_GRANT_PLUS_MONTHLY = originalPlus;
-    }
-    if (originalBuilder === undefined) {
-      delete process.env.PAYMENTS_GRANT_BUILDER_MONTHLY;
-    } else {
-      process.env.PAYMENTS_GRANT_BUILDER_MONTHLY = originalBuilder;
     }
   });
 
@@ -28,7 +18,7 @@ describe("PAYMENTS_GRANT_PLUS_MONTHLY (boot validation)", () => {
     expect(loadGrantPlusMonthlyCredits()).toBe(500000);
   });
 
-  test("unset (and no legacy fallback) throws — fails fast at boot", async () => {
+  test("unset throws — fails fast at boot", async () => {
     delete process.env.PAYMENTS_GRANT_PLUS_MONTHLY;
     const { loadGrantPlusMonthlyCredits } =
       await import("@/payments/credits/config");
@@ -71,14 +61,6 @@ describe("PAYMENTS_GRANT_PLUS_MONTHLY (boot validation)", () => {
     expect(() => loadGrantPlusMonthlyCredits()).toThrow(
       /must be a positive safe integer/,
     );
-  });
-
-  test("falls back to legacy PAYMENTS_GRANT_BUILDER_MONTHLY", async () => {
-    delete process.env.PAYMENTS_GRANT_PLUS_MONTHLY;
-    process.env.PAYMENTS_GRANT_BUILDER_MONTHLY = "4321";
-    const { loadGrantPlusMonthlyCredits } =
-      await import("@/payments/credits/config");
-    expect(loadGrantPlusMonthlyCredits()).toBe(4321);
   });
 
   test("loadConfig surfaces grantPlusMonthlyCredits", async () => {
