@@ -215,7 +215,17 @@ describe("GET /v2/accounts/me/credits", () => {
     expect(body.periodLabel).toBe("Daily");
   });
 
-  test("past-ended active subscription returns free-tier daily-cap credits", async () => {
+  // Single-ledger: a still-`active` subscription whose period window has
+  // elapsed (no EXPIRED webhook yet) is time-expired for *display* — the
+  // credits endpoint frames it as the free-tier daily branch (cap 100,
+  // periodLabel "Daily"). But the per-period `sub_grant` that `upsertFromVerify`
+  // materialized on subscribe stays in the one wallet until an
+  // expiry/refund/revoke webhook forfeits it (covered by grants.integration).
+  // So the wallet still shows the granted balance, and `monthlyGrantUsed`
+  // (= max(0, cap − balance)) clamps to 0, NOT the cap. The old assertion
+  // (used = cap, balance = 0) encoded the pre-single-ledger derived-balance
+  // model where lapsing instantly zeroed the wallet.
+  test("past-ended active subscription: daily-cap framing, wallet credits persist until forfeit", async () => {
     const accountId = await newAccount();
     const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000);
     await upsertFromVerify({
@@ -244,8 +254,8 @@ describe("GET /v2/accounts/me/credits", () => {
       .set("X-Convos-AuthToken", token);
     const body = res.body as BalanceBody;
     expect(body.monthlyGrant).toBe(100);
-    expect(body.monthlyGrantUsed).toBe(100);
-    expect(body.balance).toBe(0);
+    expect(body.monthlyGrantUsed).toBe(0);
+    expect(body.balance).toBe(2500);
     expect(body.periodLabel).toBe("Daily");
   });
 
@@ -264,18 +274,29 @@ describe("GET /v2/accounts/me/credits", () => {
     expect(BigInt(body.balance)).toBe(await getSpendableBalance(accountId));
   });
 
-  test("consumes before currentPeriodStart do NOT count (previous period burn)", async () => {
+  // Single-ledger: there is ONE wallet, not a per-period derived balance, so
+  // `monthlyGrantUsed` is `clamp(grant − balance)` over the live wallet — it no
+  // longer windows consumes by `createdAt >= currentPeriodStart`. A debit that
+  // drained the wallet is reflected regardless of when it was recorded. (The
+  // old model used `sumPeriodConsumes(since currentPeriodStart)`, which excluded
+  // earlier-dated rows; that derivation is gone.) Here the 9999-credit burn
+  // overshoots the 2500 grant, so the wallet clamps to 0 and used clamps to the
+  // full grant.
+  test("any consume drains the one wallet (no per-period windowing)", async () => {
     const accountId = await newAccount();
     await seedPlusMonthly(accountId);
-    // Burn in the prior period — should not affect this period's display.
     await writeConsume(accountId, 9999, BEFORE_PERIOD, "previous-period");
     const token = await tokenFor(accountId);
     const res = await request(makeApp())
       .get("/v2/accounts/me/credits")
       .set("X-Convos-AuthToken", token);
     const body = res.body as BalanceBody;
-    expect(body.monthlyGrantUsed).toBe(0);
-    expect(body.balance).toBe(2500);
+    expect(body.monthlyGrantUsed).toBe(2500);
+    // Wallet overshot to negative; the endpoint clamps the displayed balance to
+    // 0 (the raw `getSpendableBalance` stays negative — that's the spend gate's
+    // concern, not the display's).
+    expect(body.balance).toBe(0);
+    expect(await getSpendableBalance(accountId)).toBeLessThan(0n);
   });
 
   test("monthlyGrantUsed is capped at monthlyGrant (over-burn doesn't go negative)", async () => {

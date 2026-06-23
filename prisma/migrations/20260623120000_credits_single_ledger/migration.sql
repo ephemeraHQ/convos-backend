@@ -14,3 +14,16 @@ VALUES
   ('sub_grant',            'Subscription grant',   'Per-period subscription credit allotment', true, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
   ('subscription_forfeit', 'Subscription forfeit', 'Bounded clawback of unused subscription credits on expiry/refund/revoke', true, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
 ON CONFLICT ("id") DO NOTHING;
+
+-- 3. Widen the CreditLedger scope domain to admit the subscription clawback
+--    scope. Migration 20260522091106 pinned the CHECK to
+--    ('transaction', 'grant', 'daily_refill'); the single-ledger forfeit path
+--    writes scope = 'subscription_forfeit', which that constraint rejects with
+--    Postgres error 23514. (Per-period subscription grants reuse scope = 'grant'
+--    with grantKindId = 'sub_grant', so they were already admitted.) Drop and
+--    re-add the constraint with the new value included. Safe to add immediately:
+--    no existing row carries a value outside the widened set.
+ALTER TABLE "CreditLedger" DROP CONSTRAINT "CreditLedger_scope_check";
+ALTER TABLE "CreditLedger"
+  ADD CONSTRAINT "CreditLedger_scope_check"
+  CHECK ("scope" IN ('transaction', 'grant', 'daily_refill', 'subscription_forfeit'));
