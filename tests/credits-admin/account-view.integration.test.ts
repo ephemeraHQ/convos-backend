@@ -53,9 +53,11 @@ describe("GET /api/v2/credits-admin/accounts/:accountId", () => {
     tracker.length = 0;
   });
 
-  it("entitled subscriber → derived spendable + raw + isEntitled true", async () => {
+  it("entitled subscriber → spendable == raw wallet (single-ledger), isEntitled true", async () => {
     const accountId = await seedAccount();
     tracker.push(accountId);
+    // Single-ledger: subscribing materializes a sub_grant into the one wallet,
+    // so spendable and raw are the SAME positive value (no derived path).
     await seedPlusMonthlySubscription(accountId);
     const res = await adminRequest(app).get(
       `/api/v2/credits-admin/accounts/${accountId}`,
@@ -64,8 +66,8 @@ describe("GET /api/v2/credits-admin/accounts/:accountId", () => {
     const body = res.body as AccountViewBody;
     expect(body.isEntitled).toBe(true);
     expect(body.subscription?.effectiveStatus).toBe("active");
-    expect(body.rawBalanceCredits).toBe("0");
-    expect(BigInt(body.spendableCredits)).toBeGreaterThan(0n);
+    expect(BigInt(body.rawBalanceCredits)).toBeGreaterThan(0n);
+    expect(body.spendableCredits).toBe(body.rawBalanceCredits);
   });
 
   it("non-subscriber → no subscription, spendable equals raw", async () => {

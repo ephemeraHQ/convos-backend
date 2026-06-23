@@ -19,7 +19,6 @@ export interface ApplyDeltaInput {
   note?: string;
   grantKindId?: GrantKindId;
   floorCheck?: { minBalance: bigint };
-  recordOnly?: boolean;
 }
 
 export interface ApplyDeltaResult {
@@ -192,26 +191,6 @@ export const applyDeltaWithTx = async (
   input: ApplyDeltaInput,
 ): Promise<ApplyDeltaResult> => {
   assertIdempotencyKey(input.idempotencyKey);
-
-  if (input.recordOnly) {
-    if (input.floorCheck) {
-      throw new Error("recordOnly is incompatible with floorCheck");
-    }
-    const existing = await tx.userCredits.findUnique({
-      where: { accountId: input.accountId },
-      select: { balance: true },
-    });
-    const current = existing?.balance ?? 0n;
-    const created = await tx.creditLedger.create({
-      data: buildLedgerData(input, current),
-    });
-    return {
-      ledgerId: created.id,
-      replayed: false,
-      newBalance: current,
-      balanceAfter: current,
-    };
-  }
 
   const before = await lockOrCreateBalance(tx, input.accountId);
   const after = before + input.delta;

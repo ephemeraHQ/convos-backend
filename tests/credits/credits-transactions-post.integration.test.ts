@@ -142,10 +142,13 @@ describe("POST /v2/accounts/:accountId/credits/transactions", () => {
     expect((res.body as { code: string }).code).toBe("account_not_found");
   });
 
-  it("subscriber consume records usage without moving raw balance, never 402", async () => {
+  it("subscriber consume decrements the one wallet (single-ledger, no record-only)", async () => {
     const accountId = await seedAccount();
     tracker.push(accountId);
+    // Subscribing materializes a sub_grant into the wallet.
     await seedPlusMonthlySubscription(accountId);
+    const granted = await getBalance(accountId);
+    expect(granted).toBeGreaterThan(0n);
 
     const res = await agentRequest(app).post(
       `/v2/accounts/${accountId}/credits/transactions`,
@@ -153,8 +156,8 @@ describe("POST /v2/accounts/:accountId/credits/transactions", () => {
       { usdCostMicros: "1000000", requestId: "req-sub" },
     );
     expect(res.status).toBe(200);
-    // Raw balance untouched (record-only).
-    expect(await getBalance(accountId)).toBe(0n);
+    // Single-ledger: the consume really decrements the shared wallet.
+    expect(await getBalance(accountId)).toBe(granted - 2000n);
     const row = await prisma.creditLedger.findFirst({
       where: { accountId, reason: LedgerReason.consume },
     });

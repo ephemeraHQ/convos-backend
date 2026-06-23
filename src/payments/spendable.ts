@@ -1,12 +1,7 @@
 import { LedgerReason } from "@prisma/client";
-import { consume, getBalance, usdToCredits } from "@/payments";
+import { consume, getBalance } from "@/payments";
 import { config } from "@/payments/credits/config";
-import { applyDelta } from "@/payments/ledger";
 import type { ConsumeResult } from "@/payments/types";
-import { findCurrentByAccountId } from "@/subscriptions/repository";
-import { isEntitledSubscription } from "@/subscriptions/status";
-import { tierGrant } from "@/subscriptions/tier-config";
-import { requireSubscriptionTier } from "@/subscriptions/tiers";
 import { prisma } from "@/utils/prisma";
 
 export const sumPeriodConsumes = async (
@@ -26,53 +21,33 @@ export const sumPeriodConsumes = async (
   return Number(sum < 0n ? -sum : sum);
 };
 
-export const getSpendableBalance = async (
-  accountId: string,
-): Promise<bigint> => {
-  const subscription = await findCurrentByAccountId(accountId);
-  if (subscription && isEntitledSubscription(subscription)) {
-    const grant = tierGrant(
-      requireSubscriptionTier(subscription.tier),
-      subscription.period,
-    );
-    const used = await sumPeriodConsumes(
-      accountId,
-      subscription.currentPeriodStart,
-    );
-    const remaining = grant.perPeriod - Math.min(used, grant.perPeriod);
-    return BigInt(remaining);
-  }
-  return getBalance(accountId);
-};
+/**
+ * Spendable balance == the one wallet, for everyone.
+ *
+ * Single-ledger migration: subscriptions write real `sub_grant` credit rows
+ * into `UserCredits.balance` on subscribe/renewal (and a bounded
+ * `subscription_forfeit` on expiry), so there is no longer a derived
+ * `tierGrant − periodConsumes` path or a bimodal switch on
+ * `isEntitledSubscription`. Subscribers and non-subscribers read the same
+ * wallet. Kept as a named export (rather than inlining `getBalance` at every
+ * call site) so the agent gate and admin view keep their stable import.
+ */
+export const getSpendableBalance = async (accountId: string): Promise<bigint> =>
+  getBalance(accountId);
 
 export const isSpendAllowed = async (accountId: string): Promise<boolean> =>
   (await getSpendableBalance(accountId)) >= config.reservedMaxTurnCredits;
 
+/**
+ * Record a consume against the one wallet — a real, floor-checked decrement
+ * for everyone (subscribers included). The subscriber `recordOnly` no-mutation
+ * special case is gone: with subscription credits living in the wallet, there
+ * is one debit path.
+ */
 export const recordConsume = async (args: {
   accountId: string;
   usdCostMicros: bigint;
   idempotencyKey: string;
   requestId: string;
   model?: string;
-}): Promise<ConsumeResult> => {
-  const subscription = await findCurrentByAccountId(args.accountId);
-  if (!subscription || !isEntitledSubscription(subscription)) {
-    return consume(args);
-  }
-
-  const credits = usdToCredits(args.usdCostMicros);
-  const { replayed, newBalance, balanceAfter, ledgerId } = await applyDelta({
-    accountId: args.accountId,
-    delta: BigInt(-credits),
-    reason: LedgerReason.consume,
-    idempotencyKey: args.idempotencyKey,
-    scope: "transaction",
-    usdCostMicros: args.usdCostMicros,
-    markupRate: config.markupRate,
-    creditsPerDollar: config.creditsPerDollar,
-    model: args.model,
-    requestId: args.requestId,
-    recordOnly: true,
-  });
-  return { spent: credits, replayed, newBalance, balanceAfter, ledgerId };
-};
+}): Promise<ConsumeResult> => consume(args);

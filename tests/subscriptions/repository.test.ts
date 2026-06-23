@@ -67,6 +67,14 @@ const wipeForAccounts = async (accountIds: string[]) => {
   await prisma.subscription.deleteMany({
     where: { accountId: { in: accountIds } },
   });
+  // Single-ledger: verify/renewal now write sub_grant ledger rows, so clear
+  // the wallet + ledger before deleting the account (FK).
+  await prisma.creditLedger.deleteMany({
+    where: { accountId: { in: accountIds } },
+  });
+  await prisma.userCredits.deleteMany({
+    where: { accountId: { in: accountIds } },
+  });
   await prisma.account.deleteMany({ where: { id: { in: accountIds } } });
 };
 

@@ -1,10 +1,10 @@
 import { randomUUID } from "node:crypto";
-import { LedgerReason, SubscriptionPeriod } from "@prisma/client";
+import { SubscriptionPeriod } from "@prisma/client";
 import type { Express } from "express";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { consume } from "@/payments";
 import { tierGrant } from "@/subscriptions/tier-config";
 import { SUBSCRIPTION_TIER_PLUS } from "@/subscriptions/tiers";
-import { prisma } from "@/utils/prisma";
 import {
   agentRequest,
   buildCreditsApp,
@@ -71,9 +71,10 @@ describe("GET /v2/accounts/:accountId/credits", () => {
     expect((res.body as { code: string }).code).toBe("invalid_account_id");
   });
 
-  it("entitled subscriber → allowed with derived balance, even with no UserCredits row", async () => {
+  it("entitled subscriber → allowed; wallet holds the materialized period grant", async () => {
     const accountId = await seedAccount();
     tracker.push(accountId);
+    // Single-ledger: subscribing writes a sub_grant of perPeriod into the wallet.
     await seedPlusMonthlySubscription(accountId);
 
     const perPeriod = tierGrant(
@@ -92,7 +93,7 @@ describe("GET /v2/accounts/:accountId/credits", () => {
     });
   });
 
-  it("entitled subscriber over cap → not allowed", async () => {
+  it("entitled subscriber whose wallet is drained → not allowed", async () => {
     const accountId = await seedAccount();
     tracker.push(accountId);
     await seedPlusMonthlySubscription(accountId);
@@ -100,14 +101,13 @@ describe("GET /v2/accounts/:accountId/credits", () => {
       SUBSCRIPTION_TIER_PLUS,
       SubscriptionPeriod.monthly,
     ).perPeriod;
-    await prisma.creditLedger.create({
-      data: {
-        accountId,
-        delta: BigInt(-(perPeriod + 10)),
-        reason: LedgerReason.consume,
-        idempotencyKey: `c-${randomUUID()}`,
-        scope: "transaction",
-      },
+    // Real decrement through the one wallet down to exactly the floor (0),
+    // mirroring how a subscriber now spends in the single-ledger model.
+    await consume({
+      accountId,
+      usdCostMicros: BigInt(perPeriod * 500),
+      idempotencyKey: `c-${randomUUID()}`,
+      requestId: "drain",
     });
 
     const res = await agentRequest(app).get(
