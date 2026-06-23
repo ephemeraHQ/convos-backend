@@ -416,6 +416,11 @@ model Subscription {
   startedAt             DateTime
   currentPeriodStart    DateTime
   currentPeriodEnd      DateTime
+  // Single-ledger migration anchor: the `currentPeriodStart` of the period
+  // for which we last wrote a `sub_grant` credit row. Lets the grant path
+  // (and the optional reconcile cron) tell "already granted this period?"
+  // without scanning the ledger. Null until the first period is granted.
+  lastGrantedPeriodStart DateTime?
   // Mirrors Apple's `autoRenewStatus` / Google's `autoRenewingEnabled`.
   willRenew             Boolean            @default(true)
   // True while the active period is an introductory offer (free trial or

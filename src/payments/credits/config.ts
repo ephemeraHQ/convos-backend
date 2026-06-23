@@ -8,6 +8,7 @@ export interface PaymentsConfig {
   minBalance: bigint;
   freeTierDailyCapCredits: number;
   signupBonusCredits: number;
+  grantPlusMonthlyCredits: number;
 }
 
 const requireFloat = (key: string, raw: string | undefined): number => {
@@ -150,6 +151,40 @@ export const loadSignupBonusCredits = (): number => {
   return Number(trimmed);
 };
 
+// PAYMENTS_GRANT_PLUS_MONTHLY
+//   Monthly credit allotment for the Plus subscription tier. The source of
+//   truth for `monthlyGrant` in the iOS `CreditBalance` model and the per-
+//   period `sub_grant` ledger write. `tierGrant()` (tier-config.ts) reads it
+//   lazily and would 500 on the first subscriber grant if unset; validating it
+//   here makes a missing/non-numeric value fail fast at boot instead. Must be a
+//   positive safe integer. Falls back to the legacy `PAYMENTS_GRANT_BUILDER_
+//   MONTHLY` name to mirror tier-config.ts so deploys don't need a coordinated
+//   rename.
+//
+//   Parsing intentionally mirrors tier-config.ts's `Number.parseInt(raw, 10)`
+//   (NOT the stricter `/^-?\d+$/` requireBigInt) so that any value which booted
+//   the lazy `tierGrant()` path before — e.g. "500000\n", "500000 ", or a
+//   trailing-garbage form parseInt tolerates — still boots here. The boot
+//   validation must not be a regression that rejects a value the running system
+//   already accepted; it only moves the same failure (unset / non-numeric /
+//   non-positive) earlier.
+export const loadGrantPlusMonthlyCredits = (): number => {
+  const key = "PAYMENTS_GRANT_PLUS_MONTHLY";
+  const raw =
+    process.env.PAYMENTS_GRANT_PLUS_MONTHLY ??
+    process.env.PAYMENTS_GRANT_BUILDER_MONTHLY;
+  if (raw === undefined || raw.trim() === "") {
+    throw new ValidationError(`${key} not configured`);
+  }
+  const n = Number.parseInt(raw, 10);
+  if (!Number.isFinite(n) || n <= 0 || n > Number.MAX_SAFE_INTEGER) {
+    throw new ValidationError(
+      `${key} must be a positive safe integer, got: ${raw}`,
+    );
+  }
+  return n;
+};
+
 export const loadConfig = (): PaymentsConfig => ({
   ...loadMarkupRate(),
   creditsPerDollar: loadCreditsPerUsd(),
@@ -157,6 +192,7 @@ export const loadConfig = (): PaymentsConfig => ({
   minBalance: loadMinBalanceCredits(),
   freeTierDailyCapCredits: loadFreeTierDailyCapCredits(),
   signupBonusCredits: loadSignupBonusCredits(),
+  grantPlusMonthlyCredits: loadGrantPlusMonthlyCredits(),
 });
 
 export const config: PaymentsConfig = loadConfig();
