@@ -14,9 +14,15 @@
  * verify/renewal path uses (`sub_grant_{subscriptionId}_{periodStartEpoch}`).
  * It is therefore:
  *   - idempotent: re-running, or the next renewal/verify, no-ops on the key;
- *   - clamped: it credits `perPeriod − min(periodConsumes, perPeriod)` so a
- *     subscriber who already burned part of the period mid-migration is not
- *     over-credited.
+ *   - indistinguishable from a live grant: it writes the FULL `perPeriod`
+ *     allotment — exactly what `grantSubscriptionPeriod` writes (which never
+ *     clamps). This is REQUIRED for forfeit correctness: live forfeit reads the
+ *     `sub_grant` row back as the period's TOTAL grant and subtracts period
+ *     consumes once. A clamped (`perPeriod − consumed`) row would make forfeit
+ *     subtract the pre-migration consumes a SECOND time → under-forfeit. Any
+ *     credits the subscriber already burned this period are already reflected in
+ *     the wallet balance, so writing the full grant is not over-crediting — it
+ *     simply restores the period's allotment as the live path would have.
  *
  * Sized for n=1 (one live subscriber). NO cutover state machine, NO dual-write,
  * NO backfill-safety harness — it is a guarded loop you can read in one screen.
@@ -26,7 +32,6 @@
  *   pnpm tsx --env-file=.env dev/scripts/materializeSubscriptionWallets.ts
  *   pnpm tsx --env-file=.env dev/scripts/materializeSubscriptionWallets.ts --apply
  */
-import { LedgerReason } from "@prisma/client";
 import { grant } from "@/payments";
 import { config } from "@/payments/credits/config";
 import { subGrantKey } from "@/subscriptions/grants";
@@ -38,7 +43,20 @@ import { prisma } from "@/utils/prisma";
 
 const APPLY = process.argv.includes("--apply");
 
-async function main() {
+export interface MaterializeResult {
+  total: number;
+  granted: number;
+  skipped: number;
+}
+
+/**
+ * Core materialization loop. Exported so tests can drive it directly (the live
+ * forfeit math depends on the FULL-`perPeriod` grant this writes). `apply=false`
+ * is a dry-run that mutates nothing.
+ */
+export async function materializeSubscriptionWallets(
+  apply: boolean,
+): Promise<MaterializeResult> {
   // Touch config so a missing PAYMENTS_GRANT_PLUS_MONTHLY fails fast here too.
   void config.grantPlusMonthlyCredits;
 
@@ -70,41 +88,27 @@ async function main() {
       continue;
     }
 
-    const perPeriod = tierGrant(
+    // Write the FULL per-period allotment — identical to what the live
+    // `grantSubscriptionPeriod` writes (it never clamps). Forfeit reads this row
+    // back as the period TOTAL and nets period consumes ONCE; clamping here
+    // would make it net the pre-migration consumes a second time (under-forfeit).
+    // Credits already spent this period are already deducted from the wallet
+    // balance, so the full grant is not over-crediting.
+    const credits = tierGrant(
       requireSubscriptionTier(sub.tier),
       sub.period,
     ).perPeriod;
 
-    // Clamp by what was already consumed this period so we don't over-credit a
-    // subscriber who spent part of the period before the migration landed.
-    const consumeAgg = await prisma.creditLedger.aggregate({
-      where: {
-        accountId: sub.accountId,
-        reason: LedgerReason.consume,
-        createdAt: { gte: periodStart },
-      },
-      _sum: { delta: true },
-    });
-    const consumed =
-      consumeAgg._sum.delta === null
-        ? 0
-        : Number(
-            consumeAgg._sum.delta < 0n
-              ? -consumeAgg._sum.delta
-              : consumeAgg._sum.delta,
-          );
-    const credits = perPeriod - Math.min(consumed, perPeriod);
-
     if (credits <= 0) {
       skipped++;
       logger.info(
-        { subscriptionId: sub.id, perPeriod, consumed },
-        "[materialize-subs] nothing left to credit this period — skipping",
+        { subscriptionId: sub.id, perPeriod: credits },
+        "[materialize-subs] nothing to credit this period — skipping",
       );
       continue;
     }
 
-    if (!APPLY) {
+    if (!apply) {
       granted++;
       logger.info(
         { subscriptionId: sub.id, accountId: sub.accountId, credits },
@@ -132,21 +136,31 @@ async function main() {
   }
 
   logger.info(
-    { total: subs.length, granted, skipped, apply: APPLY },
+    { total: subs.length, granted, skipped, apply },
     "[materialize-subs] finished",
   );
-  if (!APPLY) {
+  if (!apply) {
     logger.info(
       "[materialize-subs] dry-run only — re-run with --apply to write the grants",
     );
   }
+
+  return { total: subs.length, granted, skipped };
 }
 
-main()
-  .catch((error: unknown) => {
-    logger.error({ error }, "[materialize-subs] CLI failed");
-    process.exitCode = 1;
-  })
-  .finally(() => {
-    void prisma.$disconnect();
-  });
+// Only run the CLI when invoked directly (not when imported by a test). tsx sets
+// import.meta.url to the entrypoint's file URL.
+const isDirectRun =
+  typeof process.argv[1] === "string" &&
+  import.meta.url === `file://${process.argv[1]}`;
+
+if (isDirectRun) {
+  materializeSubscriptionWallets(APPLY)
+    .catch((error: unknown) => {
+      logger.error({ error }, "[materialize-subs] CLI failed");
+      process.exitCode = 1;
+    })
+    .finally(() => {
+      void prisma.$disconnect();
+    });
+}

@@ -159,6 +159,19 @@ const lockOrCreateBalance = async (
   return rows[0]?.balance ?? 0n;
 };
 
+/**
+ * Take the row-level lock on `accountId`'s `UserCredits` row for the rest of the
+ * caller's transaction and return the LOCKED balance. Same atomic upsert+lock
+ * primitive `applyDeltaWithTx` uses internally — exposed so callers that must
+ * compute a delta FROM the current balance (e.g. subscription forfeit clamping
+ * `min(balance, …)`) read it under the same lock they then mutate under,
+ * closing the read-then-write race that a plain `findUnique` would leave open.
+ */
+export const lockUserCreditsBalance = async (
+  tx: TxClient,
+  accountId: string,
+): Promise<bigint> => lockOrCreateBalance(tx, accountId);
+
 const buildLedgerData = (input: ApplyDeltaInput, balanceAfter: bigint) => ({
   accountId: input.accountId,
   delta: input.delta,

@@ -172,11 +172,13 @@ export async function appleSsnHandler(req: Request, res: Response) {
       return;
     }
 
-    // No grant() write on DID_RENEW: subscription credit allotments are
-    // derived from the Subscription row + per-tier config at read time (see
-    // GET /v2/accounts/me/credits). Renewal updates currentPeriodStart, which
-    // resets monthlyGrantUsed on the next read. grant() is reserved for
-    // additive credits (top-ups, NUX trial, manual ops, promo).
+    // Single-ledger: `applyNotification` already wrote the money move for this
+    // notification inside its own transaction. On DID_RENEW it advances
+    // currentPeriodStart and writes a real `sub_grant` credit row for the new
+    // period (via grantSubscriptionPeriod), idempotent on the per-period key; on
+    // EXPIRED/REVOKE it writes the bounded `subscription_forfeit` adjustment.
+    // Nothing is derived at read time — GET /v2/accounts/me/credits just reads
+    // the one wallet balance.
     req.log.info(
       {
         notificationType: notification.notificationType,

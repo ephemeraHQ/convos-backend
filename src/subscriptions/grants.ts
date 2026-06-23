@@ -1,5 +1,5 @@
 import { LedgerReason, type Prisma, type Subscription } from "@prisma/client";
-import { applyDeltaWithTx } from "@/payments/ledger";
+import { applyDeltaWithTx, lockUserCreditsBalance } from "@/payments/ledger";
 import { tierGrant } from "@/subscriptions/tier-config";
 import { requireSubscriptionTier } from "@/subscriptions/tiers";
 
@@ -48,6 +48,22 @@ const findLedgerRow = (
     where: { accountId_idempotencyKey: { accountId, idempotencyKey } },
   });
 
+/**
+ * |consume deltas| since `since` (period start), as a positive credit total.
+ *
+ * S1 KNOWN APPROXIMATION (n=1, safe direction): the wallet is commingled —
+ * `consume` rows carry no funding-source/bucket metadata, so we cannot tell a
+ * spend that drew down subscription credits from one that drew down
+ * admin/promo/signup credits. We therefore attribute ALL period consumes to the
+ * subscription portion when computing `unusedSub = periodGrant − consumes`. This
+ * can only OVER-count consumes → UNDER-forfeit (a lapsed sub may retain
+ * subscription credits up to the non-sub amount spent in the period); it can
+ * never over-claw. Admin/promo/signup credits stay protected by the
+ * `max(0, …)` floor on `unusedSub` and the locked `min(balance, unusedSub)`
+ * clamp in `forfeitSubscriptionPeriod`. Clean attribution would require tagging
+ * each consume with its funding bucket — over-engineering for n=1 and tracked as
+ * a follow-up if subscription volume grows.
+ */
 const sumConsumesSince = async (
   tx: TxClient,
   accountId: string,
@@ -145,12 +161,18 @@ export type ForfeitSubscriptionPeriodResult =
  *   periodGrant    = the sub_grant delta we wrote for this period
  *   periodConsumes = |consume deltas| since currentPeriodStart
  *   unusedSub      = max(0, periodGrant − periodConsumes)
- *   forfeitDelta   = −min(walletBalance, unusedSub)        # clamp ≥ 0
+ *   forfeitDelta   = −min(lockedBalance, unusedSub)        # clamp ≥ 0
  *
- * The `min(walletBalance, unusedSub)` clamp guarantees the forfeit never drives
+ * The `min(lockedBalance, unusedSub)` clamp guarantees the forfeit never drives
  * the wallet below the admin/promo/signup credits sharing it, and never below
- * zero. Idempotent on `sub_forfeit:{subscription.id}:{periodStartEpoch}` so a
- * duplicate EXPIRED/REVOKE webhook doesn't double-claw.
+ * zero. CRITICAL: `lockedBalance` is read AFTER taking the row lock on
+ * `UserCredits` (via `lockUserCreditsBalance`), so a consume committing
+ * concurrently between our read and our write cannot make the clamp stale and
+ * drive the wallet negative. A `floorCheck: { minBalance: 0n }` on the apply is
+ * a belt-and-suspenders guard that throws (rather than silently writing a
+ * negative balance) should the clamp ever be defeated. Idempotent on
+ * `sub_forfeit:{subscription.id}:{periodStartEpoch}` so a duplicate
+ * EXPIRED/REVOKE webhook doesn't double-claw.
  *
  * Cancel-while-active (auto-renew off, period still running) must NOT call this
  * — the credits stay until the period ends.
@@ -184,6 +206,17 @@ export const forfeitSubscriptionPeriod = async (
     return { kind: "skipped_nothing_to_forfeit" };
   }
 
+  // B1: take the row lock FIRST, then read both the period consumes and the
+  // wallet balance under that lock. A plain unlocked `findUnique` here let a
+  // consume commit between the balance read and the apply, so the precomputed
+  // `−forfeit` delta could overshoot the (now smaller) locked base and drive the
+  // wallet negative. Locking before we compute the clamp removes that window —
+  // the balance we clamp against is the same one `applyDeltaWithTx` mutates.
+  const lockedBalance = await lockUserCreditsBalance(
+    tx,
+    subscription.accountId,
+  );
+
   const periodConsumes = await sumConsumesSince(
     tx,
     subscription.accountId,
@@ -194,14 +227,8 @@ export const forfeitSubscriptionPeriod = async (
     return { kind: "skipped_nothing_to_forfeit" };
   }
 
-  const walletRow = await tx.userCredits.findUnique({
-    where: { accountId: subscription.accountId },
-    select: { balance: true },
-  });
-  const walletBalance = walletRow?.balance ?? 0n;
-  const walletPositive = walletBalance > 0n ? Number(walletBalance) : 0;
-
-  const forfeit = Math.min(walletPositive, unusedSub);
+  const lockedPositive = lockedBalance > 0n ? Number(lockedBalance) : 0;
+  const forfeit = Math.min(lockedPositive, unusedSub);
   if (forfeit <= 0) {
     return { kind: "skipped_nothing_to_forfeit" };
   }
@@ -214,6 +241,9 @@ export const forfeitSubscriptionPeriod = async (
     scope: "subscription_forfeit",
     grantKindId: "subscription_forfeit",
     note: `subscription ${subscription.id} forfeit period ${periodStart.toISOString()}`,
+    // Belt-and-suspenders: even though `forfeit` is clamped to the locked
+    // balance, refuse to ever write a balance below zero.
+    floorCheck: { minBalance: 0n },
   });
 
   return { kind: "forfeited", credits: forfeit };
