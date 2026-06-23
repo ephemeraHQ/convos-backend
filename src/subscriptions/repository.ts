@@ -8,8 +8,13 @@ import {
   type SubscriptionPeriod,
 } from "@prisma/client";
 import {
+  forfeitSubscriptionPeriod,
+  grantSubscriptionPeriod,
+} from "@/subscriptions/grants";
+import {
   effectiveSubscriptionStatus,
   ENTITLED_SUBSCRIPTION_STATUSES,
+  isEntitledSubscriptionStatus,
 } from "@/subscriptions/status";
 import {
   requireSubscriptionTier,
@@ -405,6 +410,26 @@ export const upsertFromVerify = async (
         },
       });
 
+      // Single-ledger: materialize the period allotment as a real grant row.
+      // Idempotent per (subscription, periodStart), so the initial verify, a
+      // re-verify of the same period, or an S2S DID_RENEW racing this verify
+      // all resolve to one row. Only grant when the verified state is
+      // entitled and the verify is not a stale (out-of-order) replay.
+      if (!isStaleVerify && isEntitledSubscriptionStatus(subscription.status)) {
+        const grantResult = await grantSubscriptionPeriod(tx, {
+          subscription,
+          periodStart: subscription.currentPeriodStart,
+        });
+        // The grant stamps `lastGrantedPeriodStart` (bumping updatedAt) in the
+        // same tx; return that fresh row so callers see consistent state.
+        if (grantResult.kind === "granted") {
+          return {
+            subscription: grantResult.subscription,
+            receiptCreated: true,
+          };
+        }
+      }
+
       return { subscription, receiptCreated: true };
     });
   } catch (err) {
@@ -541,6 +566,36 @@ export const applyNotification = async (
         where: { id: subscription.id },
         data: input.update,
       });
+
+      // Single-ledger money-in / money-out, transactional with the state update.
+      if (
+        updated.status === SubscriptionStatus.expired ||
+        updated.status === SubscriptionStatus.revoked
+      ) {
+        // Expiry / refund / revoke → bounded clawback of the unused
+        // subscription portion. Cancel-while-active never reaches here: it
+        // only flips willRenew (status stays active), so credits stay to the
+        // period end. Idempotent per (subscription, periodStart).
+        await forfeitSubscriptionPeriod(tx, { subscription: updated });
+      } else if (
+        isEntitledSubscriptionStatus(updated.status) &&
+        updated.currentPeriodStart.getTime() >
+          subscription.currentPeriodStart.getTime()
+      ) {
+        // A renewal advanced the period start → materialize the new period's
+        // allotment. Guarding on "the start advanced" means a grace/billing-
+        // retry transition that keeps the same period does not re-grant.
+        const grantResult = await grantSubscriptionPeriod(tx, {
+          subscription: updated,
+          periodStart: updated.currentPeriodStart,
+        });
+        if (grantResult.kind === "granted") {
+          return {
+            kind: "applied" as const,
+            subscription: grantResult.subscription,
+          };
+        }
+      }
 
       return { kind: "applied" as const, subscription: updated };
     });
