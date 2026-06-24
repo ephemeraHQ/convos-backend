@@ -67,7 +67,11 @@ const discriminatedBodySchema = z.discriminatedUnion("platform", [
 // those bodies still route to the Apple arm. Only legacy Apple clients omit
 // `platform`; Google clients always send `"googlePlay"`. The per-arm `.strict()`
 // is preserved, so genuinely unknown keys are still rejected.
-const bodySchema = z.preprocess(
+// Exported so contract tests can pin the client-facing request shape directly
+// (see tests/subscriptions/verify-body-contract.test.ts). The append-only
+// client-API rule (CLAUDE.md) means a legacy bare `{ jwsRepresentation }` must
+// keep validating; that test guards against a future re-tightening.
+export const verifyBodySchema = z.preprocess(
   (value) =>
     value &&
     typeof value === "object" &&
@@ -76,6 +80,8 @@ const bodySchema = z.preprocess(
       : value,
   discriminatedBodySchema,
 );
+
+const bodySchema = verifyBodySchema;
 
 const requireField = <T>(value: T | undefined | null, field: string): T => {
   if (value === undefined || value === null) {
