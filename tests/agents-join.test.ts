@@ -197,7 +197,7 @@ describe("agents join (assistant API)", () => {
         return Promise.resolve(
           jsonResponse(200, {
             instanceId: "inst-direct",
-            joinStatus: "starting",
+            joinStatus: "pending_acceptance",
             inboxId: "inbox-direct-1",
           }),
         );
@@ -228,12 +228,23 @@ describe("agents join (assistant API)", () => {
           );
         }
         pollCount += 1;
+        // While still "starting" the inboxId hasn't been earned yet; only once
+        // the assistant reaches "pending_acceptance" does registration land.
         return Promise.resolve(
-          jsonResponse(200, {
-            instanceId: "inst-direct-2",
-            joinStatus: "starting",
-            inboxId: pollCount < 3 ? null : "inbox-direct-2",
-          }),
+          jsonResponse(
+            200,
+            pollCount < 3
+              ? {
+                  instanceId: "inst-direct-2",
+                  joinStatus: "starting",
+                  inboxId: null,
+                }
+              : {
+                  instanceId: "inst-direct-2",
+                  joinStatus: "pending_acceptance",
+                  inboxId: "inbox-direct-2",
+                },
+          ),
         );
       };
 
@@ -242,6 +253,37 @@ describe("agents join (assistant API)", () => {
       const data = (await res.json()) as { inboxId: string | null };
       expect(data.inboxId).toBe("inbox-direct-2");
       expect(pollCount).toBeGreaterThanOrEqual(3);
+    });
+
+    test("direct-add → 'starting' with an inboxId does NOT register; waits for progression", async () => {
+      mockFetchImpl = (_url, init) => {
+        if (init?.method === "POST") {
+          return Promise.resolve(
+            jsonResponse(200, { instanceId: "inst-direct-early" }),
+          );
+        }
+        // inboxId is present but joinStatus is still "starting" — the assistant
+        // isn't far enough along to be added to the group, so the poll must not
+        // treat this as registered. It outlasts the wait budget → inboxId:null.
+        return Promise.resolve(
+          jsonResponse(200, {
+            instanceId: "inst-direct-early",
+            joinStatus: "starting",
+            inboxId: "inbox-direct-early",
+          }),
+        );
+      };
+
+      const res = await post({ conversationId: DIRECT_ADD_CONVERSATION_ID });
+      expect(res.status).toBe(200);
+      const data = (await res.json()) as {
+        success: boolean;
+        joined: boolean;
+        inboxId: string | null;
+      };
+      expect(data.success).toBe(true);
+      expect(data.joined).toBe(false);
+      expect(data.inboxId).toBeNull();
     });
 
     test("direct-add → inboxId:null when registration outlasts the wait budget", async () => {
@@ -957,7 +999,7 @@ describe("agents join (assistant API)", () => {
         return Promise.resolve(
           jsonResponse(200, {
             instanceId: "inst-uuid-owner",
-            joinStatus: "starting",
+            joinStatus: "pending_acceptance",
             inboxId: "inbox-uuid-owner",
           }),
         );

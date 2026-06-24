@@ -283,7 +283,7 @@ function pollUntilJoined(
 // Direct-add mode waits only for Herald registration (inboxId lands in the
 // status row), not for the join itself — the join happens after the caller
 // adds the inbox to the group.
-function pollUntilRegistered(
+function pollUntilRegisteredAndReady(
   args: Omit<
     Parameters<typeof pollAssistantStatus<RegisteredOutcome>>[0],
     "check"
@@ -295,7 +295,13 @@ function pollUntilRegistered(
       if (status.joinStatus === "failed") {
         return { kind: "failed", reason: status.joinFailureReason ?? null };
       }
-      if (status.inboxId)
+      // Only treat the agent as registered once it has progressed past
+      // "starting" — an inboxId can land in the status row before the
+      // assistant is far enough along to be added to the group.
+      const registered = ["pending_acceptance", "joined", "ready"].includes(
+        status.joinStatus,
+      );
+      if (registered && status.inboxId)
         return { kind: "registered", inboxId: status.inboxId };
       return null;
     },
@@ -704,7 +710,7 @@ export async function joinHandler(req: Request, res: Response) {
   // inboxId to add to the group; the join completes when the runtime
   // observes the group welcome their addMembers produces.
   if (slug === undefined) {
-    const outcome = await pollUntilRegistered({
+    const outcome = await pollUntilRegisteredAndReady({
       assistantBaseUrl,
       instanceId,
       authHeader,
