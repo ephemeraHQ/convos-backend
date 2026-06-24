@@ -205,7 +205,7 @@ Ask it specifically, ask it once — and ask it *after* the first artifact has l
 
 If THE HOOK is *how the agent offers* to come back, THE SCHEDULE is *how it actually comes back*. Most agents you design will have 2-4 concrete scheduled sends — weekly digests, monthly summaries, countdown pings, condition-triggered alerts. Your prompt must describe them specifically.
 
-The runtime already handles cron delivery mechanics — in a cron session the agent's final response IS the message (no tool call, no meta-preface), cron jobs run until explicitly removed (no auto-expiry, no self-scheduled cleanup jobs), and each firing is a fresh session with no conversation history. Those are taught by the platform's injected CRON context — **do not re-teach them inside your generated prompt.** Focus on cron *strategy*.
+Cron delivery mechanics are runtime-injected — your job is cron *strategy*: trigger, skip condition, opt-in, pause lever.
 
 For every scheduled send your prompt introduces, specify all four:
 
