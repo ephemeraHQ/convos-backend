@@ -1,6 +1,10 @@
 import type { Request, Response } from "express";
 import { z } from "zod";
-import { resolveBundleActions } from "@/api/v2/connections/bundles.config";
+import {
+  getKnownActions,
+  getServiceConfig,
+  resolveBundleActions,
+} from "@/api/v2/connections/bundles.config";
 import { createComposioService } from "@/api/v2/connections/composio.service";
 import { prisma } from "@/utils/prisma";
 import { resolveTrustedCaller } from "../trusted-identity";
@@ -90,6 +94,27 @@ export async function execHandler(req: Request, res: Response) {
     return allowed.has(action);
   });
   if (applicable.length === 0) {
+    // Backstop (authoritative): distinguish a bad slug from a real consent
+    // gap. A `no_grant` tells the agent "ask the user to (re-)approve" — but if
+    // the agent simply named an action the toolkit never had (observed live:
+    // "listEvents", the retired "GOOGLECALENDAR_LIST_EVENTS", "--list-tools"),
+    // that is NOT a consent problem, and re-prompting the user for a connection
+    // they already granted is the calendar re-auth loop. So when the toolkit is
+    // known but the requested action is not in its catalog vocabulary at all,
+    // return `invalid_action` instead of `no_grant`. This holds even if the
+    // runtime slug guard is bypassed, incomplete, or its allow-list fetch
+    // failed — the matcher is the backstop. Unknown toolkits keep falling
+    // through to `no_grant` (legacy whole-toolkit grants are keyed by toolkit,
+    // not catalog membership, so we must not reclassify those).
+    const svc = getServiceConfig(toolkit);
+    if (svc && !getKnownActions(toolkit).includes(action)) {
+      req.log.warn(
+        { agentInboxId: caller.agentInboxId, toolkit, action },
+        "[Composio] exec: action not in toolkit catalog — invalid_action (not a consent gap)",
+      );
+      res.status(422).json({ code: "invalid_action", toolkit, action });
+      return;
+    }
     req.log.warn(
       { agentInboxId: caller.agentInboxId, toolkit, action, onBehalfOf },
       "[Composio] exec: no matching grant",

@@ -506,6 +506,76 @@ describe("POST /v2/composio/exec — grant authorization (DB)", () => {
     expect((await asJson<{ code: string }>(res)).code).toBe("no_grant");
   });
 
+  // Backstop: a slug the toolkit never had is `invalid_action` (422), NOT a
+  // consent gap (`no_grant`). This is the authoritative fix for the calendar
+  // re-auth loop — a guessed/typo'd slug (observed live: "listEvents", the
+  // retired "GOOGLECALENDAR_LIST_EVENTS") must never tell the agent to
+  // re-prompt the user, even when the runtime slug guard is bypassed. A VALID
+  // slug that simply isn't granted stays `no_grant` (the consent path).
+  test("422 invalid_action when the slug is not in the toolkit catalog (even with a covering grant)", async () => {
+    const ownerAccountId = await makeAccount();
+    await prisma.connectionGrant.create({
+      data: {
+        ownerAccountId,
+        ownerInboxId: "owner-inbox",
+        granteeInboxId: AGENT_INBOX,
+        conversationId: CONVERSATION,
+        toolkit: "googlecalendar",
+        actions: [],
+        bundleIds: ["calendar.events"],
+        serviceVersion: 5,
+      },
+    });
+    installComposioStub({
+      connections: [
+        { id: "conn_owned", userId: ownerAccountId, slug: "googlecalendar" },
+      ],
+    });
+    // The exact strings the agent guessed during the incident — none is a real
+    // GOOGLECALENDAR_* slug.
+    for (const action of [
+      "listEvents",
+      "list_events",
+      "getEvents",
+      "GOOGLECALENDAR_LIST_EVENTS",
+      "calendar.events.list",
+    ]) {
+      const res = await exec(
+        { ...VALID_BODY, action },
+        { headers: workerHeaders() },
+      );
+      expect(res.status).toBe(422);
+      const body = await asJson<{ code: string; action: string }>(res);
+      expect(body.code).toBe("invalid_action");
+      expect(body.action).toBe(action);
+    }
+  });
+
+  test("invalid_action takes precedence over no_grant: bad slug with NO grant is still 422, not 403", async () => {
+    // No grant at all for this conversation; the slug is also bogus. The agent
+    // must learn it named a non-existent action (fixable by itself), not that
+    // it needs consent (which would re-prompt the user pointlessly).
+    installComposioStub();
+    const res = await exec(
+      { ...VALID_BODY, action: "listEvents" },
+      { headers: workerHeaders() },
+    );
+    expect(res.status).toBe(422);
+    expect((await asJson<{ code: string }>(res)).code).toBe("invalid_action");
+  });
+
+  test("a VALID but ungranted slug stays no_grant (consent path preserved)", async () => {
+    // No grant here, but GOOGLECALENDAR_EVENTS_LIST is a real catalog slug — so
+    // this IS a consent gap and must remain no_grant, not invalid_action.
+    installComposioStub();
+    const res = await exec(
+      { ...VALID_BODY, action: "GOOGLECALENDAR_EVENTS_LIST" },
+      { headers: workerHeaders() },
+    );
+    expect(res.status).toBe(403);
+    expect((await asJson<{ code: string }>(res)).code).toBe("no_grant");
+  });
+
   // Bundle scope: a grant carrying bundleIds authorizes exactly the actions the
   // bundle resolves to (resolveBundleActions against the current catalog) — no
   // more. In-bundle actions are allowed, out-of-bundle actions are no_grant,

@@ -106,6 +106,28 @@ export function getServiceConfig(serviceId: string): ServiceConfig | undefined {
   return BY_SERVICE.get(serviceId.toLowerCase());
 }
 
+/**
+ * Every Composio action slug a toolkit can ever expose to an agent — the union
+ * across ALL bundles of the service, deprecated ones included. This is the
+ * single source of truth the agent runtime validates a requested action slug
+ * against BEFORE calling exec, so a typo'd/guessed slug (e.g. "listEvents",
+ * "GOOGLECALENDAR_LIST_EVENTS") fails as an explicit "invalid action" instead
+ * of being indistinguishable from a real consent gap (no_grant) at exec — the
+ * confusion that drove the calendar re-auth loop. Note: this is the toolkit's
+ * full slug vocabulary, NOT a per-grant authorization (exec still enforces the
+ * grant's resolved scope); it exists purely so the agent names a REAL slug.
+ * Returns [] for an unknown toolkit.
+ */
+export function getKnownActions(serviceId: string): string[] {
+  const svc = getServiceConfig(serviceId);
+  if (!svc) return [];
+  const actions = new Set<string>();
+  for (const bundle of svc.bundles) {
+    for (const action of bundle.composioActions) actions.add(action);
+  }
+  return [...actions];
+}
+
 // --- Public (client-facing) view of the catalog ------------------------------
 //
 // The Composio action slugs are the security boundary and stay backend-only:

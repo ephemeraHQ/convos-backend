@@ -139,6 +139,14 @@ v2Router.use("/attachments", authMiddleware, attachmentsRouter);
 // Declared BEFORE the requireAccount-gated /connections mount so this more
 // specific path is matched first and never forced through requireAccount.
 v2Router.get("/connections/services", authMiddleware, servicesGetHandler);
+// Action-slug vocabulary for one toolkit — backend-owned, JWT-only (NOT
+// account-scoped), so the agent runtime can validate a requested action slug
+// before exec. Declared before the requireAccount-gated /connections mount.
+v2Router.get(
+  "/connections/services/:toolkit/actions",
+  authMiddleware,
+  actionsGetHandler,
+);
 v2Router.use("/connections", authMiddleware, requireAccount, connectionsRouter);
 // Agent-facing tool execution. A DEDICATED exec key (held only by the trusted
 // worker, never in the container, and not injected by the generic convos.internal
