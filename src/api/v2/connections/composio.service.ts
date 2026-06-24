@@ -18,10 +18,21 @@ const TOOLKIT_VERSION_CACHE_TTL_MS = 60 * 60 * 1000;
 
 type ToolkitVersionCacheEntry = { version: string; expiresAt: number };
 
+// A toolkit's action catalog (the set of valid action slugs) changes only when
+// Composio publishes a new toolkit release — rarely. Cache the slug set
+// per-toolkit so exec's slug-validity check (invalid_action vs no_grant) and
+// the /actions endpoint never hit Composio on the hot path. The TTL bounds how
+// long a newly-added slug stays unrecognized; an empty set is NOT cached so a
+// transient fetch failure cannot stick a toolkit as "no valid slugs".
+const TOOLKIT_ACTIONS_CACHE_TTL_MS = 60 * 60 * 1000;
+
+type ToolkitActionsCacheEntry = { slugs: Set<string>; expiresAt: number };
+
 export class ComposioService {
   private composio: Composio;
   private authConfigCache = new Map<string, AuthConfigCacheEntry>();
   private toolkitVersionCache = new Map<string, ToolkitVersionCacheEntry>();
+  private toolkitActionsCache = new Map<string, ToolkitActionsCacheEntry>();
 
   constructor(args: { composio: Composio }) {
     this.composio = args.composio;
@@ -119,6 +130,55 @@ export class ComposioService {
       expiresAt: now + TOOLKIT_VERSION_CACHE_TTL_MS,
     });
     return version;
+  }
+
+  /**
+   * The set of valid action slugs Composio's LIVE catalog exposes for a toolkit
+   * (e.g. "GOOGLECALENDAR_EVENTS_LIST", ...). This is the authoritative
+   * vocabulary the exec matcher uses to tell a real-but-ungranted slug
+   * (no_grant) from a slug Composio never had (invalid_action) — sourcing it
+   * from Composio, not our consent bundles, means a real slug we simply haven't
+   * bundled is correctly no_grant, never mislabeled invalid_action.
+   *
+   * Cached per-toolkit (TTL) so the hot exec path doesn't call Composio every
+   * time. An empty result is treated as a fetch miss and NOT cached: a transient
+   * gap must not stick a toolkit as having no valid slugs (which would flip
+   * every exec to invalid_action). Returns an empty set on miss — callers must
+   * fail safe (do not classify as invalid_action when the set is empty).
+   */
+  async listToolkitActions(toolkit: string): Promise<Set<string>> {
+    const now = Date.now();
+    const normalized = toolkit.toLowerCase();
+    const hit = this.toolkitActionsCache.get(normalized);
+    if (hit && hit.expiresAt > now) {
+      return hit.slugs;
+    }
+
+    const tools = await this.composio.tools.getRawComposioTools({
+      toolkits: [normalized],
+    });
+    const slugs = new Set<string>();
+    for (const tool of tools) {
+      if (tool.slug) slugs.add(tool.slug);
+    }
+
+    if (slugs.size === 0) {
+      logger.warn(
+        { toolkit: normalized },
+        "[Composio] listToolkitActions: catalog returned no actions (not caching)",
+      );
+      return slugs;
+    }
+
+    logger.info(
+      { toolkit: normalized, count: slugs.size },
+      "[Composio] listToolkitActions: resolved catalog slugs",
+    );
+    this.toolkitActionsCache.set(normalized, {
+      slugs,
+      expiresAt: now + TOOLKIT_ACTIONS_CACHE_TTL_MS,
+    });
+    return slugs;
   }
 
   /**

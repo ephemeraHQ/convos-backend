@@ -107,26 +107,61 @@ export function getServiceConfig(serviceId: string): ServiceConfig | undefined {
 }
 
 /**
- * Every Composio action slug a toolkit can ever expose to an agent — the union
- * across ALL bundles of the service, deprecated ones included. This is the
- * single source of truth the agent runtime validates a requested action slug
- * against BEFORE calling exec, so a typo'd/guessed slug (e.g. "listEvents",
- * "GOOGLECALENDAR_LIST_EVENTS") fails as an explicit "invalid action" instead
- * of being indistinguishable from a real consent gap (no_grant) at exec — the
- * confusion that drove the calendar re-auth loop. Note: this is the toolkit's
- * full slug vocabulary, NOT a per-grant authorization (exec still enforces the
- * grant's resolved scope); it exists purely so the agent names a REAL slug.
- * Returns [] for an unknown toolkit.
+ * Whether `action` is a VALID slug for `serviceId` according to Composio's LIVE
+ * toolkit catalog (not our consent bundles). This is the validity source the
+ * exec matcher uses to tell a typo'd/guessed slug (e.g. "listEvents", the
+ * retired "GOOGLECALENDAR_LIST_EVENTS") — which must fail as invalid_action —
+ * from a real-but-ungranted slug, which must stay no_grant (the consent path).
+ *
+ * Sourcing validity from Composio (via `service.listToolkitActions`), rather
+ * than from the union of our bundles' `composioActions`, is deliberate: a slug
+ * that Composio really exposes but we simply haven't bundled (e.g.
+ * GOOGLECALENDAR_CALENDARS_DELETE) is a real action and a genuine consent gap
+ * (no_grant), NOT an invalid action — bundle membership is the GRANT layer, not
+ * the validity layer. The bundle catalog above stays the source of truth for
+ * the consent/grant set (`resolveBundleActions`); only slug VALIDITY moves here.
+ *
+ * Fail-safe: if the toolkit is unknown to us, or Composio reports no actions
+ * (transient miss → empty set), returns `false` for "is invalid" — i.e. we do
+ * NOT assert invalid_action without positive evidence the slug is absent from a
+ * non-empty catalog. Callers keep falling through to no_grant in that case.
  */
-export function getKnownActions(serviceId: string): string[] {
+export async function isKnownAction(
+  service: ComposioActionCatalog,
+  serviceId: string,
+  action: string,
+): Promise<boolean> {
+  const svc = getServiceConfig(serviceId);
+  if (!svc) return false;
+  const slugs = await service.listToolkitActions(svc.composioSlug);
+  if (slugs.size === 0) return false;
+  return slugs.has(action);
+}
+
+/**
+ * The full set of valid action slugs Composio's live catalog exposes for
+ * `serviceId`, as a sorted array. Backs GET /actions so the agent runtime can
+ * fetch the authoritative vocabulary to validate slugs before exec. Returns []
+ * for an unknown toolkit or on a catalog miss.
+ */
+export async function getKnownActions(
+  service: ComposioActionCatalog,
+  serviceId: string,
+): Promise<string[]> {
   const svc = getServiceConfig(serviceId);
   if (!svc) return [];
-  const actions = new Set<string>();
-  for (const bundle of svc.bundles) {
-    for (const action of bundle.composioActions) actions.add(action);
-  }
-  return [...actions];
+  const slugs = await service.listToolkitActions(svc.composioSlug);
+  return [...slugs].sort();
 }
+
+/**
+ * The slice of ComposioService that the slug-validity helpers depend on. Keeps
+ * bundles.config decoupled from the concrete service (and trivially stubbable in
+ * tests) — it only needs the live catalog lookup, nothing else.
+ */
+export type ComposioActionCatalog = {
+  listToolkitActions(toolkit: string): Promise<Set<string>>;
+};
 
 // --- Public (client-facing) view of the catalog ------------------------------
 //

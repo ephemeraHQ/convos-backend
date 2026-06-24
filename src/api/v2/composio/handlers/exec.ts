@@ -1,8 +1,8 @@
 import type { Request, Response } from "express";
 import { z } from "zod";
 import {
-  getKnownActions,
   getServiceConfig,
+  isKnownAction,
   resolveBundleActions,
 } from "@/api/v2/connections/bundles.config";
 import { createComposioService } from "@/api/v2/connections/composio.service";
@@ -107,7 +107,7 @@ export async function execHandler(req: Request, res: Response) {
     // through to `no_grant` (legacy whole-toolkit grants are keyed by toolkit,
     // not catalog membership, so we must not reclassify those).
     const svc = getServiceConfig(toolkit);
-    if (svc && !getKnownActions(toolkit).includes(action)) {
+    if (svc && !(await isKnownAction(service, toolkit, action))) {
       req.log.warn(
         { agentInboxId: caller.agentInboxId, toolkit, action },
         "[Composio] exec: action not in toolkit catalog — invalid_action (not a consent gap)",
