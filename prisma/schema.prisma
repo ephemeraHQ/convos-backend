@@ -480,8 +480,8 @@ model AdminAudit {
 }
 
 /// Per-PR agent variant (dev XMTP network only). A named bundle pinning an
-/// ephemeral runtime (assistantWorkerUrl, Axis A) and/or a bench builder-prompt
-/// slug (builderPromptSlug, Axis B). Written only by the convos-assistants
+/// ephemeral runtime (assistantWorkerUrl) and/or a bench builder-prompt slug
+/// (builderPromptSlug). Written only by the convos-assistants
 /// variant CI (agent API key + dev-only route gate); read by the dev app picker
 /// and applied server-side at generation + join. `slug` is the
 /// natural key — the PR slug (e.g. "pr-1234"); the ephemeral host is
@@ -496,9 +496,9 @@ model AgentVariant {
   /// project's move away from non-transactional enum migrations (see the
   /// AuthMethod.type / Subscription.tier comments).
   status             String    @default("building")
-  /// Axis A — the ephemeral runtime base URL, or null for the default dev runtime.
+  /// The ephemeral runtime base URL, or null for the default dev runtime.
   assistantWorkerUrl String?
-  /// Axis B — a bench/Braintrust prompt slug, or null for the canonical generator.
+  /// A bench/Braintrust prompt slug, or null for the canonical generator.
   builderPromptSlug  String?
   prUrl              String
   branch             String

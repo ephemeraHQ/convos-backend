@@ -1,5 +1,5 @@
 /**
- * Tests for the agent-variant (Axis B) seam in POST /generations.
+ * Tests for the agent-variant builder-prompt seam in POST /generations.
  *
  * A `variantId` selects a registered variant; when it pins a bench builder-
  * prompt slug, the backend resolves that slug to text (here via the bench-loader
@@ -142,7 +142,7 @@ afterAll(async () => {
   await closeServer();
 });
 
-describe("POST /generations — agent variant (Axis B)", () => {
+describe("POST /generations — agent variant builder prompt", () => {
   test("a variant pinning a bench slug resolves into builderPrompt", async () => {
     const res = await post(
       {

@@ -265,7 +265,7 @@ export const bodySchema = z
     // ignored for JWT (JWT account always wins) and anonymous (falls
     // back to ADMIN). See the owner-resolution block below.
     ownerAccountId: accountIdSchema.optional(),
-    // Per-PR agent variant (Axis B), dev-only. Selects a registered variant
+    // Per-PR agent variant builder prompt, dev-only. Selects a registered variant
     // whose builder-prompt slug the backend resolves server-side into this
     // generation's builderPrompt. Optional + ignored off-dev, so it stays
     // backwards-compatible for shipped clients; the slug is never client-
@@ -660,10 +660,10 @@ async function respondPerMode(args: {
 }
 
 /**
- * Resolve a registered variant's builder prompt (Axis B). Returns the prompt
- * text when the variant exists and pins a bench slug that resolves; returns
- * null (→ canonical generator) when the variant is unknown, pins no slug
- * (an Axis-A-only / runtime variant), or the bench lookup fails. Never throws —
+ * Resolve a registered variant's builder prompt. Returns the prompt text when
+ * the variant exists and pins a bench slug that resolves; returns null
+ * (→ canonical generator) when the variant is unknown, pins no slug
+ * (a runtime-only variant), or the bench lookup fails. Never throws —
  * a variant degrades, it never fails the build.
  */
 async function resolveVariantBuilderPrompt(
@@ -883,7 +883,7 @@ export async function generationsPostHandler(req: Request, res: Response) {
     }
   }
 
-  // 9c. Agent variant (Axis B), dev-only. A variantId selects a registered
+  // 9c. Agent variant builder prompt, dev-only. A variantId selects a registered
   //     variant; if it pins a bench builder-prompt slug, resolve that slug to
   //     text and use it as this generation's builderPrompt. The slug comes from
   //     the trusted registry (admin-authored), so this is the one path that sets

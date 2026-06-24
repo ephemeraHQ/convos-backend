@@ -1,5 +1,5 @@
 /**
- * Tests for the agent-variant (Axis A) routing seam in POST /agents/join.
+ * Tests for the agent-variant runtime-routing seam in POST /agents/join.
  *
  * When a join carries options.variantId for a registered variant with an
  * ephemeral worker, the dispatch must (1) route to the variant's worker instead
@@ -129,7 +129,7 @@ beforeAll(async () => {
         commit: "c",
       },
       {
-        // Axis-B-only variant: no ephemeral worker → routes to the default.
+        // Builder-prompt-only variant: no ephemeral worker → routes to the default.
         slug: RUNTIME_DEFAULT_SLUG,
         label: "Prompt only",
         whatToTest: "builder prompt only",
@@ -180,7 +180,7 @@ beforeEach(() => {
     mockFetchImpl(url, init)) as typeof fetch;
 });
 
-describe("POST /agents/join — agent variant routing (Axis A)", () => {
+describe("POST /agents/join — agent variant runtime routing", () => {
   test("routes to the variant worker, stamps metadata, strips variantId", async () => {
     const res = await post({
       slug: "join-token-abc",
@@ -207,7 +207,7 @@ describe("POST /agents/join — agent variant routing (Axis A)", () => {
     expect(opts.skipGreeting).toBe(true);
   });
 
-  test("an Axis-B-only variant (no worker) routes to the default", async () => {
+  test("a builder-prompt-only variant (no worker) routes to the default", async () => {
     const res = await post({
       slug: "join-token-def",
       options: { variantId: RUNTIME_DEFAULT_SLUG },

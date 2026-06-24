@@ -148,7 +148,7 @@ export const BUILDER_EXA_SERVICE_KEY =
   process.env.BUILDER_EXA_SERVICE_KEY?.trim() || "";
 
 // Braintrust bench prompt store — backs per-PR agent variant builder-prompt
-// resolution (Axis B), project "convos-agent-bench". Optional: when unset,
+// resolution, project "convos-agent-bench". Optional: when unset,
 // variant builder-prompt resolution fails open and the generation falls back
 // to the canonical generator. Dev-only feature; never set on prod.
 export const BRAINTRUST_API_KEY = process.env.BRAINTRUST_API_KEY?.trim() || "";

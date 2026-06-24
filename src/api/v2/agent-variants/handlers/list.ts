@@ -7,7 +7,7 @@ import { serializeAgentVariant } from "../serialize";
  * GET /v2/agent-variants — the dev app picker's source of truth. Returns the
  * ready/building variants, newest first. Variants exist only on the dev XMTP
  * network, so off-dev the list is empty by contract (the picker treats [] as
- * "no variants"); this is the single environment gate §7.1 calls for.
+ * "no variants"); this is the single dev-only environment gate.
  */
 export async function listAgentVariantsHandler(req: Request, res: Response) {
   if (XMTP_ENV === "production") {

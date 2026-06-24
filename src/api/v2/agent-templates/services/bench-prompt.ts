@@ -1,7 +1,7 @@
 import { BRAINTRUST_API_KEY } from "@/config";
 
 // The bench prompt store is Braintrust's native versioned Prompts, slug-
-// addressable over the public REST API. Variant builder prompts (Axis B) are
+// addressable over the public REST API. Variant builder prompts are
 // authored there (project "convos-agent-bench") and resolved live at generation
 // time — editing a bench prompt takes effect on the next build with no re-push.
 const BT_REST = "https://api.braintrust.dev/v1";

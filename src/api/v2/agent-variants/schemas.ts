@@ -31,9 +31,9 @@ export const AgentVariantUpsertSchema = z
     label: z.string().trim().min(1).max(40),
     whatToTest: z.string().trim().min(1).max(500),
     status: AgentVariantStatusSchema.default("building"),
-    // Axis A — ephemeral runtime base URL, or null for the default dev runtime.
+    // The ephemeral runtime base URL, or null for the default dev runtime.
     assistantWorkerUrl: z.string().url().nullable().default(null),
-    // Axis B — bench/Braintrust prompt slug, or null for the canonical generator.
+    // A bench/Braintrust prompt slug, or null for the canonical generator.
     builderPromptSlug: z.string().trim().min(1).nullable().default(null),
     prUrl: z.string().url(),
     branch: z.string().trim().min(1).max(255),

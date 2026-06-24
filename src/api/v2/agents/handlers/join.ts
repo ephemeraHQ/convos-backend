@@ -54,7 +54,7 @@ const optionsSchema = z
     skipGreeting: z.boolean().optional(),
     onboarding: z.string().min(1).max(64).optional(),
     // Per-PR agent variant (dev-only). Selects a registered variant; the backend
-    // consumes it here (Axis-A routing + the metadata stamp) and does NOT forward
+    // consumes it here (runtime routing + the metadata stamp) and does NOT forward
     // it to the runtime. Optional + ignored off-dev, so it stays backwards-
     // compatible for shipped clients.
     variantId: z.string().trim().min(1).max(64).optional(),
@@ -432,10 +432,10 @@ export async function joinHandler(req: Request, res: Response) {
   );
 
   // Per-PR agent variant (dev-only). When the join carries a variantId for a
-  // registered variant, route provisioning to its ephemeral worker (Axis A,
-  // when one is pinned) and stamp the variant descriptor onto the agent's
-  // profile via `metadata` (the worker emits it at Herald-join). The builder-
-  // prompt side (Axis B) was already applied at generation. `variantId` is
+  // registered variant, route provisioning to its ephemeral worker (when one is
+  // pinned) and stamp the variant descriptor onto the agent's profile via
+  // `metadata` (the worker emits it at Herald-join). The builder-prompt side was
+  // already applied at generation. `variantId` is
   // consumed here and never forwarded to the runtime. A missing/invalid variant
   // (or off-dev) falls through to the default worker with no stamp.
   const variant =
