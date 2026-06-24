@@ -71,6 +71,7 @@ import {
   attachmentsArraySchema,
   type AttachmentRef,
 } from "@/api/v2/agent-templates/services/attachment-resolver";
+import { loadBenchPromptText } from "@/api/v2/agent-templates/services/bench-prompt";
 import {
   classifyMime,
   headBuildObject,
@@ -85,7 +86,7 @@ import { type TraceContext } from "@/api/v2/agent-templates/services/openrouter-
 import { isKnownOpenRouterModel } from "@/api/v2/agent-templates/services/openrouter-models";
 import { resolveActor } from "@/api/v2/agent-templates/services/posthog";
 import { getServiceConfig } from "@/api/v2/connections/bundles.config";
-import { BUILD_ATTACHMENTS_MAX_TOTAL_BYTES } from "@/config";
+import { BUILD_ATTACHMENTS_MAX_TOTAL_BYTES, XMTP_ENV } from "@/config";
 import { accountIdSchema } from "@/utils/account-id";
 import { getEffectiveOwnerId } from "@/utils/auth-helpers";
 import { ADMIN_ACCOUNT_ID } from "@/utils/constants";
@@ -210,7 +211,7 @@ const TemplatePrefillSchema = z
   })
   .strict();
 
-const bodySchema = z
+export const bodySchema = z
   .object({
     source: z.string().min(1, "source is required"),
     inputs: inputsSchema,
@@ -264,6 +265,13 @@ const bodySchema = z
     // ignored for JWT (JWT account always wins) and anonymous (falls
     // back to ADMIN). See the owner-resolution block below.
     ownerAccountId: accountIdSchema.optional(),
+    // Per-PR agent variant (Axis B), dev-only. Selects a registered variant
+    // whose builder-prompt slug the backend resolves server-side into this
+    // generation's builderPrompt. Optional + ignored off-dev, so it stays
+    // backwards-compatible for shipped clients; the slug is never client-
+    // supplied (only the variantId), so the privileged override stays
+    // admin-authored.
+    variantId: z.string().trim().min(1).max(64).optional(),
   })
   .strict();
 
@@ -651,6 +659,42 @@ async function respondPerMode(args: {
   res.status(httpStatus).json(toResponse(row));
 }
 
+/**
+ * Resolve a registered variant's builder prompt (Axis B). Returns the prompt
+ * text when the variant exists and pins a bench slug that resolves; returns
+ * null (→ canonical generator) when the variant is unknown, pins no slug
+ * (an Axis-A-only / runtime variant), or the bench lookup fails. Never throws —
+ * a variant degrades, it never fails the build.
+ */
+async function resolveVariantBuilderPrompt(
+  req: Request,
+  variantId: string,
+): Promise<string | null> {
+  try {
+    const variant = await prisma.agentVariant.findUnique({
+      where: { slug: variantId },
+      select: { builderPromptSlug: true },
+    });
+    if (!variant) {
+      req.log.warn(
+        { variantId },
+        "agent variant not found; using canonical generator",
+      );
+      return null;
+    }
+    if (!variant.builderPromptSlug) {
+      return null;
+    }
+    return await loadBenchPromptText(variant.builderPromptSlug);
+  } catch (err) {
+    req.log.warn(
+      { err, variantId },
+      "agent variant builder-prompt resolve failed; using canonical generator",
+    );
+    return null;
+  }
+}
+
 export async function generationsPostHandler(req: Request, res: Response) {
   // Track client disconnect so all blocking paths (SSE poll, wait_ms long-poll)
   // can bail early when nobody is listening.
@@ -836,6 +880,25 @@ export async function generationsPostHandler(req: Request, res: Response) {
         });
         return;
       }
+    }
+  }
+
+  // 9c. Agent variant (Axis B), dev-only. A variantId selects a registered
+  //     variant; if it pins a bench builder-prompt slug, resolve that slug to
+  //     text and use it as this generation's builderPrompt. The slug comes from
+  //     the trusted registry (admin-authored), so this is the one path that sets
+  //     a builder-prompt override for a non-agent-key caller — the privileged
+  //     gate above only rejects a *client-supplied* builderPrompt. Resolved
+  //     BEFORE the dedupe so a replay with the same variantId matches; degrades
+  //     to the canonical generator on any miss/error (never fails the build).
+  //     Off-dev the field is ignored.
+  if (body.variantId && XMTP_ENV !== "production") {
+    const variantPrompt = await resolveVariantBuilderPrompt(
+      req,
+      body.variantId,
+    );
+    if (variantPrompt !== null) {
+      body.builderPrompt = variantPrompt;
     }
   }
 
