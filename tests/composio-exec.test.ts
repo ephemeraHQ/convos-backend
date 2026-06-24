@@ -76,6 +76,7 @@ function installComposioStub(
     connections?: Array<{ id: string; userId: string; slug: string }>;
     toolkitVersions?: string[];
     catalogSlugs?: string[];
+    catalogThrows?: boolean;
   } = {},
 ) {
   const stub = {
@@ -87,6 +88,9 @@ function installComposioStub(
           _body: { userId: string; connectedAccountId?: string },
         ) => Promise.resolve({ data: { ok: true } })),
       getRawComposioTools: (query: { toolkits?: string[] }) => {
+        if (opts.catalogThrows) {
+          return Promise.reject(new Error("Composio catalog unavailable"));
+        }
         const toolkit = (query.toolkits ?? [])[0]?.toLowerCase();
         const slugs =
           toolkit === "googlecalendar"
@@ -626,6 +630,32 @@ describe("POST /v2/composio/exec — grant authorization (DB)", () => {
     );
     expect(fake.status).toBe(422);
     expect((await asJson<{ code: string }>(fake)).code).toBe("invalid_action");
+  });
+
+  // Fail OPEN on a catalog outage: the slug-validity source is best-effort, NOT
+  // a security boundary (the grant store is). If Composio's catalog throws or
+  // returns nothing, we must NOT flag a real slug as invalid_action — that would
+  // tell the agent to re-prompt the user during an outage (the re-auth loop).
+  // The matcher skips the invalid_action check and falls through to the grant
+  // check: a real ungranted slug stays no_grant, and exec never 500s.
+  test("catalog THROW: a real ungranted slug is no_grant, not invalid_action (no 500)", async () => {
+    installComposioStub({ catalogThrows: true });
+    const res = await exec(
+      { ...VALID_BODY, action: "GOOGLECALENDAR_EVENTS_LIST" },
+      { headers: workerHeaders() },
+    );
+    expect(res.status).toBe(403);
+    expect((await asJson<{ code: string }>(res)).code).toBe("no_grant");
+  });
+
+  test("empty catalog: a real ungranted slug is no_grant, not invalid_action", async () => {
+    installComposioStub({ catalogSlugs: [] });
+    const res = await exec(
+      { ...VALID_BODY, action: "GOOGLECALENDAR_EVENTS_LIST" },
+      { headers: workerHeaders() },
+    );
+    expect(res.status).toBe(403);
+    expect((await asJson<{ code: string }>(res)).code).toBe("no_grant");
   });
 
   // Bundle scope: a grant carrying bundleIds authorizes exactly the actions the

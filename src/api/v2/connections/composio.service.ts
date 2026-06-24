@@ -141,10 +141,11 @@ export class ComposioService {
    * bundled is correctly no_grant, never mislabeled invalid_action.
    *
    * Cached per-toolkit (TTL) so the hot exec path doesn't call Composio every
-   * time. An empty result is treated as a fetch miss and NOT cached: a transient
-   * gap must not stick a toolkit as having no valid slugs (which would flip
-   * every exec to invalid_action). Returns an empty set on miss — callers must
-   * fail safe (do not classify as invalid_action when the set is empty).
+   * time. Fails OPEN: a Composio THROW (outage) or an empty result is treated as
+   * "catalog unavailable" — returns an empty set and is NOT cached. Callers must
+   * read an empty set as "unknown", never as "no valid slugs": classifying a
+   * real slug as invalid_action during an outage would wrongly tell the agent to
+   * re-prompt for consent. A transient gap must not stick for the TTL either.
    */
   async listToolkitActions(toolkit: string): Promise<Set<string>> {
     const now = Date.now();
@@ -154,12 +155,20 @@ export class ComposioService {
       return hit.slugs;
     }
 
-    const tools = await this.composio.tools.getRawComposioTools({
-      toolkits: [normalized],
-    });
     const slugs = new Set<string>();
-    for (const tool of tools) {
-      if (tool.slug) slugs.add(tool.slug);
+    try {
+      const tools = await this.composio.tools.getRawComposioTools({
+        toolkits: [normalized],
+      });
+      for (const tool of tools) {
+        if (tool.slug) slugs.add(tool.slug);
+      }
+    } catch (error) {
+      logger.warn(
+        { toolkit: normalized, error },
+        "[Composio] listToolkitActions: catalog fetch failed — treating as unavailable",
+      );
+      return new Set<string>();
     }
 
     if (slugs.size === 0) {

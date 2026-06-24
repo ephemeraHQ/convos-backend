@@ -107,26 +107,26 @@ export function getServiceConfig(serviceId: string): ServiceConfig | undefined {
 }
 
 /**
- * Whether `action` is a VALID slug for `serviceId` according to Composio's LIVE
- * toolkit catalog (not our consent bundles). This is the validity source the
- * exec matcher uses to tell a typo'd/guessed slug (e.g. "listEvents", the
- * retired "GOOGLECALENDAR_LIST_EVENTS") — which must fail as invalid_action —
- * from a real-but-ungranted slug, which must stay no_grant (the consent path).
+ * Whether `action` is DEFINITELY not a valid slug for `serviceId` per Composio's
+ * LIVE toolkit catalog (not our consent bundles) — i.e. the exec matcher should
+ * return invalid_action. True only when a NON-EMPTY catalog was fetched and does
+ * not contain the slug: a typo'd/guessed slug (e.g. "listEvents", the retired
+ * "GOOGLECALENDAR_LIST_EVENTS") the agent must fix itself, NOT re-prompt for.
  *
- * Sourcing validity from Composio (via `service.listToolkitActions`), rather
- * than from the union of our bundles' `composioActions`, is deliberate: a slug
- * that Composio really exposes but we simply haven't bundled (e.g.
- * GOOGLECALENDAR_CALENDARS_DELETE) is a real action and a genuine consent gap
- * (no_grant), NOT an invalid action — bundle membership is the GRANT layer, not
- * the validity layer. The bundle catalog above stays the source of truth for
- * the consent/grant set (`resolveBundleActions`); only slug VALIDITY moves here.
+ * Sourcing validity from Composio, rather than from the union of our bundles'
+ * `composioActions`, is deliberate: a slug Composio really exposes but we simply
+ * haven't bundled (e.g. GOOGLECALENDAR_CALENDARS_DELETE) is a real action and a
+ * genuine consent gap (no_grant), NOT invalid — bundle membership is the GRANT
+ * layer, not the validity layer. `resolveBundleActions` stays the consent set.
  *
- * Fail-safe: if the toolkit is unknown to us, or Composio reports no actions
- * (transient miss → empty set), returns `false` for "is invalid" — i.e. we do
- * NOT assert invalid_action without positive evidence the slug is absent from a
- * non-empty catalog. Callers keep falling through to no_grant in that case.
+ * Fails OPEN: an unknown toolkit, an empty catalog, or a Composio outage (which
+ * `listToolkitActions` surfaces as an empty set) all return `false` here. We
+ * never assert invalid_action without positive evidence — a non-empty catalog
+ * that lacks the slug. On any uncertainty the caller falls through to the grant
+ * check (-> no_grant if ungranted, or allowed if granted), so a real slug is
+ * never rejected as invalid during a Composio outage.
  */
-export async function isKnownAction(
+export async function isInvalidAction(
   service: ComposioActionCatalog,
   serviceId: string,
   action: string,
@@ -135,7 +135,7 @@ export async function isKnownAction(
   if (!svc) return false;
   const slugs = await service.listToolkitActions(svc.composioSlug);
   if (slugs.size === 0) return false;
-  return slugs.has(action);
+  return !slugs.has(action);
 }
 
 /**

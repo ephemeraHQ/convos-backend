@@ -2,7 +2,7 @@ import type { Request, Response } from "express";
 import { z } from "zod";
 import {
   getServiceConfig,
-  isKnownAction,
+  isInvalidAction,
   resolveBundleActions,
 } from "@/api/v2/connections/bundles.config";
 import { createComposioService } from "@/api/v2/connections/composio.service";
@@ -105,9 +105,12 @@ export async function execHandler(req: Request, res: Response) {
     // runtime slug guard is bypassed, incomplete, or its allow-list fetch
     // failed — the matcher is the backstop. Unknown toolkits keep falling
     // through to `no_grant` (legacy whole-toolkit grants are keyed by toolkit,
-    // not catalog membership, so we must not reclassify those).
+    // not catalog membership, so we must not reclassify those). `isInvalidAction`
+    // fails OPEN: only a NON-EMPTY catalog that lacks the slug yields
+    // invalid_action; a Composio outage/empty catalog falls through to no_grant,
+    // so a real slug is never rejected as invalid during an outage.
     const svc = getServiceConfig(toolkit);
-    if (svc && !(await isKnownAction(service, toolkit, action))) {
+    if (svc && (await isInvalidAction(service, toolkit, action))) {
       req.log.warn(
         { agentInboxId: caller.agentInboxId, toolkit, action },
         "[Composio] exec: action not in toolkit catalog — invalid_action (not a consent gap)",
