@@ -2,6 +2,7 @@ import http2 from "node:http2";
 import type { ApnsEnvironment, PushTokenType } from "@prisma/client";
 import jwt from "jsonwebtoken";
 import logger from "@/utils/logger";
+import { normalizePemKey } from "@/utils/pem";
 import type {
   AnyNotificationPayloadWithJWT,
   NotificationPayload,
@@ -350,8 +351,7 @@ export function createApnsService(): ApnsPushService | null {
     return null;
   }
 
-  // Convert \n escape sequences to actual newlines
-  const formattedPrivateKey = privateKey.replace(/\\n/g, "\n");
+  const formattedPrivateKey = normalizePemKey(privateKey);
 
   logger.info({ teamId, keyId, bundleId }, "[APNS] Initialising APNS service");
 

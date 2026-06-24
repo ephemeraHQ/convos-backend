@@ -5,6 +5,7 @@ import { accountIdSchema } from "@/utils/account-id";
 import { deviceIdSchema } from "@/utils/device-id";
 import { AppError } from "@/utils/errors";
 import logger from "@/utils/logger";
+import { normalizePemKey } from "@/utils/pem";
 import { tryCatch } from "@/utils/try-catch";
 
 // Maximum size in bytes for JWT metadata to prevent token bloat.
@@ -48,7 +49,10 @@ const loadPrivateKey = (): Promise<jose.KeyLike> => {
         ),
       );
     }
-    privateKeyPromise = jose.importPKCS8(JWT_PRIVATE_KEY, "ES256");
+    privateKeyPromise = jose.importPKCS8(
+      normalizePemKey(JWT_PRIVATE_KEY),
+      "ES256",
+    );
   }
   return privateKeyPromise;
 };
@@ -66,7 +70,10 @@ const loadPublicKey = (): Promise<jose.KeyLike> => {
         ),
       );
     }
-    publicKeyPromise = jose.importSPKI(JWT_PUBLIC_KEY, "ES256");
+    publicKeyPromise = jose.importSPKI(
+      normalizePemKey(JWT_PUBLIC_KEY),
+      "ES256",
+    );
   }
   return publicKeyPromise;
 };
