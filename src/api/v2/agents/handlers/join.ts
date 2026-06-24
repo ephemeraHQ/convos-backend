@@ -1,7 +1,7 @@
 import type { Request, Response } from "express";
 import { z } from "zod";
 import { buildJoinPayload } from "@/api/v2/agents/lib/build-join-payload";
-import { XMTP_ENV } from "@/config";
+import { EPHEMERAL_CREATE_SECRET, XMTP_ENV } from "@/config";
 import { accountIdSchema } from "@/utils/account-id";
 import { prisma } from "@/utils/prisma";
 import {
@@ -53,6 +53,11 @@ const optionsSchema = z
   .object({
     skipGreeting: z.boolean().optional(),
     onboarding: z.string().min(1).max(64).optional(),
+    // Per-PR agent variant (dev-only). Selects a registered variant; the backend
+    // consumes it here (Axis-A routing + the metadata stamp) and does NOT forward
+    // it to the runtime. Optional + ignored off-dev, so it stays backwards-
+    // compatible for shipped clients.
+    variantId: z.string().trim().min(1).max(64).optional(),
   })
   .strict();
 
@@ -68,7 +73,7 @@ const optionsSchema = z
 // carries the agent's `inboxId`, the caller adds it to the declared group
 // with addMembers, and the runtime attaches when it observes the resulting
 // group welcome. No confirmation call exists.
-const bodySchema = z
+export const bodySchema = z
   .object({
     slug: z.string().min(1, "slug must not be empty").max(2048).optional(),
     // Normalized to lowercase: the runtime forwards this to Herald, whose
@@ -154,6 +159,10 @@ const dispatchBodySchema = z
     ownerAccountId: accountIdSchema,
     options: optionsSchema.optional(),
     timezone: timezoneSchema.optional(),
+    // Free-form XMTP-profile metadata seed forwarded to the worker. Used to
+    // carry the per-PR variant descriptor ({ variant: <json> }), which the
+    // worker stamps onto the agent's profile at Herald-join.
+    metadata: z.record(z.string(), z.unknown()).optional(),
   })
   .strict()
   .refine(
@@ -422,6 +431,29 @@ export async function joinHandler(req: Request, res: Response) {
     "Agent join request received",
   );
 
+  // Per-PR agent variant (dev-only). When the join carries a variantId for a
+  // registered variant, route provisioning to its ephemeral worker (Axis A,
+  // when one is pinned) and stamp the variant descriptor onto the agent's
+  // profile via `metadata` (the worker emits it at Herald-join). The builder-
+  // prompt side (Axis B) was already applied at generation. `variantId` is
+  // consumed here and never forwarded to the runtime. A missing/invalid variant
+  // (or off-dev) falls through to the default worker with no stamp.
+  const variant =
+    options?.variantId && XMTP_ENV !== "production"
+      ? await prisma.agentVariant.findUnique({
+          where: { slug: options.variantId },
+          select: {
+            slug: true,
+            label: true,
+            whatToTest: true,
+            prUrl: true,
+            assistantWorkerUrl: true,
+          },
+        })
+      : null;
+  const effectiveAssistantApiUrl =
+    variant?.assistantWorkerUrl ?? assistantApiUrl;
+
   // `/api/v2/agents/join` is mounted behind `authMiddleware` (401s any
   // request without a valid JWT) and gated by `requireAccount` (403s a
   // valid-but-account-less JWT), so under normal routing `accountId` is
@@ -546,7 +578,7 @@ export async function joinHandler(req: Request, res: Response) {
     }
   }
 
-  const assistantBaseUrl = assistantApiUrl.replace(/\/+$/, "");
+  const assistantBaseUrl = effectiveAssistantApiUrl.replace(/\/+$/, "");
   const authHeader = assistantApiKey ? `Bearer ${assistantApiKey}` : undefined;
 
   let instanceId: string;
@@ -555,6 +587,11 @@ export async function joinHandler(req: Request, res: Response) {
       "Content-Type": "application/json",
     };
     if (authHeader) dispatchHeaders.Authorization = authHeader;
+    // Ephemeral variant workers gate their create route on a shared secret (F7);
+    // present it when routing to one. The default/canonical worker ignores it.
+    if (variant?.assistantWorkerUrl && EPHEMERAL_CREATE_SECRET) {
+      dispatchHeaders["x-ephemeral-create-secret"] = EPHEMERAL_CREATE_SECRET;
+    }
 
     // Forward each option only when the caller explicitly passed it —
     // no defaults at this layer. `options` is omitted entirely from the
@@ -606,6 +643,19 @@ export async function joinHandler(req: Request, res: Response) {
     }
     if (timezone !== undefined) {
       dispatchBody.timezone = timezone;
+    }
+    // Stamp the variant onto the agent: the worker reads metadata.variant at
+    // Herald-join and emits it into the XMTP profile so every participant sees
+    // the banner. Carries only the public descriptor — never the runtime URL.
+    if (variant) {
+      dispatchBody.metadata = {
+        variant: JSON.stringify({
+          slug: variant.slug,
+          label: variant.label,
+          whatToTest: variant.whatToTest,
+          prUrl: variant.prUrl,
+        }),
+      };
     }
 
     const dispatchParse = dispatchBodySchema.safeParse(dispatchBody);
