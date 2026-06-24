@@ -66,14 +66,6 @@ if (parsedAssistantUrl.protocol !== "https:" && !isLocalHost) {
   );
 }
 
-// Shared secret presented on the create route of ephemeral variant workers
-// (ephemeral-<slug>.convos.fun — the Axis-A runtime of a per-PR variant), which
-// gate that route on it. Must match the EPHEMERAL_CREATE_SECRET set on those
-// workers. Only used when a join routes to a variant's ephemeral worker; the
-// default/canonical worker ignores it. Dev-only; unset elsewhere.
-export const EPHEMERAL_CREATE_SECRET =
-  process.env.EPHEMERAL_CREATE_SECRET?.trim() || "";
-
 // Agent asset upload auth (optional — endpoint returns 503 if not configured)
 export const AGENT_ASSETS_API_KEY = process.env.AGENT_ASSETS_API_KEY || "";
 

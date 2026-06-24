@@ -3,10 +3,10 @@
  *
  * When a join carries options.variantId for a registered variant with an
  * ephemeral worker, the dispatch must (1) route to the variant's worker instead
- * of the default, (2) present the ephemeral create secret (F7), (3) carry
- * metadata.variant for the profile stamp, and (4) NOT forward variantId in the
- * options the runtime sees. XMTP_ENV is "local" under tests/setup, so the
- * dev-gate is open. Needs the test DB (the variant row); runs in CI.
+ * of the default, (2) carry metadata.variant for the profile stamp, and (3) NOT
+ * forward variantId in the options the runtime sees. XMTP_ENV is "local" under
+ * tests/setup, so the dev-gate is open. Needs the test DB (the variant row);
+ * runs in CI.
  */
 
 import type { Server } from "node:http";
@@ -34,7 +34,6 @@ const DEFAULT_URL = "https://assistants.test.local";
 const VARIANT_SLUG = "pr-test-join-variant";
 const VARIANT_URL = `https://ephemeral-${VARIANT_SLUG}.convos.fun`;
 const RUNTIME_DEFAULT_SLUG = "pr-test-join-axisb";
-const EXPECTED_SECRET = "test-ephemeral-create-secret"; // tests/setup.ts default
 const DEFAULT_ACCOUNT_ID = "11111111-1111-4111-8111-111111111111";
 
 type RecordedCall = {
@@ -182,7 +181,7 @@ beforeEach(() => {
 });
 
 describe("POST /agents/join — agent variant routing (Axis A)", () => {
-  test("routes to the variant worker, presents the secret, stamps metadata, strips variantId", async () => {
+  test("routes to the variant worker, stamps metadata, strips variantId", async () => {
     const res = await post({
       slug: "join-token-abc",
       options: { variantId: VARIANT_SLUG, skipGreeting: true },
@@ -194,9 +193,7 @@ describe("POST /agents/join — agent variant routing (Axis A)", () => {
 
     // (1) routed to the variant's ephemeral worker, not the default
     expect(dispatch.url).toBe(`${VARIANT_URL}/api/assistants`);
-    // (2) presented the ephemeral create secret (F7)
-    expect(dispatch.headers["x-ephemeral-create-secret"]).toBe(EXPECTED_SECRET);
-    // (3) carried the variant descriptor for the profile stamp
+    // (2) carried the variant descriptor for the profile stamp
     const meta = dispatch.body?.metadata as { variant?: string } | undefined;
     expect(meta?.variant).toBeTruthy();
     expect(JSON.parse(meta?.variant ?? "{}")).toMatchObject({
@@ -204,13 +201,13 @@ describe("POST /agents/join — agent variant routing (Axis A)", () => {
       label: "Q+A",
       prUrl: "https://github.com/x/y/pull/1",
     });
-    // (4) variantId is NOT forwarded to the runtime; skipGreeting still is
+    // (3) variantId is NOT forwarded to the runtime; skipGreeting still is
     const opts = (dispatch.body?.options ?? {}) as Record<string, unknown>;
     expect(opts).not.toHaveProperty("variantId");
     expect(opts.skipGreeting).toBe(true);
   });
 
-  test("an Axis-B-only variant (no worker) routes to the default, no secret", async () => {
+  test("an Axis-B-only variant (no worker) routes to the default", async () => {
     const res = await post({
       slug: "join-token-def",
       options: { variantId: RUNTIME_DEFAULT_SLUG },
@@ -220,6 +217,5 @@ describe("POST /agents/join — agent variant routing (Axis A)", () => {
     const dispatch = postDispatch();
     if (!dispatch) throw new Error("no POST dispatch recorded");
     expect(dispatch.url).toBe(`${DEFAULT_URL}/api/assistants`);
-    expect(dispatch.headers["x-ephemeral-create-secret"]).toBeUndefined();
   });
 });

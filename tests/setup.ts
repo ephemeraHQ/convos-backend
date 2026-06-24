@@ -34,10 +34,6 @@ process.env.ASSISTANT_API_URL =
   process.env.ASSISTANT_API_URL || "https://assistants.test.local";
 process.env.ASSISTANT_API_KEY =
   process.env.ASSISTANT_API_KEY || "test-assistant-key";
-// Presented to ephemeral variant workers on join dispatch (F7); the variant
-// routing test asserts it rides the dispatch headers.
-process.env.EPHEMERAL_CREATE_SECRET =
-  process.env.EPHEMERAL_CREATE_SECRET || "test-ephemeral-create-secret";
 // Shrink the server-side join wait so tests don't burn 25s each.
 process.env.ASSISTANT_JOIN_WAIT_BUDGET_MS =
   process.env.ASSISTANT_JOIN_WAIT_BUDGET_MS || "200";

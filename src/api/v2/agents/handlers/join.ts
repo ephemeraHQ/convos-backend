@@ -1,7 +1,7 @@
 import type { Request, Response } from "express";
 import { z } from "zod";
 import { buildJoinPayload } from "@/api/v2/agents/lib/build-join-payload";
-import { EPHEMERAL_CREATE_SECRET, XMTP_ENV } from "@/config";
+import { XMTP_ENV } from "@/config";
 import { accountIdSchema } from "@/utils/account-id";
 import { prisma } from "@/utils/prisma";
 import {
@@ -587,11 +587,6 @@ export async function joinHandler(req: Request, res: Response) {
       "Content-Type": "application/json",
     };
     if (authHeader) dispatchHeaders.Authorization = authHeader;
-    // Ephemeral variant workers gate their create route on a shared secret (F7);
-    // present it when routing to one. The default/canonical worker ignores it.
-    if (variant?.assistantWorkerUrl && EPHEMERAL_CREATE_SECRET) {
-      dispatchHeaders["x-ephemeral-create-secret"] = EPHEMERAL_CREATE_SECRET;
-    }
 
     // Forward each option only when the caller explicitly passed it —
     // no defaults at this layer. `options` is omitted entirely from the
