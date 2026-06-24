@@ -34,6 +34,7 @@ import { attachmentsRouter } from "./attachments/attachments.router";
 import { authRouter } from "./auth/auth.router";
 import { composioRouter } from "./composio/composio.router";
 import { connectionsRouter } from "./connections/connections.router";
+import { actionsGetHandler } from "./connections/handlers/actions-get";
 import { servicesGetHandler } from "./connections/handlers/services-get";
 import { creditsAdminRouter } from "./credits-admin/credits-admin.router";
 import { dailyRefillRouter } from "./credits/daily.router";
@@ -139,12 +140,17 @@ v2Router.use("/attachments", authMiddleware, attachmentsRouter);
 // Declared BEFORE the requireAccount-gated /connections mount so this more
 // specific path is matched first and never forced through requireAccount.
 v2Router.get("/connections/services", authMiddleware, servicesGetHandler);
-// Action-slug vocabulary for one toolkit — backend-owned, JWT-only (NOT
-// account-scoped), so the agent runtime can validate a requested action slug
-// before exec. Declared before the requireAccount-gated /connections mount.
+// Action-slug vocabulary for one toolkit so the agent runtime can validate a
+// requested action slug before exec. Auth MIRRORS /v2/composio/exec
+// (composioExecAuth / X-Composio-Exec-Key): the agent reaches the backend
+// through the trusted worker using the exec credential, not a per-user JWT, so a
+// JWT gate here would 401 the very caller that needs it. The exec key lives only
+// in the worker (never the container), giving this read parity with — not
+// weaker than — exec. Declared before the requireAccount-gated /connections
+// mount so this more specific path is matched first.
 v2Router.get(
   "/connections/services/:toolkit/actions",
-  authMiddleware,
+  composioExecAuth,
   actionsGetHandler,
 );
 v2Router.use("/connections", authMiddleware, requireAccount, connectionsRouter);
