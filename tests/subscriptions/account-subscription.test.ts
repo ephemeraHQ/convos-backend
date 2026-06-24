@@ -88,7 +88,7 @@ afterEach(async () => {
   resetVerifierForTests();
 });
 
-type ErrorBody = { error?: string };
+type ErrorBody = { error?: string; code?: string };
 type VerifyBody = {
   subscription: {
     provider: string;
@@ -415,5 +415,56 @@ describe("POST /v2/accounts/me/subscription/verify", () => {
       },
     });
     expect(persisted?.accountId).toBe(accountA);
+  });
+
+  // Backwards-compat: legacy iOS builds predate the `platform` discriminator
+  // and POST a bare `{ jwsRepresentation }`. The body schema defaults a missing
+  // `platform` to "apple", so these still parse and reach verification rather
+  // than 400-ing at the schema gate.
+  test("legacy body without platform defaults to apple and verifies (happy path)", async () => {
+    installLocalTestingVerifier();
+    const accountId = await newAccount();
+    const token = await tokenFor(accountId);
+    const res = await request(makeApp())
+      .post("/v2/accounts/me/subscription/verify")
+      .set("X-Convos-AuthToken", token)
+      .send({
+        jwsRepresentation: await signTransaction({
+          appAccountToken: "11111111-2222-3333-4444-555555555555",
+        }),
+      });
+    expect(res.status).toBe(200);
+    const body = res.body as VerifyBody;
+    expect(body.subscription.provider).toBe("apple");
+    expect(body.subscription.status).toBe("active");
+  });
+
+  test("legacy body without platform reaches verification (garbage JWS → verify-stage 400, not schema reject)", async () => {
+    installLocalTestingVerifier();
+    const accountId = await newAccount();
+    const token = await tokenFor(accountId);
+    const res = await request(makeApp())
+      .post("/v2/accounts/me/subscription/verify")
+      .set("X-Convos-AuthToken", token)
+      .send({ jwsRepresentation: "garbage.not.jws" });
+    // Reached the Apple verify stage (not the schema gate): the JWS verify
+    // failure message proves it parsed as apple, and there is no
+    // invalid_request_body code.
+    expect(res.status).toBe(400);
+    expect((res.body as ErrorBody).error).toBe("Invalid signed transaction");
+    expect((res.body as ErrorBody).code).toBeUndefined();
+  });
+
+  test("genuinely malformed body still 400s with code=invalid_request_body", async () => {
+    installLocalTestingVerifier();
+    const accountId = await newAccount();
+    const token = await tokenFor(accountId);
+    const res = await request(makeApp())
+      .post("/v2/accounts/me/subscription/verify")
+      .set("X-Convos-AuthToken", token)
+      .send({});
+    expect(res.status).toBe(400);
+    expect((res.body as ErrorBody).error).toBe("Invalid request body");
+    expect((res.body as ErrorBody).code).toBe("invalid_request_body");
   });
 });

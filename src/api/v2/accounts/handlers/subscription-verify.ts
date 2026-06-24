@@ -56,10 +56,32 @@ const playBodySchema = z
   })
   .strict();
 
-const bodySchema = z.discriminatedUnion("platform", [
+const discriminatedBodySchema = z.discriminatedUnion("platform", [
   appleBodySchema,
   playBodySchema,
 ]);
+
+// Backwards-compat: legacy iOS builds predate the `platform` discriminator
+// (original PR-#215 contract) and POST a bare `{ jwsRepresentation }` with no
+// `platform`. Default a missing `platform` to "apple" BEFORE the union parse so
+// those bodies still route to the Apple arm. Only legacy Apple clients omit
+// `platform`; Google clients always send `"googlePlay"`. The per-arm `.strict()`
+// is preserved, so genuinely unknown keys are still rejected.
+// Exported so contract tests can pin the client-facing request shape directly
+// (see tests/subscriptions/verify-body-contract.test.ts). The append-only
+// client-API rule (CLAUDE.md) means a legacy bare `{ jwsRepresentation }` must
+// keep validating; that test guards against a future re-tightening.
+export const verifyBodySchema = z.preprocess(
+  (value) =>
+    value &&
+    typeof value === "object" &&
+    (value as { platform?: unknown }).platform == null
+      ? { ...(value as Record<string, unknown>), platform: "apple" }
+      : value,
+  discriminatedBodySchema,
+);
+
+const bodySchema = verifyBodySchema;
 
 const requireField = <T>(value: T | undefined | null, field: string): T => {
   if (value === undefined || value === null) {
@@ -333,8 +355,22 @@ export async function subscriptionVerifyHandler(req: Request, res: Response) {
 
   const parsed = bodySchema.safeParse(req.body);
   if (!parsed.success) {
+    const rawBody: unknown = req.body;
+    req.log.warn(
+      {
+        accountId,
+        bodyKeys:
+          rawBody && typeof rawBody === "object"
+            ? Object.keys(rawBody)
+            : typeof rawBody,
+        platform: (rawBody as { platform?: unknown } | undefined)?.platform,
+        issues: parsed.error.issues,
+      },
+      "subscription.verify.invalid_body",
+    );
     res.status(400).json({
       error: "Invalid request body",
+      code: "invalid_request_body",
       details: parsed.error.issues,
     });
     return;
