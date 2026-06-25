@@ -11,22 +11,30 @@ export function liveVariantWhere(slug: string) {
   };
 }
 
-// Variant rows store a free-form URL; only our HTTPS dev ephemeral origins
-// (ephemeral-<slug>.convos.fun, default port) may receive a dispatch/poll and its
-// bearer token. Returns the canonical origin (scheme + host only) to route at, or
-// null to fall back to the default worker — normalizing to the origin means an
-// injected port, path, or query on an otherwise-trusted host can't redirect the
-// bearer. This pattern is a cross-repo contract with the convos-assistants
-// ephemeral host (EPHEMERAL_PREFIX + ROUTE_ZONE in scripts/ephemeral.ts,
-// registered by variant.yml) — keep the two in lockstep or variant routing
-// silently falls back.
-export function allowedVariantWorkerOrigin(url: string): string | null {
+// The ephemeral worker host for a variant slug. Cross-repo contract with the
+// convos-assistants ephemeral host (EPHEMERAL_PREFIX + ROUTE_ZONE in
+// scripts/ephemeral.ts, registered by variant.yml) — keep the two in lockstep or
+// variant routing silently falls back.
+export function variantWorkerHostname(slug: string): string {
+  return `ephemeral-${slug}.convos.fun`;
+}
+
+// A variant's dispatch/poll and its bearer token may go ONLY to the variant's
+// own HTTPS ephemeral origin (default port). Binding to the exact expected
+// hostname — not just the ephemeral-*.convos.fun shape — stops a bad/mismatched
+// row (e.g. pr-123 pointing at pr-999's worker) from leaking the bearer to
+// another PR's runtime; returning the canonical origin (scheme + host only)
+// strips any injected port/path/query.
+export function allowedVariantWorkerOrigin(
+  url: string,
+  expectedHostname: string,
+): string | null {
   try {
     const parsed = new URL(url);
     const allowed =
       parsed.protocol === "https:" &&
       (parsed.port === "" || parsed.port === "443") &&
-      /^ephemeral-[a-z0-9-]+\.convos\.fun$/.test(parsed.hostname);
+      parsed.hostname === expectedHostname;
     return allowed ? parsed.origin : null;
   } catch {
     return null;
@@ -45,7 +53,10 @@ export async function resolveVariantWorkerOrigin(
       select: { assistantWorkerUrl: true },
     });
     if (!variant?.assistantWorkerUrl) return null;
-    return allowedVariantWorkerOrigin(variant.assistantWorkerUrl);
+    return allowedVariantWorkerOrigin(
+      variant.assistantWorkerUrl,
+      variantWorkerHostname(slug),
+    );
   } catch {
     return null;
   }

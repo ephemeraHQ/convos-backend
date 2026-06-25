@@ -4,6 +4,7 @@ import { buildJoinPayload } from "@/api/v2/agents/lib/build-join-payload";
 import {
   allowedVariantWorkerOrigin,
   liveVariantWhere,
+  variantWorkerHostname,
 } from "@/api/v2/agents/lib/variant-routing";
 import { XMTP_ENV } from "@/config";
 import { accountIdSchema } from "@/utils/account-id";
@@ -487,6 +488,7 @@ export async function joinHandler(req: Request, res: Response) {
   if (variant?.assistantWorkerUrl) {
     const allowedOrigin = allowedVariantWorkerOrigin(
       variant.assistantWorkerUrl,
+      variantWorkerHostname(variant.slug),
     );
     if (allowedOrigin) {
       effectiveAssistantApiUrl = allowedOrigin;

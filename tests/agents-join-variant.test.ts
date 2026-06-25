@@ -37,11 +37,13 @@ const VARIANT_URL = `https://ephemeral-${VARIANT_SLUG}.convos.fun`;
 const RUNTIME_DEFAULT_SLUG = "pr-test-join-axisb";
 const BAD_URL_SLUG = "pr-test-join-badurl";
 const FAILED_SLUG = "pr-test-join-failed";
+const MISMATCH_SLUG = "pr-test-join-mismatch";
 const ALL_SLUGS = [
   VARIANT_SLUG,
   RUNTIME_DEFAULT_SLUG,
   BAD_URL_SLUG,
   FAILED_SLUG,
+  MISMATCH_SLUG,
 ];
 const DEFAULT_ACCOUNT_ID = "11111111-1111-4111-8111-111111111111";
 
@@ -174,6 +176,19 @@ beforeAll(async () => {
         branch: "b",
         commit: "c",
       },
+      {
+        // Valid ephemeral host, but for a DIFFERENT slug — the bearer must not
+        // go cross-PR, so this routes to the default worker.
+        slug: MISMATCH_SLUG,
+        label: "Mismatch",
+        whatToTest: "host points at another slug",
+        status: "ready",
+        assistantWorkerUrl: "https://ephemeral-pr-test-join-other.convos.fun",
+        builderPromptSlug: null,
+        prUrl: "https://github.com/x/y/pull/5",
+        branch: "b",
+        commit: "c",
+      },
     ],
   });
   await new Promise<void>((resolve) => {
@@ -283,6 +298,19 @@ describe("POST /agents/join — agent variant runtime routing", () => {
     // Filtered out by status, so no routing and no descriptor stamp.
     expect(dispatch.url).toBe(`${DEFAULT_URL}/api/assistants`);
     expect(dispatch.body?.metadata).toBeUndefined();
+  });
+
+  test("a variant whose worker host is a different slug routes to the default", async () => {
+    const res = await post({
+      slug: "join-token-pqr",
+      options: { variantId: MISMATCH_SLUG },
+    });
+    expect(res.status).toBeLessThan(500);
+
+    const dispatch = postDispatch();
+    if (!dispatch) throw new Error("no POST dispatch recorded");
+    // Host is a valid ephemeral but not THIS variant's — bearer stays on default.
+    expect(dispatch.url).toBe(`${DEFAULT_URL}/api/assistants`);
   });
 
   test("a variant lookup DB error degrades to the default worker (no 500)", async () => {
