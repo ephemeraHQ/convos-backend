@@ -28,6 +28,34 @@ describe("extractPromptText", () => {
     ).toBe("line one\nline two");
   });
 
+  test("reads array message `content`, joining text parts and skipping non-text", () => {
+    expect(
+      extractPromptText({
+        prompt: {
+          messages: [
+            {
+              role: "system",
+              content: [
+                { type: "text", text: "part one" },
+                { type: "image_url", image_url: { url: "ignored" } },
+                { type: "text", text: "part two" },
+              ],
+            },
+            { role: "user", content: "plain string still works" },
+          ],
+        },
+      }),
+    ).toBe("part one\npart two\nplain string still works");
+  });
+
+  test("reads a completion `content` array", () => {
+    expect(
+      extractPromptText({
+        prompt: { content: [{ type: "text", text: "you are a bot" }] },
+      }),
+    ).toBe("you are a bot");
+  });
+
   test("returns empty string for missing/unknown shapes", () => {
     expect(extractPromptText(null)).toBe("");
     expect(extractPromptText({})).toBe("");

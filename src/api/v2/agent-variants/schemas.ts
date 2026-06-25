@@ -30,15 +30,20 @@ export const AgentVariantUpsertSchema = z
       ),
     label: z.string().trim().min(1).max(40),
     whatToTest: z.string().trim().min(1).max(500),
-    status: AgentVariantStatusSchema.default("building"),
+    // Optional, NOT defaulted: an omitted field stays `undefined` so a partial
+    // re-POST (the upsert spreads `...rest` into the Prisma `update`) preserves
+    // the stored value instead of clobbering it with a default. Omitted fields
+    // on create fall back to the Prisma column defaults (`status` → "building",
+    // the nullable URL/slug/date columns → null).
+    status: AgentVariantStatusSchema.optional(),
     // The ephemeral runtime base URL, or null for the default dev runtime.
-    assistantWorkerUrl: z.string().url().nullable().default(null),
+    assistantWorkerUrl: z.string().url().nullable().optional(),
     // A bench/Braintrust prompt slug, or null for the canonical generator.
-    builderPromptSlug: z.string().trim().min(1).nullable().default(null),
+    builderPromptSlug: z.string().trim().min(1).nullable().optional(),
     prUrl: z.string().url(),
     branch: z.string().trim().min(1).max(255),
     commit: z.string().trim().min(1).max(64),
-    expiresAt: z.coerce.date().nullable().default(null),
+    expiresAt: z.coerce.date().nullable().optional(),
   })
   .strict();
 export type AgentVariantUpsert = z.infer<typeof AgentVariantUpsertSchema>;

@@ -96,20 +96,55 @@ describe("POST /v2/agent-variants", () => {
 
   test("upserts (second POST on the same slug updates, not duplicates)", async () => {
     const slug = `${SLUG_PREFIX}upsert`;
-    await fetch(`${baseURL}/api/v2/agent-variants`, {
+    const first = await fetch(`${baseURL}/api/v2/agent-variants`, {
       method: "POST",
       headers: registryHeaders(AGENT_KEY),
       body: JSON.stringify(body(slug, { status: "building", commit: "old" })),
     });
+    expect(first.status).toBe(200);
     const res = await fetch(`${baseURL}/api/v2/agent-variants`, {
       method: "POST",
       headers: registryHeaders(AGENT_KEY),
       body: JSON.stringify(body(slug, { status: "ready", commit: "new" })),
     });
     expect(res.status).toBe(200);
+    expect(await prisma.agentVariant.count({ where: { slug } })).toBe(1);
     const row = await prisma.agentVariant.findUnique({ where: { slug } });
     expect(row?.commit).toBe("new");
     expect(row?.status).toBe("ready");
+  });
+
+  test("a partial update preserves omitted optional fields (no clobber)", async () => {
+    const slug = `${SLUG_PREFIX}partial`;
+    const full = body(slug);
+    const created = await fetch(`${baseURL}/api/v2/agent-variants`, {
+      method: "POST",
+      headers: registryHeaders(AGENT_KEY),
+      body: JSON.stringify(full),
+    });
+    expect(created.status).toBe(200);
+
+    // Re-POST omitting assistantWorkerUrl + builderPromptSlug. With the schema
+    // defaulting removed they stay undefined and Prisma leaves them untouched,
+    // rather than nulling out the stored runtime URL.
+    const updated = await fetch(`${baseURL}/api/v2/agent-variants`, {
+      method: "POST",
+      headers: registryHeaders(AGENT_KEY),
+      body: JSON.stringify({
+        slug: full.slug,
+        label: full.label,
+        whatToTest: full.whatToTest,
+        prUrl: full.prUrl,
+        branch: full.branch,
+        commit: full.commit,
+        status: "building",
+      }),
+    });
+    expect(updated.status).toBe(200);
+    const row = await prisma.agentVariant.findUnique({ where: { slug } });
+    expect(row?.assistantWorkerUrl).toBe(full.assistantWorkerUrl);
+    expect(row?.builderPromptSlug).toBe("qa-flow-v2");
+    expect(row?.status).toBe("building");
   });
 
   test("401 without the registry key", async () => {

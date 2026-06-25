@@ -34,6 +34,8 @@ const DEFAULT_URL = "https://assistants.test.local";
 const VARIANT_SLUG = "pr-test-join-variant";
 const VARIANT_URL = `https://ephemeral-${VARIANT_SLUG}.convos.fun`;
 const RUNTIME_DEFAULT_SLUG = "pr-test-join-axisb";
+const BAD_URL_SLUG = "pr-test-join-badurl";
+const ALL_SLUGS = [VARIANT_SLUG, RUNTIME_DEFAULT_SLUG, BAD_URL_SLUG];
 const DEFAULT_ACCOUNT_ID = "11111111-1111-4111-8111-111111111111";
 
 type RecordedCall = {
@@ -113,7 +115,7 @@ const postDispatch = () => calls.find((c) => c.method === "POST");
 
 beforeAll(async () => {
   await prisma.agentVariant.deleteMany({
-    where: { slug: { in: [VARIANT_SLUG, RUNTIME_DEFAULT_SLUG] } },
+    where: { slug: { in: ALL_SLUGS } },
   });
   await prisma.agentVariant.createMany({
     data: [
@@ -140,6 +142,19 @@ beforeAll(async () => {
         branch: "b",
         commit: "c",
       },
+      {
+        // Untrusted worker URL (not an ephemeral-*.convos.fun origin) → the join
+        // must NOT send the bearer there; it falls back to the default worker.
+        slug: BAD_URL_SLUG,
+        label: "Bad URL",
+        whatToTest: "untrusted worker origin",
+        status: "ready",
+        assistantWorkerUrl: "https://evil.example.com",
+        builderPromptSlug: null,
+        prUrl: "https://github.com/x/y/pull/3",
+        branch: "b",
+        commit: "c",
+      },
     ],
   });
   await new Promise<void>((resolve) => {
@@ -158,7 +173,7 @@ afterAll(async () => {
   globalThis.fetch = originalFetch;
   __setAssistantConfigOverridesForTests({});
   await prisma.agentVariant.deleteMany({
-    where: { slug: { in: [VARIANT_SLUG, RUNTIME_DEFAULT_SLUG] } },
+    where: { slug: { in: ALL_SLUGS } },
   });
   await new Promise<void>((resolve) => {
     server.close(() => {
@@ -217,5 +232,44 @@ describe("POST /agents/join — agent variant runtime routing", () => {
     const dispatch = postDispatch();
     if (!dispatch) throw new Error("no POST dispatch recorded");
     expect(dispatch.url).toBe(`${DEFAULT_URL}/api/assistants`);
+  });
+
+  test("a non-allowlisted worker URL routes to the default and still stamps", async () => {
+    const res = await post({
+      slug: "join-token-ghi",
+      options: { variantId: BAD_URL_SLUG },
+    });
+    expect(res.status).toBeLessThan(500);
+
+    const dispatch = postDispatch();
+    if (!dispatch) throw new Error("no POST dispatch recorded");
+    // The untrusted URL never receives the dispatch (nor its bearer token).
+    expect(dispatch.url).toBe(`${DEFAULT_URL}/api/assistants`);
+    // The descriptor stamp still applies, as for a default-runtime variant.
+    const meta = dispatch.body?.metadata as { variant?: string } | undefined;
+    expect(JSON.parse(meta?.variant ?? "{}")).toMatchObject({
+      slug: BAD_URL_SLUG,
+    });
+  });
+
+  test("a variant lookup DB error degrades to the default worker (no 500)", async () => {
+    const variantModel = prisma.agentVariant as unknown as {
+      findUnique: (...args: unknown[]) => Promise<unknown>;
+    };
+    const original = variantModel.findUnique;
+    variantModel.findUnique = () => Promise.reject(new Error("db unreachable"));
+    try {
+      const res = await post({
+        slug: "join-token-jkl",
+        options: { variantId: VARIANT_SLUG },
+      });
+      expect(res.status).toBeLessThan(500);
+      const dispatch = postDispatch();
+      if (!dispatch) throw new Error("no POST dispatch recorded");
+      expect(dispatch.url).toBe(`${DEFAULT_URL}/api/assistants`);
+      expect(dispatch.body?.metadata).toBeUndefined();
+    } finally {
+      variantModel.findUnique = original;
+    }
   });
 });

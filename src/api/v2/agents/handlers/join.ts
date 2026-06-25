@@ -15,6 +15,31 @@ import {
 
 const AGENT_BUILDER_ONBOARDING = "agent-builder";
 
+// The public variant descriptor + optional ephemeral runtime URL read from the
+// registry for a dev-only per-PR variant join.
+type VariantDescriptor = {
+  slug: string;
+  label: string;
+  whatToTest: string;
+  prUrl: string;
+  assistantWorkerUrl: string | null;
+};
+
+// Variant rows store a free-form URL; only our HTTPS dev ephemeral origins
+// (ephemeral-<slug>.convos.fun) may receive the join dispatch and its bearer
+// token. Anything else falls back to the default worker.
+function isAllowedVariantWorkerUrl(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    return (
+      parsed.protocol === "https:" &&
+      /^ephemeral-[a-z0-9-]+\.convos\.fun$/.test(parsed.hostname)
+    );
+  } catch {
+    return false;
+  }
+}
+
 type TemplateRow = Awaited<ReturnType<typeof prisma.agentTemplate.findUnique>>;
 type TemplateFinder = (id: string) => Promise<TemplateRow>;
 
@@ -438,21 +463,48 @@ export async function joinHandler(req: Request, res: Response) {
   // already applied at generation. `variantId` is
   // consumed here and never forwarded to the runtime. A missing/invalid variant
   // (or off-dev) falls through to the default worker with no stamp.
-  const variant =
-    options?.variantId && XMTP_ENV !== "production"
-      ? await prisma.agentVariant.findUnique({
-          where: { slug: options.variantId },
-          select: {
-            slug: true,
-            label: true,
-            whatToTest: true,
-            prUrl: true,
-            assistantWorkerUrl: true,
-          },
-        })
-      : null;
-  const effectiveAssistantApiUrl =
-    variant?.assistantWorkerUrl ?? assistantApiUrl;
+  let variant: VariantDescriptor | null = null;
+  if (options?.variantId && XMTP_ENV !== "production") {
+    try {
+      variant = await prisma.agentVariant.findUnique({
+        where: { slug: options.variantId },
+        select: {
+          slug: true,
+          label: true,
+          whatToTest: true,
+          prUrl: true,
+          assistantWorkerUrl: true,
+        },
+      });
+    } catch (error) {
+      // A transient DB error on this optional dev-only lookup must not 500 the
+      // join — degrade to the default worker with no variant stamp.
+      req.log.error(
+        { error, variantId: options.variantId },
+        "Variant lookup failed; falling back to the default worker",
+      );
+    }
+  }
+
+  // The variant row carries a free-form URL. Before routing the join — and its
+  // `Authorization: Bearer` — at it, confirm it's one of our HTTPS dev ephemeral
+  // origins; a bad or compromised row otherwise turns this into an SSRF /
+  // credential-leak path. A non-matching URL falls back to the default worker
+  // (the descriptor stamp still applies, exactly as a default-runtime variant).
+  let effectiveAssistantApiUrl = assistantApiUrl;
+  if (variant?.assistantWorkerUrl) {
+    if (isAllowedVariantWorkerUrl(variant.assistantWorkerUrl)) {
+      effectiveAssistantApiUrl = variant.assistantWorkerUrl;
+    } else {
+      req.log.warn(
+        {
+          variantId: variant.slug,
+          assistantWorkerUrl: variant.assistantWorkerUrl,
+        },
+        "Variant assistantWorkerUrl is not an allowed dev ephemeral origin; using the default worker",
+      );
+    }
+  }
 
   // `/api/v2/agents/join` is mounted behind `authMiddleware` (401s any
   // request without a valid JWT) and gated by `requireAccount` (403s a

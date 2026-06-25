@@ -19,25 +19,46 @@ function restObjects(body: unknown): Record<string, unknown>[] {
   );
 }
 
+// A Braintrust message `content` is either a plain string or an array of typed
+// parts (e.g. [{ type: "text", text: "..." }] for multimodal prompts). Join the
+// text parts and ignore the rest; anything else yields "".
+function contentToText(content: unknown): string {
+  if (typeof content === "string") return content;
+  if (Array.isArray(content)) {
+    return content
+      .map((part) =>
+        typeof part === "object" &&
+        part !== null &&
+        (part as { type?: unknown }).type === "text" &&
+        typeof (part as { text?: unknown }).text === "string"
+          ? (part as { text: string }).text
+          : "",
+      )
+      .filter(Boolean)
+      .join("\n");
+  }
+  return "";
+}
+
 /**
  * Pull the builder text out of a Braintrust `prompt_data` payload — either a
- * completion `content`/`prompt` string or the joined chat `messages`. Pure, so
- * the parsing is unit-testable without hitting the API.
+ * completion `content`/`prompt` string or the joined chat `messages`. A message
+ * `content` may be a plain string or an array of typed parts. Pure, so the
+ * parsing is unit-testable without hitting the API.
  */
 export function extractPromptText(promptData: unknown): string {
   if (typeof promptData !== "object" || promptData === null) return "";
   const p = (promptData as { prompt?: unknown }).prompt;
   if (typeof p !== "object" || p === null) return "";
   const prompt = p as Record<string, unknown>;
-  if (typeof prompt.content === "string") return prompt.content;
+  const direct = contentToText(prompt.content);
+  if (direct) return direct;
   if (typeof prompt.prompt === "string") return prompt.prompt;
   if (Array.isArray(prompt.messages)) {
     return prompt.messages
       .map((m: unknown) =>
-        typeof m === "object" &&
-        m !== null &&
-        typeof (m as { content?: unknown }).content === "string"
-          ? (m as { content: string }).content
+        typeof m === "object" && m !== null
+          ? contentToText((m as { content?: unknown }).content)
           : "",
       )
       .filter(Boolean)
