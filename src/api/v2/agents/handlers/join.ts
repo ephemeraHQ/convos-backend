@@ -27,7 +27,10 @@ type VariantDescriptor = {
 
 // Variant rows store a free-form URL; only our HTTPS dev ephemeral origins
 // (ephemeral-<slug>.convos.fun) may receive the join dispatch and its bearer
-// token. Anything else falls back to the default worker.
+// token. Anything else falls back to the default worker. This pattern is a
+// cross-repo contract with the convos-assistants ephemeral host (EPHEMERAL_PREFIX
+// + ROUTE_ZONE in scripts/ephemeral.ts, registered by variant.yml) — keep the
+// two in lockstep or variant joins silently fall back.
 function isAllowedVariantWorkerUrl(url: string): boolean {
   try {
     const parsed = new URL(url);
