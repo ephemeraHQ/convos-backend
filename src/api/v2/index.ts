@@ -22,6 +22,7 @@ import {
 import { accountsByIdRouter } from "./accounts/accountsByIdRouter";
 import { accountsMeRouter } from "./accounts/accountsMeRouter";
 import { meGuard } from "./accounts/middleware/meGuard";
+import { agentPromptHintsRouter } from "./agent-prompt-hints/agent-prompt-hints.router";
 import { agentTemplatesRouter } from "./agent-templates/agent-templates.router";
 import { agentsRouter } from "./agents/agents.router";
 import { agentAssetsRouter } from "./agents/assets/agent-assets.router";
@@ -56,6 +57,8 @@ const v2Router = Router();
 if (process.env.XMTP_ENV !== "production") {
   v2Router.use("/dev", devAuthMiddleware, devRouter);
 }
+
+v2Router.use("/agent-prompt-hints", agentPromptHintsRouter);
 
 v2Router.use("/agent-templates", agentTemplatesRouter);
 
