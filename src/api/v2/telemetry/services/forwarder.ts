@@ -20,6 +20,10 @@ export async function forwardMetrics(
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
       signal: AbortSignal.timeout(10_000),
+      // Reject on any redirect rather than following it — a 3xx would turn this
+      // POST into a GET and a 200 there would falsely read as a successful
+      // ingest. fetch throws on redirect, landing in the catch as a failure.
+      redirect: "error",
     });
     if (!res.ok) {
       logger.error(
