@@ -5,8 +5,7 @@ import {
   type Response,
 } from "express";
 import { XMTP_ENV } from "@/config";
-import { agentApiKeyAuth } from "@/middleware/agentAuth";
-import { authMiddleware } from "@/middleware/auth";
+import { agentApiKeyAuth, authOrAgentApiKeyAuth } from "@/middleware/agentAuth";
 import { deleteAgentVariantHandler } from "./handlers/delete";
 import { listAgentVariantsHandler } from "./handlers/list";
 import { upsertAgentVariantHandler } from "./handlers/upsert";
@@ -25,9 +24,10 @@ function requireDevBackend(_req: Request, res: Response, next: NextFunction) {
   next();
 }
 
-// Read by the dev app picker (internal builds). authMiddleware keeps it to
-// signed-in clients; the handler returns [] off-dev.
-agentVariantsRouter.get("/", authMiddleware, listAgentVariantsHandler);
+// Read by the dev app picker (a signed-in client's JWT) and by the
+// convos-assistants variant-sweep CI (the agent API key) — authOrAgentApiKeyAuth
+// accepts either. Non-sensitive dev-only data, and the handler returns [] off-dev.
+agentVariantsRouter.get("/", authOrAgentApiKeyAuth, listAgentVariantsHandler);
 
 // Written only by the convos-assistants variant CI, authenticating with the
 // agent API key (X-Agent-API-Key) — the same machine→backend credential the

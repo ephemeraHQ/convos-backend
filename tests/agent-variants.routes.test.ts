@@ -167,9 +167,21 @@ describe("GET /v2/agent-variants", () => {
     expect(slugs).not.toContain(`${SLUG_PREFIX}gone`);
   });
 
-  test("401 without a JWT", async () => {
+  test("401 without any credentials", async () => {
     const res = await fetch(`${baseURL}/api/v2/agent-variants`);
     expect(res.status).toBe(401);
+  });
+
+  test("also accepts the agent API key (the CI sweep's path)", async () => {
+    await prisma.agentVariant.create({
+      data: body(`${SLUG_PREFIX}agentkey`, { status: "ready" }),
+    });
+    const res = await fetch(`${baseURL}/api/v2/agent-variants`, {
+      headers: { "X-Agent-API-Key": AGENT_KEY },
+    });
+    expect(res.status).toBe(200);
+    const json = (await res.json()) as { data: { slug: string }[] };
+    expect(json.data.map((v) => v.slug)).toContain(`${SLUG_PREFIX}agentkey`);
   });
 });
 
