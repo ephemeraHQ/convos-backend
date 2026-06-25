@@ -11,7 +11,14 @@ const bodySchema = z.object({
         sortOrder: z.number().int(),
       }),
     )
-    .min(1),
+    .min(1)
+    // Reject duplicate ids: a repeated id is last-write-wins and would inflate
+    // the returned `updated` count past the number of distinct rows actually
+    // touched. With this guard, orders.length is the distinct-row count.
+    .refine(
+      (orders) => new Set(orders.map((order) => order.id)).size === orders.length,
+      { message: "Duplicate hint id in reorder batch" },
+    ),
 });
 
 export async function reorderHandler(req: Request, res: Response) {

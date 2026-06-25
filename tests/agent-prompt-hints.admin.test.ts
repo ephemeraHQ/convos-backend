@@ -408,4 +408,61 @@ describe("Agent prompt hints admin endpoints", () => {
     expect(rowA?.sortOrder).toBe(50);
     expect(rowB?.sortOrder).toBe(40);
   });
+
+  test("POST /reorder rejects duplicate ids (400)", async () => {
+    const a = await createHint({
+      text: `${TEST_PREFIX}reorder-dup`,
+      sortOrder: 1,
+    });
+
+    const response = await fetch(
+      `${baseURL}/api/v2/agent-prompt-hints/reorder`,
+      {
+        method: "POST",
+        headers: agentKeyHeaders(),
+        body: JSON.stringify({
+          orders: [
+            { id: a.json.id, sortOrder: 10 },
+            { id: a.json.id, sortOrder: 20 },
+          ],
+        }),
+      },
+    );
+    expect(response.status).toBe(400);
+
+    // Nothing applied: the row keeps its original sortOrder.
+    const rowA = await prisma.agentPromptHint.findUnique({
+      where: { id: a.json.id },
+    });
+    expect(rowA?.sortOrder).toBe(1);
+  });
+
+  test("POST /reorder rolls back when an id is missing (404, no partial update)", async () => {
+    const a = await createHint({
+      text: `${TEST_PREFIX}reorder-rollback`,
+      sortOrder: 1,
+    });
+    const missingId = "00000000-0000-4000-8000-000000000000";
+
+    const response = await fetch(
+      `${baseURL}/api/v2/agent-prompt-hints/reorder`,
+      {
+        method: "POST",
+        headers: agentKeyHeaders(),
+        body: JSON.stringify({
+          orders: [
+            { id: a.json.id, sortOrder: 77 },
+            { id: missingId, sortOrder: 88 },
+          ],
+        }),
+      },
+    );
+    expect(response.status).toBe(404);
+
+    // The whole $transaction rolled back: the valid row keeps its old sortOrder.
+    const rowA = await prisma.agentPromptHint.findUnique({
+      where: { id: a.json.id },
+    });
+    expect(rowA?.sortOrder).toBe(1);
+  });
 });
