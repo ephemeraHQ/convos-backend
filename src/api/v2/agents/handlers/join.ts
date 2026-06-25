@@ -473,8 +473,15 @@ export async function joinHandler(req: Request, res: Response) {
   let variant: VariantDescriptor | null = null;
   if (options?.variantId && XMTP_ENV !== "production") {
     try {
-      variant = await prisma.agentVariant.findUnique({
-        where: { slug: options.variantId },
+      // Only a live variant routes + stamps: exclude failed/stale and expired
+      // rows (mirrors the picker's ready/building filter) so a client can't pin a
+      // retired runtime by slug. A miss falls through to the default worker.
+      variant = await prisma.agentVariant.findFirst({
+        where: {
+          slug: options.variantId,
+          status: { in: ["ready", "building"] },
+          OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }],
+        },
         select: {
           slug: true,
           label: true,

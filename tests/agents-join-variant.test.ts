@@ -36,7 +36,13 @@ const VARIANT_SLUG = "pr-test-join-variant";
 const VARIANT_URL = `https://ephemeral-${VARIANT_SLUG}.convos.fun`;
 const RUNTIME_DEFAULT_SLUG = "pr-test-join-axisb";
 const BAD_URL_SLUG = "pr-test-join-badurl";
-const ALL_SLUGS = [VARIANT_SLUG, RUNTIME_DEFAULT_SLUG, BAD_URL_SLUG];
+const FAILED_SLUG = "pr-test-join-failed";
+const ALL_SLUGS = [
+  VARIANT_SLUG,
+  RUNTIME_DEFAULT_SLUG,
+  BAD_URL_SLUG,
+  FAILED_SLUG,
+];
 const DEFAULT_ACCOUNT_ID = "11111111-1111-4111-8111-111111111111";
 
 type RecordedCall = {
@@ -156,6 +162,18 @@ beforeAll(async () => {
         branch: "b",
         commit: "c",
       },
+      {
+        // A non-live (failed) variant must be ignored even with a valid URL.
+        slug: FAILED_SLUG,
+        label: "Failed",
+        whatToTest: "retired runtime",
+        status: "failed",
+        assistantWorkerUrl: `https://ephemeral-${FAILED_SLUG}.convos.fun`,
+        builderPromptSlug: null,
+        prUrl: "https://github.com/x/y/pull/4",
+        branch: "b",
+        commit: "c",
+      },
     ],
   });
   await new Promise<void>((resolve) => {
@@ -251,6 +269,20 @@ describe("POST /agents/join — agent variant runtime routing", () => {
     expect(JSON.parse(meta?.variant ?? "{}")).toMatchObject({
       slug: BAD_URL_SLUG,
     });
+  });
+
+  test("a non-live (failed) variant is ignored and routes to the default", async () => {
+    const res = await post({
+      slug: "join-token-mno",
+      options: { variantId: FAILED_SLUG },
+    });
+    expect(res.status).toBeLessThan(500);
+
+    const dispatch = postDispatch();
+    if (!dispatch) throw new Error("no POST dispatch recorded");
+    // Filtered out by status, so no routing and no descriptor stamp.
+    expect(dispatch.url).toBe(`${DEFAULT_URL}/api/assistants`);
+    expect(dispatch.body?.metadata).toBeUndefined();
   });
 
   test("a variant lookup DB error degrades to the default worker (no 500)", async () => {
