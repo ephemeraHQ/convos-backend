@@ -1,5 +1,7 @@
 import type { Request, Response } from "express";
 import { z } from "zod";
+import { resolveVariantWorkerOrigin } from "@/api/v2/agents/lib/variant-routing";
+import { XMTP_ENV } from "@/config";
 import {
   assistantStatusSchema,
   getAssistantApiKey,
@@ -69,7 +71,18 @@ export async function joinStatusHandler(req: Request, res: Response) {
   }
 
   const { instanceId } = parsed.data;
-  const assistantBaseUrl = assistantApiUrl.replace(/\/+$/, "");
+
+  // A join routed to a variant worker returns an instanceId that lives there, not
+  // on the default worker, so the client carries the variantId back here to poll
+  // the right runtime. Re-resolve the variant's ephemeral origin (dev-only, live +
+  // allowlisted); anything else falls back to the default worker.
+  let assistantBaseUrl = assistantApiUrl.replace(/\/+$/, "");
+  const variantId =
+    typeof req.query.variantId === "string" ? req.query.variantId : null;
+  if (variantId && XMTP_ENV !== "production") {
+    const origin = await resolveVariantWorkerOrigin(variantId);
+    if (origin) assistantBaseUrl = origin;
+  }
 
   const headers: Record<string, string> = {};
   if (assistantApiKey) {

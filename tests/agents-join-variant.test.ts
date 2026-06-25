@@ -286,8 +286,8 @@ describe("POST /agents/join — agent variant runtime routing", () => {
   });
 
   test("a variant lookup DB error degrades to the default worker (no 500)", async () => {
-    const findUniqueSpy = vi
-      .spyOn(prisma.agentVariant, "findUnique")
+    const findFirstSpy = vi
+      .spyOn(prisma.agentVariant, "findFirst")
       .mockRejectedValue(new Error("db unreachable"));
     try {
       const res = await post({
@@ -300,7 +300,43 @@ describe("POST /agents/join — agent variant runtime routing", () => {
       expect(dispatch.url).toBe(`${DEFAULT_URL}/api/assistants`);
       expect(dispatch.body?.metadata).toBeUndefined();
     } finally {
-      findUniqueSpy.mockRestore();
+      findFirstSpy.mockRestore();
     }
+  });
+});
+
+describe("GET /agents/join/:instanceId — variant status routing", () => {
+  test("polls the variant worker when the client carries variantId", async () => {
+    const res = await originalFetch(
+      `${baseURL}/api/v2/agents/join/inst-x?variantId=${VARIANT_SLUG}`,
+    );
+    expect(res.status).toBe(200);
+    const statusGet = calls.find(
+      (c) => c.method === "GET" && c.url.includes("/api/assistants/inst-x"),
+    );
+    if (!statusGet) throw new Error("no status GET recorded");
+    expect(statusGet.url).toBe(`${VARIANT_URL}/api/assistants/inst-x`);
+  });
+
+  test("polls the default worker without variantId", async () => {
+    const res = await originalFetch(`${baseURL}/api/v2/agents/join/inst-y`);
+    expect(res.status).toBe(200);
+    const statusGet = calls.find(
+      (c) => c.method === "GET" && c.url.includes("/api/assistants/inst-y"),
+    );
+    if (!statusGet) throw new Error("no status GET recorded");
+    expect(statusGet.url).toBe(`${DEFAULT_URL}/api/assistants/inst-y`);
+  });
+
+  test("falls back to the default worker for a non-live variant", async () => {
+    const res = await originalFetch(
+      `${baseURL}/api/v2/agents/join/inst-z?variantId=${FAILED_SLUG}`,
+    );
+    expect(res.status).toBe(200);
+    const statusGet = calls.find(
+      (c) => c.method === "GET" && c.url.includes("/api/assistants/inst-z"),
+    );
+    if (!statusGet) throw new Error("no status GET recorded");
+    expect(statusGet.url).toBe(`${DEFAULT_URL}/api/assistants/inst-z`);
   });
 });

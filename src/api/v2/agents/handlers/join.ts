@@ -1,6 +1,10 @@
 import type { Request, Response } from "express";
 import { z } from "zod";
 import { buildJoinPayload } from "@/api/v2/agents/lib/build-join-payload";
+import {
+  allowedVariantWorkerOrigin,
+  liveVariantWhere,
+} from "@/api/v2/agents/lib/variant-routing";
 import { XMTP_ENV } from "@/config";
 import { accountIdSchema } from "@/utils/account-id";
 import { prisma } from "@/utils/prisma";
@@ -24,28 +28,6 @@ type VariantDescriptor = {
   prUrl: string;
   assistantWorkerUrl: string | null;
 };
-
-// Variant rows store a free-form URL; only our HTTPS dev ephemeral origins
-// (ephemeral-<slug>.convos.fun, default port) may receive the join dispatch and
-// its bearer token. Returns the canonical origin (scheme + host only) to dispatch
-// at, or null to fall back to the default worker — normalizing to the origin
-// means an injected port, path, or query on an otherwise-trusted host can't
-// redirect the bearer. This pattern is a cross-repo contract with the
-// convos-assistants ephemeral host (EPHEMERAL_PREFIX + ROUTE_ZONE in
-// scripts/ephemeral.ts, registered by variant.yml) — keep the two in lockstep or
-// variant joins silently fall back.
-function allowedVariantWorkerOrigin(url: string): string | null {
-  try {
-    const parsed = new URL(url);
-    const allowed =
-      parsed.protocol === "https:" &&
-      (parsed.port === "" || parsed.port === "443") &&
-      /^ephemeral-[a-z0-9-]+\.convos\.fun$/.test(parsed.hostname);
-    return allowed ? parsed.origin : null;
-  } catch {
-    return null;
-  }
-}
 
 type TemplateRow = Awaited<ReturnType<typeof prisma.agentTemplate.findUnique>>;
 type TemplateFinder = (id: string) => Promise<TemplateRow>;
@@ -477,11 +459,7 @@ export async function joinHandler(req: Request, res: Response) {
       // rows (mirrors the picker's ready/building filter) so a client can't pin a
       // retired runtime by slug. A miss falls through to the default worker.
       variant = await prisma.agentVariant.findFirst({
-        where: {
-          slug: options.variantId,
-          status: { in: ["ready", "building"] },
-          OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }],
-        },
+        where: liveVariantWhere(options.variantId),
         select: {
           slug: true,
           label: true,
