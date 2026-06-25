@@ -35,6 +35,7 @@ import {
   BUILDER_OPENROUTER_API_KEY,
 } from "@/config";
 import { AppError } from "@/utils/errors";
+import { normalizeJobTitle } from "../lib/normalize-job-title";
 import { SYSTEM_PROMPT } from "../lib/system-prompt";
 import {
   openRouterChatCompletion,
@@ -224,6 +225,7 @@ already enforced by the response schema. Regardless of those instructions, fill
 every field with a real, fitting value — never blank, placeholder, or "TODO":
 
 - agentName — a memorable 1–3 word handle that fits the agent's vibe. Never "Assistant", "Bot", "Helper", or a descriptive title.
+- jobTitle — a short role label for the share card: 3 words or fewer, no single word longer than 10 characters. Title Case, no emoji, no punctuation. The role, not a repeat of the name.
 - emoji — exactly one glyph that fits the agent. Never blank.
 - description — one line (≤140 chars) on what the agent is for.
 - category — one sensible category.
@@ -236,6 +238,7 @@ every field with a real, fitting value — never blank, placeholder, or "TODO":
 
 export interface GeneratedTemplate {
   agentName: string;
+  jobTitle: string | null;
   description: string;
   prompt: string;
   category: string;
@@ -675,6 +678,9 @@ ${BREVITY_RAIL}`;
 
   return {
     agentName: metadata.agentName,
+    // Passthrough agents (GitHub repo / install-instructions) aren't run
+    // through the share-card title generator, so they carry no job title.
+    jobTitle: null,
     description: metadata.description,
     prompt,
     category: metadata.category,
@@ -1567,6 +1573,7 @@ export async function generateTemplate(
           properties: {
             prompt: { type: "string" },
             agentName: { type: "string" },
+            jobTitle: { type: "string" },
             emoji: { type: "string" },
             description: { type: "string" },
             category: { type: "string", enum: [...TEMPLATE_CATEGORIES] },
@@ -1578,6 +1585,7 @@ export async function generateTemplate(
           required: [
             "prompt",
             "agentName",
+            "jobTitle",
             "emoji",
             "description",
             "category",
@@ -1750,8 +1758,28 @@ export function parseTemplateResponse(
     throw new Error("LLM response missing prompt");
   }
 
+  // Soft-normalize only — trim and collapse whitespace to a clean
+  // single-line title, or null when blank/missing. The ≤3-word /
+  // ≤10-char-per-word limits are steered by the generator prompt, not
+  // hard-enforced here: a stray over-length title shouldn't fail the whole
+  // generation. Unlike agentName/prompt, jobTitle is a nullable, non-load-
+  // bearing column — a missing share-card label must not fail an otherwise
+  // complete agent build. The json_schema marks it required, so a null here
+  // means the provider/schema regressed: warn (don't throw) so it's visible.
+  const jobTitle = normalizeJobTitle(
+    typeof parsed.jobTitle === "string"
+      ? decodeEmojiEscapes(parsed.jobTitle)
+      : null,
+  );
+  if (jobTitle === null) {
+    console.warn(
+      "[templateGen] generated template has no jobTitle (json_schema requires one) — persisting null",
+    );
+  }
+
   return {
     agentName: decodeEmojiEscapes(parsed.agentName).trim(),
+    jobTitle,
     description:
       typeof parsed.description === "string"
         ? decodeEmojiEscapes(parsed.description)

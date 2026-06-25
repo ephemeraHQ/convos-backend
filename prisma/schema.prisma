@@ -177,6 +177,7 @@ model AgentTemplate {
   ownerAccountId   String        @db.Uuid
   forkedFromId     String?       @db.Uuid
   agentName        String
+  jobTitle         String?
   description      String?
   prompt           String        @db.Text
   category         String?

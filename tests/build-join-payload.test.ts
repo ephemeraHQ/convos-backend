@@ -35,6 +35,7 @@ const rowFromSnapshot = (
   ownerAccountId: "00000000-0000-0000-0000-0000000000aa",
   forkedFromId: snapshot.forkedFromId as string | null,
   agentName: snapshot.agentName as string,
+  jobTitle: snapshot.jobTitle as string | null,
   description: snapshot.description as string | null,
   prompt: snapshot.prompt as string,
   category: snapshot.category as string | null,

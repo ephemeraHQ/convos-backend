@@ -40,6 +40,7 @@ export const serializeAgentTemplate = (
     : { owner: serializeAccount(options.owner) }),
   forkedFromId: template.forkedFromId,
   agentName: template.agentName,
+  jobTitle: template.jobTitle,
   description: template.description,
   prompt: template.prompt,
   category: template.category,

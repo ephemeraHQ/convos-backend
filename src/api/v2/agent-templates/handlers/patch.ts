@@ -1,6 +1,7 @@
 import type { Prisma, PublishStatus } from "@prisma/client";
 import type { Request, Response } from "express";
 import { z } from "zod";
+import { normalizeJobTitle } from "@/api/v2/agent-templates/lib/normalize-job-title";
 import { serializeAgentTemplate } from "@/api/v2/agent-templates/lib/serialize-agent-template";
 import { revalidateTemplate } from "@/api/v2/agent-templates/services/revalidate-dashboard";
 import { prisma } from "@/utils/prisma";
@@ -15,6 +16,7 @@ const statusSchema = z.enum(["draft", "published", "unlisted", "archived"]);
 const bodySchema = z
   .object({
     agentName: z.string().trim().min(1).optional(),
+    jobTitle: z.string().nullable().optional(),
     avatarUrl: z.string().nullable().optional(),
     category: z.string().nullable().optional(),
     connections: z.array(z.string()).optional(),
@@ -71,6 +73,9 @@ const applyContentFields = (
 ) => {
   if (body.agentName !== undefined) {
     data.agentName = body.agentName;
+  }
+  if (body.jobTitle !== undefined) {
+    data.jobTitle = normalizeJobTitle(body.jobTitle);
   }
   if (body.avatarUrl !== undefined) {
     data.avatarUrl = body.avatarUrl;

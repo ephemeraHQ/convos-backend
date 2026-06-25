@@ -61,6 +61,7 @@ const seedTemplate = async (
       ownerAccountId: overrides.ownerAccountId ?? ADMIN_ACCOUNT_ID,
       forkedFromId: overrides.forkedFromId ?? null,
       agentName: overrides.agentName ?? "Patch Test Template",
+      jobTitle: overrides.jobTitle ?? null,
       description: overrides.description ?? null,
       prompt: overrides.prompt ?? "Initial prompt",
       category: overrides.category ?? null,
@@ -107,6 +108,7 @@ const expectTemplateShape = (body: TemplateBody) => {
     "firstPublishedAt",
     "forkedFromId",
     "id",
+    "jobTitle",
     "object",
     "ownerAccountId",
     "prompt",
@@ -172,6 +174,7 @@ describe("Agent template patch endpoint", () => {
         connections: ["calendar", "gmail"],
         avatarUrl: "https://example.com/avatar.png",
         agentName: "Renamed Patch Test",
+        jobTitle: "Group Lead",
         description: "Updated description",
         category: "productivity",
         emoji: "🤖",
@@ -186,6 +189,7 @@ describe("Agent template patch endpoint", () => {
       connections: ["calendar", "gmail"],
       avatarUrl: "https://example.com/avatar.png",
       agentName: "Renamed Patch Test",
+      jobTitle: "Group Lead",
       description: "Updated description",
       category: "productivity",
       emoji: "🤖",
@@ -200,8 +204,27 @@ describe("Agent template patch endpoint", () => {
     expect(row.firstPublishedAt?.toISOString()).toBe(publishedAt.toISOString());
     expect(row.prompt).toBe("New prompt");
     expect(row.agentName).toBe("Renamed Patch Test");
+    expect(row.jobTitle).toBe("Group Lead");
     expect(row.tools).toEqual(["web_search", "calculator"]);
     expect(row.connections).toEqual(["calendar", "gmail"]);
+  });
+
+  test("clears jobTitle when patched with null or blank", async () => {
+    for (const clearing of [null, "   "]) {
+      const template = await seedTemplate({ jobTitle: "Old Title" });
+      const { body, response } = await patchTemplate({
+        id: template.id,
+        body: { jobTitle: clearing },
+      });
+
+      expect(response.status).toBe(200);
+      expect(body.jobTitle).toBeNull();
+
+      const row = await prisma.agentTemplate.findUniqueOrThrow({
+        where: { id: template.id },
+      });
+      expect(row.jobTitle).toBeNull();
+    }
   });
 
   test("allows valid pre-publish slug patches and enforces the 64 character boundary", async () => {

@@ -19,6 +19,7 @@ export const makeFakeTemplate = (
   overrides: Partial<GeneratedTemplate> = {},
 ): GeneratedTemplate => ({
   agentName: "Test Agent",
+  jobTitle: "Test Role",
   description: "test description",
   prompt: "you are a test",
   category: "Test",

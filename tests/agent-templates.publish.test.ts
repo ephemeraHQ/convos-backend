@@ -104,6 +104,7 @@ const expectTemplateShape = (body: TemplateBody) => {
     "firstPublishedAt",
     "forkedFromId",
     "id",
+    "jobTitle",
     "object",
     "ownerAccountId",
     "prompt",
