@@ -420,8 +420,8 @@ export const upsertFromVerify = async (
           subscription,
           periodStart: subscription.currentPeriodStart,
         });
-        // The grant stamps `lastGrantedPeriodStart` (bumping updatedAt) in the
-        // same tx; return that fresh row so callers see consistent state.
+        // The grant wrote the credit row in the same tx; return the (current)
+        // subscription so callers see consistent state.
         if (grantResult.kind === "granted") {
           return {
             subscription: grantResult.subscription,

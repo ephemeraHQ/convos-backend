@@ -176,7 +176,7 @@ export async function appleSsnHandler(req: Request, res: Response) {
     // notification inside its own transaction. On DID_RENEW it advances
     // currentPeriodStart and writes a real `sub_grant` credit row for the new
     // period (via grantSubscriptionPeriod), idempotent on the per-period key; on
-    // EXPIRED/REVOKE it writes the bounded `subscription_forfeit` adjustment.
+    // EXPIRED/REVOKE it writes the bounded `sub_forfeit` adjustment.
     // Nothing is derived at read time — GET /v2/accounts/me/credits just reads
     // the one wallet balance.
     req.log.info(

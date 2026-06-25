@@ -124,10 +124,6 @@ export async function materializeSubscriptionWallets(
       idempotencyKey,
       note: `n=1 materialize subscription ${sub.id} period ${periodStart.toISOString()}`,
     });
-    await prisma.subscription.update({
-      where: { id: sub.id },
-      data: { lastGrantedPeriodStart: periodStart },
-    });
     granted++;
     logger.info(
       { subscriptionId: sub.id, accountId: sub.accountId, credits },

@@ -9,7 +9,7 @@ export const GrantKindIdSchema = z.enum([
   "sub_grant",
   // Bounded clawback of the unused subscription portion on expiry/refund/
   // revoke. Negative-delta adjustment; never wipes admin/promo/signup credits.
-  "subscription_forfeit",
+  "sub_forfeit",
 ]);
 export type GrantKindId = z.infer<typeof GrantKindIdSchema>;
 
@@ -18,7 +18,7 @@ export const LedgerScopeSchema = z.enum([
   "grant",
   "daily_refill",
   // Forfeit adjustment scope (negative subscription clawback).
-  "subscription_forfeit",
+  "sub_forfeit",
 ]);
 export type LedgerScope = z.infer<typeof LedgerScopeSchema>;
 

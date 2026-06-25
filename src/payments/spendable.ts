@@ -26,7 +26,7 @@ export const sumPeriodConsumes = async (
  *
  * Single-ledger migration: subscriptions write real `sub_grant` credit rows
  * into `UserCredits.balance` on subscribe/renewal (and a bounded
- * `subscription_forfeit` on expiry), so there is no longer a derived
+ * `sub_forfeit` on expiry), so there is no longer a derived
  * `tierGrant − periodConsumes` path or a bimodal switch on
  * `isEntitledSubscription`. Subscribers and non-subscribers read the same
  * wallet. Kept as a named export (rather than inlining `getBalance` at every

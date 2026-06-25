@@ -10,7 +10,7 @@ type TxClient = Prisma.TransactionClient;
  *
  * Subscriptions are no longer derived at read time — subscribe + each renewal
  * write a real `sub_grant` credit row into the one wallet (`UserCredits`), and
- * expiry/refund/revoke write a bounded `subscription_forfeit` adjustment that
+ * expiry/refund/revoke write a bounded `sub_forfeit` adjustment that
  * removes ONLY the unused subscription portion (never admin/promo/signup
  * credits sharing the same wallet).
  *
@@ -141,12 +141,7 @@ export const grantSubscriptionPeriod = async (
     note: `subscription ${subscription.id} period ${periodStart.toISOString()}`,
   });
 
-  const updated = await tx.subscription.update({
-    where: { id: subscription.id },
-    data: { lastGrantedPeriodStart: periodStart },
-  });
-
-  return { kind: "granted", credits, subscription: updated };
+  return { kind: "granted", credits, subscription };
 };
 
 export type ForfeitSubscriptionPeriodResult =
@@ -155,7 +150,7 @@ export type ForfeitSubscriptionPeriodResult =
   | { kind: "skipped_nothing_to_forfeit" };
 
 /**
- * On expiry/refund/revoke, write ONE bounded `subscription_forfeit` adjustment
+ * On expiry/refund/revoke, write ONE bounded `sub_forfeit` adjustment
  * that removes only the unused subscription portion of the current period:
  *
  *   periodGrant    = the sub_grant delta we wrote for this period
@@ -238,8 +233,8 @@ export const forfeitSubscriptionPeriod = async (
     delta: BigInt(-forfeit),
     reason: LedgerReason.adjust,
     idempotencyKey: forfeitKey,
-    scope: "subscription_forfeit",
-    grantKindId: "subscription_forfeit",
+    scope: "sub_forfeit",
+    grantKindId: "sub_forfeit",
     note: `subscription ${subscription.id} forfeit period ${periodStart.toISOString()}`,
     // Belt-and-suspenders: even though `forfeit` is clamped to the locked
     // balance, refuse to ever write a balance below zero.

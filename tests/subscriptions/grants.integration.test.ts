@@ -99,13 +99,6 @@ describe("subscription grant materialization (single-ledger)", () => {
     expect(row?.reason).toBe(LedgerReason.grant);
     expect(row?.grantKindId).toBe("sub_grant");
     expect(row?.delta).toBe(BigInt(perPeriod()));
-
-    const fresh = await prisma.subscription.findUnique({
-      where: { id: subscription.id },
-    });
-    expect(fresh?.lastGrantedPeriodStart?.toISOString()).toBe(
-      subscription.currentPeriodStart.toISOString(),
-    );
   });
 
   it("re-verify of the same period is idempotent — no double grant", async () => {
@@ -157,13 +150,6 @@ describe("subscription grant materialization (single-ledger)", () => {
       where: { accountId, grantKindId: "sub_grant" },
     });
     expect(grantRows).toBe(2);
-
-    const fresh = await prisma.subscription.findUnique({
-      where: { id: subscription.id },
-    });
-    expect(fresh?.lastGrantedPeriodStart?.toISOString()).toBe(
-      newStart.toISOString(),
-    );
   });
 });
 
@@ -226,7 +212,7 @@ describe("subscription forfeit (bounded clawback)", () => {
         accountId_idempotencyKey: { accountId, idempotencyKey: forfeitKey },
       },
     });
-    expect(forfeitRow?.grantKindId).toBe("subscription_forfeit");
+    expect(forfeitRow?.grantKindId).toBe("sub_forfeit");
     expect(forfeitRow?.delta).toBe(BigInt(-unusedSub));
   });
 
@@ -358,7 +344,7 @@ describe("subscription forfeit (bounded clawback)", () => {
       expect(finalBalance).toBe(agg._sum.delta ?? 0n);
       // The forfeit adjustment is always a non-positive clawback.
       const forfeitRows = await prisma.creditLedger.findMany({
-        where: { accountId, grantKindId: "subscription_forfeit" },
+        where: { accountId, grantKindId: "sub_forfeit" },
       });
       for (const row of forfeitRows) {
         expect(row.delta).toBeLessThanOrEqual(0n);
@@ -395,7 +381,7 @@ describe("subscription forfeit (bounded clawback)", () => {
     expect(afterFirst).toBe(1000n);
 
     const forfeitRows = await prisma.creditLedger.count({
-      where: { accountId, grantKindId: "subscription_forfeit" },
+      where: { accountId, grantKindId: "sub_forfeit" },
     });
     expect(forfeitRows).toBe(1);
   });
@@ -441,7 +427,7 @@ describe("subscription forfeit (bounded clawback)", () => {
     // Status stays active → credits stay to the period end.
     expect(await getBalance(accountId)).toBe(BigInt(perPeriod()));
     const forfeitRows = await prisma.creditLedger.count({
-      where: { accountId, grantKindId: "subscription_forfeit" },
+      where: { accountId, grantKindId: "sub_forfeit" },
     });
     expect(forfeitRows).toBe(0);
   });
@@ -485,10 +471,6 @@ describe("B2: n=1 materialization writes the FULL perPeriod grant", () => {
     await prisma.userCredits.update({
       where: { accountId },
       data: { balance: { decrement: BigInt(perPeriod()) } },
-    });
-    await prisma.subscription.update({
-      where: { id: subscription.id },
-      data: { lastGrantedPeriodStart: null },
     });
 
     return { accountId, otid, subscription };
