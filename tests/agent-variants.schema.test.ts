@@ -21,10 +21,15 @@ describe("AgentVariantUpsertSchema", () => {
     expect(parsed.assistantWorkerUrl).toBe(
       "https://ephemeral-pr-1234.convos.fun",
     );
-    expect(parsed.expiresAt).toBeNull();
+    // expiresAt is omitted from `valid`; optional fields are not defaulted.
+    expect(parsed.expiresAt).toBeUndefined();
   });
 
-  test("defaults status, nullable axes, and expiresAt when omitted", () => {
+  test("leaves omitted optional fields undefined (not defaulted)", () => {
+    // Optional, NOT defaulted: omitted fields stay undefined so a partial upsert
+    // preserves the stored value (the handler spreads ...rest into the Prisma
+    // update, which skips undefined). Create-time gaps fall back to the Prisma
+    // column defaults instead.
     const parsed = AgentVariantUpsertSchema.parse({
       slug: "pr-1",
       label: "X",
@@ -33,10 +38,10 @@ describe("AgentVariantUpsertSchema", () => {
       branch: "b",
       commit: "c",
     });
-    expect(parsed.status).toBe("building");
-    expect(parsed.assistantWorkerUrl).toBeNull();
-    expect(parsed.builderPromptSlug).toBeNull();
-    expect(parsed.expiresAt).toBeNull();
+    expect(parsed.status).toBeUndefined();
+    expect(parsed.assistantWorkerUrl).toBeUndefined();
+    expect(parsed.builderPromptSlug).toBeUndefined();
+    expect(parsed.expiresAt).toBeUndefined();
   });
 
   test("rejects an unknown key (strict; server-to-server route)", () => {
