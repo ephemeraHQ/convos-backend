@@ -26,20 +26,24 @@ type VariantDescriptor = {
 };
 
 // Variant rows store a free-form URL; only our HTTPS dev ephemeral origins
-// (ephemeral-<slug>.convos.fun) may receive the join dispatch and its bearer
-// token. Anything else falls back to the default worker. This pattern is a
-// cross-repo contract with the convos-assistants ephemeral host (EPHEMERAL_PREFIX
-// + ROUTE_ZONE in scripts/ephemeral.ts, registered by variant.yml) — keep the
-// two in lockstep or variant joins silently fall back.
-function isAllowedVariantWorkerUrl(url: string): boolean {
+// (ephemeral-<slug>.convos.fun, default port) may receive the join dispatch and
+// its bearer token. Returns the canonical origin (scheme + host only) to dispatch
+// at, or null to fall back to the default worker — normalizing to the origin
+// means an injected port, path, or query on an otherwise-trusted host can't
+// redirect the bearer. This pattern is a cross-repo contract with the
+// convos-assistants ephemeral host (EPHEMERAL_PREFIX + ROUTE_ZONE in
+// scripts/ephemeral.ts, registered by variant.yml) — keep the two in lockstep or
+// variant joins silently fall back.
+function allowedVariantWorkerOrigin(url: string): string | null {
   try {
     const parsed = new URL(url);
-    return (
+    const allowed =
       parsed.protocol === "https:" &&
-      /^ephemeral-[a-z0-9-]+\.convos\.fun$/.test(parsed.hostname)
-    );
+      (parsed.port === "" || parsed.port === "443") &&
+      /^ephemeral-[a-z0-9-]+\.convos\.fun$/.test(parsed.hostname);
+    return allowed ? parsed.origin : null;
   } catch {
-    return false;
+    return null;
   }
 }
 
@@ -496,8 +500,11 @@ export async function joinHandler(req: Request, res: Response) {
   // (the descriptor stamp still applies, exactly as a default-runtime variant).
   let effectiveAssistantApiUrl = assistantApiUrl;
   if (variant?.assistantWorkerUrl) {
-    if (isAllowedVariantWorkerUrl(variant.assistantWorkerUrl)) {
-      effectiveAssistantApiUrl = variant.assistantWorkerUrl;
+    const allowedOrigin = allowedVariantWorkerOrigin(
+      variant.assistantWorkerUrl,
+    );
+    if (allowedOrigin) {
+      effectiveAssistantApiUrl = allowedOrigin;
     } else {
       req.log.warn(
         {

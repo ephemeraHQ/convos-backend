@@ -22,6 +22,7 @@ import {
   describe,
   expect,
   test,
+  vi,
 } from "vitest";
 import { __setAssistantConfigOverridesForTests } from "@/api/v2/agents/handlers/assistant-config";
 import { joinHandler } from "@/api/v2/agents/handlers/join";
@@ -253,11 +254,9 @@ describe("POST /agents/join — agent variant runtime routing", () => {
   });
 
   test("a variant lookup DB error degrades to the default worker (no 500)", async () => {
-    const variantModel = prisma.agentVariant as unknown as {
-      findUnique: (...args: unknown[]) => Promise<unknown>;
-    };
-    const original = variantModel.findUnique;
-    variantModel.findUnique = () => Promise.reject(new Error("db unreachable"));
+    const findUniqueSpy = vi
+      .spyOn(prisma.agentVariant, "findUnique")
+      .mockRejectedValue(new Error("db unreachable"));
     try {
       const res = await post({
         slug: "join-token-jkl",
@@ -269,7 +268,7 @@ describe("POST /agents/join — agent variant runtime routing", () => {
       expect(dispatch.url).toBe(`${DEFAULT_URL}/api/assistants`);
       expect(dispatch.body?.metadata).toBeUndefined();
     } finally {
-      variantModel.findUnique = original;
+      findUniqueSpy.mockRestore();
     }
   });
 });
