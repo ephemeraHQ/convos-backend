@@ -99,6 +99,10 @@ export async function loadBenchPromptText(slug: string): Promise<string> {
     `${BT_REST}/prompt?project_name=${encodeURIComponent(BENCH_PROJECT)}&slug=${encodeURIComponent(slug)}`,
     {
       headers: { Authorization: `Bearer ${BRAINTRUST_API_KEY}` },
+      // Don't follow redirects: a 3xx to another host would replay the
+      // Authorization bearer off-origin. A redirect throws here and degrades to
+      // the canonical generator like any other lookup failure.
+      redirect: "error",
       signal: AbortSignal.timeout(REST_TIMEOUT_MS),
     },
   );

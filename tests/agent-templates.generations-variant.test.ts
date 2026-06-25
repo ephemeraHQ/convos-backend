@@ -183,4 +183,29 @@ describe("POST /generations — agent variant builder prompt", () => {
     expect([200, 202]).toContain(res.status);
     expect(await latestBuilderPrompt()).toBeNull();
   });
+
+  test("a bench-loader failure degrades to the canonical generator", async () => {
+    // The variant pins a bench slug, but resolving it throws (e.g. a Braintrust
+    // outage or a redirect). The generation must fall back to canonical, not 500.
+    __resetBenchPromptLoaderForTests(() =>
+      Promise.reject(new Error("braintrust unreachable")),
+    );
+    try {
+      const res = await post(
+        {
+          source: TEST_SOURCE,
+          inputs: { text: "build me a trivia bot" },
+          variantId: VARIANT_WITH_PROMPT,
+        },
+        "variant-loader-fail",
+      );
+      expect([200, 202]).toContain(res.status);
+      expect(await latestBuilderPrompt()).toBeNull();
+    } finally {
+      // Restore the success loader for any remaining tests.
+      __resetBenchPromptLoaderForTests((slug) =>
+        Promise.resolve(`BUILDER PROMPT for ${slug}`),
+      );
+    }
+  });
 });
