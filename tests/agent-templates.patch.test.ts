@@ -172,6 +172,7 @@ describe("Agent template patch endpoint", () => {
         connections: ["calendar", "gmail"],
         avatarUrl: "https://example.com/avatar.png",
         agentName: "Renamed Patch Test",
+        jobTitle: "Group Lead",
         description: "Updated description",
         category: "productivity",
         emoji: "🤖",
@@ -186,6 +187,7 @@ describe("Agent template patch endpoint", () => {
       connections: ["calendar", "gmail"],
       avatarUrl: "https://example.com/avatar.png",
       agentName: "Renamed Patch Test",
+      jobTitle: "Group Lead",
       description: "Updated description",
       category: "productivity",
       emoji: "🤖",
@@ -200,6 +202,7 @@ describe("Agent template patch endpoint", () => {
     expect(row.firstPublishedAt?.toISOString()).toBe(publishedAt.toISOString());
     expect(row.prompt).toBe("New prompt");
     expect(row.agentName).toBe("Renamed Patch Test");
+    expect(row.jobTitle).toBe("Group Lead");
     expect(row.tools).toEqual(["web_search", "calculator"]);
     expect(row.connections).toEqual(["calendar", "gmail"]);
   });

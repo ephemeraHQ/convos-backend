@@ -57,6 +57,7 @@ const createTemplate = async (body: Record<string, unknown>) => {
 
 const expectTemplateShape = (body: TemplateBody) => {
   expect(body.object).toBe("agent_template");
+  expect(body).toHaveProperty("jobTitle");
   expect(body.id).toEqual(
     expect.stringMatching(
       /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i,
@@ -132,6 +133,7 @@ describe("Agent template create endpoint", () => {
     expect(body).toMatchObject({
       slug: "create-test-helper-bot",
       agentName: "Create Test Helper",
+      jobTitle: null,
       prompt: "You are helpful",
       description: null,
       category: null,
@@ -143,6 +145,24 @@ describe("Agent template create endpoint", () => {
     });
     expect(body).not.toHaveProperty("owner_account_id");
     expect(body).not.toHaveProperty("first_published_at");
+  });
+
+  test("persists a jobTitle from the create body", async () => {
+    const { body, response } = await createTemplate({
+      agentName: "Create Test Titled",
+      jobTitle: "Trip Planner",
+      prompt: "You are helpful",
+      slug: "create-test-titled",
+    });
+
+    expect(response.status).toBe(201);
+    expectTemplateShape(body);
+    expect(body.jobTitle).toBe("Trip Planner");
+
+    const row = await prisma.agentTemplate.findUniqueOrThrow({
+      where: { id: body.id as string },
+    });
+    expect(row.jobTitle).toBe("Trip Planner");
   });
 
   test("ignores server-pinned fields from the body and persists pinned values", async () => {

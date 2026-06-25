@@ -11,6 +11,7 @@ import { validateSlug } from "@/utils/reserved-slugs";
 
 const bodySchema = z.object({
   agentName: z.string().trim().min(1),
+  jobTitle: z.string().nullable().optional(),
   avatarUrl: z.string().nullable().optional(),
   category: z.string().nullable().optional(),
   connections: z.array(z.string()).optional(),
@@ -74,6 +75,7 @@ const createTemplateRow = (args: {
       ownerAccountId: args.ownerAccountId,
       forkedFromId: args.body.forkedFromId ?? null,
       agentName: args.body.agentName,
+      jobTitle: args.body.jobTitle ?? null,
       description: args.body.description ?? null,
       prompt: args.body.prompt,
       category: args.body.category ?? null,

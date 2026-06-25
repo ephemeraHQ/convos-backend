@@ -15,6 +15,7 @@ const statusSchema = z.enum(["draft", "published", "unlisted", "archived"]);
 const bodySchema = z
   .object({
     agentName: z.string().trim().min(1).optional(),
+    jobTitle: z.string().nullable().optional(),
     avatarUrl: z.string().nullable().optional(),
     category: z.string().nullable().optional(),
     connections: z.array(z.string()).optional(),
@@ -71,6 +72,9 @@ const applyContentFields = (
 ) => {
   if (body.agentName !== undefined) {
     data.agentName = body.agentName;
+  }
+  if (body.jobTitle !== undefined) {
+    data.jobTitle = body.jobTitle;
   }
   if (body.avatarUrl !== undefined) {
     data.avatarUrl = body.avatarUrl;

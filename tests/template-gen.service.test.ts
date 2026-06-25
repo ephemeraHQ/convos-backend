@@ -443,6 +443,7 @@ describe("templateGen service — OpenRouter integration", () => {
     expect(required).toEqual(
       [
         "agentName",
+        "jobTitle",
         "category",
         "description",
         "emoji",
@@ -1767,6 +1768,7 @@ describe("templateGen service — OpenRouter integration", () => {
       JSON.stringify({
         prompt: "test",
         agentName: "Bot",
+        jobTitle: "  Trip   Planner ",
         emoji: "🤖",
         description: "desc",
         category: "Work",
@@ -1776,6 +1778,8 @@ describe("templateGen service — OpenRouter integration", () => {
 
     expect(result.agentName).toBe("Bot");
     expect(result.tools).toEqual(["Search"]);
+    // Soft-normalized: trimmed and inner whitespace collapsed, value kept as-is.
+    expect(result.jobTitle).toBe("Trip Planner");
   });
 
   test("parseTemplateResponse handles JSON wrapped in markdown fences", async () => {
@@ -1802,6 +1806,7 @@ describe("templateGen service — OpenRouter integration", () => {
 
     expect(result.agentName).toBe("Bot");
     expect(result.prompt).toBe("Be helpful");
+    expect(result.jobTitle).toBe("");
     expect(result.description).toBe("");
     expect(result.category).toBe("");
     expect(result.emoji).toBe("");
@@ -1926,6 +1931,7 @@ describe("templateGen service — OpenRouter integration", () => {
 
     const template = {
       agentName: "Bot",
+      jobTitle: "Test Role",
       description: "desc",
       prompt: "BODY",
       category: "Work",

@@ -63,6 +63,7 @@ const baseTemplate = (
   ownerAccountId: "owner-account-1",
   forkedFromId: null,
   agentName: "Brewski",
+  jobTitle: "Coffee Boss",
   description: "A friendly barista.",
   prompt: "You are Brewski.",
   category: null,

@@ -311,6 +311,7 @@ function deriveTemplateSlug(agentName: string): string {
 async function persistTemplate(
   template: {
     agentName: string;
+    jobTitle: string;
     description: string;
     prompt: string;
     category: string;
@@ -337,6 +338,7 @@ async function persistTemplate(
       ownerAccountId,
       forkedFromId: null,
       agentName: template.agentName,
+      jobTitle: template.jobTitle || null,
       description: template.description || null,
       prompt: template.prompt,
       category: template.category || null,
