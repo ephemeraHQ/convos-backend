@@ -1,6 +1,7 @@
 import { Prisma } from "@prisma/client";
 import type { Request, Response } from "express";
 import { z } from "zod";
+import { normalizeJobTitle } from "@/api/v2/agent-templates/lib/normalize-job-title";
 import { pickCollisionFreeId } from "@/api/v2/agent-templates/lib/pick-collision-free-id";
 import { serializeAgentTemplate } from "@/api/v2/agent-templates/lib/serialize-agent-template";
 import { revalidateTemplate } from "@/api/v2/agent-templates/services/revalidate-dashboard";
@@ -75,7 +76,7 @@ const createTemplateRow = (args: {
       ownerAccountId: args.ownerAccountId,
       forkedFromId: args.body.forkedFromId ?? null,
       agentName: args.body.agentName,
-      jobTitle: args.body.jobTitle ?? null,
+      jobTitle: normalizeJobTitle(args.body.jobTitle),
       description: args.body.description ?? null,
       prompt: args.body.prompt,
       category: args.body.category ?? null,

@@ -1806,7 +1806,7 @@ describe("templateGen service — OpenRouter integration", () => {
 
     expect(result.agentName).toBe("Bot");
     expect(result.prompt).toBe("Be helpful");
-    expect(result.jobTitle).toBe("");
+    expect(result.jobTitle).toBeNull();
     expect(result.description).toBe("");
     expect(result.category).toBe("");
     expect(result.emoji).toBe("");

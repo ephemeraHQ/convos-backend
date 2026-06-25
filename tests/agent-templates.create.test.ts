@@ -147,10 +147,11 @@ describe("Agent template create endpoint", () => {
     expect(body).not.toHaveProperty("first_published_at");
   });
 
-  test("persists a jobTitle from the create body", async () => {
+  test("persists a normalized jobTitle from the create body", async () => {
     const { body, response } = await createTemplate({
       agentName: "Create Test Titled",
-      jobTitle: "Trip Planner",
+      // Extra/irregular whitespace is trimmed and collapsed on the way in.
+      jobTitle: "  Trip   Planner  ",
       prompt: "You are helpful",
       slug: "create-test-titled",
     });
@@ -163,6 +164,18 @@ describe("Agent template create endpoint", () => {
       where: { id: body.id as string },
     });
     expect(row.jobTitle).toBe("Trip Planner");
+  });
+
+  test("stores a blank jobTitle as null", async () => {
+    const { body, response } = await createTemplate({
+      agentName: "Create Test Blank Title",
+      jobTitle: "   ",
+      prompt: "You are helpful",
+      slug: "create-test-blank-title",
+    });
+
+    expect(response.status).toBe(201);
+    expect(body.jobTitle).toBeNull();
   });
 
   test("ignores server-pinned fields from the body and persists pinned values", async () => {

@@ -35,6 +35,7 @@ import {
   BUILDER_OPENROUTER_API_KEY,
 } from "@/config";
 import { AppError } from "@/utils/errors";
+import { normalizeJobTitle } from "../lib/normalize-job-title";
 import { SYSTEM_PROMPT } from "../lib/system-prompt";
 import {
   openRouterChatCompletion,
@@ -224,7 +225,7 @@ already enforced by the response schema. Regardless of those instructions, fill
 every field with a real, fitting value — never blank, placeholder, or "TODO":
 
 - agentName — a memorable 1–3 word handle that fits the agent's vibe. Never "Assistant", "Bot", "Helper", or a descriptive title.
-- jobTitle — a short role label for the share card: 3 words or fewer, no word longer than 10 characters. The role, not a repeat of the name.
+- jobTitle — a short role label for the share card: 3 words or fewer, no single word longer than 10 characters. The role, not a repeat of the name.
 - emoji — exactly one glyph that fits the agent. Never blank.
 - description — one line (≤140 chars) on what the agent is for.
 - category — one sensible category.
@@ -237,7 +238,7 @@ every field with a real, fitting value — never blank, placeholder, or "TODO":
 
 export interface GeneratedTemplate {
   agentName: string;
-  jobTitle: string;
+  jobTitle: string | null;
   description: string;
   prompt: string;
   category: string;
@@ -679,7 +680,7 @@ ${BREVITY_RAIL}`;
     agentName: metadata.agentName,
     // Passthrough agents (GitHub repo / install-instructions) aren't run
     // through the share-card title generator, so they carry no job title.
-    jobTitle: "",
+    jobTitle: null,
     description: metadata.description,
     prompt,
     category: metadata.category,
@@ -1759,14 +1760,16 @@ export function parseTemplateResponse(
 
   return {
     agentName: decodeEmojiEscapes(parsed.agentName).trim(),
-    // Soft-normalize only — trim and collapse whitespace so the card gets a
-    // clean single-line title. The ≤3-word / ≤10-char-per-word limits are
-    // steered by the generator prompt, not hard-enforced here: a stray
-    // over-length title shouldn't fail the whole generation.
-    jobTitle:
+    // Soft-normalize only — trim and collapse whitespace to a clean
+    // single-line title, or null when blank/missing. The ≤3-word /
+    // ≤10-char-per-word limits are steered by the generator prompt, not
+    // hard-enforced here: a stray over-length title shouldn't fail the
+    // whole generation.
+    jobTitle: normalizeJobTitle(
       typeof parsed.jobTitle === "string"
-        ? decodeEmojiEscapes(parsed.jobTitle).trim().replace(/\s+/g, " ")
-        : "",
+        ? decodeEmojiEscapes(parsed.jobTitle)
+        : null,
+    ),
     description:
       typeof parsed.description === "string"
         ? decodeEmojiEscapes(parsed.description)
