@@ -1,4 +1,4 @@
-import type { Prisma } from "@prisma/client";
+import { Prisma } from "@prisma/client";
 import type { Request, Response } from "express";
 import { z } from "zod";
 import { prisma } from "@/utils/prisma";
@@ -50,17 +50,12 @@ export async function patchHandler(req: Request, res: Response) {
     data.sortOrder = parsedBody.data.sortOrder;
   }
 
+  // Hit the row directly instead of a findUnique pre-check: a pre-check leaves a
+  // window where the row is deleted before the update, which would throw and
+  // surface as a 500. Letting Prisma raise P2025 ("record not found") and
+  // mapping it to 404 closes that race. An empty patch still needs a fetch to
+  // echo the current row, so it uses findUniqueOrThrow (also P2025 when absent).
   try {
-    const existing = await prisma.agentPromptHint.findUnique({
-      where: { id: parsedParams.data.id },
-      select: { id: true },
-    });
-
-    if (existing === null) {
-      res.status(404).json({ error: "Agent prompt hint not found" });
-      return;
-    }
-
     if (Object.keys(data).length === 0) {
       const unchanged = await prisma.agentPromptHint.findUniqueOrThrow({
         where: { id: parsedParams.data.id },
@@ -75,6 +70,13 @@ export async function patchHandler(req: Request, res: Response) {
     });
     res.status(200).json(updated);
   } catch (error) {
+    if (
+      error instanceof Prisma.PrismaClientKnownRequestError &&
+      error.code === "P2025"
+    ) {
+      res.status(404).json({ error: "Agent prompt hint not found" });
+      return;
+    }
     req.log.error(
       { error, stack: error instanceof Error ? error.stack : undefined },
       "Failed to patch agent prompt hint",
