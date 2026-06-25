@@ -28,6 +28,7 @@ export async function deleteAgentVariantHandler(req: Request, res: Response) {
   try {
     await prisma.agentVariant.deleteMany({ where: { slug: parsed.data.slug } });
     res.status(204).end();
+    return;
   } catch (error) {
     req.log.error(
       {
@@ -38,5 +39,6 @@ export async function deleteAgentVariantHandler(req: Request, res: Response) {
       "Failed to delete agent variant",
     );
     res.status(500).json({ error: "Failed to delete agent variant" });
+    return;
   }
 }

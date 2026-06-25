@@ -21,11 +21,13 @@ export async function listAgentVariantsHandler(req: Request, res: Response) {
       orderBy: { createdAt: "desc" },
     });
     res.status(200).json({ data: variants.map(serializeAgentVariant) });
+    return;
   } catch (error) {
     req.log.error(
       { error, stack: error instanceof Error ? error.stack : undefined },
       "Failed to list agent variants",
     );
     res.status(500).json({ error: "Failed to list agent variants" });
+    return;
   }
 }

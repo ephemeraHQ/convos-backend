@@ -28,11 +28,13 @@ export async function upsertAgentVariantHandler(req: Request, res: Response) {
       update: rest,
     });
     res.status(200).json(serializeAgentVariant(variant));
+    return;
   } catch (error) {
     req.log.error(
       { error, slug, stack: error instanceof Error ? error.stack : undefined },
       "Failed to upsert agent variant",
     );
     res.status(500).json({ error: "Failed to upsert agent variant" });
+    return;
   }
 }
