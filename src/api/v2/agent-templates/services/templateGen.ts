@@ -225,7 +225,7 @@ already enforced by the response schema. Regardless of those instructions, fill
 every field with a real, fitting value — never blank, placeholder, or "TODO":
 
 - agentName — a memorable 1–3 word handle that fits the agent's vibe. Never "Assistant", "Bot", "Helper", or a descriptive title.
-- jobTitle — a short role label for the share card: 3 words or fewer, no single word longer than 10 characters. The role, not a repeat of the name.
+- jobTitle — a short role label for the share card: 3 words or fewer, no single word longer than 10 characters. Title Case, no emoji, no punctuation. The role, not a repeat of the name.
 - emoji — exactly one glyph that fits the agent. Never blank.
 - description — one line (≤140 chars) on what the agent is for.
 - category — one sensible category.
