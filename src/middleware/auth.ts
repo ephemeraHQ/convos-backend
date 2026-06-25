@@ -1,5 +1,6 @@
 import type { NextFunction, Request, Response } from "express";
 import { accountIdSchema } from "@/utils/account-id";
+import { ADMIN_ACCOUNT_ID } from "@/utils/constants";
 import { AppError } from "@/utils/errors";
 import { verifyAppCheckToken } from "@/utils/firebase";
 import { isNotificationExtensionOnlyToken, verifyJwtToken } from "@/utils/jwt";
@@ -188,6 +189,32 @@ export const requireAccount = (
       "requireAccount rejected request",
     );
     res.status(403).json({ error: "Account required" });
+    return;
+  }
+  next();
+};
+
+/**
+ * Restricts a route to the admin identity. Mirrors how the agent-templates
+ * admin writes restrict privileged access: the only non-owner allowed to write
+ * is the agent-API-key caller (`isApiKeyListener`), which resolves to
+ * `ADMIN_ACCOUNT_ID`. The admin account authenticating via its own JWT (the
+ * identity the agent-templates admin tests use) is accepted too, so the gate
+ * holds whichever path the admin uses. Layer this after `requireAccount`.
+ */
+export const requireAdmin = (
+  req: Request,
+  res: Response,
+  next: NextFunction,
+) => {
+  const isApiKeyListener = res.locals.isApiKeyListener === true;
+  const isAdminAccount = res.locals.accountId === ADMIN_ACCOUNT_ID;
+  if (!isApiKeyListener && !isAdminAccount) {
+    ((req as { log?: Request["log"] }).log ?? logger).warn(
+      { isApiKeyListener },
+      "requireAdmin rejected request",
+    );
+    res.status(403).json({ error: "Admin required" });
     return;
   }
   next();

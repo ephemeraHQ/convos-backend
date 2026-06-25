@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import type { Server } from "node:http";
 import express from "express";
 import {
@@ -13,6 +14,8 @@ import { __setAgentAssetsApiKeyOverrideForTests } from "@/middleware/agentAuth";
 import { jsonMiddleware } from "@/middleware/json";
 import { noRouteMiddleware } from "@/middleware/noRoute";
 import { pinoMiddleware } from "@/middleware/pino";
+import { ADMIN_ACCOUNT_ID } from "@/utils/constants";
+import { createJwtToken } from "@/utils/jwt";
 import { prisma } from "@/utils/prisma";
 
 type AdminRow = {
@@ -42,6 +45,19 @@ const jsonHeaders: Record<string, string> = {
   "Content-Type": "application/json",
 };
 
+// JWT-authed headers for an account. Used to prove the admin gate: a non-admin
+// account is rejected (403), while the admin account's own JWT is accepted -
+// the same admin identity the agent-templates admin tests authenticate with.
+const jwtHeaders = async (
+  accountId: string,
+): Promise<Record<string, string>> => ({
+  "Content-Type": "application/json",
+  "X-Convos-AuthToken": await createJwtToken({
+    deviceId: "test-device-hint-admin-gate",
+    accountId,
+  }),
+});
+
 const buildApp = (): express.Express => {
   const app = express();
   app.use(pinoMiddleware);
@@ -53,7 +69,9 @@ const buildApp = (): express.Express => {
 
 const app = buildApp();
 let server: Server;
-const baseURL = "http://localhost:4074";
+// Bind to an ephemeral port (0) and read the assigned port back at runtime so
+// concurrent vitest workers never collide on a fixed port (EADDRINUSE).
+let baseURL = "";
 
 const cleanup = () =>
   prisma.agentPromptHint.deleteMany({
@@ -145,8 +163,14 @@ const readPublicHints = async () => {
 describe("Agent prompt hints admin endpoints", () => {
   beforeAll(async () => {
     __setAgentAssetsApiKeyOverrideForTests(validAgentAssetsApiKey);
-    await new Promise<void>((resolve) => {
-      server = app.listen(4074, () => {
+    await new Promise<void>((resolve, reject) => {
+      server = app.listen(0, () => {
+        const address = server.address();
+        if (!address || typeof address === "string") {
+          reject(new Error("Unable to determine server port"));
+          return;
+        }
+        baseURL = `http://localhost:${address.port}`;
         resolve();
       });
     });
@@ -276,6 +300,30 @@ describe("Agent prompt hints admin endpoints", () => {
     // Anonymous GET /admin is gated too.
     const adminAnon = await fetch(`${baseURL}/api/v2/agent-prompt-hints/admin`);
     expect(adminAnon.status).toBe(401);
+  });
+
+  test("non-admin authenticated account is rejected (403), and no row is created", async () => {
+    const headers = await jwtHeaders(randomUUID());
+
+    // Write route (POST /) is admin-gated.
+    const text = `${TEST_PREFIX}non-admin`;
+    const { response } = await createHint({ text }, headers);
+    expect(response.status).toBe(403);
+
+    const count = await prisma.agentPromptHint.count({ where: { text } });
+    expect(count).toBe(0);
+
+    // Admin read route (GET /admin) is admin-gated too.
+    const adminList = await listAdmin(headers);
+    expect(adminList.response.status).toBe(403);
+  });
+
+  test("admin account's own JWT passes the admin gate (201)", async () => {
+    const headers = await jwtHeaders(ADMIN_ACCOUNT_ID);
+    const text = `${TEST_PREFIX}admin-jwt`;
+    const { response, json } = await createHint({ text }, headers);
+    expect(response.status).toBe(201);
+    expect(json.text).toBe(text);
   });
 
   test("create rejects text longer than 240 chars (400)", async () => {
