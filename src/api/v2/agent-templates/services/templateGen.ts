@@ -1758,18 +1758,28 @@ export function parseTemplateResponse(
     throw new Error("LLM response missing prompt");
   }
 
+  // Soft-normalize only — trim and collapse whitespace to a clean
+  // single-line title, or null when blank/missing. The ≤3-word /
+  // ≤10-char-per-word limits are steered by the generator prompt, not
+  // hard-enforced here: a stray over-length title shouldn't fail the whole
+  // generation. Unlike agentName/prompt, jobTitle is a nullable, non-load-
+  // bearing column — a missing share-card label must not fail an otherwise
+  // complete agent build. The json_schema marks it required, so a null here
+  // means the provider/schema regressed: warn (don't throw) so it's visible.
+  const jobTitle = normalizeJobTitle(
+    typeof parsed.jobTitle === "string"
+      ? decodeEmojiEscapes(parsed.jobTitle)
+      : null,
+  );
+  if (jobTitle === null) {
+    console.warn(
+      "[templateGen] generated template has no jobTitle (json_schema requires one) — persisting null",
+    );
+  }
+
   return {
     agentName: decodeEmojiEscapes(parsed.agentName).trim(),
-    // Soft-normalize only — trim and collapse whitespace to a clean
-    // single-line title, or null when blank/missing. The ≤3-word /
-    // ≤10-char-per-word limits are steered by the generator prompt, not
-    // hard-enforced here: a stray over-length title shouldn't fail the
-    // whole generation.
-    jobTitle: normalizeJobTitle(
-      typeof parsed.jobTitle === "string"
-        ? decodeEmojiEscapes(parsed.jobTitle)
-        : null,
-    ),
+    jobTitle,
     description:
       typeof parsed.description === "string"
         ? decodeEmojiEscapes(parsed.description)
