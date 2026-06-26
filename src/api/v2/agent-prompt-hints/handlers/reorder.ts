@@ -16,7 +16,8 @@ const bodySchema = z.object({
     // the returned `updated` count past the number of distinct rows actually
     // touched. With this guard, orders.length is the distinct-row count.
     .refine(
-      (orders) => new Set(orders.map((order) => order.id)).size === orders.length,
+      (orders) =>
+        new Set(orders.map((order) => order.id)).size === orders.length,
       { message: "Duplicate hint id in reorder batch" },
     ),
 });
