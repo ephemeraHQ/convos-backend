@@ -312,28 +312,6 @@ describe("POST /agents/join — agent variant runtime routing", () => {
     // Host is a valid ephemeral but not THIS variant's — bearer stays on default.
     expect(dispatch.url).toBe(`${DEFAULT_URL}/api/assistants`);
   });
-
-  test("a variant lookup DB error degrades to the default worker (no 500)", async () => {
-    // Reject only the single lookup this join makes (mockRejectedValueOnce): the
-    // spy then calls through to the real findFirst, so later tests aren't left
-    // with a rejecting mock if mockRestore is unreliable for the prisma method.
-    const findFirstSpy = vi
-      .spyOn(prisma.agentVariant, "findFirst")
-      .mockRejectedValueOnce(new Error("db unreachable"));
-    try {
-      const res = await post({
-        slug: "join-token-jkl",
-        options: { variantId: VARIANT_SLUG },
-      });
-      expect(res.status).toBeLessThan(500);
-      const dispatch = postDispatch();
-      if (!dispatch) throw new Error("no POST dispatch recorded");
-      expect(dispatch.url).toBe(`${DEFAULT_URL}/api/assistants`);
-      expect(dispatch.body?.metadata).toBeUndefined();
-    } finally {
-      findFirstSpy.mockRestore();
-    }
-  });
 });
 
 describe("GET /agents/join/:instanceId — variant status routing", () => {
@@ -369,5 +347,31 @@ describe("GET /agents/join/:instanceId — variant status routing", () => {
     );
     if (!statusGet) throw new Error("no status GET recorded");
     expect(statusGet.url).toBe(`${DEFAULT_URL}/api/assistants/inst-z`);
+  });
+});
+
+// Placed last on purpose: this spies the shared prisma.agentVariant.findFirst,
+// and mockRestore is unreliable for the prisma delegate method here — so running
+// it before the routing tests leaks a stubbed findFirst into them. With it last,
+// no test runs after, and the file isolation (singleFork + isolate) keeps it
+// from bleeding into other files.
+describe("POST /agents/join — variant lookup degradation", () => {
+  test("a DB error on the variant lookup degrades to the default worker", async () => {
+    const findFirstSpy = vi
+      .spyOn(prisma.agentVariant, "findFirst")
+      .mockRejectedValueOnce(new Error("db unreachable"));
+    try {
+      const res = await post({
+        slug: "join-token-jkl",
+        options: { variantId: VARIANT_SLUG },
+      });
+      expect(res.status).toBeLessThan(500);
+      const dispatch = postDispatch();
+      if (!dispatch) throw new Error("no POST dispatch recorded");
+      expect(dispatch.url).toBe(`${DEFAULT_URL}/api/assistants`);
+      expect(dispatch.body?.metadata).toBeUndefined();
+    } finally {
+      findFirstSpy.mockRestore();
+    }
   });
 });
