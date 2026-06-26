@@ -20,11 +20,37 @@ import {
 } from "@/subscriptions/repository";
 import { tierGrant } from "@/subscriptions/tier-config";
 import { prisma } from "@/utils/prisma";
-import { materializeSubscriptionWallets } from "../../dev/scripts/materializeSubscriptionWallets";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const perPeriod = () =>
   tierGrant(SUBSCRIPTION_TIER_PLUS, SubscriptionPeriod.monthly).perPeriod;
+
+/**
+ * Re-materialize the current period for a subscription via the real `grant()`
+ * primitive — exactly what the (now-deleted) one-shot materialize CLI did for a
+ * single entitled subscriber. Writes the FULL `perPeriod` allotment under the
+ * canonical `subGrantKey`, so it is idempotent (a replay no-ops on the key) and
+ * indistinguishable from a live `grantSubscriptionPeriod` row, which is what the
+ * forfeit-no-double-subtract assertion relies on. Returns the number of NEW
+ * grants written (0 on replay), mirroring the old MaterializeResult.granted.
+ */
+const materializeCurrentPeriod = async (subscription: {
+  id: string;
+  accountId: string;
+  currentPeriodStart: Date;
+}): Promise<{ granted: number }> => {
+  const res = await grant({
+    accountId: subscription.accountId,
+    credits: perPeriod(),
+    kind: "sub_grant",
+    idempotencyKey: subGrantKey(
+      subscription.id,
+      subscription.currentPeriodStart,
+    ),
+    note: `test materialize subscription ${subscription.id}`,
+  });
+  return { granted: res.replayed ? 0 : 1 };
+};
 
 const created: string[] = [];
 afterEach(async () => {
@@ -121,7 +147,7 @@ describe("subscription grant materialization (single-ledger)", () => {
   it("renewal advancing the period grants the new period again", async () => {
     const accountId = await newAccount();
     const otid = `otid-${accountId}`;
-    const { subscription } = await verifyApple(accountId, {
+    await verifyApple(accountId, {
       originalTransactionId: otid,
     });
     expect(await getBalance(accountId)).toBe(BigInt(perPeriod()));
@@ -480,7 +506,7 @@ describe("B2: n=1 materialization writes the FULL perPeriod grant", () => {
     const { accountId, subscription } = await setupPreMigrationSubscriber();
     const balanceBefore = await getBalance(accountId);
 
-    const res = await materializeSubscriptionWallets(true);
+    const res = await materializeCurrentPeriod(subscription);
     expect(res.granted).toBeGreaterThanOrEqual(1);
 
     // The materialized row is the FULL perPeriod, indistinguishable from a live
@@ -504,7 +530,7 @@ describe("B2: n=1 materialization writes the FULL perPeriod grant", () => {
 
     // Re-run: same idempotency key → no second grant, balance unchanged.
     const before = await getBalance(accountId);
-    const rerun = await materializeSubscriptionWallets(true);
+    const rerun = await materializeCurrentPeriod(subscription);
     expect(rerun.granted).toBe(0);
     expect(await getBalance(accountId)).toBe(before);
     const grantRows = await prisma.creditLedger.count({
@@ -516,7 +542,7 @@ describe("B2: n=1 materialization writes the FULL perPeriod grant", () => {
   it("forfeit after materialization claws the CORRECT amount (no double-subtract)", async () => {
     const { accountId, otid, subscription } =
       await setupPreMigrationSubscriber();
-    await materializeSubscriptionWallets(true);
+    await materializeCurrentPeriod(subscription);
 
     const balanceAfterMaterialize = await getBalance(accountId);
 
