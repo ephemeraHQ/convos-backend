@@ -143,9 +143,11 @@ export class ComposioService {
    * Cached per-toolkit (TTL) so the hot exec path doesn't call Composio every
    * time. Fails OPEN: a Composio THROW (outage) or an empty result is treated as
    * "catalog unavailable" — returns an empty set and is NOT cached. Callers must
-   * read an empty set as "unknown", never as "no valid slugs": classifying a
-   * real slug as invalid_action during an outage would wrongly tell the agent to
-   * re-prompt for consent. A transient gap must not stick for the TTL either.
+   * read an empty set as "unknown", never as "no valid slugs": `isInvalidAction`
+   * therefore returns false on an empty set, so the exec matcher falls through to
+   * no_grant rather than flagging a real slug invalid_action during an outage
+   * (which would wrongly tell the agent to re-prompt for consent). A transient
+   * gap must not stick for the TTL either.
    */
   async listToolkitActions(toolkit: string): Promise<Set<string>> {
     const now = Date.now();

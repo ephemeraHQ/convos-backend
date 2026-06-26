@@ -106,9 +106,11 @@ export async function execHandler(req: Request, res: Response) {
     // failed — the matcher is the backstop. Unknown toolkits keep falling
     // through to `no_grant` (legacy whole-toolkit grants are keyed by toolkit,
     // not catalog membership, so we must not reclassify those). `isInvalidAction`
-    // fails OPEN: only a NON-EMPTY catalog that lacks the slug yields
-    // invalid_action; a Composio outage/empty catalog falls through to no_grant,
-    // so a real slug is never rejected as invalid during an outage.
+    // is the ONLY thing that escalates to invalid_action, and it fails OPEN: it
+    // returns true exclusively when a NON-EMPTY catalog was fetched and lacks the
+    // slug. An empty catalog or a Composio outage makes it return false, so the
+    // `if` below is false and we fall straight through to the no_grant response
+    // — a real slug is never mislabeled invalid during an outage.
     const svc = getServiceConfig(toolkit);
     if (svc && (await isInvalidAction(service, toolkit, action))) {
       req.log.warn(
