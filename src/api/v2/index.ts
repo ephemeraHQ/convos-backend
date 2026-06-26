@@ -24,6 +24,7 @@ import { accountsMeRouter } from "./accounts/accountsMeRouter";
 import { meGuard } from "./accounts/middleware/meGuard";
 import { agentPromptHintsRouter } from "./agent-prompt-hints/agent-prompt-hints.router";
 import { agentTemplatesRouter } from "./agent-templates/agent-templates.router";
+import { agentVariantsRouter } from "./agent-variants/agent-variants.router";
 import { agentsRouter } from "./agents/agents.router";
 import { agentAssetsRouter } from "./agents/assets/agent-assets.router";
 import { assetsRouter } from "./assets/assets.router";
@@ -62,6 +63,10 @@ if (process.env.XMTP_ENV !== "production") {
 v2Router.use("/agent-prompt-hints", agentPromptHintsRouter);
 
 v2Router.use("/agent-templates", agentTemplatesRouter);
+
+// Per-PR agent variants. Per-route auth: GET is app-facing (authMiddleware,
+// dev-gated to []), POST/DELETE require the agent API key + dev-gate.
+v2Router.use("/agent-variants", agentVariantsRouter);
 
 v2Router.use("/invites", invitesV2Router);
 

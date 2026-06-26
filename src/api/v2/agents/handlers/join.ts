@@ -1,6 +1,11 @@
 import type { Request, Response } from "express";
 import { z } from "zod";
 import { buildJoinPayload } from "@/api/v2/agents/lib/build-join-payload";
+import {
+  allowedVariantWorkerOrigin,
+  liveVariantWhere,
+  variantWorkerHostname,
+} from "@/api/v2/agents/lib/variant-routing";
 import { XMTP_ENV } from "@/config";
 import { accountIdSchema } from "@/utils/account-id";
 import { prisma } from "@/utils/prisma";
@@ -14,6 +19,16 @@ import {
 } from "./assistant-config";
 
 const AGENT_BUILDER_ONBOARDING = "agent-builder";
+
+// The public variant descriptor + optional ephemeral runtime URL read from the
+// registry for a dev-only per-PR variant join.
+type VariantDescriptor = {
+  slug: string;
+  label: string;
+  whatToTest: string;
+  prUrl: string;
+  assistantWorkerUrl: string | null;
+};
 
 type TemplateRow = Awaited<ReturnType<typeof prisma.agentTemplate.findUnique>>;
 type TemplateFinder = (id: string) => Promise<TemplateRow>;
@@ -53,6 +68,11 @@ const optionsSchema = z
   .object({
     skipGreeting: z.boolean().optional(),
     onboarding: z.string().min(1).max(64).optional(),
+    // Per-PR agent variant (dev-only). Selects a registered variant; the backend
+    // consumes it here (runtime routing + the metadata stamp) and does NOT forward
+    // it to the runtime. Optional + ignored off-dev, so it stays backwards-
+    // compatible for shipped clients.
+    variantId: z.string().trim().min(1).max(64).optional(),
   })
   .strict();
 
@@ -68,7 +88,7 @@ const optionsSchema = z
 // carries the agent's `inboxId`, the caller adds it to the declared group
 // with addMembers, and the runtime attaches when it observes the resulting
 // group welcome. No confirmation call exists.
-const bodySchema = z
+export const bodySchema = z
   .object({
     slug: z.string().min(1, "slug must not be empty").max(2048).optional(),
     // Normalized to lowercase: the runtime forwards this to Herald, whose
@@ -154,6 +174,10 @@ const dispatchBodySchema = z
     ownerAccountId: accountIdSchema,
     options: optionsSchema.optional(),
     timezone: timezoneSchema.optional(),
+    // Free-form XMTP-profile metadata seed forwarded to the worker. Used to
+    // carry the per-PR variant descriptor ({ variant: <json> }), which the
+    // worker stamps onto the agent's profile at Herald-join.
+    metadata: z.record(z.string(), z.unknown()).optional(),
   })
   .strict()
   .refine(
@@ -422,6 +446,63 @@ export async function joinHandler(req: Request, res: Response) {
     "Agent join request received",
   );
 
+  // Per-PR agent variant (dev-only). When the join carries a variantId for a
+  // registered variant, route provisioning to its ephemeral worker (when one is
+  // pinned) and stamp the variant descriptor onto the agent's profile via
+  // `metadata` (the worker emits it at Herald-join). The builder-prompt side was
+  // already applied at generation. `variantId` is
+  // consumed here and never forwarded to the runtime. A missing/invalid variant
+  // (or off-dev) falls through to the default worker with no stamp.
+  let variant: VariantDescriptor | null = null;
+  if (options?.variantId && XMTP_ENV !== "production") {
+    try {
+      // Only a live variant routes + stamps: exclude failed/stale and expired
+      // rows (mirrors the picker's ready/building filter) so a client can't pin a
+      // retired runtime by slug. A miss falls through to the default worker.
+      variant = await prisma.agentVariant.findFirst({
+        where: liveVariantWhere(options.variantId),
+        select: {
+          slug: true,
+          label: true,
+          whatToTest: true,
+          prUrl: true,
+          assistantWorkerUrl: true,
+        },
+      });
+    } catch (error) {
+      // A transient DB error on this optional dev-only lookup must not 500 the
+      // join — degrade to the default worker with no variant stamp.
+      req.log.error(
+        { error, variantId: options.variantId },
+        "Variant lookup failed; falling back to the default worker",
+      );
+    }
+  }
+
+  // The variant row carries a free-form URL. Before routing the join — and its
+  // `Authorization: Bearer` — at it, confirm it's one of our HTTPS dev ephemeral
+  // origins; a bad or compromised row otherwise turns this into an SSRF /
+  // credential-leak path. A non-matching URL falls back to the default worker
+  // (the descriptor stamp still applies, exactly as a default-runtime variant).
+  let effectiveAssistantApiUrl = assistantApiUrl;
+  if (variant?.assistantWorkerUrl) {
+    const allowedOrigin = allowedVariantWorkerOrigin(
+      variant.assistantWorkerUrl,
+      variantWorkerHostname(variant.slug),
+    );
+    if (allowedOrigin) {
+      effectiveAssistantApiUrl = allowedOrigin;
+    } else {
+      req.log.warn(
+        {
+          variantId: variant.slug,
+          assistantWorkerUrl: variant.assistantWorkerUrl,
+        },
+        "Variant assistantWorkerUrl is not an allowed dev ephemeral origin; using the default worker",
+      );
+    }
+  }
+
   // `/api/v2/agents/join` is mounted behind `authMiddleware` (401s any
   // request without a valid JWT) and gated by `requireAccount` (403s a
   // valid-but-account-less JWT), so under normal routing `accountId` is
@@ -546,7 +627,7 @@ export async function joinHandler(req: Request, res: Response) {
     }
   }
 
-  const assistantBaseUrl = assistantApiUrl.replace(/\/+$/, "");
+  const assistantBaseUrl = effectiveAssistantApiUrl.replace(/\/+$/, "");
   const authHeader = assistantApiKey ? `Bearer ${assistantApiKey}` : undefined;
 
   let instanceId: string;
@@ -606,6 +687,19 @@ export async function joinHandler(req: Request, res: Response) {
     }
     if (timezone !== undefined) {
       dispatchBody.timezone = timezone;
+    }
+    // Stamp the variant onto the agent: the worker reads metadata.variant at
+    // Herald-join and emits it into the XMTP profile so every participant sees
+    // the banner. Carries only the public descriptor — never the runtime URL.
+    if (variant) {
+      dispatchBody.metadata = {
+        variant: JSON.stringify({
+          slug: variant.slug,
+          label: variant.label,
+          whatToTest: variant.whatToTest,
+          prUrl: variant.prUrl,
+        }),
+      };
     }
 
     const dispatchParse = dispatchBodySchema.safeParse(dispatchBody);

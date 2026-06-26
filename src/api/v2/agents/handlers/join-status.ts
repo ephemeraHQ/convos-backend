@@ -1,5 +1,7 @@
 import type { Request, Response } from "express";
 import { z } from "zod";
+import { resolveVariantWorkerOrigin } from "@/api/v2/agents/lib/variant-routing";
+import { XMTP_ENV } from "@/config";
 import {
   assistantStatusSchema,
   getAssistantApiKey,
@@ -11,6 +13,13 @@ const ERROR_BODY_LOG_LIMIT = 200;
 
 const paramsSchema = z.object({
   instanceId: z.string().trim().min(1, "instanceId is required").max(256),
+});
+
+// Optional dev-only variant routing hint. A malformed value (array, blank,
+// over-long) parses away to undefined and the poll falls back to the default
+// worker rather than 400ing — the status read still works.
+const querySchema = z.object({
+  variantId: z.string().trim().min(1).max(64).optional(),
 });
 
 const ERRORS = {
@@ -69,7 +78,17 @@ export async function joinStatusHandler(req: Request, res: Response) {
   }
 
   const { instanceId } = parsed.data;
-  const assistantBaseUrl = assistantApiUrl.replace(/\/+$/, "");
+
+  // A join routed to a variant worker returns an instanceId that lives there, not
+  // on the default worker, so the client carries the variantId back here to poll
+  // the right runtime. Re-resolve the variant's ephemeral origin (dev-only, live +
+  // allowlisted); anything else falls back to the default worker.
+  let assistantBaseUrl = assistantApiUrl.replace(/\/+$/, "");
+  const variantId = querySchema.safeParse(req.query).data?.variantId;
+  if (variantId && XMTP_ENV !== "production") {
+    const origin = await resolveVariantWorkerOrigin(variantId);
+    if (origin) assistantBaseUrl = origin;
+  }
 
   const headers: Record<string, string> = {};
   if (assistantApiKey) {
