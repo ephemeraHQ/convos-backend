@@ -314,9 +314,12 @@ describe("POST /agents/join — agent variant runtime routing", () => {
   });
 
   test("a variant lookup DB error degrades to the default worker (no 500)", async () => {
+    // Reject only the single lookup this join makes (mockRejectedValueOnce): the
+    // spy then calls through to the real findFirst, so later tests aren't left
+    // with a rejecting mock if mockRestore is unreliable for the prisma method.
     const findFirstSpy = vi
       .spyOn(prisma.agentVariant, "findFirst")
-      .mockRejectedValue(new Error("db unreachable"));
+      .mockRejectedValueOnce(new Error("db unreachable"));
     try {
       const res = await post({
         slug: "join-token-jkl",
