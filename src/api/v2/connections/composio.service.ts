@@ -18,10 +18,21 @@ const TOOLKIT_VERSION_CACHE_TTL_MS = 60 * 60 * 1000;
 
 type ToolkitVersionCacheEntry = { version: string; expiresAt: number };
 
+// A toolkit's action catalog (the set of valid action slugs) changes only when
+// Composio publishes a new toolkit release — rarely. Cache the slug set
+// per-toolkit so exec's slug-validity check (invalid_action vs no_grant) and
+// the /actions endpoint never hit Composio on the hot path. The TTL bounds how
+// long a newly-added slug stays unrecognized; an empty set is NOT cached so a
+// transient fetch failure cannot stick a toolkit as "no valid slugs".
+const TOOLKIT_ACTIONS_CACHE_TTL_MS = 60 * 60 * 1000;
+
+type ToolkitActionsCacheEntry = { slugs: Set<string>; expiresAt: number };
+
 export class ComposioService {
   private composio: Composio;
   private authConfigCache = new Map<string, AuthConfigCacheEntry>();
   private toolkitVersionCache = new Map<string, ToolkitVersionCacheEntry>();
+  private toolkitActionsCache = new Map<string, ToolkitActionsCacheEntry>();
 
   constructor(args: { composio: Composio }) {
     this.composio = args.composio;
@@ -119,6 +130,66 @@ export class ComposioService {
       expiresAt: now + TOOLKIT_VERSION_CACHE_TTL_MS,
     });
     return version;
+  }
+
+  /**
+   * The set of valid action slugs Composio's LIVE catalog exposes for a toolkit
+   * (e.g. "GOOGLECALENDAR_EVENTS_LIST", ...). This is the authoritative
+   * vocabulary the exec matcher uses to tell a real-but-ungranted slug
+   * (no_grant) from a slug Composio never had (invalid_action) — sourcing it
+   * from Composio, not our consent bundles, means a real slug we simply haven't
+   * bundled is correctly no_grant, never mislabeled invalid_action.
+   *
+   * Cached per-toolkit (TTL) so the hot exec path doesn't call Composio every
+   * time. Fails OPEN: a Composio THROW (outage) or an empty result is treated as
+   * "catalog unavailable" — returns an empty set and is NOT cached. Callers must
+   * read an empty set as "unknown", never as "no valid slugs": `isInvalidAction`
+   * therefore returns false on an empty set, so the exec matcher falls through to
+   * no_grant rather than flagging a real slug invalid_action during an outage
+   * (which would wrongly tell the agent to re-prompt for consent). A transient
+   * gap must not stick for the TTL either.
+   */
+  async listToolkitActions(toolkit: string): Promise<Set<string>> {
+    const now = Date.now();
+    const normalized = toolkit.toLowerCase();
+    const hit = this.toolkitActionsCache.get(normalized);
+    if (hit && hit.expiresAt > now) {
+      return hit.slugs;
+    }
+
+    const slugs = new Set<string>();
+    try {
+      const tools = await this.composio.tools.getRawComposioTools({
+        toolkits: [normalized],
+      });
+      for (const tool of tools) {
+        if (tool.slug) slugs.add(tool.slug);
+      }
+    } catch (error) {
+      logger.warn(
+        { toolkit: normalized, error },
+        "[Composio] listToolkitActions: catalog fetch failed — treating as unavailable",
+      );
+      return new Set<string>();
+    }
+
+    if (slugs.size === 0) {
+      logger.warn(
+        { toolkit: normalized },
+        "[Composio] listToolkitActions: catalog returned no actions (not caching)",
+      );
+      return slugs;
+    }
+
+    logger.info(
+      { toolkit: normalized, count: slugs.size },
+      "[Composio] listToolkitActions: resolved catalog slugs",
+    );
+    this.toolkitActionsCache.set(normalized, {
+      slugs,
+      expiresAt: now + TOOLKIT_ACTIONS_CACHE_TTL_MS,
+    });
+    return slugs;
   }
 
   /**

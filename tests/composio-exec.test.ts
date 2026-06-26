@@ -46,8 +46,23 @@ const baseURL = "http://localhost:4014";
 // The toolkit version the stub publishes; exec must pin it on every execute.
 const STUB_TOOLKIT_VERSION = "20260429_00";
 
-// Minimal Composio stub: exec touches tools.execute, toolkits.get (version
-// pinning) and (when a grant pins no connection) connectedAccounts.list.
+// The googlecalendar action slugs Composio's LIVE catalog exposes — the
+// validity source the exec matcher checks (invalid_action vs no_grant). This
+// stands in for `composio.tools.getRawComposioTools`. It deliberately includes
+// real-but-UNBUNDLED slugs (e.g. GOOGLECALENDAR_CALENDARS_DELETE) so the suite
+// can prove a real slug we don't bundle is no_grant, never invalid_action.
+const STUB_GOOGLECALENDAR_CATALOG_SLUGS = [
+  "GOOGLECALENDAR_EVENTS_LIST",
+  "GOOGLECALENDAR_CREATE_EVENT",
+  "GOOGLECALENDAR_UPDATE_EVENT",
+  "GOOGLECALENDAR_DELETE_EVENT",
+  "GOOGLECALENDAR_CALENDARS_DELETE",
+  "GOOGLECALENDAR_FIND_FREE_SLOTS",
+];
+
+// Minimal Composio stub: exec touches tools.execute, tools.getRawComposioTools
+// (slug-validity catalog), toolkits.get (version pinning) and (when a grant
+// pins no connection) connectedAccounts.list.
 function installComposioStub(
   opts: {
     execute?: (
@@ -60,6 +75,8 @@ function installComposioStub(
     ) => Promise<unknown>;
     connections?: Array<{ id: string; userId: string; slug: string }>;
     toolkitVersions?: string[];
+    catalogSlugs?: string[];
+    catalogThrows?: boolean;
   } = {},
 ) {
   const stub = {
@@ -70,6 +87,17 @@ function installComposioStub(
           _slug: string,
           _body: { userId: string; connectedAccountId?: string },
         ) => Promise.resolve({ data: { ok: true } })),
+      getRawComposioTools: (query: { toolkits?: string[] }) => {
+        if (opts.catalogThrows) {
+          return Promise.reject(new Error("Composio catalog unavailable"));
+        }
+        const toolkit = (query.toolkits ?? [])[0]?.toLowerCase();
+        const slugs =
+          toolkit === "googlecalendar"
+            ? (opts.catalogSlugs ?? STUB_GOOGLECALENDAR_CATALOG_SLUGS)
+            : (opts.catalogSlugs ?? []);
+        return Promise.resolve(slugs.map((slug) => ({ slug })));
+      },
     },
     toolkits: {
       get: (_slug: string) =>
@@ -500,6 +528,130 @@ describe("POST /v2/composio/exec — grant authorization (DB)", () => {
     installComposioStub();
     const res = await exec(
       { ...VALID_BODY, action: "GOOGLECALENDAR_DELETE_EVENT" },
+      { headers: workerHeaders() },
+    );
+    expect(res.status).toBe(403);
+    expect((await asJson<{ code: string }>(res)).code).toBe("no_grant");
+  });
+
+  // Backstop: a slug the toolkit never had is `invalid_action` (422), NOT a
+  // consent gap (`no_grant`). This is the authoritative fix for the calendar
+  // re-auth loop — a guessed/typo'd slug (observed live: "listEvents", the
+  // retired "GOOGLECALENDAR_LIST_EVENTS") must never tell the agent to
+  // re-prompt the user, even when the runtime slug guard is bypassed. A VALID
+  // slug that simply isn't granted stays `no_grant` (the consent path).
+  test("422 invalid_action when the slug is not in the toolkit catalog (even with a covering grant)", async () => {
+    const ownerAccountId = await makeAccount();
+    await prisma.connectionGrant.create({
+      data: {
+        ownerAccountId,
+        ownerInboxId: "owner-inbox",
+        granteeInboxId: AGENT_INBOX,
+        conversationId: CONVERSATION,
+        toolkit: "googlecalendar",
+        actions: [],
+        bundleIds: ["calendar.events"],
+        serviceVersion: 5,
+      },
+    });
+    installComposioStub({
+      connections: [
+        { id: "conn_owned", userId: ownerAccountId, slug: "googlecalendar" },
+      ],
+    });
+    // The exact strings the agent guessed during the incident — none is a real
+    // GOOGLECALENDAR_* slug.
+    for (const action of [
+      "listEvents",
+      "list_events",
+      "getEvents",
+      "GOOGLECALENDAR_LIST_EVENTS",
+      "calendar.events.list",
+    ]) {
+      const res = await exec(
+        { ...VALID_BODY, action },
+        { headers: workerHeaders() },
+      );
+      expect(res.status).toBe(422);
+      const body = await asJson<{ code: string; action: string }>(res);
+      expect(body.code).toBe("invalid_action");
+      expect(body.action).toBe(action);
+    }
+  });
+
+  test("invalid_action takes precedence over no_grant: bad slug with NO grant is still 422, not 403", async () => {
+    // No grant at all for this conversation; the slug is also bogus. The agent
+    // must learn it named a non-existent action (fixable by itself), not that
+    // it needs consent (which would re-prompt the user pointlessly).
+    installComposioStub();
+    const res = await exec(
+      { ...VALID_BODY, action: "listEvents" },
+      { headers: workerHeaders() },
+    );
+    expect(res.status).toBe(422);
+    expect((await asJson<{ code: string }>(res)).code).toBe("invalid_action");
+  });
+
+  test("a VALID but ungranted slug stays no_grant (consent path preserved)", async () => {
+    // No grant here, but GOOGLECALENDAR_EVENTS_LIST is a real catalog slug — so
+    // this IS a consent gap and must remain no_grant, not invalid_action.
+    installComposioStub();
+    const res = await exec(
+      { ...VALID_BODY, action: "GOOGLECALENDAR_EVENTS_LIST" },
+      { headers: workerHeaders() },
+    );
+    expect(res.status).toBe(403);
+    expect((await asJson<{ code: string }>(res)).code).toBe("no_grant");
+  });
+
+  // The decision the whole PR turns on: validity is sourced from Composio's LIVE
+  // catalog, not our consent bundles. So a slug Composio really exposes but we
+  // have NOT bundled (GOOGLECALENDAR_CALENDARS_DELETE) is a real action -> a
+  // genuine consent gap (no_grant/403), while a slug Composio never had
+  // (a typo) is invalid_action (422). Sourcing validity from bundles would
+  // wrongly flip the real-but-unbundled slug to invalid_action — this locks
+  // against that regression.
+  test("catalog vs bundle: real-but-unbundled slug is no_grant; fake slug is invalid_action", async () => {
+    installComposioStub();
+    // Real Composio slug, not in any consent bundle, no grant -> consent gap.
+    const realUnbundled = await exec(
+      { ...VALID_BODY, action: "GOOGLECALENDAR_CALENDARS_DELETE" },
+      { headers: workerHeaders() },
+    );
+    expect(realUnbundled.status).toBe(403);
+    expect((await asJson<{ code: string }>(realUnbundled)).code).toBe(
+      "no_grant",
+    );
+
+    // Slug Composio never exposed -> the agent named a non-existent action.
+    const fake = await exec(
+      { ...VALID_BODY, action: "GOOGLECALENDAR_TOTALLY_MADE_UP" },
+      { headers: workerHeaders() },
+    );
+    expect(fake.status).toBe(422);
+    expect((await asJson<{ code: string }>(fake)).code).toBe("invalid_action");
+  });
+
+  // Fail OPEN on a catalog outage: the slug-validity source is best-effort, NOT
+  // a security boundary (the grant store is). If Composio's catalog throws or
+  // returns nothing, we must NOT flag a real slug as invalid_action — that would
+  // tell the agent to re-prompt the user during an outage (the re-auth loop).
+  // The matcher skips the invalid_action check and falls through to the grant
+  // check: a real ungranted slug stays no_grant, and exec never 500s.
+  test("catalog THROW: a real ungranted slug is no_grant, not invalid_action (no 500)", async () => {
+    installComposioStub({ catalogThrows: true });
+    const res = await exec(
+      { ...VALID_BODY, action: "GOOGLECALENDAR_EVENTS_LIST" },
+      { headers: workerHeaders() },
+    );
+    expect(res.status).toBe(403);
+    expect((await asJson<{ code: string }>(res)).code).toBe("no_grant");
+  });
+
+  test("empty catalog: a real ungranted slug is no_grant, not invalid_action", async () => {
+    installComposioStub({ catalogSlugs: [] });
+    const res = await exec(
+      { ...VALID_BODY, action: "GOOGLECALENDAR_EVENTS_LIST" },
       { headers: workerHeaders() },
     );
     expect(res.status).toBe(403);
