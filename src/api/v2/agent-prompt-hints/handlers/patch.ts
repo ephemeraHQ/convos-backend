@@ -69,6 +69,7 @@ export async function patchHandler(req: Request, res: Response) {
       data,
     });
     res.status(200).json(updated);
+    return;
   } catch (error) {
     if (
       error instanceof Prisma.PrismaClientKnownRequestError &&
@@ -82,5 +83,6 @@ export async function patchHandler(req: Request, res: Response) {
       "Failed to patch agent prompt hint",
     );
     res.status(500).json({ error: "Failed to patch agent prompt hint" });
+    return;
   }
 }

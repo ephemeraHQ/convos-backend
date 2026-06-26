@@ -31,11 +31,13 @@ export async function deleteHandler(req: Request, res: Response) {
       id: parsedParams.data.id,
       deleted: true,
     });
+    return;
   } catch (error) {
     req.log.error(
       { error, stack: error instanceof Error ? error.stack : undefined },
       "Failed to delete agent prompt hint",
     );
     res.status(500).json({ error: "Failed to delete agent prompt hint" });
+    return;
   }
 }

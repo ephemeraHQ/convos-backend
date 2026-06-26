@@ -13,11 +13,13 @@ export async function listAdminHandler(req: Request, res: Response) {
     });
 
     res.status(200).json({ data: rows });
+    return;
   } catch (error) {
     req.log.error(
       { error, stack: error instanceof Error ? error.stack : undefined },
       "Failed to list agent prompt hints (admin)",
     );
     res.status(500).json({ error: "Failed to list agent prompt hints" });
+    return;
   }
 }

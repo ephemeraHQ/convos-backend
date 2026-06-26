@@ -40,11 +40,13 @@ export async function createHandler(req: Request, res: Response) {
   try {
     const hint = await prisma.agentPromptHint.create({ data });
     res.status(201).json(hint);
+    return;
   } catch (error) {
     req.log.error(
       { error, stack: error instanceof Error ? error.stack : undefined },
       "Failed to create agent prompt hint",
     );
     res.status(500).json({ error: "Failed to create agent prompt hint" });
+    return;
   }
 }

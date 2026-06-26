@@ -46,6 +46,7 @@ export async function reorderHandler(req: Request, res: Response) {
     );
 
     res.status(200).json({ updated: parsed.data.orders.length });
+    return;
   } catch (error) {
     if (
       error instanceof Prisma.PrismaClientKnownRequestError &&
@@ -61,5 +62,6 @@ export async function reorderHandler(req: Request, res: Response) {
       "Failed to reorder agent prompt hints",
     );
     res.status(500).json({ error: "Failed to reorder agent prompt hints" });
+    return;
   }
 }
