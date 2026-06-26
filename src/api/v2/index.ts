@@ -40,6 +40,7 @@ import { creditsAdminRouter } from "./credits-admin/credits-admin.router";
 import { dailyRefillRouter } from "./credits/daily.router";
 import { devRouter } from "./dev/dev.router";
 import { deviceRouter } from "./device/device.router";
+import { emptyStateMocksRouter } from "./empty-state-mocks/empty-state-mocks.router";
 import {
   inviteCodesAdminRouter,
   inviteCodesRouter,
@@ -61,6 +62,10 @@ if (process.env.XMTP_ENV !== "production") {
 v2Router.use("/agent-prompt-hints", agentPromptHintsRouter);
 
 v2Router.use("/agent-templates", agentTemplatesRouter);
+
+// Public mock data for the iOS empty-state CTAs; no auth (fresh installs
+// have no account yet).
+v2Router.use("/empty-state-mocks", emptyStateMocksRouter);
 
 v2Router.use("/invites", invitesV2Router);
 
