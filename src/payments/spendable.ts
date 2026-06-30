@@ -43,6 +43,21 @@ export const isSpendAllowed = async (accountId: string): Promise<boolean> =>
  * for everyone (subscribers included). The subscriber `recordOnly` no-mutation
  * special case is gone: with subscription credits living in the wallet, there
  * is one debit path.
+ *
+ * INVARIANT (relied on by removing `recordOnly`): an entitled subscriber's
+ * period credits are materialized into `UserCredits.balance` via
+ * `grantSubscriptionPeriod` on verify/renewal BEFORE any consume runs, so the
+ * floor check here sees those credits and a normal in-period spend never
+ * floor-breaches. The old `recordOnly` path masked this by not mutating the
+ * wallet for subscribers; with one ledger it is gone.
+ *
+ * ACCEPTED TRADEOFF (Option-A migration, n=1): there is a brief window where an
+ * entitled subscriber whose current period was NOT yet materialized (the
+ * pre-cutover row never got its `sub_grant`) and who had already drained their
+ * raw wallet could hit `InsufficientBalanceError` on consume. We DOCUMENT and
+ * ACCEPT this rather than re-introduce the one-shot materialize script: the
+ * window is bounded (the next verify/renewal materializes the period) and n=1.
+ * Do NOT re-add a materialize CLI to paper over it.
  */
 export const recordConsume = async (args: {
   accountId: string;
