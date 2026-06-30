@@ -274,15 +274,15 @@ describe("GET /v2/accounts/me/credits", () => {
     expect(BigInt(body.balance)).toBe(await getSpendableBalance(accountId));
   });
 
-  // Single-ledger: there is ONE wallet, not a per-period derived balance, so
-  // `monthlyGrantUsed` is `clamp(grant − balance)` over the live wallet — it no
-  // longer windows consumes by `createdAt >= currentPeriodStart`. A debit that
-  // drained the wallet is reflected regardless of when it was recorded. (The
-  // old model used `sumPeriodConsumes(since currentPeriodStart)`, which excluded
-  // earlier-dated rows; that derivation is gone.) Here the 9999-credit burn
-  // overshoots the 2500 grant, so the wallet clamps to 0 and used clamps to the
-  // full grant.
-  test("any consume drains the one wallet (no per-period windowing)", async () => {
+  // `monthlyGrantUsed` for entitled subscribers is `min(periodConsumes, grant)`
+  // where `periodConsumes` is |consume deltas| since `currentPeriodStart` — it
+  // windows consumes by `createdAt >= currentPeriodStart` and does NOT derive
+  // from the commingled wallet balance (which admin/promo/signup credits share).
+  // Here the 9999-credit burn is dated BEFORE the current period, so it is
+  // excluded from `periodConsumes` → used is 0. The debit still drains the one
+  // wallet, so the displayed balance clamps to 0 (raw `getSpendableBalance`
+  // stays negative — that's the spend gate's concern, not the display's).
+  test("out-of-period consume is excluded from monthlyGrantUsed but still drains the wallet", async () => {
     const accountId = await newAccount();
     await seedPlusMonthly(accountId);
     await writeConsume(accountId, 9999, BEFORE_PERIOD, "previous-period");
@@ -291,12 +291,49 @@ describe("GET /v2/accounts/me/credits", () => {
       .get("/v2/accounts/me/credits")
       .set("X-Convos-AuthToken", token);
     const body = res.body as BalanceBody;
-    expect(body.monthlyGrantUsed).toBe(2500);
+    expect(body.monthlyGrantUsed).toBe(0);
     // Wallet overshot to negative; the endpoint clamps the displayed balance to
     // 0 (the raw `getSpendableBalance` stays negative — that's the spend gate's
     // concern, not the display's).
     expect(body.balance).toBe(0);
     expect(await getSpendableBalance(accountId)).toBeLessThan(0n);
+  });
+
+  // FIX 2 regression: a subscriber with extra admin credits on top of the period
+  // grant who has consumed within the period must report the REAL consumes as
+  // `monthlyGrantUsed` (capped at the grant), NOT 0. The old wallet-derived
+  // `clamp(grant − balance)` returned 0 here because the admin credits kept the
+  // balance above the grant.
+  test("admin credits on top of the grant: monthlyGrantUsed reflects period consumes, not 0", async () => {
+    const accountId = await newAccount();
+    await seedPlusMonthly(accountId); // wallet = 2500 (sub_grant)
+    // Admin/promo credits on top of the subscription grant.
+    await prisma.userCredits.update({
+      where: { accountId },
+      data: { balance: { increment: 1000n } },
+    });
+    await prisma.creditLedger.create({
+      data: {
+        accountId,
+        delta: 1000n,
+        reason: LedgerReason.grant,
+        idempotencyKey: `admin-${accountId}`,
+        scope: "grant",
+        grantKindId: "manual",
+      },
+    });
+    // Consume 700 within the current period.
+    await writeConsume(accountId, 700, WITHIN_PERIOD_A, "spend-700");
+    const token = await tokenFor(accountId);
+    const res = await request(makeApp())
+      .get("/v2/accounts/me/credits")
+      .set("X-Convos-AuthToken", token);
+    const body = res.body as BalanceBody;
+    // Wallet = 2500 + 1000 − 700 = 2800 (above the 2500 grant), yet usage is the
+    // real 700 of period consumes — NOT clamp(2500 − 2800) = 0.
+    expect(body.balance).toBe(2800);
+    expect(body.monthlyGrant).toBe(2500);
+    expect(body.monthlyGrantUsed).toBe(700);
   });
 
   test("monthlyGrantUsed is capped at monthlyGrant (over-burn doesn't go negative)", async () => {

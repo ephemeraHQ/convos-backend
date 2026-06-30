@@ -2,6 +2,7 @@ import type { Request, Response } from "express";
 import { getBalance } from "@/payments";
 import { config } from "@/payments/credits/config";
 import { startOfNextUtcDay } from "@/payments/daily-refill/utc";
+import { sumPeriodConsumes } from "@/payments/spendable";
 import { findCurrentByAccountId } from "@/subscriptions/repository";
 import { isEntitledSubscription } from "@/subscriptions/status";
 import { tierGrant } from "@/subscriptions/tier-config";
@@ -23,9 +24,13 @@ const MONTH_LABEL_FORMATTER = new Intl.DateTimeFormat("en-US", {
  *   - With an entitled Subscription (effective status in trial/active/grace/
  *     billingRetry per `isEntitledSubscription`): `monthlyGrant` = the period
  *     allotment from tier × period config (the `sub_grant` we wrote on
- *     subscribe/renewal); `monthlyGrantUsed = clamp(monthlyGrant − balance, 0,
- *     monthlyGrant)`; `nextRefreshAt = currentPeriodEnd`; `periodLabel` = the
- *     month label.
+ *     subscribe/renewal); `monthlyGrantUsed = min(periodConsumes, monthlyGrant)`
+ *     where `periodConsumes` is |consume deltas| since `currentPeriodStart`.
+ *     We compute usage from period consumes (NOT `monthlyGrant − balance`)
+ *     because the wallet is commingled — admin/promo/signup credits sharing it
+ *     would otherwise make `monthlyGrant − balance` negative and hide real
+ *     usage. `nextRefreshAt = currentPeriodEnd`; `periodLabel` = the month
+ *     label.
  *   - Without an entitled Subscription (no row, expired, revoked, or grace
  *     past end): free-tier daily-refill semantics. `monthlyGrant` =
  *     `PAYMENTS_FREE_TIER_DAILY_CAP_CREDITS`; `monthlyGrantUsed` =
@@ -63,8 +68,12 @@ export async function creditsGetHandler(req: Request, res: Response) {
       requireSubscriptionTier(subscription.tier),
       subscription.period,
     );
+    // Usage = period consumes (capped at the allotment), NOT
+    // `monthlyGrant − balance`. The wallet is commingled, so admin/promo/signup
+    // credits would otherwise push `monthlyGrant − balance` negative and report
+    // 0 used despite real spend. `perPeriod=0` → min clamps to 0.
     const monthlyGrantUsed = Math.min(
-      Math.max(0, grant.perPeriod - balanceCredits),
+      await sumPeriodConsumes(accountId, subscription.currentPeriodStart),
       grant.perPeriod,
     );
 
