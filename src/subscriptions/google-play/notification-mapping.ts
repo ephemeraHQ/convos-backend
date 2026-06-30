@@ -31,6 +31,22 @@ export type PlayNotificationMappingInput = {
 };
 
 /**
+ * `{ currentPeriodEnd }` from the refreshed purchase, or `{}` when the purchase
+ * has no usable expiry. Used to stamp the staleness signal on terminal events
+ * (revoked/expired) without letting a malformed purchase throw and break the
+ * webhook — the absent field just makes applyNotification apply as before.
+ */
+const safePeriodEnd = (
+  purchase: SubscriptionPurchaseV2,
+): { currentPeriodEnd?: Date } => {
+  try {
+    return { currentPeriodEnd: extractPeriodWindow(purchase).currentPeriodEnd };
+  } catch {
+    return {};
+  }
+};
+
+/**
  * Map an RTDN notificationType + the authoritative fetched purchase into a
  * Subscription state update. The notificationType tells us *why* to refresh;
  * the fetched purchase is the source of truth for *what* to write.
@@ -91,12 +107,20 @@ export const mapNotificationToUpdate = (
       return null;
     case PlayNotificationType.revoked:
       return {
+        // The RTDN envelope carries no period — this comes from the refreshed
+        // Play purchase (already fetched). Carrying currentPeriodEnd lets
+        // applyNotification's staleness guard distinguish a legit mid-period
+        // revoke (>= stored end → applies + forfeits) from a stale old-period
+        // one (< stored → skipped). Guarded: a purchase missing expiryTime
+        // omits the field and applies as before.
+        ...safePeriodEnd(input.purchase),
         status: SubscriptionStatus.revoked,
         willRenew: false,
         cancelledAt: now,
       };
     case PlayNotificationType.expired:
       return {
+        ...safePeriodEnd(input.purchase),
         status: SubscriptionStatus.expired,
         willRenew: false,
         gracePeriodEnd: null,

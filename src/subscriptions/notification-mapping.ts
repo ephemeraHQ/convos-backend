@@ -90,6 +90,12 @@ export const mapNotificationToUpdate = (
     case NotificationTypeV2.GRACE_PERIOD_EXPIRED:
     case NotificationTypeV2.EXPIRED:
       return {
+        // Carry the period this terminal event is about so applyNotification's
+        // staleness guard can drop an out-of-order EXPIRED for a period a later
+        // renewal already superseded (instead of clobbering the active row).
+        ...(transaction.expiresDate
+          ? { currentPeriodEnd: new Date(transaction.expiresDate) }
+          : {}),
         status: SubscriptionStatus.expired,
         willRenew: false,
         gracePeriodEnd: null,
@@ -98,6 +104,12 @@ export const mapNotificationToUpdate = (
     case NotificationTypeV2.REVOKE:
     case NotificationTypeV2.REFUND:
       return {
+        // Same staleness signal as EXPIRED: a legit mid-period refund/revoke
+        // carries the current period's end (>= stored) and applies + forfeits;
+        // a stale old-period one (< stored) is skipped by the guard.
+        ...(transaction.expiresDate
+          ? { currentPeriodEnd: new Date(transaction.expiresDate) }
+          : {}),
         status: SubscriptionStatus.revoked,
         willRenew: false,
         cancelledAt: new Date(transaction.signedDate ?? Date.now()),
