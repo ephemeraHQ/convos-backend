@@ -123,6 +123,14 @@ export const grantSubscriptionPeriod = async (
 
   const idempotencyKey = subGrantKey(subscription.id, periodStart);
 
+  // Serialize same-account ledger writers BEFORE the pre-check (mirrors the lock
+  // the forfeit path takes). Without it, two concurrent same-(sub, period)
+  // grants both read `prior === null` and both reach `creditLedger.create`, so
+  // the loser hits P2002 on (accountId, idempotencyKey) and aborts the whole tx.
+  // Holding the UserCredits row lock makes the loser block until the winner
+  // commits; its pre-check then sees the committed row and no-ops as "replayed".
+  await lockUserCreditsBalance(tx, subscription.accountId);
+
   // Pre-check inside the tx so a same-period grant already committed by a
   // concurrent verify/notification no-ops instead of aborting the whole tx on
   // the unique-key violation.

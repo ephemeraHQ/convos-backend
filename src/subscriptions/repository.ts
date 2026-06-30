@@ -433,9 +433,19 @@ export const upsertFromVerify = async (
       return { subscription, receiptCreated: true };
     });
   } catch (err) {
+    // Route the P2002 by WHICH unique index fired. Only the documented
+    // cold-start race — two concurrent creates of the same provider
+    // Subscription — is a benign idempotent replay we resolve by re-reading
+    // the now-committed row. A CreditLedger (accountId, idempotencyKey) P2002
+    // means a grant conflict; swallowing it would silently drop the
+    // BillingReceipt we just created and report receiptCreated:false, so it
+    // MUST rethrow. With the UserCredits lock in grantSubscriptionPeriod this
+    // is defense-in-depth. Anything else (incl. a BillingReceipt race, which
+    // the pre-check above already handles for the common case) also rethrows.
     if (
       err instanceof Prisma.PrismaClientKnownRequestError &&
-      err.code === "P2002"
+      err.code === "P2002" &&
+      isSubscriptionProviderUniqueConflict(err)
     ) {
       const current = await reReadAfterRace(input);
       if (current) {
@@ -451,6 +461,45 @@ export const upsertFromVerify = async (
     }
     throw err;
   }
+};
+
+// The four `@@unique([provider, …])` indexes on Subscription. With the Postgres
+// driver, Prisma's `err.meta.target` is the array of conflicting FIELD names
+// (e.g. ["provider", "originalTransactionId"]) — NOT the index name. We match on
+// the second field of each provider-unique tuple (the first is always
+// "provider"). Some adapters instead surface the index NAME as a string, so we
+// also accept those for forward-compat.
+const SUBSCRIPTION_PROVIDER_UNIQUE_FIELDS = new Set([
+  "originalTransactionId",
+  "appAccountToken",
+  "purchaseToken",
+  "obfuscatedAccountId",
+]);
+const SUBSCRIPTION_PROVIDER_UNIQUE_INDEX_NAMES = new Set([
+  "subscription_apple_otx_unique",
+  "subscription_apple_aat_unique",
+  "subscription_play_token_unique",
+  "subscription_play_oid_unique",
+]);
+
+const isSubscriptionProviderUniqueConflict = (
+  err: Prisma.PrismaClientKnownRequestError,
+): boolean => {
+  if (err.meta?.modelName && err.meta.modelName !== "Subscription") {
+    return false;
+  }
+  const target = err.meta?.target;
+  const tokens =
+    typeof target === "string"
+      ? [target]
+      : Array.isArray(target)
+        ? target.map(String)
+        : [];
+  return tokens.some(
+    (t) =>
+      SUBSCRIPTION_PROVIDER_UNIQUE_FIELDS.has(t) ||
+      SUBSCRIPTION_PROVIDER_UNIQUE_INDEX_NAMES.has(t),
+  );
 };
 
 export type NotificationStateUpdate = {
