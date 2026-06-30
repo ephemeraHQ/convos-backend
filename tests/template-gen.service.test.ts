@@ -27,7 +27,11 @@ type CapturedRequest = {
 let capturedRequests: CapturedRequest[] = [];
 const fetchMockResponses: Map<
   string,
-  { status: number; body: any; headers?: Record<string, string> }
+  {
+    status: number;
+    body: unknown;
+    headers?: Record<string, string>;
+  }
 > = new Map();
 
 const originalFetch = globalThis.fetch;
@@ -77,7 +81,9 @@ function mockFetch(input: any, init?: RequestInit): Response {
   // Check for mock responses
   for (const [pattern, response] of fetchMockResponses) {
     if (url.includes(pattern)) {
-      return new Response(JSON.stringify(response.body), {
+      const responseBody =
+        typeof response.body === "function" ? response.body() : response.body;
+      return new Response(JSON.stringify(responseBody), {
         status: response.status,
         headers: { "Content-Type": "application/json", ...response.headers },
       });
@@ -117,6 +123,42 @@ const TEST_API_KEY = "test-or-key-1234567890";
 
 function setOpenRouterResponse(body: any, status = 200) {
   fetchMockResponses.set("openrouter.ai", { status, body });
+}
+
+function templateResponse(overrides: Record<string, unknown> = {}) {
+  return {
+    model: "@preset/assistants-pro",
+    choices: [
+      {
+        finish_reason: "stop",
+        message: {
+          content: JSON.stringify({
+            prompt: "BODY",
+            agentName: "TestAgent",
+            emoji: "🤖",
+            description: "A test agent",
+            category: "Work",
+            tools: ["Search"],
+            ...overrides,
+          }),
+        },
+      },
+    ],
+    usage: { prompt_tokens: 100, completion_tokens: 50 },
+  };
+}
+
+function setOpenRouterResponseQueue(bodies: any[]) {
+  const queue = [...bodies];
+  fetchMockResponses.set("openrouter.ai", {
+    status: 200,
+    body: () => {
+      if (queue.length === 0) {
+        throw new Error("OpenRouter response queue exhausted");
+      }
+      return queue.shift();
+    },
+  });
 }
 
 function _setGitHubRepoResponse(repoData: any) {
@@ -524,6 +566,111 @@ describe("templateGen service — OpenRouter integration", () => {
     for (const key of forbiddenKeys) {
       expect(req.body[key]).toBeUndefined();
     }
+  });
+
+  test("retries main generation once when structured output is malformed JSON", async () => {
+    const mod = await import("@/api/v2/agent-templates/services/templateGen");
+    generateTemplate = mod.generateTemplate;
+
+    setOpenRouterResponseQueue([
+      {
+        model: "@preset/assistants-pro",
+        choices: [
+          {
+            finish_reason: "length",
+            message: {
+              content: '{"prompt":"Character: Page Two',
+            },
+          },
+        ],
+        usage: { prompt_tokens: 100, completion_tokens: 20 },
+      },
+      templateResponse({
+        agentName: "RetryBot",
+        prompt: "Recovered prompt",
+        description: "Recovered description",
+      }),
+    ]);
+
+    const result = await generateTemplate({ text: "Build me a helper" });
+
+    expect(result.template.agentName).toBe("RetryBot");
+    expect(result.template.prompt).toContain("Recovered prompt");
+
+    const reqs = getOpenRouterRequests();
+    expect(reqs).toHaveLength(2);
+    expect(reqs[0].body.temperature).toBe(0.7);
+    expect(reqs[1].body.temperature).toBe(0.2);
+    expect(reqs[1].body.response_format).toEqual(reqs[0].body.response_format);
+    const firstMessages = reqs[0].body.messages as unknown[];
+    const retryMessages = reqs[1].body.messages as unknown[];
+    expect(retryMessages).toHaveLength(firstMessages.length + 1);
+    expect(retryMessages.at(-1)).toMatchObject({
+      role: "user",
+      content: expect.stringContaining("Return only one valid JSON object"),
+    });
+  });
+
+  test("does not retry when structured JSON is valid but missing required fields", async () => {
+    const mod = await import("@/api/v2/agent-templates/services/templateGen");
+    generateTemplate = mod.generateTemplate;
+
+    setOpenRouterResponse({
+      model: "@preset/assistants-pro",
+      choices: [
+        {
+          finish_reason: "stop",
+          message: {
+            content: JSON.stringify({
+              agentName: "Bot",
+              emoji: "🤖",
+              description: "desc",
+              category: "Work",
+              tools: [],
+            }),
+          },
+        },
+      ],
+      usage: { prompt_tokens: 100, completion_tokens: 20 },
+    });
+
+    await expect(
+      generateTemplate({ text: "Build me a helper" }),
+    ).rejects.toThrow(/missing prompt/i);
+    expect(getOpenRouterRequests()).toHaveLength(1);
+  });
+
+  test("fails with a clear error when malformed JSON retry is also malformed", async () => {
+    const mod = await import("@/api/v2/agent-templates/services/templateGen");
+    generateTemplate = mod.generateTemplate;
+
+    setOpenRouterResponseQueue([
+      {
+        model: "@preset/assistants-pro",
+        choices: [
+          {
+            finish_reason: "length",
+            message: { content: '{"prompt":"unterminated' },
+          },
+        ],
+        usage: { prompt_tokens: 100, completion_tokens: 20 },
+      },
+      {
+        model: "@preset/assistants-pro",
+        choices: [
+          {
+            finish_reason: "length",
+            message: { content: '{"prompt":"still unterminated' },
+          },
+        ],
+        usage: { prompt_tokens: 100, completion_tokens: 20 },
+      },
+    ]);
+
+    await expect(
+      generateTemplate({ text: "Build me a helper" }),
+    ).rejects.toThrow(/Invalid structured JSON after retry/i);
+    expect(getOpenRouterRequests()).toHaveLength(2);
   });
 
   // -----------------------------------------------------------------------
