@@ -68,6 +68,23 @@ describe("redactTemplatePii", () => {
     expect(result.findings).toHaveLength(2);
   });
 
+  test("sends RAW field text to the model, not a JSON-escaped copy", async () => {
+    // Regression: JSON.stringify'ing the field showed the model escaped text
+    // (\" , \n), so it returned escaped spans that then failed the literal
+    // split in applyFindings against the unescaped field — leaving the PII in.
+    mockCall.mockResolvedValue(completion({ findings: [] }));
+
+    const raw = 'Contact "John" Doe\nat the London office';
+    await redactTemplatePii({ prompt: raw });
+
+    const sent = (mockCall.mock.calls[0]?.[0]?.body?.messages?.[0]?.content ??
+      "") as string;
+    // Raw value appears verbatim (quotes + real newline)...
+    expect(sent).toContain(raw);
+    // ...and the JSON-escaped form that would break span matching does not.
+    expect(sent).not.toContain('\\"John\\"');
+  });
+
   test("returns fields unchanged when no PII is found", async () => {
     mockCall.mockResolvedValue(completion({ findings: [] }));
 

@@ -383,21 +383,28 @@ export function __resetPiiRedactionForTests(
 }
 
 function buildRedactionPrompt(fields: RedactableFields): string {
-  const lines = REDACTABLE_FIELDS.filter(
+  // Each field's RAW value goes between explicit markers — never JSON.stringify.
+  // Stringifying would show the model escaped text (\" , \n), and it would then
+  // return those escaped forms in findings[].text, which fail the literal
+  // split(f.text) in applyFindings against the unescaped field — silently
+  // leaving the PII in. The markers keep field boundaries unambiguous even when
+  // a value spans multiple lines, so attribution stays correct.
+  const blocks = REDACTABLE_FIELDS.filter(
     (k) => typeof fields[k] === "string",
-  ).map((k) => `${k}: ${JSON.stringify(fields[k])}`);
+  ).map((k) => `<<<BEGIN ${k}>>>\n${fields[k]}\n<<<END ${k}>>>`);
   return `You are a PII detector for AI assistant templates that may be shared publicly with other users.
 
 You are given fields of an assistant template. Find every span of personal/identifying information a person would not want shared: names of real people, email addresses, phone numbers, street/physical addresses, account/card/SSN/IBAN numbers, and similar identifiers.
 
+Each field's content is wrapped in <<<BEGIN name>>> / <<<END name>>> markers. Scan only the content between the markers; the markers themselves are not part of the content.
+
 Rules:
-- Return the EXACT substring as it appears in the field (so it can be removed verbatim). Do not paraphrase or normalize it.
+- Return the EXACT substring as it appears between the markers — character for character, including any quotes, punctuation, or line breaks. Do NOT add escaping, add quotes, or normalize it; it must match the source verbatim so it can be removed.
 - Attribute each finding to the field it appears in: "description" or "prompt".
 - Do NOT flag generic role/topic words, brand/product names, or the assistant's own persona — only genuine personal data.
 - If there is no PII, return an empty list.
 
-Fields:
-${lines.join("\n")}`;
+${blocks.join("\n\n")}`;
 }
 
 const REDACTION_RESPONSE_FORMAT = {
