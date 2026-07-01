@@ -42,6 +42,7 @@ import {
   composeReply,
 } from "@/api/v2/agent-templates/services/compose-reply";
 import { distill } from "@/api/v2/agent-templates/services/distill";
+import { redactTemplatePii } from "@/api/v2/agent-templates/services/moderation";
 import { type TraceContext } from "@/api/v2/agent-templates/services/openrouter-client";
 import {
   capturePostHog,
@@ -701,10 +702,44 @@ async function _runPipeline(
   // value fed into the generator above, so the prompt body agrees with the
   // metadata. Then overlay the resolved connections, replacing the generator's
   // hardcoded `connections: []` so the template records the services it uses.
-  const templateToPersist = applyConnections({
+  const merged = applyConnections({
     template: applyPrefill(templateResult.template, identity),
     connectionIds,
   });
+
+  // PII redaction stage — scrub personal data from the generated template
+  // before it is persisted as a shareable artifact. Fails CLOSED: a scan error
+  // fails the generation rather than persisting (and later sharing/cloning)
+  // un-scanned content. Only the free-text fields are scanned; the rest of the
+  // template is carried through unchanged.
+  let templateToPersist: typeof merged;
+  try {
+    const redaction = await redactTemplatePii(
+      {
+        agentName: merged.agentName,
+        description: merged.description,
+        prompt: merged.prompt,
+      },
+      signal,
+      trace,
+    );
+    templateToPersist = {
+      ...merged,
+      agentName: redaction.fields.agentName ?? merged.agentName,
+      description: redaction.fields.description ?? merged.description,
+      prompt: redaction.fields.prompt ?? merged.prompt,
+    };
+  } catch (err) {
+    capturePostHog({
+      ...templateResult.metrics,
+      ...base,
+      outcome: "failed",
+    });
+    throw new Error(
+      `PII redaction stage failed: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+
   let persisted: { id: string; slug: string };
   try {
     persisted = await persistTemplate(

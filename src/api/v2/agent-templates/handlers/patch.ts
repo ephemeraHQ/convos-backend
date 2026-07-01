@@ -3,6 +3,10 @@ import type { Request, Response } from "express";
 import { z } from "zod";
 import { normalizeJobTitle } from "@/api/v2/agent-templates/lib/normalize-job-title";
 import { serializeAgentTemplate } from "@/api/v2/agent-templates/lib/serialize-agent-template";
+import {
+  redactTemplatePii,
+  type RedactableFields,
+} from "@/api/v2/agent-templates/services/moderation";
 import { revalidateTemplate } from "@/api/v2/agent-templates/services/revalidate-dashboard";
 import { prisma } from "@/utils/prisma";
 import { validateSlug } from "@/utils/reserved-slugs";
@@ -175,6 +179,36 @@ export async function patchHandler(req: Request, res: Response) {
 
     const data: Prisma.AgentTemplateUncheckedUpdateInput = {};
     applyContentFields(data, parsedBody.data);
+
+    // PII redaction — scrub the content fields being written. Only the fields
+    // present in this PATCH are scanned (partial update). Fails CLOSED: a scan
+    // error rejects the edit rather than persisting un-scanned content.
+    const toScan: RedactableFields = {};
+    if (typeof data.agentName === "string") toScan.agentName = data.agentName;
+    if (typeof data.description === "string")
+      toScan.description = data.description;
+    if (typeof data.prompt === "string") toScan.prompt = data.prompt;
+    if (
+      toScan.agentName !== undefined ||
+      toScan.description !== undefined ||
+      toScan.prompt !== undefined
+    ) {
+      let redacted: RedactableFields;
+      try {
+        ({ fields: redacted } = await redactTemplatePii(toScan));
+      } catch (error) {
+        req.log.error(
+          { error, stack: error instanceof Error ? error.stack : undefined },
+          "PII redaction failed for agent template patch",
+        );
+        res.status(502).json({ error: "Content scan failed, please retry" });
+        return;
+      }
+      if (redacted.agentName !== undefined) data.agentName = redacted.agentName;
+      if (redacted.description !== undefined)
+        data.description = redacted.description;
+      if (redacted.prompt !== undefined) data.prompt = redacted.prompt;
+    }
 
     if (parsedBody.data.slug !== undefined) {
       if (template.firstPublishedAt !== null) {

@@ -148,6 +148,7 @@ export interface OpenRouterChatOptions {
     | "moderation"
     | "twitter-intent"
     | "compose-reply"
+    | "pii-redaction"
     | "transcribe";
   body: OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming;
   /** External cancellation (e.g. the executor's per-generation timeout). */

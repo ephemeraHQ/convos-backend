@@ -1,7 +1,6 @@
 // vi.mock for firebase-admin lives in __mocks__/ + per-test-file vi.mock()
 // declarations.
-
-import { afterAll } from "vitest";
+import { afterAll, beforeAll, beforeEach } from "vitest";
 
 // Local dev: load DATABASE_URL (and any other vars) from .env when the shell
 // hasn't already provided it. CI sets DATABASE_URL as a real env var, so this
@@ -79,6 +78,23 @@ process.env.PAYMENTS_CRON_API_KEY =
 // number is set by ops via env in each deploy environment.
 process.env.PAYMENTS_GRANT_PLUS_MONTHLY =
   process.env.PAYMENTS_GRANT_PLUS_MONTHLY || "2500";
+
+// PII redaction defaults to a no-op pass-through in tests, so the many handler
+// tests that create/patch templates don't make a real (fail-closed) OpenRouter
+// call. Tests that exercise redaction itself opt out via
+// __resetPiiRedactionForTests(null). Dynamic import so config.ts (required env
+// above) is loaded only after this file's env assignments have run.
+async function installPiiRedactionNoop() {
+  const { __resetPiiRedactionForTests } =
+    await import("@/api/v2/agent-templates/services/moderation");
+  __resetPiiRedactionForTests((fields) =>
+    Promise.resolve({ fields, findings: [] }),
+  );
+}
+// beforeAll covers fixtures seeded in a file's own beforeAll/beforeEach;
+// beforeEach re-asserts in case a test mutated the override.
+beforeAll(installPiiRedactionNoop);
+beforeEach(installPiiRedactionNoop);
 
 afterAll(async () => {
   const { prisma } = await import("@/utils/prisma");
