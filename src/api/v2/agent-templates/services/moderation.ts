@@ -356,11 +356,12 @@ export type PiiRedactionOverride = (
 ) => Promise<RedactionResult>;
 
 const PII_TIMEOUT_MS = 10_000;
-const REDACTABLE_FIELDS: readonly RedactableField[] = [
-  "agentName",
-  "description",
-  "prompt",
-];
+// agentName is intentionally NOT scanned: the persisted slug is derived from it
+// (see deriveTemplateSlug in generation-executor / deriveSlugFromAgentName in
+// create), and redaction runs BEFORE that derivation — so masking a legitimately
+// person-named agent would both wreck the title and force a fallback slug. Only
+// the free-text body fields are redacted.
+const REDACTABLE_FIELDS: readonly RedactableField[] = ["description", "prompt"];
 
 let _piiModelOverride: string | null = null;
 let _piiOverride: PiiRedactionOverride | null = null;
@@ -391,7 +392,7 @@ You are given fields of an assistant template. Find every span of personal/ident
 
 Rules:
 - Return the EXACT substring as it appears in the field (so it can be removed verbatim). Do not paraphrase or normalize it.
-- Attribute each finding to the field it appears in: "agentName", "description", or "prompt".
+- Attribute each finding to the field it appears in: "description" or "prompt".
 - Do NOT flag generic role/topic words, brand/product names, or the assistant's own persona — only genuine personal data.
 - If there is no PII, return an empty list.
 
@@ -416,7 +417,7 @@ const REDACTION_RESPONSE_FORMAT = {
             properties: {
               field: {
                 type: "string",
-                enum: ["agentName", "description", "prompt"],
+                enum: ["description", "prompt"],
               },
               text: { type: "string" },
               type: { type: "string" },
@@ -435,6 +436,104 @@ function maskFor(type: string): string {
   return `[${label}]`;
 }
 
+// ---------------------------------------------------------------------------
+// Deterministic structured-PII detector — a recall floor under the LLM.
+//
+// The model is the primary detector but has no recall guarantee: a missed span
+// silently persists PII, and fail-closed only catches SCAN errors, not
+// detection misses. So we also run high-precision regexes for the structured
+// identifiers that are highest-risk and most mechanically detectable — email,
+// phone, SSN, credit card — and union their hits with the model's. These always
+// fire (the model can only ADD to them), turning "the model probably caught it"
+// into a guaranteed catch for these types. Types are canonical so the masks are
+// stable: [EMAIL] / [PHONE] / [SSN] / [CREDIT_CARD].
+// ---------------------------------------------------------------------------
+
+const EMAIL_RE = /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g;
+const SSN_RE = /\b\d{3}-\d{2}-\d{4}\b/g;
+// 13–19 digits with optional single space/dash between groups. Anchored digit
+// at both ends so a trailing separator (e.g. the space before the next word) is
+// never swallowed into the span.
+const CARD_RE = /\b\d(?:[ -]?\d){12,18}\b/g;
+// Formatted phone numbers: optional +country, then digit groups joined by
+// space/dot/dash/parens. The separator requirement in `phoneLike` keeps this
+// from masking bare long integers (order numbers, IDs).
+const PHONE_RE =
+  /(?:\+\d{1,3}[\s.-]?)?(?:\(\d{1,4}\)[\s.-]?)?\d{2,4}(?:[\s.-]\d{2,4}){1,4}/g;
+
+/** Luhn check — cuts most false positives for the broad card digit-run regex. */
+function luhnValid(candidate: string): boolean {
+  const digits = candidate.replace(/\D/g, "");
+  if (digits.length < 13 || digits.length > 19) return false;
+  let sum = 0;
+  let double = false;
+  for (let i = digits.length - 1; i >= 0; i--) {
+    let n = digits.charCodeAt(i) - 48;
+    if (double) {
+      n *= 2;
+      if (n > 9) n -= 9;
+    }
+    sum += n;
+    double = !double;
+  }
+  return sum % 10 === 0;
+}
+
+/** A phone must have 10–14 digits AND at least one separator/plus, so formatted
+ *  numbers are caught but a bare integer run (order id, count) is not. */
+function phoneLike(match: string): boolean {
+  const digits = match.replace(/\D/g, "").length;
+  return digits >= 10 && digits <= 14 && /[\s.\-()+]/.test(match);
+}
+
+function collectMatches(
+  field: RedactableField,
+  value: string,
+  re: RegExp,
+  type: string,
+  out: PiiFinding[],
+  validate?: (m: string) => boolean,
+): void {
+  for (const m of value.matchAll(re)) {
+    const text = m[0];
+    if (!text || (validate && !validate(text))) continue;
+    out.push({ field, text, type });
+  }
+}
+
+/** Regex pass for structured identifiers. Runs over the same fields the LLM
+ *  scans (never agentName). Its hits are unioned with the model's so these
+ *  types can't slip through a model miss. Exported for the CI recall eval. */
+export function detectStructuredPii(fields: RedactableFields): PiiFinding[] {
+  const out: PiiFinding[] = [];
+  for (const field of REDACTABLE_FIELDS) {
+    const value = fields[field];
+    if (typeof value !== "string" || !value) continue;
+    collectMatches(field, value, EMAIL_RE, "email", out);
+    collectMatches(field, value, SSN_RE, "ssn", out);
+    collectMatches(field, value, CARD_RE, "credit card", out, luhnValid);
+    collectMatches(field, value, PHONE_RE, "phone", out, phoneLike);
+  }
+  return out;
+}
+
+/** Union finding lists, dropping exact (field+text) duplicates so a span both
+ *  the regex and the model flagged is masked once. Earlier entries win, so pass
+ *  the deterministic findings first to keep their canonical type. */
+export function mergeFindings(...lists: PiiFinding[][]): PiiFinding[] {
+  const seen = new Set<string>();
+  const out: PiiFinding[] = [];
+  for (const list of lists) {
+    for (const f of list) {
+      const key = `${f.field} ${f.text}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push(f);
+    }
+  }
+  return out;
+}
+
 /** Remove every finding's exact text from its named field. Plain substring
  *  split/join (no regex) so special characters can't break the substitution,
  *  and a finding only ever touches the one field it was attributed to. */
@@ -443,7 +542,12 @@ export function applyFindings(
   findings: PiiFinding[],
 ): RedactableFields {
   const out: RedactableFields = { ...fields };
-  for (const f of findings) {
+  // Longest spans first: when one finding's text contains another's (a full
+  // card number vs. a digit run inside it, or "John Smith" vs. "Smith"), masking
+  // the longer span first means the shorter is already gone and can't leave a
+  // partial/incorrect mask behind.
+  const ordered = [...findings].sort((a, b) => b.text.length - a.text.length);
+  for (const f of ordered) {
     const cur = out[f.field];
     if (typeof cur !== "string" || !f.text) continue;
     out[f.field] = cur.split(f.text).join(maskFor(f.type));
@@ -490,7 +594,13 @@ export async function redactTemplatePii(
     throw new Error("[pii-redaction] empty LLM response");
   }
 
-  const findings = parseFindings(content);
+  // Union the model's findings with the deterministic regex floor so the
+  // structured identifiers (email/phone/SSN/card) can't slip through a model
+  // miss. Deterministic first so its canonical type label wins on a dup.
+  const findings = mergeFindings(
+    detectStructuredPii(fields),
+    parseFindings(content),
+  );
   const redacted = applyFindings(fields, findings);
 
   if (findings.length > 0) {
