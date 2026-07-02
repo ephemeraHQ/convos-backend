@@ -28,24 +28,15 @@ afterEach(async () => {
 const perPeriod = () =>
   tierGrant(SUBSCRIPTION_TIER_PLUS, SubscriptionPeriod.monthly).perPeriod;
 
-const writeConsume = async (accountId: string, credits: number) => {
-  await prisma.creditLedger.create({
-    data: {
-      accountId,
-      delta: BigInt(-credits),
-      reason: LedgerReason.consume,
-      idempotencyKey: `c-${randomUUID()}`,
-      scope: "transaction",
-    },
-  });
-};
-
-describe("getSpendableBalance / isSpendAllowed", () => {
-  it("non-subscriber → raw ledger balance", async () => {
+describe("getSpendableBalance / isSpendAllowed (single-ledger)", () => {
+  it("non-subscriber → the one wallet balance", async () => {
     const accountId = await seedAccount();
     tracker.push(accountId);
     await seedBalance(accountId, 4242n);
     expect(await getSpendableBalance(accountId)).toBe(4242n);
+    expect(await getSpendableBalance(accountId)).toBe(
+      await getBalance(accountId),
+    );
     expect(await isSpendAllowed(accountId)).toBe(true);
   });
 
@@ -56,43 +47,52 @@ describe("getSpendableBalance / isSpendAllowed", () => {
     expect(await isSpendAllowed(accountId)).toBe(false);
   });
 
-  it("entitled subscriber → perPeriod − periodConsumes", async () => {
+  it("subscriber → the same one wallet (materialized sub_grant)", async () => {
     const accountId = await seedAccount();
     tracker.push(accountId);
     await seedPlusMonthlySubscription(accountId);
-    await writeConsume(accountId, 100);
+    // Single-ledger: subscribing wrote perPeriod into the wallet; spendable is
+    // just that wallet — no derivation, identical to getBalance.
+    expect(await getSpendableBalance(accountId)).toBe(BigInt(perPeriod()));
     expect(await getSpendableBalance(accountId)).toBe(
-      BigInt(perPeriod() - 100),
+      await getBalance(accountId),
     );
     expect(await isSpendAllowed(accountId)).toBe(true);
   });
 
-  it("entitled subscriber at/over cap → 0 and not allowed", async () => {
+  it("subscriber wallet drained → 0 and not allowed", async () => {
     const accountId = await seedAccount();
     tracker.push(accountId);
     await seedPlusMonthlySubscription(accountId);
-    await writeConsume(accountId, perPeriod() + 50);
+    // Real decrement through the wallet down to exactly 0.
+    await recordConsume({
+      accountId,
+      usdCostMicros: BigInt(perPeriod() * 500),
+      idempotencyKey: `t-${randomUUID()}`,
+      requestId: "drain",
+    });
     expect(await getSpendableBalance(accountId)).toBe(0n);
     expect(await isSpendAllowed(accountId)).toBe(
       config.reservedMaxTurnCredits <= 0n,
     );
   });
 
-  it("lapsed subscriber → falls through to raw ledger balance", async () => {
+  it("lapsed subscriber → still just the one wallet balance", async () => {
     const accountId = await seedAccount();
     tracker.push(accountId);
     await seedExpiredSubscription(accountId);
     await seedBalance(accountId, 1234n);
-    // Subscription row exists but is not entitled → raw additive balance, not derived.
+    // Expired sub does not materialize a grant; the wallet is the raw balance.
     expect(await getSpendableBalance(accountId)).toBe(1234n);
   });
 });
 
-describe("recordConsume", () => {
-  it("subscriber → ledger row written, raw balance untouched, never throws", async () => {
+describe("recordConsume (single-ledger — one debit path)", () => {
+  it("subscriber → real decrement of the shared wallet", async () => {
     const accountId = await seedAccount();
     tracker.push(accountId);
     await seedPlusMonthlySubscription(accountId);
+    const before = await getBalance(accountId);
 
     const res = await recordConsume({
       accountId,
@@ -102,11 +102,10 @@ describe("recordConsume", () => {
     });
     expect(res.spent).toBeGreaterThan(0);
 
-    // Raw balance untouched (no UserCredits row created).
-    expect(await getBalance(accountId)).toBe(0n);
-    // Usage is recorded → spendable dropped by the consumed amount.
+    // Wallet moved by exactly the spent amount (no record-only no-op).
+    expect(await getBalance(accountId)).toBe(before - BigInt(res.spent));
     expect(await getSpendableBalance(accountId)).toBe(
-      BigInt(perPeriod() - res.spent),
+      before - BigInt(res.spent),
     );
     const rows = await prisma.creditLedger.count({
       where: { accountId, reason: LedgerReason.consume },
@@ -114,7 +113,26 @@ describe("recordConsume", () => {
     expect(rows).toBe(1);
   });
 
-  it("non-subscriber → identical to consume() (decrements raw balance)", async () => {
+  it("admin + subscription credits are spent uniformly from the one balance", async () => {
+    const accountId = await seedAccount();
+    tracker.push(accountId);
+    await seedPlusMonthlySubscription(accountId);
+    await seedBalance(accountId, 1_000n); // admin/manual credits on top
+
+    const before = await getBalance(accountId);
+    expect(before).toBe(BigInt(perPeriod()) + 1_000n);
+
+    const res = await recordConsume({
+      accountId,
+      usdCostMicros: 1_000_000n,
+      idempotencyKey: `t-${randomUUID()}`,
+      requestId: "req-mix",
+    });
+    // Single pooled balance: no distinction between sub vs admin credits.
+    expect(await getBalance(accountId)).toBe(before - BigInt(res.spent));
+  });
+
+  it("non-subscriber → identical to consume() (decrements the wallet)", async () => {
     const accountId = await seedAccount();
     tracker.push(accountId);
     await seedBalance(accountId, 5000n);
@@ -128,34 +146,39 @@ describe("recordConsume", () => {
     expect(await getBalance(accountId)).toBe(5000n - BigInt(res.spent));
   });
 
-  it("subscriber idempotent replay → single row, replayed: true", async () => {
+  it("subscriber idempotent replay → single row, replayed: true, no double debit", async () => {
     const accountId = await seedAccount();
     tracker.push(accountId);
     await seedPlusMonthlySubscription(accountId);
+    const before = await getBalance(accountId);
     const key = `t-${randomUUID()}`;
 
+    // Small spend so the replay attempt does not trip the floor before the
+    // idempotency short-circuit (the floor is checked before the insert).
     const first = await recordConsume({
       accountId,
-      usdCostMicros: 1_000_000n,
+      usdCostMicros: 50_000n,
       idempotencyKey: key,
       requestId: "req-r",
     });
     const second = await recordConsume({
       accountId,
-      usdCostMicros: 1_000_000n,
+      usdCostMicros: 50_000n,
       idempotencyKey: key,
       requestId: "req-r",
     });
 
     expect(second.replayed).toBe(true);
     expect(second.ledgerId).toBe(first.ledgerId);
+    // Debited once, not twice.
+    expect(await getBalance(accountId)).toBe(before - BigInt(first.spent));
     const rows = await prisma.creditLedger.count({
       where: { accountId, reason: LedgerReason.consume },
     });
     expect(rows).toBe(1);
   });
 
-  it("record-only subscriber consume surfaces in bucketed consumption", async () => {
+  it("subscriber consume surfaces in bucketed consumption", async () => {
     const accountId = await seedAccount();
     tracker.push(accountId);
     await seedPlusMonthlySubscription(accountId);

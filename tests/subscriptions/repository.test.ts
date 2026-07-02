@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from "vitest";
+import { getBalance } from "@/payments";
 import {
   applyNotification,
   BillingProvider,
@@ -13,7 +14,11 @@ import {
   upsertFromVerify,
   type AppleVerifyInput,
 } from "@/subscriptions/repository";
+import { tierGrant } from "@/subscriptions/tier-config";
 import { prisma } from "@/utils/prisma";
+
+const perPeriod = () =>
+  tierGrant(SUBSCRIPTION_TIER_PLUS, SubscriptionPeriod.monthly).perPeriod;
 
 const makeAccount = async () => {
   const account = await prisma.account.create({ data: {} });
@@ -65,6 +70,14 @@ const wipeForAccounts = async (accountIds: string[]) => {
     where: { subscription: { accountId: { in: accountIds } } },
   });
   await prisma.subscription.deleteMany({
+    where: { accountId: { in: accountIds } },
+  });
+  // Single-ledger: verify/renewal now write sub_grant ledger rows, so clear
+  // the wallet + ledger before deleting the account (FK).
+  await prisma.creditLedger.deleteMany({
+    where: { accountId: { in: accountIds } },
+  });
+  await prisma.userCredits.deleteMany({
     where: { accountId: { in: accountIds } },
   });
   await prisma.account.deleteMany({ where: { id: { in: accountIds } } });
@@ -264,6 +277,45 @@ describe("upsertFromVerify", () => {
       where: { transactionId: "tx-concurrent-same" },
     });
     expect(receipts).toHaveLength(1);
+  });
+
+  // #2 regression: when two concurrent dup /verify calls race PAST the
+  // `existingReceipt` pre-check and both reach `billingReceipt.create`, the
+  // loser hits a BillingReceipt-idempotencyKey P2002. The narrowed catch must
+  // route that to reReadAfterRace → { receiptCreated: false }, NOT rethrow a
+  // 500. Run several trials to actually exercise the concurrent window.
+  test("concurrent dup verifies resolve idempotently — loser never throws (BillingReceipt P2002 routed)", async () => {
+    const TRIALS = 8;
+    for (let i = 0; i < TRIALS; i++) {
+      const accountId = await newAccount();
+      const input = verifyInput({
+        accountId,
+        originalTransactionId: `otid-dup-${i}`,
+        transactionId: `tx-dup-${i}`,
+        appAccountToken: `00000000-0000-0000-0000-${String(i).padStart(12, "0")}`,
+      });
+
+      const results = await Promise.allSettled([
+        upsertFromVerify(input),
+        upsertFromVerify(input),
+      ]);
+
+      // Neither call rejects — both resolve idempotently.
+      expect(results.every((r) => r.status === "fulfilled")).toBe(true);
+      const values = results.flatMap((r) =>
+        r.status === "fulfilled" ? [r.value] : [],
+      );
+      // Exactly one created the receipt; the other returned receiptCreated:false.
+      expect(values.map((v) => v.receiptCreated).sort()).toEqual([false, true]);
+      // Both see the same subscription, owned by the caller.
+      expect(values[0].subscription.id).toBe(values[1].subscription.id);
+      expect(values[0].subscription.accountId).toBe(accountId);
+      // Exactly one receipt persisted.
+      const receipts = await prisma.billingReceipt.findMany({
+        where: { transactionId: `tx-dup-${i}` },
+      });
+      expect(receipts).toHaveLength(1);
+    }
   });
 
   test("concurrent verifies, different accountId: exactly one wins, the other rejects with account-mismatch", async () => {
@@ -506,6 +558,126 @@ describe("applyNotification", () => {
       "notif-shared-a",
       "notif-shared-b",
     ]);
+  });
+
+  // #3 staleness guard: a valid-but-OUT-OF-ORDER terminal notification (an
+  // EXPIRED for a period a later renewal already superseded) must NOT roll the
+  // active row back to expired NOR forfeit the now-active period.
+  test("stale EXPIRED arriving after a renewal does NOT change status or forfeit", async () => {
+    const accountId = await newAccount();
+    const otid = "otid-stale-expired";
+    const oldEnd = new Date("2026-06-01T00:00:00.000Z");
+    const newStart = new Date("2026-06-01T00:00:00.000Z");
+    const newEnd = new Date("2026-07-01T00:00:00.000Z");
+
+    // Initial verify → grants period 1.
+    await upsertFromVerify(
+      verifyInput({
+        accountId,
+        originalTransactionId: otid,
+        transactionId: "tx-stale-initial",
+        currentPeriodStart: new Date("2026-05-01T00:00:00.000Z"),
+        currentPeriodEnd: oldEnd,
+      }),
+    );
+    // Renewal advances the period → grants period 2. Wallet now holds 2×.
+    const renew = await applyNotification({
+      provider: BillingProvider.apple,
+      originalTransactionId: otid,
+      transactionId: "tx-stale-renew",
+      notificationUUID: "notif-stale-renew",
+      notificationType: "DID_RENEW",
+      signedPayload: "stub",
+      update: {
+        status: SubscriptionStatus.active,
+        currentPeriodStart: newStart,
+        currentPeriodEnd: newEnd,
+        willRenew: true,
+      },
+    });
+    expect(renew.kind).toBe("applied");
+    expect(await getBalance(accountId)).toBe(BigInt(perPeriod() * 2));
+
+    // Now a STALE EXPIRED for the OLD period (currentPeriodEnd = oldEnd < newEnd).
+    const stale = await applyNotification({
+      provider: BillingProvider.apple,
+      originalTransactionId: otid,
+      transactionId: "tx-stale-expired",
+      notificationUUID: "notif-stale-expired",
+      notificationType: "EXPIRED",
+      signedPayload: "stub",
+      update: {
+        status: SubscriptionStatus.expired,
+        willRenew: false,
+        currentPeriodEnd: oldEnd,
+      },
+    });
+    // Receipt recorded (idempotency preserved) but state NOT rolled back.
+    expect(stale.kind).toBe("applied");
+    if (stale.kind === "applied") {
+      expect(stale.subscription.status).toBe(SubscriptionStatus.active);
+      expect(stale.subscription.currentPeriodEnd.toISOString()).toBe(
+        newEnd.toISOString(),
+      );
+    }
+    // No forfeit — wallet untouched.
+    expect(await getBalance(accountId)).toBe(BigInt(perPeriod() * 2));
+    const forfeitRows = await prisma.creditLedger.count({
+      where: { accountId, grantKindId: "sub_forfeit" },
+    });
+    expect(forfeitRows).toBe(0);
+    // The stale receipt is still recorded for audit.
+    const receipt = await findReceiptByTransactionId(
+      BillingProvider.apple,
+      "tx-stale-expired",
+    );
+    expect(receipt).not.toBeNull();
+  });
+
+  // #3 counterpart: a LEGITIMATE mid-period refund/revoke (its period end is the
+  // CURRENT one, not older) is NOT stale → it applies the terminal status AND
+  // forfeits the unused portion.
+  test("mid-period REVOKE for the current period applies and forfeits", async () => {
+    const accountId = await newAccount();
+    const otid = "otid-midperiod-revoke";
+    const periodEnd = new Date("2026-06-01T00:00:00.000Z");
+
+    await upsertFromVerify(
+      verifyInput({
+        accountId,
+        originalTransactionId: otid,
+        transactionId: "tx-revoke-initial",
+        currentPeriodStart: new Date("2026-05-01T00:00:00.000Z"),
+        currentPeriodEnd: periodEnd,
+      }),
+    );
+    expect(await getBalance(accountId)).toBe(BigInt(perPeriod()));
+
+    // REVOKE carrying the CURRENT period end (== stored) → not stale.
+    const revoke = await applyNotification({
+      provider: BillingProvider.apple,
+      originalTransactionId: otid,
+      transactionId: "tx-revoke-now",
+      notificationUUID: "notif-revoke-now",
+      notificationType: "REVOKE",
+      signedPayload: "stub",
+      update: {
+        status: SubscriptionStatus.revoked,
+        willRenew: false,
+        cancelledAt: new Date("2026-05-15T00:00:00.000Z"),
+        currentPeriodEnd: periodEnd,
+      },
+    });
+    expect(revoke.kind).toBe("applied");
+    if (revoke.kind === "applied") {
+      expect(revoke.subscription.status).toBe(SubscriptionStatus.revoked);
+    }
+    // Nothing consumed → whole period forfeited, wallet back to 0.
+    expect(await getBalance(accountId)).toBe(0n);
+    const forfeitRows = await prisma.creditLedger.count({
+      where: { accountId, grantKindId: "sub_forfeit" },
+    });
+    expect(forfeitRows).toBe(1);
   });
 });
 

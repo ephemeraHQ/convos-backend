@@ -8,8 +8,13 @@ import {
   type SubscriptionPeriod,
 } from "@prisma/client";
 import {
+  forfeitSubscriptionPeriod,
+  grantSubscriptionPeriod,
+} from "@/subscriptions/grants";
+import {
   effectiveSubscriptionStatus,
   ENTITLED_SUBSCRIPTION_STATUSES,
+  isEntitledSubscriptionStatus,
 } from "@/subscriptions/status";
 import {
   requireSubscriptionTier,
@@ -405,12 +410,49 @@ export const upsertFromVerify = async (
         },
       });
 
+      // Single-ledger: materialize the period allotment as a real grant row.
+      // Idempotent per (subscription, periodStart), so the initial verify, a
+      // re-verify of the same period, or an S2S DID_RENEW racing this verify
+      // all resolve to one row. Only grant when the verified state is
+      // entitled and the verify is not a stale (out-of-order) replay.
+      if (!isStaleVerify && isEntitledSubscriptionStatus(subscription.status)) {
+        const grantResult = await grantSubscriptionPeriod(tx, {
+          subscription,
+          periodStart: subscription.currentPeriodStart,
+        });
+        // The grant wrote the credit row in the same tx; return the (current)
+        // subscription so callers see consistent state.
+        if (grantResult.kind === "granted") {
+          return {
+            subscription: grantResult.subscription,
+            receiptCreated: true,
+          };
+        }
+      }
+
       return { subscription, receiptCreated: true };
     });
   } catch (err) {
+    // Route the P2002 by WHICH unique index fired:
+    //   - Subscription provider-unique → the documented cold-start race (two
+    //     concurrent creates of the same provider sub). Benign idempotent
+    //     replay: re-read the committed row.
+    //   - BillingReceipt idempotencyKey → two concurrent /verify calls for the
+    //     same transaction raced past the `existingReceipt` pre-check above and
+    //     both reached `billingReceipt.create`. The loser must ALSO resolve
+    //     idempotently (re-read → receiptCreated:false), NOT 500. The pre-check
+    //     handles the sequential dup; this handles the concurrent dup.
+    //   - CreditLedger (accountId, idempotencyKey) → a grant conflict. MUST
+    //     rethrow: swallowing it would silently drop the just-created
+    //     BillingReceipt and falsely report receiptCreated:false. With the
+    //     UserCredits lock in grantSubscriptionPeriod this should not happen;
+    //     rethrow is defense-in-depth.
+    //   - Anything else → rethrow.
     if (
       err instanceof Prisma.PrismaClientKnownRequestError &&
-      err.code === "P2002"
+      err.code === "P2002" &&
+      (isSubscriptionProviderUniqueConflict(err) ||
+        isBillingReceiptIdempotencyConflict(err))
     ) {
       const current = await reReadAfterRace(input);
       if (current) {
@@ -426,6 +468,69 @@ export const upsertFromVerify = async (
     }
     throw err;
   }
+};
+
+// The four `@@unique([provider, …])` indexes on Subscription. With the Postgres
+// driver, Prisma's `err.meta.target` is the array of conflicting FIELD names
+// (e.g. ["provider", "originalTransactionId"]) — NOT the index name. We match on
+// the second field of each provider-unique tuple (the first is always
+// "provider"). Some adapters instead surface the index NAME as a string, so we
+// also accept those for forward-compat.
+const SUBSCRIPTION_PROVIDER_UNIQUE_FIELDS = new Set([
+  "originalTransactionId",
+  "appAccountToken",
+  "purchaseToken",
+  "obfuscatedAccountId",
+]);
+const SUBSCRIPTION_PROVIDER_UNIQUE_INDEX_NAMES = new Set([
+  "subscription_apple_otx_unique",
+  "subscription_apple_aat_unique",
+  "subscription_play_token_unique",
+  "subscription_play_oid_unique",
+]);
+
+const isSubscriptionProviderUniqueConflict = (
+  err: Prisma.PrismaClientKnownRequestError,
+): boolean => {
+  if (err.meta?.modelName && err.meta.modelName !== "Subscription") {
+    return false;
+  }
+  const target = err.meta?.target;
+  const tokens =
+    typeof target === "string"
+      ? [target]
+      : Array.isArray(target)
+        ? target.map(String)
+        : [];
+  return tokens.some(
+    (t) =>
+      SUBSCRIPTION_PROVIDER_UNIQUE_FIELDS.has(t) ||
+      SUBSCRIPTION_PROVIDER_UNIQUE_INDEX_NAMES.has(t),
+  );
+};
+
+// The BillingReceipt-idempotencyKey conflict (a concurrent duplicate /verify
+// losing the receipt-create race). BillingReceipt also has a separate
+// `externalNotificationId @unique`, so `modelName === "BillingReceipt"` ALONE is
+// ambiguous — we additionally require the conflicting target to be the
+// idempotencyKey column (or its index name for forward-compat). CreditLedger's
+// conflict is ["accountId", "idempotencyKey"] under modelName "CreditLedger", so
+// the modelName gate keeps it out and it still rethrows.
+const isBillingReceiptIdempotencyConflict = (
+  err: Prisma.PrismaClientKnownRequestError,
+): boolean => {
+  const modelName = err.meta?.modelName;
+  if (modelName !== undefined && modelName !== "BillingReceipt") return false;
+  const target = err.meta?.target;
+  const tokens =
+    typeof target === "string"
+      ? [target]
+      : Array.isArray(target)
+        ? target.map(String)
+        : [];
+  return tokens.some(
+    (t) => t === "idempotencyKey" || t === "BillingReceipt_idempotencyKey_key",
+  );
 };
 
 export type NotificationStateUpdate = {
@@ -537,10 +642,64 @@ export const applyNotification = async (
         },
       });
 
+      // STALENESS GUARD (mirrors verify's `isStaleVerify`, repository.ts ~388):
+      // a valid but OUT-OF-ORDER notification — e.g. an EXPIRED/REVOKE for a
+      // period a later renewal already superseded — must not roll the
+      // subscription's entitlement window/status backwards NOR forfeit the
+      // now-active period. Skipping only the forfeit is insufficient: the stale
+      // update would still write a terminal status over the renewed active row.
+      // So we skip the ENTIRE state-apply (update + grant + forfeit) when the
+      // notification's own period end predates the stored one. The receipt is
+      // already recorded above, preserving idempotency/audit. The terminal
+      // mapping cases now carry `currentPeriodEnd` (from the JWS transaction's
+      // expiresDate / the refreshed Play purchase) precisely so this guard has a
+      // period to compare; updates that omit it (no period drift possible) fall
+      // through and apply as before.
+      if (
+        input.update.currentPeriodEnd !== undefined &&
+        input.update.currentPeriodEnd.getTime() <
+          subscription.currentPeriodEnd.getTime()
+      ) {
+        return { kind: "applied" as const, subscription };
+      }
+
       const updated = await tx.subscription.update({
         where: { id: subscription.id },
         data: input.update,
       });
+
+      // Single-ledger money-in / money-out, transactional with the state update.
+      if (
+        updated.status === SubscriptionStatus.expired ||
+        updated.status === SubscriptionStatus.revoked
+      ) {
+        // Expiry / refund / revoke → bounded clawback of the unused
+        // subscription portion. Cancel-while-active never reaches here: it
+        // only flips willRenew (status stays active), so credits stay to the
+        // period end. Idempotent per (subscription, periodStart). Stale
+        // out-of-order terminal events were already short-circuited by the
+        // staleness guard above, so this only fires for the current period
+        // (natural expiry or a legitimate mid-period refund/revoke).
+        await forfeitSubscriptionPeriod(tx, { subscription: updated });
+      } else if (
+        isEntitledSubscriptionStatus(updated.status) &&
+        updated.currentPeriodStart.getTime() >
+          subscription.currentPeriodStart.getTime()
+      ) {
+        // A renewal advanced the period start → materialize the new period's
+        // allotment. Guarding on "the start advanced" means a grace/billing-
+        // retry transition that keeps the same period does not re-grant.
+        const grantResult = await grantSubscriptionPeriod(tx, {
+          subscription: updated,
+          periodStart: updated.currentPeriodStart,
+        });
+        if (grantResult.kind === "granted") {
+          return {
+            kind: "applied" as const,
+            subscription: grantResult.subscription,
+          };
+        }
+      }
 
       return { kind: "applied" as const, subscription: updated };
     });

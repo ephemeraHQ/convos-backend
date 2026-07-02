@@ -18,17 +18,24 @@ const MONTH_LABEL_FORMATTER = new Intl.DateTimeFormat("en-US", {
  * GET /v2/accounts/me/credits — returns the iOS `CreditBalance` shape:
  * `{ balance, monthlyGrant, monthlyGrantUsed, nextRefreshAt, periodLabel }`.
  *
- * Derivation:
+ * Single-ledger model: `balance` is always the one wallet
+ * (`UserCredits.balance`), for subscribers and non-subscribers alike. The
+ * display fields differ only in framing:
  *   - With an entitled Subscription (effective status in trial/active/grace/
- *     billingRetry per `isEntitledSubscription`): `monthlyGrant` from tier ×
- *     period config; `monthlyGrantUsed` = sum of consume-ledger deltas since
- *     `currentPeriodStart`; `balance = monthlyGrant - monthlyGrantUsed`;
- *     `nextRefreshAt = currentPeriodEnd`.
+ *     billingRetry per `isEntitledSubscription`): `monthlyGrant` = the period
+ *     allotment from tier × period config (the `sub_grant` we wrote on
+ *     subscribe/renewal); `monthlyGrantUsed = min(periodConsumes, monthlyGrant)`
+ *     where `periodConsumes` is |consume deltas| since `currentPeriodStart`.
+ *     We compute usage from period consumes (NOT `monthlyGrant − balance`)
+ *     because the wallet is commingled — admin/promo/signup credits sharing it
+ *     would otherwise make `monthlyGrant − balance` negative and hide real
+ *     usage. `nextRefreshAt = currentPeriodEnd`; `periodLabel` = the month
+ *     label.
  *   - Without an entitled Subscription (no row, expired, revoked, or grace
- *     past end): free-tier daily-refill semantics. `balance` = live ledger
- *     balance clamped to 0; `monthlyGrant` = `PAYMENTS_FREE_TIER_DAILY_CAP_CREDITS`;
- *     `monthlyGrantUsed` = `max(0, cap - balance)`; `nextRefreshAt` = start
- *     of next UTC day; `periodLabel` = "Daily".
+ *     past end): free-tier daily-refill semantics. `monthlyGrant` =
+ *     `PAYMENTS_FREE_TIER_DAILY_CAP_CREDITS`; `monthlyGrantUsed` =
+ *     `max(0, cap − balance)`; `nextRefreshAt` = start of next UTC day;
+ *     `periodLabel` = "Daily".
  *
  * Note for v1: field names reuse `monthlyGrant`/`monthlyGrantUsed` for the
  * daily cap so iOS doesn't need a client-side change. Proper `dailyCap` /
@@ -39,15 +46,16 @@ export async function creditsGetHandler(req: Request, res: Response) {
 
   try {
     const subscription = await findCurrentByAccountId(accountId);
+    const balance = await getBalance(accountId);
+    const positiveBalance = balance < 0n ? 0n : balance;
+    const balanceCredits = Number(positiveBalance);
 
     if (!subscription || !isEntitledSubscription(subscription)) {
-      const balance = await getBalance(accountId);
       const cap = config.freeTierDailyCapCredits;
-      const positiveBalance = balance < 0n ? 0n : balance;
-      const used = Math.max(0, cap - Number(positiveBalance));
+      const used = Math.max(0, cap - balanceCredits);
       const now = new Date();
       res.status(200).json({
-        balance: Number(positiveBalance),
+        balance: balanceCredits,
         monthlyGrant: cap,
         monthlyGrantUsed: used,
         nextRefreshAt: startOfNextUtcDay(now).toISOString(),
@@ -60,15 +68,17 @@ export async function creditsGetHandler(req: Request, res: Response) {
       requireSubscriptionTier(subscription.tier),
       subscription.period,
     );
-    const rawUsed = await sumPeriodConsumes(
-      accountId,
-      subscription.currentPeriodStart,
+    // Usage = period consumes (capped at the allotment), NOT
+    // `monthlyGrant − balance`. The wallet is commingled, so admin/promo/signup
+    // credits would otherwise push `monthlyGrant − balance` negative and report
+    // 0 used despite real spend. `perPeriod=0` → min clamps to 0.
+    const monthlyGrantUsed = Math.min(
+      await sumPeriodConsumes(accountId, subscription.currentPeriodStart),
+      grant.perPeriod,
     );
-    const monthlyGrantUsed = Math.min(rawUsed, grant.perPeriod);
-    const balance = grant.perPeriod - monthlyGrantUsed;
 
     res.status(200).json({
-      balance,
+      balance: balanceCredits,
       monthlyGrant: grant.perPeriod,
       monthlyGrantUsed,
       nextRefreshAt: subscription.currentPeriodEnd.toISOString(),
