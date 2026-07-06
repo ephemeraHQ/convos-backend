@@ -187,9 +187,15 @@ const twitterContextSchema = z
     /** True when the caller folded a shared X Article's body into `inputs.text`.
      *  A referenced article is itself a deliberate build request (the user
      *  pointed the bot at long-form content), so it stands in for the intent
-     *  signal — the intent classifier is skipped for it, exactly as it is for an
-     *  attachment. Otherwise a bare `@bot` + article, whose text is the article
-     *  body with no "make an agent" words, gets classified `not_agent_request`. */
+     *  signal — the intent *classifier* (step 14) is skipped for it, exactly as
+     *  it is for an attachment. Otherwise a bare `@bot` + article, whose text is
+     *  the article body with no "make an agent" words, is classified
+     *  `not_agent_request`. It does NOT skip the text-requirement (step 6a): an
+     *  article always carries its body in `inputs.text`, so requiring text costs
+     *  the real path nothing and stops a caller asserting `hasArticle` on an
+     *  empty body. Caller-asserted like the rest of `twitterContext` (handle,
+     *  idea) — trusted because the field is agent-API-key-gated; content
+     *  moderation still runs regardless. */
     hasArticle: z.boolean().optional(),
   })
   .strict();
@@ -824,22 +830,22 @@ export async function generationsPostHandler(req: Request, res: Response) {
       ? body.twitterContext.idea
       : undefined;
 
-  // A shared X Article stands in for the intent signal the same way an
-  // attachment does (see step 14), so it skips both the fast-fail below and the
-  // classifier.
+  // A shared X Article stands in for the intent SIGNAL the same way an
+  // attachment does, so it skips the classifier (step 14). It does NOT skip the
+  // text-requirement fast-fail below — an article always folds its body into
+  // `inputs.text`, so requiring text costs the real path nothing while stopping
+  // a caller from asserting `hasArticle` to push a text-less build through.
   const twitterHasArticle = body.twitterContext?.hasArticle === true;
 
   // 6a. The twitter intent classifier needs text to run on, so a twitter
   //     submission must carry either `inputs.text` or `twitterContext.idea` —
-  //     unless it carries an attachment or a shared article. Either is itself a
-  //     deliberate build request, so it stands in for the intent text (step 14
-  //     skips the classifier in that case). Checked here — before any S3/LLM
-  //     work — so a text-less, signal-less twitter request fails fast.
-  if (
-    body.twitterContext &&
-    coalesced.attachments.length === 0 &&
-    !twitterHasArticle
-  ) {
+  //     unless it carries an attachment. An attachment is itself a deliberate
+  //     build request, so it stands in for the intent text (step 14 skips the
+  //     classifier in that case). A shared article is NOT exempt here: it always
+  //     carries its body in `inputs.text`, so the text requirement is already
+  //     satisfied. Checked here — before any S3/LLM work — so a text-less,
+  //     attachment-less twitter request fails fast.
+  if (body.twitterContext && coalesced.attachments.length === 0) {
     const intentText = twitterIdea ?? coalesced.text;
     if (!intentText || intentText.trim().length === 0) {
       res.status(400).json({
