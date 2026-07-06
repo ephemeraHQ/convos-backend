@@ -5,9 +5,9 @@ import { prisma } from "@/utils/prisma";
 // The API serves each hint as a short string under `hints`. The DB column is
 // generous TEXT so curation is never lossy, so the read path is where the
 // published contract is enforced: never serve an over-length hint (clients
-// budget for <= 240 characters) and cap the payload size. Filtering and the
+// budget for <= 350 characters) and cap the payload size. Filtering and the
 // limit run in SQL so the cap counts only contract-valid rows.
-const MAX_HINT_LENGTH = 240;
+const MAX_HINT_LENGTH = 350;
 const MAX_HINTS = 1000;
 
 export async function listHandler(req: Request, res: Response) {

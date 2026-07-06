@@ -207,7 +207,7 @@ model AgentTemplate {
 // Short, quirky prompt suggestions served to the maker's empty composer.
 // Dedicated table, intentionally separate from published AgentTemplates: a
 // hint is just a string, with no owner, slug, avatar, tools, or connections.
-// The public read endpoint enforces the API contract (<= 240 chars, capped
+// The public read endpoint enforces the API contract (<= 350 chars, capped
 // item count); the DB column stays generous TEXT so curation isn't lossy.
 model AgentPromptHint {
   id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid

@@ -92,7 +92,7 @@ const seedHint = (args: {
   });
 
 // A fixed-length string (incl. the test prefix) so length-boundary assertions
-// are exact under the 240-char cap.
+// are exact under the 350-char cap.
 const textOfLength = (length: number, label: string) => {
   const head = `${TEST_PREFIX}${label}:`;
   return head + "x".repeat(Math.max(0, length - head.length));
@@ -326,9 +326,9 @@ describe("Agent prompt hints admin endpoints", () => {
     expect(json.text).toBe(text);
   });
 
-  test("create rejects text longer than 240 chars (400)", async () => {
-    const overLimit = textOfLength(241, "over");
-    expect(overLimit.length).toBe(241);
+  test("create rejects text longer than 350 chars (400)", async () => {
+    const overLimit = textOfLength(351, "over");
+    expect(overLimit.length).toBe(351);
 
     const { response } = await createHint({ text: overLimit });
     expect(response.status).toBe(400);
@@ -339,17 +339,17 @@ describe("Agent prompt hints admin endpoints", () => {
     expect(count).toBe(0);
   });
 
-  test("create accepts text of exactly 240 chars (201)", async () => {
-    const atLimit = textOfLength(240, "limit");
-    expect(atLimit.length).toBe(240);
+  test("create accepts text of exactly 350 chars (201)", async () => {
+    const atLimit = textOfLength(350, "limit");
+    expect(atLimit.length).toBe(350);
 
     const { response } = await createHint({ text: atLimit });
     expect(response.status).toBe(201);
   });
 
-  test("patch rejects text longer than 240 chars (400)", async () => {
+  test("patch rejects text longer than 350 chars (400)", async () => {
     const created = await createHint({ text: `${TEST_PREFIX}patch-cap` });
-    const overLimit = textOfLength(241, "patchover");
+    const overLimit = textOfLength(351, "patchover");
 
     const { response } = await patchHint(created.json.id, { text: overLimit });
     expect(response.status).toBe(400);

@@ -7,7 +7,7 @@ import { prisma } from "@/utils/prisma";
 // column is generous TEXT, but storing an over-length hint here would create an
 // invisible row the public endpoint silently drops, so what an admin saves is
 // exactly what ships.
-const MAX_HINT_LENGTH = 240;
+const MAX_HINT_LENGTH = 350;
 
 const bodySchema = z.object({
   text: z.string().trim().min(1).max(MAX_HINT_LENGTH),
