@@ -344,6 +344,36 @@ describe("POST /generations — twitter intent moderation", () => {
     expect(res.status).toBe(202);
     expect(intentCalls).toBe(0);
   });
+
+  test("hasArticle → intent gate skipped (article is the request)", async () => {
+    // A `@bot` + shared X Article whose seed is the article body carries no
+    // "make an agent" words, so the classifier would reject it — but the folded
+    // article is a deliberate build request, so the gate is skipped entirely
+    // (like an attachment) and the build proceeds.
+    let intentCalls = 0;
+    __resetTwitterIntentForTests(() => {
+      intentCalls += 1;
+      return Promise.resolve({ allowed: false, reason: "not_agent_request" });
+    });
+    __resetGenerationExecutorForTests(() => Promise.resolve());
+
+    const res = await post(
+      {
+        source: TEST_SOURCE,
+        inputs: {
+          text: 'Shared article from @author: "How I built an app"\nA long article body with no explicit build request in it.',
+        },
+        twitterContext: {
+          twitterHandle: "@some_user",
+          tweetId: "1789432100123456790",
+          hasArticle: true,
+        },
+      },
+      { headers: withKey("tw-article-skips-intent") },
+    );
+    expect(res.status).toBe(202);
+    expect(intentCalls).toBe(0);
+  });
 });
 
 describe("POST /generations — twitter happy path", () => {
