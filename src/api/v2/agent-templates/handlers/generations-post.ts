@@ -38,7 +38,7 @@
  *  12.                  → existing different body               → 409
  *  13. Attachment bytes — existence + size caps (fresh submit)  → 400
  *  14. Content moderation (text only)                           → 422 (content)
- *  15. Twitter intent moderation (twitterContext, no attachment) → 422 (intent)
+ *  15. Twitter intent moderation (twitterContext, no attachment/article) → 422 (intent)
  *  16. Persist row + fire executor + respondPerMode
  *
  * Idempotent replays go through the SAME respondPerMode path as the original
@@ -184,6 +184,22 @@ const twitterContextSchema = z
     }),
     /** Optional override for the moderation/reply input. Defaults to inputs.text. */
     idea: z.string().optional(),
+    /** True when the caller folded a shared X Article's body into `inputs.text`.
+     *  A referenced article is itself a deliberate build request (the user
+     *  pointed the bot at long-form content), so it stands in for the intent
+     *  signal — the intent *classifier* (step 14) is skipped for it, exactly as
+     *  it is for an attachment. Otherwise a bare `@bot` + article, whose text is
+     *  the article body with no "make an agent" words, is classified
+     *  `not_agent_request`. It does NOT skip the text-requirement (step 6a): an
+     *  article always carries its body in `inputs.text`, so requiring text costs
+     *  the real path nothing and stops a caller asserting `hasArticle` on an
+     *  empty body. Caller-asserted like the rest of `twitterContext` (handle,
+     *  idea) — trusted because the field is agent-API-key-gated; content
+     *  moderation still runs regardless. The caller MUST set it only when it
+     *  actually folded an article body into `inputs.text`; the server can't
+     *  verify (it has no Twitter access), so asserting it falsely only skips the
+     *  build-intent classifier, never content safety. */
+    hasArticle: z.boolean().optional(),
   })
   .strict();
 
@@ -817,12 +833,21 @@ export async function generationsPostHandler(req: Request, res: Response) {
       ? body.twitterContext.idea
       : undefined;
 
+  // A shared X Article stands in for the intent SIGNAL the same way an
+  // attachment does, so it skips the classifier (step 14). It does NOT skip the
+  // text-requirement fast-fail below — an article always folds its body into
+  // `inputs.text`, so requiring text costs the real path nothing while stopping
+  // a caller from asserting `hasArticle` to push a text-less build through.
+  const twitterHasArticle = body.twitterContext?.hasArticle === true;
+
   // 6a. The twitter intent classifier needs text to run on, so a twitter
   //     submission must carry either `inputs.text` or `twitterContext.idea` —
   //     unless it carries an attachment. An attachment is itself a deliberate
   //     build request, so it stands in for the intent text (step 14 skips the
-  //     classifier in that case). Checked here — before any S3/LLM work — so a
-  //     text-less, attachment-less twitter request fails fast.
+  //     classifier in that case). A shared article is NOT exempt here: it always
+  //     carries its body in `inputs.text`, so the text requirement is already
+  //     satisfied. Checked here — before any S3/LLM work — so a text-less,
+  //     attachment-less twitter request fails fast.
   if (body.twitterContext && coalesced.attachments.length === 0) {
     const intentText = twitterIdea ?? coalesced.text;
     if (!intentText || intentText.trim().length === 0) {
@@ -1047,13 +1072,21 @@ export async function generationsPostHandler(req: Request, res: Response) {
   }
 
   // 14. Twitter intent gate — only when twitterContext is present AND there's no
-  //     attachment. An attached image/PDF/audio is itself a deliberate build
-  //     request and stands in for the text intent signal (which the classifier
-  //     never sees), so a photo mention whose only "text" is the photo's own
-  //     t.co link isn't rejected as not_agent_request. Binary attachments are
-  //     still moderated off the request path in the executor (Rekognition for
-  //     images, a transcript check for audio).
-  if (body.twitterContext && coalesced.attachments.length === 0) {
+  //     attachment or shared article. An attached image/PDF/audio is itself a
+  //     deliberate build request and stands in for the text intent signal (which
+  //     the classifier never sees), so a photo mention whose only "text" is the
+  //     photo's own t.co link isn't rejected as not_agent_request. A folded X
+  //     Article is the same case: the user pointed the bot at long-form content,
+  //     but the seed is the article body with no "make an agent" words, so the
+  //     classifier would wrongly reject it — the deliberate reference stands in
+  //     for the intent signal instead. Binary attachments are still moderated
+  //     off the request path in the executor (Rekognition for images, a
+  //     transcript check for audio).
+  if (
+    body.twitterContext &&
+    coalesced.attachments.length === 0 &&
+    !twitterHasArticle
+  ) {
     const intentInput = twitterIdea ?? coalesced.text ?? "";
     const intent = await checkTwitterIntent(intentInput, moderationTrace);
     if (!intent.allowed) {
