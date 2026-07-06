@@ -195,7 +195,10 @@ const twitterContextSchema = z
      *  the real path nothing and stops a caller asserting `hasArticle` on an
      *  empty body. Caller-asserted like the rest of `twitterContext` (handle,
      *  idea) — trusted because the field is agent-API-key-gated; content
-     *  moderation still runs regardless. */
+     *  moderation still runs regardless. The caller MUST set it only when it
+     *  actually folded an article body into `inputs.text`; the server can't
+     *  verify (it has no Twitter access), so asserting it falsely only skips the
+     *  build-intent classifier, never content safety. */
     hasArticle: z.boolean().optional(),
   })
   .strict();
