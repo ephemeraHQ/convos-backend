@@ -122,11 +122,11 @@ describe("Agent prompt hints list endpoint", () => {
     expect(hints).not.toContain(unpublished);
   });
 
-  test("excludes hints longer than 240 characters, includes 240 exactly", async () => {
-    const atLimit = textOfLength(240, "limit");
-    const overLimit = textOfLength(241, "over");
-    expect(atLimit.length).toBe(240);
-    expect(overLimit.length).toBe(241);
+  test("excludes hints longer than 350 characters, includes 350 exactly", async () => {
+    const atLimit = textOfLength(350, "limit");
+    const overLimit = textOfLength(351, "over");
+    expect(atLimit.length).toBe(350);
+    expect(overLimit.length).toBe(351);
 
     await createHint({ text: atLimit, sortOrder: 1 });
     await createHint({ text: overLimit, sortOrder: 2 });

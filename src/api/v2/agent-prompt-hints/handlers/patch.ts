@@ -5,7 +5,7 @@ import { prisma } from "@/utils/prisma";
 
 // Same length cap as create: the public read filters over-length rows, so the
 // admin write keeps stored == served.
-const MAX_HINT_LENGTH = 240;
+const MAX_HINT_LENGTH = 350;
 
 const paramsSchema = z.object({
   id: z.string().uuid(),
