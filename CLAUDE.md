@@ -32,8 +32,23 @@ schema, pin every legacy shape with `assertLegacyShapeValidates` (see
 CI instead of breaking users. Example:
 `tests/subscriptions/verify-body-contract.test.ts`.
 
+## Money / credits: go through the ledger wallet
+
+Any change touching credits, balances, or subscription billing MUST go through
+the ledger wallet. `getBalance` is the single source of truth; all balance
+movement goes through `@/payments` `consume` / `grant` / `adjust` (subscriptions
+via `grantSubscriptionPeriod` / `forfeitSubscriptionPeriod`). Never write
+`UserCredits` or `CreditLedger` directly outside `src/payments/ledger/`.
+
+Read the full law before writing money code: **`src/payments/AGENTS.md`**.
+Repo-wide agent guidance: `AGENTS.md`.
+
 ## PR checklist
 
 - [ ] Any change touching `src/api/v2/**` request schemas: backwards-compatible
       for shipped clients? (old request shapes still validate — add/extend a
       contract test)
+- [ ] Any change touching credits/balances: routed through `@/payments`
+      (`consume` / `grant` / `adjust`), no direct `UserCredits` / `CreditLedger`
+      writes outside `src/payments/ledger/`, idempotency key present
+      (see `src/payments/AGENTS.md`)
