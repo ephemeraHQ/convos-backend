@@ -56,6 +56,15 @@ row update and the ledger row commit or roll back together.
 / `consume`, kept so the agent gate and admin view keep stable imports. Prefer
 the `@/payments` names in new code.
 
+A few existing internal flows write through the low-level primitives directly
+rather than the `consume`/`grant`/`adjust` façade: the signup bonus
+(`grantSignupBonusWithTx`, `src/payments/signup-bonus.ts`) and daily refill
+(`src/payments/daily-refill/service.ts`) call `applyDeltaWithTx` / `applyDelta`
+with their own `GrantKind`, because they must commit inside a wider transaction
+or a batch loop. They are precedent, not violations — a new tx-scoped flow
+follows the same pattern (see the checklist below), and still lives inside
+`src/payments`.
+
 ## Hard rules — do NOT
 
 - **Do NOT write `UserCredits` or `CreditLedger` directly** (`prisma.userCredits.update`,
@@ -113,7 +122,10 @@ keys. The `consume` key is client-supplied by the assistants harness
    source.
 3. Needs atomicity with other DB writes (e.g. a subscription row)? Take a tx and
    call `applyDeltaWithTx(tx, …)`. Otherwise the top-level `grant` / `consume` /
-   `adjust` already open their own transaction.
+   `adjust` already open their own transaction. Caveat: `applyDeltaWithTx` /
+   `applyDelta` do NOT enforce the `GrantKind.active` gate that `grant()` does —
+   if your credit source uses a `GrantKind` that can be deactivated, either go
+   through `grant()` or replicate the active-check in your tx.
 4. Provide a deterministic idempotency key (charset above). One logical event =
    one key.
 5. Test balance movement, idempotent replay (same key → no double move), and
