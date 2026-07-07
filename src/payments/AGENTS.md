@@ -76,9 +76,16 @@ the `@/payments` names in new code.
 ## Idempotency keys
 
 Every ledger mutation carries an idempotency key, charset
-`^[A-Za-z0-9_-]{1,255}$` — underscore separators, **not** colon. Replays are
-validated field-by-field: the same key with a different payload throws
-`IdempotencyMismatchError` (surfaced as HTTP 409), it does not silently double-move.
+`^[A-Za-z0-9_-]{1,255}$` — underscore separators, **not** colon.
+
+The top-level entry points (`consume` / `grant` / `adjust`) validate replays
+field-by-field: the same key with a different payload throws
+`IdempotencyMismatchError` (HTTP 409), and a matching replay returns the prior
+result instead of double-moving. That guarantee lives in `applyDelta`, **not**
+in `applyDeltaWithTx`. If you call `applyDeltaWithTx` directly (as the
+subscription helpers do), you own the idempotency pre-check — look up the prior
+row first (see `grantSubscriptionPeriod`'s `findLedgerRow` short-circuit), or a
+duplicate key surfaces as a raw Prisma `P2002`, not a 409.
 
 Server-generated key shapes: `signup_bonus_<accountId>`,
 `daily_refill_<accountId>_<YYYY-MM-DD>`, and per-period `sub_grant` / `sub_forfeit`
@@ -98,8 +105,9 @@ keys. The `consume` key is client-supplied by the assistants harness
 
 ## Adding a new money flow — checklist
 
-1. Add, debit, or admin-adjust? Use `grant`, `consume`, or `adjust`. Do not
-   invent a new mutation path.
+1. Add, debit, or admin-adjust? Use `grant`, `consume`, or `adjust`.
+   Subscription billing? Use `grantSubscriptionPeriod` / `forfeitSubscriptionPeriod`.
+   Do not invent a new mutation path.
 2. New systematic source of granted credits? Define a `GrantKind` (migration +
    seed) and pass its id to `grant`. Don't overload `manual` for a systematic
    source.
