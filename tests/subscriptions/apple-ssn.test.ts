@@ -209,12 +209,18 @@ describe("POST /v2/webhooks/apple/ssn", () => {
     const otid = "1000000000000010";
     const { subscription } = await seedSubscription(otid);
 
+    // The renewal must extend into the future so the derived status is active
+    // regardless of the calendar date the suite runs on.
+    const purchaseDate = new Date();
+    const expiresDate = new Date(
+      purchaseDate.getTime() + 30 * 24 * 60 * 60 * 1000,
+    );
     const transactionJws = await signTransaction({
       originalTransactionId: otid,
       transactionId: "3000000000000010",
       productId: "app.convos.subs.monthly",
-      purchaseDate: new Date("2026-06-01T00:00:00.000Z").getTime(),
-      expiresDate: new Date("2026-07-01T00:00:00.000Z").getTime(),
+      purchaseDate: purchaseDate.getTime(),
+      expiresDate: expiresDate.getTime(),
     });
     const signedPayload = await signNotification({
       notificationType: "DID_RENEW",
@@ -231,7 +237,7 @@ describe("POST /v2/webhooks/apple/ssn", () => {
       where: { id: subscription.id },
     });
     expect(updated?.currentPeriodEnd.toISOString()).toBe(
-      "2026-07-01T00:00:00.000Z",
+      expiresDate.toISOString(),
     );
     expect(updated?.status).toBe(SubscriptionStatus.active);
 
