@@ -45,6 +45,7 @@ import {
   OpenAI,
 } from "openai";
 import { getPostHogClient } from "@/api/v2/agent-templates/services/posthog";
+import logger from "@/utils/logger";
 
 const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
 
@@ -286,9 +287,16 @@ export async function openRouterChatCompletion(
       // can't hold the resolved upstream: that's only on the response, after the
       // wrapper has captured `$ai_generation`. So we emit it ourselves to tell
       // whether the Bedrock preference took effect or fell back, and to segment
-      // latency by upstream. Fire-and-forget; only on success (errors are
-      // captured by the wrapper's own event).
-      captureProviderTelemetry(opts, response, performance.now() - startedMs);
+      // latency by upstream. `attempt` is the retry count that preceded this
+      // success (0 on the first try) so retry frequency is monitorable in
+      // PostHog. Fire-and-forget; only on success (errors are captured by the
+      // wrapper's own event).
+      captureProviderTelemetry(
+        opts,
+        response,
+        performance.now() - startedMs,
+        attempt,
+      );
       return response;
     } catch (err) {
       const delayMs = TRANSIENT_RETRY_BASE_DELAY_MS * 2 ** attempt;
@@ -303,9 +311,17 @@ export async function openRouterChatCompletion(
       ) {
         throw err;
       }
-      console.warn(
-        `[openrouter] transient connection error on stage=${opts.stage} attempt=${attempt + 1}/${TRANSIENT_RETRY_ATTEMPTS + 1}; retrying in ${delayMs}ms:`,
-        err instanceof Error ? err.message : String(err),
+      // Structured so retry frequency is queryable (by stage/attempt) in the log
+      // pipeline, not just eyeballed in raw console output.
+      logger.warn(
+        {
+          stage: opts.stage,
+          attempt: attempt + 1,
+          maxAttempts: TRANSIENT_RETRY_ATTEMPTS + 1,
+          delayMs,
+          err: err instanceof Error ? err.message : String(err),
+        },
+        "[openrouter] transient connection error, retrying",
       );
       await sleep(delayMs);
     }
@@ -319,6 +335,7 @@ function captureProviderTelemetry(
   opts: OpenRouterChatOptions,
   response: OpenAI.Chat.Completions.ChatCompletion,
   latencyMs: number,
+  retryCount: number,
 ): void {
   if (!opts.trace) return;
   const ph = getPostHogClient();
@@ -338,6 +355,9 @@ function captureProviderTelemetry(
         // providers/responses that don't report it.
         upstream_provider: r.provider,
         latency_ms: latencyMs,
+        // Transient-connection retries that preceded this success (0 = first
+        // try). Lets retry frequency be monitored alongside the call.
+        retry_count: retryCount,
       },
     });
   } catch {
