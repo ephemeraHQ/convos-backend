@@ -1784,10 +1784,13 @@ export async function generateTemplate(
     }
 
     const retryLatencyMs = Math.round(performance.now() - retryStarted);
+    // Both calls are billed, so tokens + cost accumulate across the first
+    // (malformed) call and the retry — matching latencyMs, which already spans
+    // both (measured from t0). Replacing would underreport the retry path.
     latencyMs = Math.round(performance.now() - t0);
-    promptTokens = Number(retryData?.usage?.prompt_tokens ?? 0);
-    completionTokens = Number(retryData?.usage?.completion_tokens ?? 0);
-    costUsd = Number(retryData?.usage?.cost ?? 0);
+    promptTokens += Number(retryData?.usage?.prompt_tokens ?? 0);
+    completionTokens += Number(retryData?.usage?.completion_tokens ?? 0);
+    costUsd += Number(retryData?.usage?.cost ?? 0);
     responseModel = retryModel;
     console.log(
       `[templateGen] generate retry ok: model=${retryModel}, latencyMs=${retryLatencyMs}, prompt=${retryData?.usage?.prompt_tokens}, completion=${retryData?.usage?.completion_tokens}`,
