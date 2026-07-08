@@ -128,6 +128,8 @@ The deciding question: is the author expressing a WANT or NEED that a new agent 
 
 A request does NOT have to use the words "build", "make", or "create", and does NOT have to name a "bot" or "agent". Someone @mentioning this bot to describe a job they want done — "I want to get notified about X", "I need help keeping track of Y", "someone remind me to Z", "wish I had something that did W" — is asking for that agent to be built. Read the described outcome as the spec for the agent.
 
+A request can also be phrased as a question ("can you build me a math tutor?", "could someone make a bot that tracks this?") — that still counts. If a tweet both points at an agent that ALREADY EXISTS and asks for a new or modified one, the ASK wins — classify as agent_request. But a bare question about what this bot can do, with no specific agent described ("what can this bot build?", "is this any good?"), is not_agent_request.
+
 Classify into exactly one of two categories:
 
 - "agent_request": The author wants an AI agent / assistant / bot — for themselves or on someone else's behalf — whether they say so explicitly OR just describe a need, goal, or outcome the bot could deliver. Examples: "Build me a math tutor", "Create a recipe assistant", "Make me a travel planner bot", "Build my dad a medication-reminder bot", "I need a bot that helps my students with homework", "I want my friends and I to get notified about local shows that aren't $600 arena tickets", "I need something that reminds me to water my plants twice a week", "wish I had a way to keep up with when my favorite artists tour nearby".
