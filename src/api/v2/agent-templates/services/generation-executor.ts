@@ -589,6 +589,7 @@ async function _runPipeline(
       promptTokens: 0,
       completionTokens: 0,
       latencyMs: 0,
+      costUsd: 0,
       ...base,
       outcome: "failed",
     });
@@ -676,6 +677,7 @@ async function _runPipeline(
       promptTokens: 0,
       completionTokens: 0,
       latencyMs: Math.round(performance.now() - startTime),
+      costUsd: 0,
       ...base,
       outcome: "failed",
     });

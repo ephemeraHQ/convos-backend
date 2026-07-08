@@ -163,7 +163,11 @@ export interface OpenRouterChatOptions {
     | "compose-reply"
     | "pii-redaction"
     | "transcribe";
-  body: OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming;
+  /** OpenAI params plus OpenRouter extensions — `usage: { include: true }`
+   *  turns on usage accounting so the response carries `usage.cost`. */
+  body: OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming & {
+    usage?: { include: boolean };
+  };
   /** External cancellation (e.g. the executor's per-generation timeout). */
   signal?: AbortSignal;
   /** Per-request wallclock cap in ms. */

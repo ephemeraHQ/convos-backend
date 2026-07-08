@@ -30,6 +30,7 @@ describe("resolveActor — precedence ladder", () => {
     promptTokens: 0,
     completionTokens: 0,
     latencyMs: 0,
+    costUsd: 0,
   };
 
   test.each([
