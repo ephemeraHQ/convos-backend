@@ -291,6 +291,11 @@ export interface GenerationMetrics {
   promptTokens: number;
   completionTokens: number;
   latencyMs: number;
+  /** Actual USD cost of the call, from OpenRouter usage accounting
+   *  (`usage: { include: true }`) — reflects prompt-cache discounts and the
+   *  resolved upstream's real price, not a list-price estimate. 0 when the
+   *  provider didn't report a cost. */
+  costUsd: number;
 }
 
 /** Return type for `callGenerateTemplate` — template + LLM metrics. */
@@ -304,6 +309,7 @@ export interface GenerationResult {
 interface PassthroughTokens {
   promptTokens: number;
   completionTokens: number;
+  costUsd: number;
 }
 
 interface PassthroughBundle {
@@ -331,6 +337,7 @@ export const DEFAULT_TEST_METRICS: GenerationMetrics = {
   promptTokens: 100,
   completionTokens: 200,
   latencyMs: 1500,
+  costUsd: 0,
 };
 
 /** One attachment resolved to LLM-ready content by the executor — the bytes are
@@ -845,6 +852,7 @@ Rules:
         model: getModel(),
         messages: [{ role: "user", content: selectorPrompt }],
         temperature: 0.2,
+        usage: { include: true },
       },
       signal: externalSignal,
       timeoutMs: OPENROUTER_TIMEOUT_MS,
@@ -867,6 +875,7 @@ Rules:
   const tokens: PassthroughTokens = {
     promptTokens: Number(data?.usage?.prompt_tokens ?? 0),
     completionTokens: Number(data?.usage?.completion_tokens ?? 0),
+    costUsd: Number(data?.usage?.cost ?? 0),
   };
   const content = data?.choices?.[0]?.message?.content;
   if (!content) return null;
@@ -1198,7 +1207,7 @@ export async function classifyPastedContent(
         description: structured.description,
         category: null,
       },
-      tokens: { promptTokens: 0, completionTokens: 0 },
+      tokens: { promptTokens: 0, completionTokens: 0, costUsd: 0 },
     };
   }
 
@@ -1262,6 +1271,7 @@ Rules:
         model: getClassifierModel(),
         messages: [{ role: "user", content: classifierPrompt }],
         temperature: 0.2,
+        usage: { include: true },
       },
       signal: externalSignal,
       timeoutMs: OPENROUTER_TIMEOUT_MS,
@@ -1284,6 +1294,7 @@ Rules:
   const tokens: PassthroughTokens = {
     promptTokens: Number(data?.usage?.prompt_tokens ?? 0),
     completionTokens: Number(data?.usage?.completion_tokens ?? 0),
+    costUsd: Number(data?.usage?.cost ?? 0),
   };
   const content_response = data?.choices?.[0]?.message?.content;
   if (!content_response) return null;
@@ -1496,6 +1507,7 @@ export async function generateTemplate(
             promptTokens: bundle.tokens.promptTokens,
             completionTokens: bundle.tokens.completionTokens,
             latencyMs: Math.round(performance.now() - funcStart),
+            costUsd: bundle.tokens.costUsd,
           },
         };
       }
@@ -1525,6 +1537,7 @@ export async function generateTemplate(
           promptTokens: passthroughBundle.tokens.promptTokens,
           completionTokens: passthroughBundle.tokens.completionTokens,
           latencyMs: Math.round(performance.now() - funcStart),
+          costUsd: passthroughBundle.tokens.costUsd,
         },
       };
 
@@ -1560,6 +1573,10 @@ export async function generateTemplate(
 
   const reqBody: any = {
     model,
+    // OpenRouter usage accounting so the response carries actual `usage.cost`
+    // (reflects prompt-cache discounts / resolved-upstream price). Surfaced as
+    // GenerationMetrics.costUsd; the retry body inherits it via spread.
+    usage: { include: true },
     messages: [
       // Prompt-caching breakpoint on the static ~12k-token system prompt. It's
       // byte-identical across every generation, so caching its prefix cuts
@@ -1666,6 +1683,7 @@ export async function generateTemplate(
   let latencyMs = Math.round(performance.now() - t0);
   let promptTokens = Number(data?.usage?.prompt_tokens ?? 0);
   let completionTokens = Number(data?.usage?.completion_tokens ?? 0);
+  let costUsd = Number(data?.usage?.cost ?? 0);
   let responseModel = String(data?.model ?? model);
   console.log(
     `[templateGen] generate ok: model=${responseModel}, latencyMs=${latencyMs}, prompt=${promptTokens}, completion=${completionTokens}`,
@@ -1769,6 +1787,7 @@ export async function generateTemplate(
     latencyMs = Math.round(performance.now() - t0);
     promptTokens = Number(retryData?.usage?.prompt_tokens ?? 0);
     completionTokens = Number(retryData?.usage?.completion_tokens ?? 0);
+    costUsd = Number(retryData?.usage?.cost ?? 0);
     responseModel = retryModel;
     console.log(
       `[templateGen] generate retry ok: model=${retryModel}, latencyMs=${retryLatencyMs}, prompt=${retryData?.usage?.prompt_tokens}, completion=${retryData?.usage?.completion_tokens}`,
@@ -1784,6 +1803,7 @@ export async function generateTemplate(
       promptTokens,
       completionTokens,
       latencyMs,
+      costUsd,
     },
   };
 }
