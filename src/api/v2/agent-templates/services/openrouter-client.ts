@@ -208,7 +208,10 @@ function isTransientConnectionError(err: unknown): boolean {
     .filter((s): s is string => typeof s === "string")
     .join(" ")
     .toLowerCase();
-  return /terminated|econnreset|econnrefused|etimedout|epipe|socket hang up|other side closed|network error|fetch failed/.test(
+  // Note: no ETIMEDOUT here — a timeout stays single-attempt per the contract
+  // above (the SDK's own wallclock timeout raises APIConnectionTimeoutError,
+  // already excluded); only unambiguous connection drops are retried.
+  return /terminated|econnreset|econnrefused|epipe|socket hang up|other side closed|network error|fetch failed/.test(
     signature,
   );
 }
