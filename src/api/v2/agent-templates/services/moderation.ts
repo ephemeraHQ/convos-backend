@@ -122,18 +122,22 @@ export function __resetTwitterIntentForTests(
 function buildTwitterIntentPrompt(input: string): string {
   return `You are an intent classifier for a Twitter bot that builds AI assistants when users @mention it with requests like "Build me a math tutor bot".
 
-The input below has already passed a separate content-safety check; you are ONLY judging whether the author is genuinely asking the bot to BUILD AN AGENT.
+The input below has already passed a separate content-safety check; you are ONLY judging whether the author wants the bot to BUILD AN AGENT for them.
 
-The deciding question: is the author ASKING for an agent to be built (for themselves OR for someone else), or are they TALKING ABOUT / showing off an agent that already exists?
+The deciding question: is the author expressing a WANT or NEED that a new agent would fulfill (for themselves OR for someone else), or are they TALKING ABOUT / showing off an agent that already exists?
+
+A request does NOT have to use the words "build", "make", or "create", and does NOT have to name a "bot" or "agent". Someone @mentioning this bot to describe a job they want done — "I want to get notified about X", "I need help keeping track of Y", "someone remind me to Z", "wish I had something that did W" — is asking for that agent to be built. Read the described outcome as the spec for the agent.
 
 Classify into exactly one of two categories:
 
-- "agent_request": The author is asking for an AI agent / assistant / bot to be built — for themselves or on someone else's behalf. Examples: "Build me a math tutor", "Create a recipe assistant", "Make me a travel planner bot", "Build my dad a medication-reminder bot", "I need a bot that helps my students with homework".
+- "agent_request": The author wants an AI agent / assistant / bot — for themselves or on someone else's behalf — whether they say so explicitly OR just describe a need, goal, or outcome the bot could deliver. Examples: "Build me a math tutor", "Create a recipe assistant", "Make me a travel planner bot", "Build my dad a medication-reminder bot", "I need a bot that helps my students with homework", "I want my friends and I to get notified about local shows that aren't $600 arena tickets", "I need something that reminds me to water my plants twice a week", "wish I had a way to keep up with when my favorite artists tour nearby".
 
 - "not_agent_request": Anything else. This includes:
   • Greetings, chit-chat, and spam: "follow me back", "retweet this", "hi", "good morning", "@bot what's up", "lol".
   • Requests for the bot to do something other than build an agent.
-  • Tweets that TALK ABOUT, DESCRIBE, ANNOUNCE, SHOWCASE, or PROMOTE an agent that already exists rather than ask for a new one — e.g. reporting what someone already built ("Someone built a live music agent…") or pointing at a finished agent ("Check out this agent", "Here's the agent <link>"). Describing in detail what an agent does — even listing its features — is NOT a request to build one.
+  • Tweets that TALK ABOUT, DESCRIBE, ANNOUNCE, SHOWCASE, or PROMOTE an agent that ALREADY EXISTS rather than ask for a new one — e.g. reporting what someone already built ("Someone built a live music agent…") or pointing at a finished agent ("Check out this agent", "Here's the agent <link>"). Describing in detail what an already-built agent does — even listing its features — is NOT a request to build one.
+
+The distinction is EXISTING vs WANTED, not explicit vs implicit: an unmet want/need is a request even without imperative wording; a description of something that already exists is not, even if it reads like a spec.
 
 Respond with ONLY the classification label, nothing else. No quotes, no explanation, no extra text.
 
