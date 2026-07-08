@@ -12,6 +12,8 @@
 {"id":"fridge-recipes","expected":true,"input":"make me a recipe assistant that suggests dinners from whatever's in my fridge","notes":"First-person build request."}
 {"id":"concert-tickets-request","expected":true,"input":"I want an agent that tracks concert tickets for my favorite bands and grabs them the second they drop","notes":"Same music/ticket domain as encore-showcase but framed as a first-person request — must NOT be over-rejected as a showcase."}
 {"id":"travel-planner-request","expected":true,"input":"create a travel planner that finds cheap flights and builds an itinerary","notes":"Same domain as product-promo but an actual request → agent_request."}
+{"id":"third-party-dad","expected":true,"input":"build my dad a medication reminder bot that pings him when it's time to take each pill","notes":"A build request with a third-party beneficiary — still agent_request; the describe-vs-request axis is not about who benefits."}
+{"id":"third-party-students","expected":true,"input":"create a homework helper for my students that explains problems without giving away the answer","notes":"Third-party-beneficiary request → agent_request (guards against narrowing agent_request to first-person)."}
 {"id":"greeting","expected":false,"input":"gm ☀️","notes":"Greeting, no request."}
 {"id":"follow-spam","expected":false,"input":"follow me back and I'll follow you","notes":"Engagement spam."}
 {"id":"chitchat","expected":false,"input":"lol this is the funniest thing I've seen all day","notes":"Chit-chat."}

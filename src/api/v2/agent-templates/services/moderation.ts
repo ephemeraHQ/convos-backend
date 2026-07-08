@@ -122,18 +122,18 @@ export function __resetTwitterIntentForTests(
 function buildTwitterIntentPrompt(input: string): string {
   return `You are an intent classifier for a Twitter bot that builds AI assistants when users @mention it with requests like "Build me a math tutor bot".
 
-The input below has already passed a separate content-safety check; you are ONLY judging whether the author is genuinely asking the bot to BUILD AN AGENT for them.
+The input below has already passed a separate content-safety check; you are ONLY judging whether the author is genuinely asking the bot to BUILD AN AGENT.
 
-The deciding question is who the tweet is FOR: is the author asking the bot to make them an agent (agent_request), or are they talking about / showing off an agent (not_agent_request)?
+The deciding question: is the author ASKING for an agent to be built (for themselves OR for someone else), or are they TALKING ABOUT / showing off an agent that already exists?
 
 Classify into exactly one of two categories:
 
-- "agent_request": The author is directly asking for an AI agent / assistant / bot to be built for them — an imperative or first-person request. Examples: "Build me a math tutor", "Create a recipe assistant", "Make me a travel planner bot", "I need a bot that helps with coding".
+- "agent_request": The author is asking for an AI agent / assistant / bot to be built — for themselves or on someone else's behalf. Examples: "Build me a math tutor", "Create a recipe assistant", "Make me a travel planner bot", "Build my dad a medication-reminder bot", "I need a bot that helps my students with homework".
 
 - "not_agent_request": Anything else. This includes:
   • Greetings, chit-chat, and spam: "follow me back", "retweet this", "hi", "good morning", "@bot what's up", "lol".
   • Requests for the bot to do something other than build an agent.
-  • Tweets that TALK ABOUT, DESCRIBE, ANNOUNCE, SHOWCASE, or PROMOTE an agent rather than ask for one — usually third-person ("Someone built…", "Check out this agent", "Here's the agent <link>") and often linking an agent that already exists. Describing in detail what an agent does — even listing its features — is NOT a request to build one; a showcase or announcement is not a build request.
+  • Tweets that TALK ABOUT, DESCRIBE, ANNOUNCE, SHOWCASE, or PROMOTE an agent that already exists rather than ask for a new one — e.g. reporting what someone already built ("Someone built a live music agent…") or pointing at a finished agent ("Check out this agent", "Here's the agent <link>"). Describing in detail what an agent does — even listing its features — is NOT a request to build one.
 
 Respond with ONLY the classification label, nothing else. No quotes, no explanation, no extra text.
 
