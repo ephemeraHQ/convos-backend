@@ -247,14 +247,25 @@ export async function openRouterChatCompletion(
         }
       : {};
 
-  // Only set request options that are defined — the OpenAI SDK validates
-  // `timeout` as a positive integer and rejects an explicit `undefined`.
   const requestOptions: Record<string, unknown> = {};
   if (opts.signal) requestOptions.signal = opts.signal;
-  if (typeof opts.timeoutMs === "number")
-    requestOptions.timeout = opts.timeoutMs;
+
+  // `timeoutMs` is the wallclock cap for the whole call, not per attempt — a
+  // single deadline shared across retries + backoff. Each attempt gets only the
+  // time still left in the budget, so retries can never multiply the cap. The
+  // OpenAI SDK validates `timeout` as a positive integer, so it's floored at 1.
+  const deadlineMs =
+    typeof opts.timeoutMs === "number"
+      ? performance.now() + opts.timeoutMs
+      : null;
 
   for (let attempt = 0; ; attempt++) {
+    if (deadlineMs !== null) {
+      requestOptions.timeout = Math.max(
+        1,
+        Math.ceil(deadlineMs - performance.now()),
+      );
+    }
     const startedMs = performance.now();
     try {
       const response = await client.chat.completions.create(
@@ -277,16 +288,18 @@ export async function openRouterChatCompletion(
       captureProviderTelemetry(opts, response, performance.now() - startedMs);
       return response;
     } catch (err) {
-      // Give up once the caller has cancelled, the budget is spent, or the error
-      // isn't a transient connection drop — the caller's error handling owns it.
+      const delayMs = TRANSIENT_RETRY_BASE_DELAY_MS * 2 ** attempt;
+      // Give up when the caller cancelled, the retry budget is spent, the error
+      // isn't a transient connection drop, or the wallclock deadline can't fit
+      // another attempt after backoff — the caller's error handling owns those.
       if (
         opts.signal?.aborted ||
         attempt >= TRANSIENT_RETRY_ATTEMPTS ||
-        !isTransientConnectionError(err)
+        !isTransientConnectionError(err) ||
+        (deadlineMs !== null && performance.now() + delayMs >= deadlineMs)
       ) {
         throw err;
       }
-      const delayMs = TRANSIENT_RETRY_BASE_DELAY_MS * 2 ** attempt;
       console.warn(
         `[openrouter] transient connection error on stage=${opts.stage} attempt=${attempt + 1}/${TRANSIENT_RETRY_ATTEMPTS + 1}; retrying in ${delayMs}ms:`,
         err instanceof Error ? err.message : String(err),
