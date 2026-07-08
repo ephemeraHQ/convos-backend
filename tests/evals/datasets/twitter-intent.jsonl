@@ -1,0 +1,19 @@
+// Twitter-intent-classifier dataset. `expected` = the correct agent_request verdict.
+// true  = the author is asking the bot to build them an agent → agent_request.
+// false = spam/greeting, or a tweet that describes/showcases an agent → not_agent_request.
+// Drives tests/evals/twitter-intent.ts. See that file for usage.
+// The bot's own @handle is stripped by the worker before the classifier sees the
+// text, so the seeds below omit it (other @handles in the tweet are kept).
+{"id":"encore-showcase","expected":false,"input":"Someone built a live music agent on powered by @link\n\nAsk it to monitor your favorite local venues websites and send me weekly shows + grab tix. Uses @browserbase under the hood to go buy tickets for you using Link!\n\nHere's the agent convos.org/a/ledger.imfyi","notes":"The real prod miss: a third-person showcase of an existing agent (links it) that the gate wrongly built 'Encore' from. Describes agent features but asks for nothing → not_agent_request."}
+{"id":"friend-announcement","expected":false,"input":"Check out this agent my friend made — it plans weekly meal prep and spits out a grocery list every Sunday. Try it: convos.org/a/mealprep.tasty","notes":"Third-person announcement linking an existing agent."}
+{"id":"product-promo","expected":false,"input":"We just shipped an incredible travel-planner agent 🧳 It finds cheap flights, books hotels, and builds a day-by-day itinerary. Link below 👇 convos.org/a/wanderly.trips","notes":"Marketing/promo that lists features and links the agent — not a build request."}
+{"id":"describe-no-link","expected":false,"input":"This bot is wild — it watches crypto prices and DMs you the moment your coins move 5%. The future is here.","notes":"Describes an agent with no ask and no link — still not a build request."}
+{"id":"math-tutor","expected":true,"input":"Build me a math tutor bot that explains calculus step by step","notes":"Direct imperative build request."}
+{"id":"fridge-recipes","expected":true,"input":"make me a recipe assistant that suggests dinners from whatever's in my fridge","notes":"First-person build request."}
+{"id":"concert-tickets-request","expected":true,"input":"I want an agent that tracks concert tickets for my favorite bands and grabs them the second they drop","notes":"Same music/ticket domain as encore-showcase but framed as a first-person request — must NOT be over-rejected as a showcase."}
+{"id":"travel-planner-request","expected":true,"input":"create a travel planner that finds cheap flights and builds an itinerary","notes":"Same domain as product-promo but an actual request → agent_request."}
+{"id":"third-party-dad","expected":true,"input":"build my dad a medication reminder bot that pings him when it's time to take each pill","notes":"A build request with a third-party beneficiary — still agent_request; the describe-vs-request axis is not about who benefits."}
+{"id":"third-party-students","expected":true,"input":"create a homework helper for my students that explains problems without giving away the answer","notes":"Third-party-beneficiary request → agent_request (guards against narrowing agent_request to first-person)."}
+{"id":"greeting","expected":false,"input":"gm ☀️","notes":"Greeting, no request."}
+{"id":"follow-spam","expected":false,"input":"follow me back and I'll follow you","notes":"Engagement spam."}
+{"id":"chitchat","expected":false,"input":"lol this is the funniest thing I've seen all day","notes":"Chit-chat."}
