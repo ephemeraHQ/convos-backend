@@ -155,3 +155,51 @@ describe("templateGen service — transient connection retry", () => {
     expect(orCalls).toBe(1); // HTTP status is a response, not a broken socket
   });
 });
+
+describe("openRouterChatCompletion — abort during retry backoff", () => {
+  afterEach(async () => {
+    globalThis.fetch = originalFetch;
+    const client =
+      await import("@/api/v2/agent-templates/services/openrouter-client");
+    client.__resetOpenRouterClientForTests();
+  });
+
+  test("aborting mid-backoff stops promptly instead of waiting out the delay", async () => {
+    // First backoff is 250ms. Fail transiently so a retry is scheduled, then
+    // abort ~5ms in — while the backoff timer is running. The abortable sleep
+    // must hand control back at once (loop re-checks the signal and throws),
+    // so total time stays far below the 250ms it would take if the sleep
+    // ignored the signal and ran to completion.
+    globalThis.fetch = ((input: any) => {
+      if (urlOf(input) === OPENROUTER_URL) {
+        return Promise.reject(connectionResetError());
+      }
+      return Promise.resolve(new Response("{}", { status: 200 }));
+    }) as any;
+
+    const client =
+      await import("@/api/v2/agent-templates/services/openrouter-client");
+    client.__resetOpenRouterClientForTests();
+
+    const controller = new AbortController();
+    const timer = setTimeout(() => {
+      controller.abort();
+    }, 5);
+    const startedMs = performance.now();
+    await expect(
+      client.openRouterChatCompletion({
+        apiKey: TEST_API_KEY,
+        stage: "generate",
+        body: {
+          model: "test/model",
+          messages: [{ role: "user", content: "hi" }],
+        },
+        signal: controller.signal,
+      }),
+    ).rejects.toThrow();
+    const elapsedMs = performance.now() - startedMs;
+    clearTimeout(timer);
+
+    expect(elapsedMs).toBeLessThan(150);
+  });
+});
