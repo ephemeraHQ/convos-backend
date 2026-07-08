@@ -17,8 +17,13 @@
  * When `POSTHOG_PROJECT_TOKEN` is unset, `getPostHogClient()` returns null and
  * we fall back to a plain OpenAI client — no tracing, no monitoring params, no
  * behavioural change. A custom `fetch` delegates to `globalThis.fetch` at call
- * time so existing fetch-mocking tests keep working, and `maxRetries: 0`
- * preserves the old single-attempt semantics of the raw-fetch code.
+ * time so existing fetch-mocking tests keep working. `maxRetries: 0` disables
+ * the SDK's own retry so retry policy lives here explicitly:
+ * `openRouterChatCompletion` retries a transient connection failure (a dropped
+ * socket — undici "terminated"/ECONNRESET, or the SDK's `APIConnectionError`)
+ * a couple of times with backoff, while an HTTP error status and a caller/
+ * timeout abort stay single-attempt (the call site's error handling and the
+ * wallclock cap own those).
  *
  * Model attribution note: the wrapper records the *requested* model as
  * `$ai_model` (`openAIParams.model ?? result.model`). The default model is a
@@ -32,8 +37,15 @@
 
 import { randomUUID } from "node:crypto";
 import { OpenAI as PostHogOpenAI } from "@posthog/ai/openai";
-import { OpenAI } from "openai";
+import {
+  APIConnectionError,
+  APIConnectionTimeoutError,
+  APIError,
+  APIUserAbortError,
+  OpenAI,
+} from "openai";
 import { getPostHogClient } from "@/api/v2/agent-templates/services/posthog";
+import logger from "@/utils/logger";
 
 const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
 
@@ -86,8 +98,9 @@ function buildClient(apiKey: string): { client: OpenAI; wrapped: boolean } {
   const common = {
     apiKey,
     baseURL: OPENROUTER_BASE_URL,
-    // The raw-fetch code made a single attempt; keep that so error/timeout
-    // tests don't see silent retries.
+    // Disable the SDK's own retry — `openRouterChatCompletion` owns retry policy
+    // (transient connection errors only), so the SDK must not also retry and
+    // double up on 4xx/5xx/timeouts.
     maxRetries: 0,
     // Attribute every builder call to the "Convos Agents" app in OpenRouter.
     defaultHeaders: OPENROUTER_ATTRIBUTION_HEADERS,
@@ -150,7 +163,11 @@ export interface OpenRouterChatOptions {
     | "compose-reply"
     | "pii-redaction"
     | "transcribe";
-  body: OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming;
+  /** OpenAI params plus OpenRouter extensions — `usage: { include: true }`
+   *  turns on usage accounting so the response carries `usage.cost`. */
+  body: OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming & {
+    usage?: { include: boolean };
+  };
   /** External cancellation (e.g. the executor's per-generation timeout). */
   signal?: AbortSignal;
   /** Per-request wallclock cap in ms. */
@@ -159,12 +176,59 @@ export interface OpenRouterChatOptions {
   trace?: TraceContext;
 }
 
+// Retry budget for a transient connection failure. A dropped socket usually
+// fails fast (the incident that motivated this — an `ECONNRESET`/"terminated"
+// mid-generate — failed in ~0s), so a couple of quick attempts recover it well
+// inside the per-request wallclock cap.
+const TRANSIENT_RETRY_ATTEMPTS = 2;
+const TRANSIENT_RETRY_BASE_DELAY_MS = 250;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Whether an error is a transient connection failure worth retrying: the socket
+ * dropped before a response arrived. NOT a caller/timeout abort (its own error
+ * handling and the wallclock cap own that) and NOT an HTTP error status (a
+ * response arrived — a 4xx/5xx is the model/gateway's answer, not a broken
+ * connection). The SDK wraps a failed socket as `APIConnectionError` (an
+ * `APIError` subclass with no `status`); the raw undici error ("terminated" /
+ * ECONNRESET) can also surface directly, so its signature is matched as a
+ * fallback. `APIConnectionTimeoutError` extends `APIConnectionError`, so it is
+ * excluded first.
+ */
+function isTransientConnectionError(err: unknown): boolean {
+  if (err instanceof APIConnectionTimeoutError) return false;
+  if (err instanceof APIUserAbortError) return false;
+  if ((err as { name?: unknown }).name === "AbortError") return false;
+  if (err instanceof APIError && typeof err.status === "number") return false;
+  if (err instanceof APIConnectionError) return true;
+  const e = err as {
+    message?: unknown;
+    code?: unknown;
+    cause?: { code?: unknown; message?: unknown };
+  };
+  const signature = [e.message, e.code, e.cause?.code, e.cause?.message]
+    .filter((s): s is string => typeof s === "string")
+    .join(" ")
+    .toLowerCase();
+  // Note: no ETIMEDOUT here — a timeout stays single-attempt per the contract
+  // above (the SDK's own wallclock timeout raises APIConnectionTimeoutError,
+  // already excluded); only unambiguous connection drops are retried.
+  return /terminated|econnreset|econnrefused|epipe|socket hang up|other side closed|network error|fetch failed/.test(
+    signature,
+  );
+}
+
 /**
  * Make one OpenRouter chat completion. When PostHog is configured the call is
  * routed through `@posthog/ai`'s wrapper, which auto-emits a `$ai_generation`
  * (input, output, tokens, latency) tagged with the trace context. Otherwise it
- * is a plain OpenAI SDK call. Errors propagate to the caller unchanged so each
- * call site keeps its own error handling.
+ * is a plain OpenAI SDK call. A transient connection failure is retried a couple
+ * of times with backoff (each attempt emits its own `$ai_generation`); every
+ * other error — HTTP status, abort/timeout, malformed body — propagates to the
+ * caller unchanged so each call site keeps its own error handling.
  */
 export async function openRouterChatCompletion(
   opts: OpenRouterChatOptions,
@@ -191,34 +255,81 @@ export async function openRouterChatCompletion(
         }
       : {};
 
-  // Only set request options that are defined — the OpenAI SDK validates
-  // `timeout` as a positive integer and rejects an explicit `undefined`.
   const requestOptions: Record<string, unknown> = {};
   if (opts.signal) requestOptions.signal = opts.signal;
-  if (typeof opts.timeoutMs === "number")
-    requestOptions.timeout = opts.timeoutMs;
 
-  const startedMs = performance.now();
-  const response = await client.chat.completions.create(
-    // `provider` is an OpenRouter extension (passed through by the OpenAI SDK).
-    // Default first so a caller-supplied `body.provider` can still override.
-    {
-      provider: DEFAULT_PROVIDER_PREFERENCE,
-      ...opts.body,
-      ...monitoring,
-    } as any,
-    requestOptions,
-  );
+  // `timeoutMs` is the wallclock cap for the whole call, not per attempt — a
+  // single deadline shared across retries + backoff. Each attempt gets only the
+  // time still left in the budget, so retries can never multiply the cap. The
+  // OpenAI SDK validates `timeout` as a positive integer, so it's floored at 1.
+  const deadlineMs =
+    typeof opts.timeoutMs === "number"
+      ? performance.now() + opts.timeoutMs
+      : null;
 
-  // Record which upstream OpenRouter actually routed to. `$ai_provider` is the
-  // native API-provider field (now "openrouter" — the gateway), but it can't
-  // hold the resolved upstream: that's only on the response, after the wrapper
-  // has captured `$ai_generation`. So we emit it ourselves to tell whether the
-  // Bedrock preference took effect or fell back, and to segment latency by
-  // upstream. Fire-and-forget; only on success (errors are captured by the
-  // wrapper's own event).
-  captureProviderTelemetry(opts, response, performance.now() - startedMs);
-  return response;
+  for (let attempt = 0; ; attempt++) {
+    if (deadlineMs !== null) {
+      requestOptions.timeout = Math.max(
+        1,
+        Math.ceil(deadlineMs - performance.now()),
+      );
+    }
+    const startedMs = performance.now();
+    try {
+      const response = await client.chat.completions.create(
+        // `provider` is an OpenRouter extension (passed through by the OpenAI
+        // SDK). Default first so a caller-supplied `body.provider` can override.
+        {
+          provider: DEFAULT_PROVIDER_PREFERENCE,
+          ...opts.body,
+          ...monitoring,
+        } as any,
+        requestOptions,
+      );
+      // Record which upstream OpenRouter actually routed to. `$ai_provider` is
+      // the native API-provider field (now "openrouter" — the gateway), but it
+      // can't hold the resolved upstream: that's only on the response, after the
+      // wrapper has captured `$ai_generation`. So we emit it ourselves to tell
+      // whether the Bedrock preference took effect or fell back, and to segment
+      // latency by upstream. `attempt` is the retry count that preceded this
+      // success (0 on the first try) so retry frequency is monitorable in
+      // PostHog. Fire-and-forget; only on success (errors are captured by the
+      // wrapper's own event).
+      captureProviderTelemetry(
+        opts,
+        response,
+        performance.now() - startedMs,
+        attempt,
+      );
+      return response;
+    } catch (err) {
+      const delayMs = TRANSIENT_RETRY_BASE_DELAY_MS * 2 ** attempt;
+      // Give up when the caller cancelled, the retry budget is spent, the error
+      // isn't a transient connection drop, or the wallclock deadline can't fit
+      // another attempt after backoff — the caller's error handling owns those.
+      if (
+        opts.signal?.aborted ||
+        attempt >= TRANSIENT_RETRY_ATTEMPTS ||
+        !isTransientConnectionError(err) ||
+        (deadlineMs !== null && performance.now() + delayMs >= deadlineMs)
+      ) {
+        throw err;
+      }
+      // Structured so retry frequency is queryable (by stage/attempt) in the log
+      // pipeline, not just eyeballed in raw console output.
+      logger.warn(
+        {
+          stage: opts.stage,
+          attempt: attempt + 1,
+          maxAttempts: TRANSIENT_RETRY_ATTEMPTS + 1,
+          delayMs,
+          err: err instanceof Error ? err.message : String(err),
+        },
+        "[openrouter] transient connection error, retrying",
+      );
+      await sleep(delayMs);
+    }
+  }
 }
 
 /** Custom event recording the resolved upstream provider + served model for one
@@ -228,6 +339,7 @@ function captureProviderTelemetry(
   opts: OpenRouterChatOptions,
   response: OpenAI.Chat.Completions.ChatCompletion,
   latencyMs: number,
+  retryCount: number,
 ): void {
   if (!opts.trace) return;
   const ph = getPostHogClient();
@@ -247,6 +359,9 @@ function captureProviderTelemetry(
         // providers/responses that don't report it.
         upstream_provider: r.provider,
         latency_ms: latencyMs,
+        // Transient-connection retries that preceded this success (0 = first
+        // try). Lets retry frequency be monitored alongside the call.
+        retry_count: retryCount,
       },
     });
   } catch {

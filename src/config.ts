@@ -145,12 +145,12 @@ export const CONTENT_MODERATION_MODEL =
   process.env.CONTENT_MODERATION_MODEL?.trim() ||
   "google/gemini-3.1-flash-lite";
 // PII redaction scan run at persist time over the generated template
-// (agentName/description/prompt). Cheap classifier — concrete OpenRouter id so
-// PostHog can price it. Unlike moderation this stage fails CLOSED (see
-// services/pii-redaction.ts): a shared/persisted artifact must never carry
-// un-scanned PII, so a scan failure fails the generation.
+// (agentName/description/prompt). Concrete OpenRouter id so PostHog can price
+// it. Uses a stronger model than moderation because this stage fails CLOSED
+// (see services/pii-redaction.ts): a shared/persisted artifact must never
+// carry un-scanned PII, so recall matters more than cost here.
 export const PII_REDACTION_MODEL =
-  process.env.PII_REDACTION_MODEL?.trim() || "google/gemini-3.1-flash-lite";
+  process.env.PII_REDACTION_MODEL?.trim() || "anthropic/claude-sonnet-5";
 export const BUILDER_EXA_SERVICE_KEY =
   process.env.BUILDER_EXA_SERVICE_KEY?.trim() || "";
 

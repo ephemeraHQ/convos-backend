@@ -583,19 +583,28 @@ describe("templateGen service — OpenRouter integration", () => {
             },
           },
         ],
-        usage: { prompt_tokens: 100, completion_tokens: 20 },
+        usage: { prompt_tokens: 100, completion_tokens: 20, cost: 0.02 },
       },
-      templateResponse({
-        agentName: "RetryBot",
-        prompt: "Recovered prompt",
-        description: "Recovered description",
-      }),
+      {
+        ...templateResponse({
+          agentName: "RetryBot",
+          prompt: "Recovered prompt",
+          description: "Recovered description",
+        }),
+        usage: { prompt_tokens: 100, completion_tokens: 50, cost: 0.05 },
+      },
     ]);
 
     const result = await generateTemplate({ text: "Build me a helper" });
 
     expect(result.template.agentName).toBe("RetryBot");
     expect(result.template.prompt).toContain("Recovered prompt");
+
+    // Both calls are billed, so tokens + cost accumulate across the malformed
+    // first call and the retry (the retry path must not replace the first).
+    expect(result.metrics.promptTokens).toBe(200);
+    expect(result.metrics.completionTokens).toBe(70);
+    expect(result.metrics.costUsd).toBeCloseTo(0.07, 5);
 
     const reqs = getOpenRouterRequests();
     expect(reqs).toHaveLength(2);
