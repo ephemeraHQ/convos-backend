@@ -3,15 +3,19 @@
  *
  * Answers: when a tweet @mentions the build bot, does the intent gate correctly
  * tell a genuine build request from a tweet that merely TALKS ABOUT / SHOWS OFF
- * an agent? A real prod build ("Encore") fired off @ShaneMac's third-person
- * showcase of an existing agent — the gate read the described features as a
- * request. This eval scores the gate on a labeled dataset (showcases /
- * announcements / spam as expected=false; genuine build requests as
- * expected=true) so the prompt is tuned empirically, not by guesswork.
+ * an agent — AND does it recognize an implicit request (a stated want/need with
+ * no "build/make/bot" wording) as a build request rather than reject it? Two
+ * real prod misses drive this: a third-person showcase of an existing agent the
+ * gate wrongly built ("Encore"), and an implicit ask ("I want … to get notified
+ * about local shows") the gate wrongly rejected. This eval scores the gate on a
+ * labeled dataset (showcases / announcements / spam as expected=false; genuine
+ * build requests, explicit or implicit, as expected=true) so the prompt is tuned
+ * empirically, not by guesswork.
  *
  * Variants:
- *   baseline — the intent prompt BEFORE this change (frozen inline). No
- *              describe-vs-request distinction; expected to build the showcases.
+ *   baseline — the SHIPPED gate's prompt BEFORE this change (frozen inline). Has
+ *              the describe-vs-request distinction but over-rejects implicit
+ *              needs.
  *   current  — the SHIPPED gate (checkTwitterIntent) with this PR's prompt.
  *
  * Usage:
@@ -108,13 +112,18 @@ const OPENROUTER_KEY =
 function baselineIntentPrompt(input: string): string {
   return `You are an intent classifier for a Twitter bot that builds AI assistants when users @mention it with requests like "Build me a math tutor bot".
 
-The input below has already passed a separate content-safety check; you are ONLY judging whether the user is genuinely asking the bot to BUILD AN AGENT.
+The input below has already passed a separate content-safety check; you are ONLY judging whether the author is genuinely asking the bot to BUILD AN AGENT.
+
+The deciding question: is the author ASKING for an agent to be built (for themselves OR for someone else), or are they TALKING ABOUT / showing off an agent that already exists?
 
 Classify into exactly one of two categories:
 
-- "agent_request": The user is requesting an AI agent / assistant / bot to be built. Examples: "Build me a math tutor", "Create a recipe assistant", "Make me a travel planner bot", "I need a bot that helps with coding".
+- "agent_request": The author is asking for an AI agent / assistant / bot to be built — for themselves or on someone else's behalf. Examples: "Build me a math tutor", "Create a recipe assistant", "Make me a travel planner bot", "Build my dad a medication-reminder bot", "I need a bot that helps my students with homework".
 
-- "not_agent_request": The content is something other than a build request. Examples: "follow me back", "retweet this", "hi", "good morning", "@bot what's up", "lol", generic greetings, requests for the bot to perform actions other than building agents.
+- "not_agent_request": Anything else. This includes:
+  • Greetings, chit-chat, and spam: "follow me back", "retweet this", "hi", "good morning", "@bot what's up", "lol".
+  • Requests for the bot to do something other than build an agent.
+  • Tweets that TALK ABOUT, DESCRIBE, ANNOUNCE, SHOWCASE, or PROMOTE an agent that already exists rather than ask for a new one — e.g. reporting what someone already built ("Someone built a live music agent…") or pointing at a finished agent ("Check out this agent", "Here's the agent <link>"). Describing in detail what an agent does — even listing its features — is NOT a request to build one.
 
 Respond with ONLY the classification label, nothing else. No quotes, no explanation, no extra text.
 
