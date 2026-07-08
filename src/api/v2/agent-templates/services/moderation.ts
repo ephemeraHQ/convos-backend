@@ -421,8 +421,11 @@ Each field's content is wrapped between markers of the form "<<<BEGIN <field> ${
 Rules:
 - Return the EXACT substring as it appears between the markers — character for character, including any quotes, punctuation, or line breaks. Do NOT add escaping, add quotes, or normalize it; it must match the source verbatim so it can be removed.
 - Attribute each finding to the field it appears in: "description" or "prompt".
-- Do NOT flag generic role/topic words, brand/product names, or the assistant's own persona — only genuine personal data.
-- Do NOT flag the names of well-known PUBLIC figures — business leaders, founders, CEOs, investors, politicians, athletes, entertainers, authors, or historical figures (e.g. "Patrick Collison", "Warren Buffett", "Taylor Swift"). Their names are already public, and a template may legitimately be built around one (a persona that recommends books like Patrick Collison, writes in the style of a famous author, etc.). Only flag a personal name when it belongs to a PRIVATE individual — a non-famous person whose name is not otherwise public. Structured identifiers (email, phone, address, card/SSN/account numbers) are always PII regardless of whose they are.
+- Do NOT flag generic role/topic words, brand/product/company names, or fictional or mythological characters (e.g. "Sherlock Holmes", "Yoda", "Zeus") — these are not real personal data.
+- Do NOT flag the assistant's OWN persona name: the invented first name or handle the template gives the agent itself (e.g. "You are Emma, a friendly yoga coach"). That is the product's identity, not a private third party.
+- Do NOT flag the names of well-known PUBLIC figures — business leaders, founders, CEOs, investors, politicians, athletes, entertainers, authors, or historical figures (e.g. "Patrick Collison", "Warren Buffett", "Taylor Swift"). Their names are already public, and a template may legitimately be built around one (recommending books like Patrick Collison, writing in the style of a famous author, etc.).
+- DO flag a personal name when it belongs to a PRIVATE individual — a non-famous person whose name is not otherwise public (a customer, patient, client, employee, colleague, family member, or friend). If a name happens to match a public figure's but the surrounding context clearly refers to a private individual (e.g. "email our customer Taylor Swift", "our new hire Warren Buffett"), treat it as private and flag it.
+- Structured identifiers (email, phone, street/physical address, card/SSN/IBAN/account numbers) are ALWAYS PII and must always be flagged, regardless of whose they are.
 - If there is no PII, return an empty list.
 
 ${blocks.join("\n\n")}`;

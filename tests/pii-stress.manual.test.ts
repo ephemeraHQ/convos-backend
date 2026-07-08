@@ -96,6 +96,34 @@ const CASES: { name: string; fields: RedactableFields }[] = [
         "Teach the principles Warren Buffett is known for. If the student gets stuck, tell them to email their tutor Dana Whitfield at dana.whitfield@gmail.com.",
     },
   },
+  {
+    name: "fictional/mythological characters — should NOT be redacted",
+    fields: {
+      agentName: "Baker Street Sleuth",
+      description:
+        "A deduction game master channeling Sherlock Holmes and the wit of Yoda.",
+      prompt:
+        "You are a mystery master. Reason like Sherlock Holmes, quip like Yoda, and pose puzzles worthy of Zeus. Never break character.",
+    },
+  },
+  {
+    name: "invented persona name — should NOT be redacted",
+    fields: {
+      agentName: "Yoga With Emma",
+      description: "A calm yoga coach named Emma.",
+      prompt:
+        "You are Emma, a warm and patient yoga coach. Greet users as Emma and guide them through gentle stretches.",
+    },
+  },
+  {
+    name: "private name colliding with a public figure — SHOULD be redacted",
+    fields: {
+      agentName: "Salon Booking Helper",
+      description: "Books appointments for our salon",
+      prompt:
+        "Greet visitors and book slots. For VIP handling, flag our regular customer Taylor Swift, and route billing questions to our new hire Warren Buffett in accounting.",
+    },
+  },
 ];
 
 describe.runIf(KEY)("redactTemplatePii — live stress", () => {
@@ -114,6 +142,7 @@ describe.runIf(KEY)("redactTemplatePii — live stress", () => {
 
   test("prompt → redacted output across cases", async () => {
     const latencies: number[] = [];
+    const errors: string[] = [];
     console.log(
       `\n##### PII redaction stress — model: ${MODEL ?? "default (gemini-3.1-flash-lite)"} #####`,
     );
@@ -131,8 +160,10 @@ describe.runIf(KEY)("redactTemplatePii — live stress", () => {
       latencies.push(ms);
 
       if (err) {
+        const msg = (err as Error).message;
         console.log(`\n=== ${c.name} — ERROR after ${ms}ms (fail-closed)`);
-        console.log(`    ${(err as Error).message}`);
+        console.log(`    ${msg}`);
+        errors.push(`${c.name}: ${msg}`);
         continue;
       }
 
@@ -159,6 +190,10 @@ describe.runIf(KEY)("redactTemplatePii — live stress", () => {
     const max = sorted[sorted.length - 1];
     console.log(`\n##### latency: p50 ${p50}ms · max ${max}ms #####\n`);
 
+    // Every case here has valid content, so a real live call should never
+    // throw — a thrown call means the live model path is broken (bad key,
+    // timeout, malformed response). Fail loudly instead of reporting green.
+    expect(errors).toEqual([]);
     expect(latencies.length).toBe(CASES.length);
   }, 120_000);
 });
