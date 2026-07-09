@@ -183,8 +183,24 @@ export interface OpenRouterChatOptions {
 const TRANSIENT_RETRY_ATTEMPTS = 2;
 const TRANSIENT_RETRY_BASE_DELAY_MS = 250;
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+// Resolves early if `signal` aborts, so a caller's cancellation takes effect
+// during the retry backoff instead of only after the timer elapses. Resolving
+// (not rejecting) hands control back to the loop, whose catch guard sees the
+// aborted signal on the next attempt and throws the underlying error.
+function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve) => {
+    if (signal?.aborted) {
+      resolve();
+      return;
+    }
+    const onDone = () => {
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", onDone);
+      resolve();
+    };
+    const timer = setTimeout(onDone, ms);
+    signal?.addEventListener("abort", onDone);
+  });
 }
 
 /**
@@ -327,7 +343,7 @@ export async function openRouterChatCompletion(
         },
         "[openrouter] transient connection error, retrying",
       );
-      await sleep(delayMs);
+      await sleep(delayMs, opts.signal);
     }
   }
 }
