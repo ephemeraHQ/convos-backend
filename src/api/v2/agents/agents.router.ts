@@ -6,6 +6,7 @@ import {
 } from "@/middleware/rateLimit";
 import { joinHandler } from "./handlers/join";
 import { joinStatusHandler } from "./handlers/join-status";
+import { updateAgentVariantHandler } from "./handlers/update-variant";
 
 export const agentsRouter = Router();
 
@@ -19,6 +20,11 @@ export const agentsRouter = Router();
 // budget re-minting the same account-less token, surfacing as a confusing
 // `notAuthenticated`. A 403 fails honestly and breaks that loop.
 agentsRouter.post("/join", agentJoinLimiter, requireAccount, joinHandler);
+agentsRouter.patch(
+  "/:instanceId/variant",
+  requireAccount,
+  updateAgentVariantHandler,
+);
 // Generous limit on status polling (60/5min) — clients on the fallback
 // async path may poll every ~5s; status reads have no upstream side-effects.
 agentsRouter.get(
