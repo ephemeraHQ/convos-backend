@@ -142,6 +142,15 @@ const CASES: { name: string; fields: RedactableFields }[] = [
         "For escalations, use this mailto link: mailto:support-lead@example.com or the contact form at https://example.com/contact?ref=agent.",
     },
   },
+  {
+    name: "URL with email in query param — SHOULD redact only the embedded identifier",
+    fields: {
+      agentName: "Feedback Bot",
+      description: "Collects product feedback",
+      prompt:
+        "Route bug reports to https://example.com/contact?email=foo@bar.com&subject=bug, leaving the rest of the link intact.",
+    },
+  },
 ];
 
 describe.runIf(KEY)("redactTemplatePii — live stress", () => {
