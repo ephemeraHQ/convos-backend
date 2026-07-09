@@ -124,6 +124,24 @@ const CASES: { name: string; fields: RedactableFields }[] = [
         "Greet visitors and book slots. For VIP handling, flag our regular customer Taylor Swift, and route billing questions to our new hire Warren Buffett in accounting.",
     },
   },
+  {
+    name: "bare URLs/links — should NOT be redacted",
+    fields: {
+      agentName: "Scheduling Buddy",
+      description: "Helps users book time and find resources online",
+      prompt:
+        "If someone wants to book time, send them to https://calendly.com/jane-doe. Our docs live at https://docs.example.com/getting-started, and our team's Twitter is https://twitter.com/janedoe123.",
+    },
+  },
+  {
+    name: "URL with embedded email — SHOULD redact only the embedded identifier",
+    fields: {
+      agentName: "Support Bot",
+      description: "Handles support requests",
+      prompt:
+        "For escalations, use this mailto link: mailto:support-lead@example.com or the contact form at https://example.com/contact?ref=agent.",
+    },
+  },
 ];
 
 describe.runIf(KEY)("redactTemplatePii — live stress", () => {
