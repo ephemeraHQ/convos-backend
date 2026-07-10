@@ -1,5 +1,5 @@
 import type { Server } from "node:http";
-import type { AgentTemplate } from "@prisma/client";
+import type { AgentTemplate, AgentTemplateGeneration } from "@prisma/client";
 import express, {
   type Response as ExpressResponse,
   type NextFunction,
@@ -16,6 +16,7 @@ import {
 } from "vitest";
 import { __setAssistantConfigOverridesForTests } from "@/api/v2/agents/handlers/assistant-config";
 import {
+  __setGenerationFinderForTests,
   __setTemplateFinderForTests,
   joinHandler,
 } from "@/api/v2/agents/handlers/join";
@@ -80,6 +81,33 @@ const baseTemplate = (
   ...overrides,
 });
 
+const baseGeneration = (
+  overrides: Partial<AgentTemplateGeneration> = {},
+): AgentTemplateGeneration => ({
+  id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+  ownerAccountId: "55555555-5555-4555-8555-555555555555",
+  source: "test",
+  idempotencyKey: "generation-test-key",
+  inputs: {},
+  twitterContext: null,
+  clientDeviceId: null,
+  prefill: null,
+  builderPrompt: null,
+  builderModel: null,
+  connections: [],
+  preview: null,
+  progressPhrases: null,
+  templateId: null,
+  publishStatus: "draft",
+  reply: null,
+  status: "pending",
+  error: null,
+  expiresAt: null,
+  createdAt: new Date("2026-01-01T00:00:00.000Z"),
+  updatedAt: new Date("2026-01-01T00:00:00.000Z"),
+  ...overrides,
+});
+
 function jsonResponse(status: number, body: unknown): Response {
   return new Response(JSON.stringify(body), {
     status,
@@ -132,6 +160,7 @@ describe("agents join (assistant API)", () => {
 
   afterEach(() => {
     __setAssistantConfigOverridesForTests({});
+    __setGenerationFinderForTests(null);
     __setTemplateFinderForTests(null);
   });
 
@@ -358,6 +387,39 @@ describe("agents join (assistant API)", () => {
       expect(res.status).toBe(400);
       const data = (await res.json()) as { success: boolean; error: string };
       expect(data.success).toBe(false);
+      expect(data.error).toBe("INVALID_REQUEST");
+      expect(dispatched).toBe(false);
+    });
+
+    test("rejects templateId combined with generationId", async () => {
+      let dispatched = false;
+      mockFetchImpl = () => {
+        dispatched = true;
+        return Promise.reject(new Error("should not dispatch"));
+      };
+
+      const res = await post({
+        slug: "x",
+        templateId: "33333333-3333-4333-8333-333333333333",
+        generationId: "44444444-4444-4444-8444-444444444444",
+      });
+      expect(res.status).toBe(400);
+      const data = (await res.json()) as { success: boolean; error: string };
+      expect(data.success).toBe(false);
+      expect(data.error).toBe("INVALID_REQUEST");
+      expect(dispatched).toBe(false);
+    });
+
+    test("rejects a non-UUID generationId", async () => {
+      let dispatched = false;
+      mockFetchImpl = () => {
+        dispatched = true;
+        return Promise.reject(new Error("should not dispatch"));
+      };
+
+      const res = await post({ slug: "x", generationId: "not-a-uuid" });
+      expect(res.status).toBe(400);
+      const data = (await res.json()) as { error: string };
       expect(data.error).toBe("INVALID_REQUEST");
       expect(dispatched).toBe(false);
     });
@@ -983,6 +1045,188 @@ describe("agents join (assistant API)", () => {
         { accountId: "55555555-5555-4555-8555-555555555555" },
       );
       expect(res.status).toBe(200);
+    });
+
+    // ----- generationId resolution -----
+
+    test("returns 404 when the generation row is missing", async () => {
+      __setGenerationFinderForTests(() => Promise.resolve(null));
+      let dispatched = false;
+      mockFetchImpl = () => {
+        dispatched = true;
+        return Promise.reject(new Error("should not dispatch"));
+      };
+
+      const res = await post(
+        {
+          conversationId: DIRECT_ADD_CONVERSATION_ID,
+          generationId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        },
+        { accountId: "55555555-5555-4555-8555-555555555555" },
+      );
+      expect(res.status).toBe(404);
+      const data = (await res.json()) as { error: string };
+      expect(data.error).toBe("GENERATION_NOT_FOUND");
+      expect(dispatched).toBe(false);
+    });
+
+    test("returns 403 when the generation row belongs to another account", async () => {
+      __setGenerationFinderForTests(() =>
+        Promise.resolve(
+          baseGeneration({
+            ownerAccountId: "66666666-6666-4666-8666-666666666666",
+          }),
+        ),
+      );
+      let dispatched = false;
+      mockFetchImpl = () => {
+        dispatched = true;
+        return Promise.reject(new Error("should not dispatch"));
+      };
+
+      const res = await post(
+        {
+          conversationId: DIRECT_ADD_CONVERSATION_ID,
+          generationId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        },
+        { accountId: "55555555-5555-4555-8555-555555555555" },
+      );
+      expect(res.status).toBe(403);
+      const data = (await res.json()) as { error: string };
+      expect(data.error).toBe("GENERATION_FORBIDDEN");
+      expect(dispatched).toBe(false);
+    });
+
+    test("returns 500 when the generation lookup throws", async () => {
+      __setGenerationFinderForTests(() =>
+        Promise.reject(new Error("ECONNREFUSED")),
+      );
+      let dispatched = false;
+      mockFetchImpl = () => {
+        dispatched = true;
+        return Promise.reject(new Error("should not dispatch"));
+      };
+
+      const res = await post(
+        {
+          conversationId: DIRECT_ADD_CONVERSATION_ID,
+          generationId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        },
+        { accountId: "55555555-5555-4555-8555-555555555555" },
+      );
+      expect(res.status).toBe(500);
+      const data = (await res.json()) as { error: string };
+      expect(data.error).toBe("GENERATION_LOOKUP_FAILED");
+      expect(dispatched).toBe(false);
+    });
+
+    test("dispatches a null template, the generationId, and the caller ownerAccountId", async () => {
+      const generationId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+      const accountId = "55555555-5555-4555-8555-555555555555";
+      let lookedUpGenerationId: string | undefined;
+      __setGenerationFinderForTests((id) => {
+        lookedUpGenerationId = id;
+        return Promise.resolve(
+          baseGeneration({ id, ownerAccountId: accountId }),
+        );
+      });
+
+      let dispatchedBody: Record<string, unknown> | undefined;
+      mockFetchImpl = (_url, init) => {
+        if (init?.method === "POST") {
+          dispatchedBody = JSON.parse(init.body as string) as Record<
+            string,
+            unknown
+          >;
+          return Promise.resolve(jsonResponse(200, { instanceId: "inst-gen" }));
+        }
+        return Promise.resolve(
+          jsonResponse(200, {
+            instanceId: "inst-gen",
+            joinStatus: "starting",
+            inboxId: "inbox-gen",
+          }),
+        );
+      };
+
+      const res = await post(
+        { conversationId: DIRECT_ADD_CONVERSATION_ID, generationId },
+        { accountId },
+      );
+      expect(res.status).toBe(200);
+      expect(lookedUpGenerationId).toBe(generationId);
+      expect(dispatchedBody?.generationId).toBe(generationId);
+      expect(dispatchedBody?.template).toBeNull();
+      expect(dispatchedBody?.ownerAccountId).toBe(accountId);
+    });
+
+    test("accepts generationId combined with onboarding agent-builder and forwards it", async () => {
+      __setGenerationFinderForTests(() => Promise.resolve(baseGeneration()));
+
+      let dispatchedOptions: Record<string, unknown> | undefined;
+      mockFetchImpl = (_url, init) => {
+        if (init?.method === "POST") {
+          const body = JSON.parse(init.body as string) as {
+            options?: Record<string, unknown>;
+          };
+          dispatchedOptions = body.options;
+          return Promise.resolve(jsonResponse(200, { instanceId: "inst-ab" }));
+        }
+        return Promise.resolve(
+          jsonResponse(200, {
+            instanceId: "inst-ab",
+            joinStatus: "starting",
+            inboxId: "inbox-ab",
+          }),
+        );
+      };
+
+      const res = await post(
+        {
+          conversationId: DIRECT_ADD_CONVERSATION_ID,
+          generationId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+          options: { onboarding: "agent-builder" },
+        },
+        { accountId: "55555555-5555-4555-8555-555555555555" },
+      );
+      expect(res.status).toBe(200);
+      expect(dispatchedOptions?.onboarding).toBe("agent-builder");
+    });
+
+    test("returns the registered inboxId for a generationId direct-add join", async () => {
+      __setGenerationFinderForTests(() => Promise.resolve(baseGeneration()));
+
+      mockFetchImpl = (_url, init) => {
+        if (init?.method === "POST") {
+          return Promise.resolve(jsonResponse(200, { instanceId: "inst-da" }));
+        }
+        return Promise.resolve(
+          jsonResponse(200, {
+            instanceId: "inst-da",
+            joinStatus: "starting",
+            inboxId: "inbox-da",
+          }),
+        );
+      };
+
+      const res = await post(
+        {
+          conversationId: DIRECT_ADD_CONVERSATION_ID,
+          generationId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        },
+        { accountId: "55555555-5555-4555-8555-555555555555" },
+      );
+      expect(res.status).toBe(200);
+      const data = (await res.json()) as {
+        success: boolean;
+        joined: boolean;
+        instanceId: string;
+        inboxId: string | null;
+      };
+      expect(data.success).toBe(true);
+      expect(data.joined).toBe(false);
+      expect(data.instanceId).toBe("inst-da");
+      expect(data.inboxId).toBe("inbox-da");
     });
 
     test("dispatch body carries the joining user's uuid ownerAccountId", async () => {

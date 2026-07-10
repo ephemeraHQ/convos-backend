@@ -9,11 +9,16 @@ import {
   expect,
   test,
 } from "vitest";
+import { __setAgentAssetsApiKeyOverrideForTests } from "@/middleware/agentAuth";
 import { ADMIN_ACCOUNT_ID } from "@/utils/constants";
 import { createJwtToken } from "@/utils/jwt";
 import { prisma } from "@/utils/prisma";
 import { hashId } from "@/utils/url-slug";
-import { buildAgentTemplatesApp } from "./agent-templates.cross.helpers";
+import {
+  agentKeyHeaders,
+  buildAgentTemplatesApp,
+  validAgentAssetsApiKey,
+} from "./agent-templates.cross.helpers";
 
 type DetailBody = Record<string, unknown>;
 
@@ -26,7 +31,9 @@ const isoTimestampPattern = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$/;
 
 const cleanupTemplates = () =>
   prisma.agentTemplate.deleteMany({
-    where: { ownerAccountId: ADMIN_ACCOUNT_ID },
+    where: {
+      ownerAccountId: { in: [ADMIN_ACCOUNT_ID, API_KEY_DRAFT_OWNER_ID] },
+    },
   });
 
 const createTemplate = async (
@@ -63,6 +70,7 @@ const createTemplate = async (
 // owner — templates are owned by ADMIN_ACCOUNT_ID; the reader sees only
 // published/unlisted/archived from other owners.
 const READER_ACCOUNT_ID = "00000000-0000-4000-8000-000000000002";
+const API_KEY_DRAFT_OWNER_ID = "00000000-0000-4000-8000-000000000003";
 
 const readerAuthHeaders = async (): Promise<Record<string, string>> => ({
   "X-Convos-AuthToken": await createJwtToken({
@@ -85,6 +93,7 @@ const readDetail = async (args: { path: string }) => {
 
 describe("Agent template detail endpoint", () => {
   beforeAll(async () => {
+    __setAgentAssetsApiKeyOverrideForTests(validAgentAssetsApiKey);
     await new Promise<void>((resolve) => {
       server = app.listen(4053, () => {
         resolve();
@@ -99,6 +108,7 @@ describe("Agent template detail endpoint", () => {
         resolve();
       });
     });
+    __setAgentAssetsApiKeyOverrideForTests(undefined);
   });
 
   beforeEach(async () => {
@@ -220,6 +230,44 @@ describe("Agent template detail endpoint", () => {
       expect(byHash.response.status).toBe(200);
       expect(byHash.body?.status).toBe(fixture.status);
     }
+  });
+
+  test("returns a draft template to an agent API key caller", async () => {
+    await prisma.account.upsert({
+      where: { id: API_KEY_DRAFT_OWNER_ID },
+      update: {},
+      create: { id: API_KEY_DRAFT_OWNER_ID },
+    });
+
+    const draft = await createTemplate({
+      slug: "detail-draft-apikey",
+      ownerAccountId: API_KEY_DRAFT_OWNER_ID,
+      status: "draft",
+      firstPublishedAt: null,
+    });
+
+    const reader = await readDetail({
+      path: `/api/v2/agent-templates/${draft.id}`,
+    });
+    expect(reader.response.status).toBe(404);
+
+    const response = await fetch(
+      `${baseURL}/api/v2/agent-templates/${draft.id}`,
+      { headers: agentKeyHeaders() },
+    );
+    const body = (await response.json()) as DetailBody;
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toContain("application/json");
+    expect(body).toMatchObject({
+      object: "agent_template",
+      id: draft.id,
+      slug: "detail-draft-apikey",
+      ownerAccountId: API_KEY_DRAFT_OWNER_ID,
+      status: "draft",
+    });
+    expect(body).not.toHaveProperty("owner");
+    expect(body).not.toHaveProperty("skills");
   });
 
   test("supports owner and skills expansions while ignoring unknown expansion values", async () => {
