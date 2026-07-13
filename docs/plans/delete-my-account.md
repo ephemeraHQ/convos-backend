@@ -467,3 +467,26 @@ cannot mint tokens".
 - Companion client plan: convos-ios repo, `docs/plans/delete-my-account.md`.
 - Apple App Store Review Guideline 5.1.1(v) (account deletion requirement).
 - Apple developer guidance: "Provide options to delete your app's account".
+
+## Relationship to subscription ownership reconciliation
+
+The provider-key subscription tombstone proposed here supplies the safety gate
+that Option A in `docs/plans/subscription-ownership-reconciliation.md` lacks.
+The two plans should compose in this order:
+
+1. Ship account deletion as detach+tombstone: detach the `Subscription` from
+   the deleted `Account`, retain only the minimal provider-key tombstone, and
+   make webhooks and verify fail closed. This delivers deletion compliant with
+   Apple App Store Guideline 5.1.1(v) before introducing ownership transfer.
+2. Ship Option B's mismatch detection and telemetry immediately, including
+   `subscription.verify.account_mismatch` visibility and alerts, while
+   cross-account verification continues to return 409.
+3. Add Option A only when a fresh provider-verified transaction targets a
+   provider key whose prior owner is represented by a committed deletion
+   tombstone. A tombstoned owner is provably dead, so transfer heals a paying
+   user's entitlement without turning an ordinary ownership mismatch into a
+   subscription hijack vector.
+
+The July 12-13 incident demonstrates the need: account recreation orphaned
+subscriptions, leaving the new account with a verify 409 while renewals kept
+enriching the ghost account's wallet.
