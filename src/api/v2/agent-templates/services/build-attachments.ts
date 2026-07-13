@@ -107,6 +107,15 @@ export function maxBytesForKind(kind: AttachmentKind): number {
  *  the builder can read while creating that agent. */
 export const TEXT_ATTACHMENT_MAX_CHARS = 20_000;
 
+/** Name to fence a text attachment with when the client didn't send a filename.
+ *  Derived from the MIME rather than defaulted to `.txt`, because the extension is
+ *  part of what tells the model what it's reading — a CSV labelled `attachment.txt`
+ *  reads as prose instead of a table. */
+export function defaultTextFilename(mimeType: string): string {
+  const ext = mime.extension(normalizeMime(mimeType));
+  return ext ? `attachment.${ext}` : "attachment.txt";
+}
+
 /** Decode a text attachment to UTF-8, refusing bytes that aren't really text.
  *
  *  The MIME allowlist is the client's claim about a file; this is where the claim
@@ -125,7 +134,10 @@ export function decodeTextAttachment(
     throw new AppError(400, `Attachment ${filename} is not valid UTF-8 text`);
   }
   if (text.includes("\u0000")) {
-    throw new AppError(400, `Attachment ${filename} is not a text file`);
+    throw new AppError(
+      400,
+      `Attachment ${filename} contains binary data, not text`,
+    );
   }
   if (!text.trim()) {
     throw new AppError(400, `Attachment ${filename} is empty`);

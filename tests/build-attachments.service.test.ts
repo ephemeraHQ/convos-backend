@@ -8,6 +8,7 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 import {
   classifyMime,
   decodeTextAttachment,
+  defaultTextFilename,
   getBuildObjectBytes,
   headBuildObject,
   maxBytesForKind,
@@ -120,7 +121,7 @@ describe("decodeTextAttachment", () => {
   test("rejects a binary carrying an embedded NUL", () => {
     expect(() =>
       decodeTextAttachment(new Uint8Array([0x41, 0x00, 0x42]), "a.txt"),
-    ).toThrow(/not a text file/i);
+    ).toThrow(/contains binary data/i);
   });
 
   test("rejects an empty file", () => {
@@ -144,6 +145,22 @@ describe("decodeTextAttachment", () => {
       "exact.md",
     );
     expect(out).toBe("x".repeat(TEXT_ATTACHMENT_MAX_CHARS));
+  });
+});
+
+describe("defaultTextFilename", () => {
+  test("derives the extension from the MIME so structured data stays labelled", () => {
+    expect(defaultTextFilename("text/csv")).toBe("attachment.csv");
+    expect(defaultTextFilename("application/json")).toBe("attachment.json");
+    expect(defaultTextFilename("text/plain")).toBe("attachment.txt");
+    expect(defaultTextFilename("text/csv; charset=utf-8")).toBe(
+      "attachment.csv",
+    );
+  });
+
+  test("falls back to .txt for a MIME with no known extension", () => {
+    // mime-types has no extension for application/x-yaml.
+    expect(defaultTextFilename("application/x-yaml")).toBe("attachment.txt");
   });
 });
 

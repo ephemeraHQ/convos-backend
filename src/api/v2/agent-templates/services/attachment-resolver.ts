@@ -24,6 +24,7 @@ import { AppError } from "@/utils/errors";
 import {
   classifyMime,
   decodeTextAttachment,
+  defaultTextFilename,
   getBuildObjectBytes,
   maxBytesForKind,
   normalizeMime,
@@ -128,7 +129,7 @@ async function resolveOne(
   }
 
   if (kind === "text") {
-    const filename = ref.filename || "attachment.txt";
+    const filename = ref.filename || defaultTextFilename(ref.mimeType);
     const text = decodeTextAttachment(bytes, filename);
     // A text attachment is user-supplied prose heading straight for the prompt,
     // so it gets the same content check the typed directive and voice transcripts

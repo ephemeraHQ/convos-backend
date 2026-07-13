@@ -198,7 +198,7 @@ test("a binary mislabelled as text/plain is rejected, not decoded to mojibake", 
       [{ objectKey: "build/x.txt", mimeType: "text/plain", filename: "x.txt" }],
       { moderate: false },
     ),
-  ).rejects.toThrow(/not a text file/i);
+  ).rejects.toThrow(/contains binary data/i);
 });
 
 test("invalid UTF-8 claiming to be text is rejected", async () => {
