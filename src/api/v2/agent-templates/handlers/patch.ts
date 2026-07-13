@@ -207,6 +207,29 @@ export async function patchHandler(req: Request, res: Response) {
     const data: Prisma.AgentTemplateUncheckedUpdateInput = {};
     applyContentFields(data, parsedBody.data);
 
+    // A curation weight IS a homepage slot, and only a public template has one:
+    // the gallery renders `status=published`. So a template that isn't public
+    // holds no place in the order, and one that leaves `published` gives its
+    // place up — re-publishing enters it at the end, to be curated back like
+    // anything else. Without this an unpublished template keeps its weight and
+    // silently reclaims its old slot on re-publish, and a long-featured draft
+    // published for the first time lands wherever the weight it was seeded with
+    // happens to sit — a position nobody curated.
+    const nextStatus = parsedBody.data.status ?? template.status;
+    if (nextStatus !== "published") {
+      if (parsedBody.data.featuredRank !== undefined) {
+        sendBadRequest(res, {
+          code: "TEMPLATE_NOT_PUBLISHED",
+          message:
+            "Only a published template can hold a position in the featured gallery",
+        });
+        return;
+      }
+      if (template.featuredRank !== 0) {
+        data.featuredRank = 0;
+      }
+    }
+
     // PII redaction — scrub the content fields being written. Only the fields
     // present in this PATCH are scanned (partial update). Fails CLOSED: a scan
     // error rejects the edit rather than persisting un-scanned content.
