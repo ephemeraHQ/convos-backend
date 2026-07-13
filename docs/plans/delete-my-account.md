@@ -202,16 +202,42 @@ cascades, and `DeviceRegistration` merely nulls its account link. The
 `RESTRICT` relations are a feature: they force an explicit, reviewed decision
 per table, and they should stay.
 
-Concurrent writers need fencing, not just a transaction. `DeviceRegistration`
-and `ClientIdentifier` have no restrictive FK to `Account`, so a still-valid
-JWT (or a device-scoped registration call) racing the teardown could attach
-fresh rows after the sweep has passed. The barrier's fail-closed behavior must
-therefore cover every writer that can attach state to an account (device
-registration account-stamping, notification subscribe, subscription verify),
-and the transaction takes a row lock on the `Account` and performs the
-`ClientIdentifier`/`DeviceRegistration` sweep as its final locked step, with
-the external-purge outbox snapshotted from that final sweep so remote cleanup
-covers late-arriving rows.
+Concurrent writers need fencing, not just a transaction, and a barrier check
+on its own is a TOCTOU: a writer can consult the barrier before the deletion
+transaction commits (seeing none) and attach an account-linked row after the
+sweep has passed. The schema does not stop this — `ClientIdentifier.accountId`
+and `AdminAudit.accountId` are plain scalars with no FK, and
+`DeviceRegistration`'s FK is SET NULL, so the final `Account` delete would
+quietly unlink a late row (stranding its push token) rather than fail. The
+primary fence is therefore a parent-row lock protocol:
+
+- The deletion transaction's first statement locks the account row —
+  `SELECT id FROM "Account" WHERE id = $1 FOR UPDATE` — before any teardown
+  statement runs. Taking the exclusive lock only via the final `DELETE` of
+  the `Account` row would not be sound: children are torn down first, so the
+  sweep would run before the lock exists and the race would survive.
+- Every writer that attaches account-linked state calls a shared helper
+  (`requireLiveAccount(tx, accountId)`) inside its own transaction:
+  `SELECT 1 FROM "Account" WHERE id = $1 FOR KEY SHARE`, aborting when no
+  row comes back. That one statement is both the existence check and the
+  serialization point. The helper is mandatory at the FK-less writers — the
+  `ClientIdentifier` upsert in notification subscribe and `AdminAudit`
+  inserts — and is uniformity at the FK-backed ones (`DeviceRegistration`,
+  `Subscription`, ledger writes), whose referential-integrity checks already
+  take the same implicit `FOR KEY SHARE` on the parent row.
+- The lock modes do the work: `FOR KEY SHARE` conflicts with the deletion's
+  `FOR UPDATE` but not with other `FOR KEY SHARE` holders, so writers
+  serialize against deletion only, never against each other. Under READ
+  COMMITTED, a writer that blocks on the lock re-reads the row once deletion
+  commits, finds it gone, and aborts; a writer that acquired its lock first
+  commits ahead of the deletion, whose sweep statements — each taking a
+  fresh snapshot after the lock was acquired — then see and remove its rows.
+
+The honest cost is one shared helper called from the four or five writer
+sites that stamp an accountId today. The barrier's fail-closed behavior and
+the final `ClientIdentifier`/`DeviceRegistration` sweep (with the
+external-purge outbox snapshotted from it) remain as defense in depth, not
+as the primary mechanism.
 
 Teardown runs inside one transaction, children before parents:
 
