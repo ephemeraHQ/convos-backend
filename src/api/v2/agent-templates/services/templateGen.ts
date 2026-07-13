@@ -436,8 +436,11 @@ function buildCapabilitiesDirective(connections?: string[] | null): string {
 
 /** Wrap a text attachment in a labelled fence. The filename is the point: it tells
  *  the model this is an attached file rather than more of the user's directive, and
- *  the name itself is signal ("support-faq.csv" says more than its rows do). */
-function fenceTextAttachment(
+ *  the name itself is signal ("support-faq.csv" says more than its rows do).
+ *
+ *  Shared with the distill stage: the two stages describe the same file to the same
+ *  model, so the fence is a contract between them, not a local formatting choice. */
+export function fenceTextAttachment(
   attachment: Extract<ResolvedAttachment, { kind: "text" }>,
 ): string {
   return `--- ${attachment.filename} ---\n${attachment.text}\n--- end ${attachment.filename} ---`;

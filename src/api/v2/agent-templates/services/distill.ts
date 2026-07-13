@@ -25,6 +25,7 @@ import {
 } from "./openrouter-client";
 import {
   decodeEmojiEscapes,
+  fenceTextAttachment,
   getModel,
   sanitizeEmojiField,
   type GenerationPrefill,
@@ -238,10 +239,7 @@ function buildDistillUserContent(
         return { type: "image_url", image_url: { url: attachment.dataUri } };
       }
       if (attachment.kind === "text") {
-        return {
-          type: "text",
-          text: `--- ${attachment.filename} ---\n${attachment.text}\n--- end ${attachment.filename} ---`,
-        };
+        return { type: "text", text: fenceTextAttachment(attachment) };
       }
       return {
         type: "file",
