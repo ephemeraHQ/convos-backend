@@ -7,7 +7,10 @@
 ## Overview
 
 Add an authenticated account-deletion endpoint that removes an account and all
-of its server-side data, erects a durable deletion barrier so the account
+of its server-side data apart from a small, documented set of retained records
+(pseudonymized financial records, provider-key billing tombstones, the deletion
+barrier, audit entries, and the deletion record itself; see the retention
+sections below), erects a durable deletion barrier so the account
 cannot be silently recreated, purges the account's footprint in external
 systems (S3, XMTP notification server, Composio, analytics), and leaves
 store-billing webhooks in a state where they neither error nor resurrect
@@ -92,7 +95,10 @@ carries billing state, so the safe assumption is that the guideline applies.
 Acceptance criteria:
 
 - [ ] After a successful call, the database transaction has removed or
-      pseudonymized every row traceable to my identity, and my authentication
+      pseudonymized every row traceable to my identity — the only survivors
+      are the documented retained classes (financial records, billing
+      tombstones, the barrier, audit entries, and the deletion record), each
+      under the pseudonymized-retention regime below — and my authentication
       is terminally dead: no token can be minted for my identity and no
       account-scoped route accepts a leftover token.
 - [ ] My uploaded assets, notification-server registrations, Composio
@@ -134,7 +140,15 @@ Two hardening notes:
 
 - `requireAccount` currently trusts the JWT claim without checking that the
   account row exists. Deletion must make account-scoped routes fail closed
-  for a deleted account even while a pre-deletion token is unexpired.
+  for a deleted account even while a pre-deletion token is unexpired. The one
+  deliberate exception is the deletion route itself: it authenticates through
+  an endpoint-specific path that accepts a validly-signed, unexpired token
+  for an already-deleted account solely to look up the deletion record (by
+  account claim and operation id) and re-return the stored success. That path
+  grants no other capability, and generic `requireAccount` is never loosened.
+  Without this carve-out, the idempotency contract below would contradict
+  fail-closed auth: a repeat call would be rejected before the handler could
+  converge on success.
 - Because deletion is irreversible, consider requiring a fresh token (issued
   within the last few minutes) rather than accepting any unexpired JWT, to
   narrow the window in which a stolen token can destroy an account. If
@@ -188,22 +202,33 @@ cascades, and `DeviceRegistration` merely nulls its account link. The
 `RESTRICT` relations are a feature: they force an explicit, reviewed decision
 per table, and they should stay.
 
+Concurrent writers need fencing, not just a transaction. `DeviceRegistration`
+and `ClientIdentifier` have no restrictive FK to `Account`, so a still-valid
+JWT (or a device-scoped registration call) racing the teardown could attach
+fresh rows after the sweep has passed. The barrier's fail-closed behavior must
+therefore cover every writer that can attach state to an account (device
+registration account-stamping, notification subscribe, subscription verify),
+and the transaction takes a row lock on the `Account` and performs the
+`ClientIdentifier`/`DeviceRegistration` sweep as its final locked step, with
+the external-purge outbox snapshotted from that final sweep so remote cleanup
+covers late-arriving rows.
+
 Teardown runs inside one transaction, children before parents:
 
-| Model | Current FK behavior | Proposed handling |
-| --- | --- | --- |
-| BillingReceipt | RESTRICT (via Subscription) | Move raw signed payloads to the restricted retention store or delete; see financial records below |
-| Subscription | RESTRICT | Convert to a provider-key tombstone; see billing below |
-| CreditLedger | RESTRICT | Retain pseudonymized or delete; see financial records below |
-| UserCredits | RESTRICT | Delete |
-| AgentTemplateGeneration | RESTRICT | Delete; queue private-bucket attachment purge |
-| AgentTemplate | RESTRICT (forks SET NULL) | Delete or anonymize; published templates are a decision point; queue avatar purge |
-| AuthMethod | RESTRICT | Delete, and write the deletion barrier in the same transaction |
-| ClientIdentifier | Scalar accountId, no FK to Account; CASCADE only via DeviceRegistration | Delete by direct accountId query, not only via the device cascade: stale rows whose device has since re-registered under another account are unreachable through the account's current devices. Queue remote notification-server installation removal for every row found |
-| DeviceRegistration | SET NULL | Delete the rows outright (they hold push tokens); do not settle for unlinking |
-| ConnectionGrant | CASCADE | Cascades; remote Composio purge is enumerated separately (below), not derived from grants |
-| AdminAudit | No FK | Retain for ops accountability, but record a deletion audit entry; whether old entries keep the raw account id or get re-keyed is a decision point |
-| Account | root | Delete last; the durable deletion record and billing tombstones carry whatever must survive |
+| Model                   | Current FK behavior                                                     | Proposed handling                                                                                                                                                                                                                                                                                                                                                                                              |
+| ----------------------- | ----------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| BillingReceipt          | RESTRICT (via Subscription)                                             | Move raw signed payloads to the restricted retention store or delete; see financial records below                                                                                                                                                                                                                                                                                                              |
+| Subscription            | RESTRICT                                                                | Convert to a provider-key tombstone; see billing below                                                                                                                                                                                                                                                                                                                                                         |
+| CreditLedger            | RESTRICT                                                                | Retain pseudonymized or delete; see financial records below                                                                                                                                                                                                                                                                                                                                                    |
+| UserCredits             | RESTRICT                                                                | Delete                                                                                                                                                                                                                                                                                                                                                                                                         |
+| AgentTemplateGeneration | RESTRICT                                                                | Delete; queue private-bucket attachment purge                                                                                                                                                                                                                                                                                                                                                                  |
+| AgentTemplate           | RESTRICT (forks SET NULL)                                               | Delete or anonymize; published templates are a decision point; queue avatar purge                                                                                                                                                                                                                                                                                                                              |
+| AuthMethod              | RESTRICT                                                                | Delete, and write the deletion barrier in the same transaction                                                                                                                                                                                                                                                                                                                                                 |
+| ClientIdentifier        | Scalar accountId, no FK to Account; CASCADE only via DeviceRegistration | Delete by direct accountId query, not only via the device cascade: stale rows whose device has since re-registered under another account are unreachable through the account's current devices. The direct query deletes every row carrying the accountId (current and stale alike), making the device cascade a redundant backstop. Queue remote notification-server installation removal for every row found |
+| DeviceRegistration      | SET NULL                                                                | Delete the rows outright (they hold push tokens); do not settle for unlinking                                                                                                                                                                                                                                                                                                                                  |
+| ConnectionGrant         | CASCADE                                                                 | Cascades; remote Composio purge is enumerated separately (below), not derived from grants                                                                                                                                                                                                                                                                                                                      |
+| AdminAudit              | No FK                                                                   | Retain for ops accountability, but record a deletion audit entry; whether old entries keep the raw account id or get re-keyed is a decision point                                                                                                                                                                                                                                                              |
+| Account                 | root                                                                    | Delete last; the durable deletion record and billing tombstones carry whatever must survive                                                                                                                                                                                                                                                                                                                    |
 
 Ownerless tables (RuntimeConfig, InviteCode, InviteCodeRedemption, AuthNonce,
 GrantKind, TelemetryBatch, AgentVariant) are untouched.
@@ -232,7 +257,18 @@ record and barrier themselves), document:
 - access controls (raw signed receipts likely belong in a restricted
   financial store, not the primary application tables);
 - a fixed retention period and the expiry job that enforces it;
-- how existing `AdminAudit.accountId` values are handled at deletion time.
+- how existing `AdminAudit.accountId` values are handled at deletion time;
+- the handoff boundary: retention writes must be atomic with the teardown —
+  if the restricted store is the same database, they happen inside the
+  deletion transaction; if it is external, a durable copy is completed and
+  verified before the deletion transaction commits, with reconciliation and
+  expiry owned by the retention job either way.
+
+One implementation constraint is already settled by repo law: nothing outside
+`src/payments/ledger/` may write `UserCredits` or `CreditLedger`
+(`src/payments/AGENTS.md`). The teardown therefore calls a deletion-specific
+helper inside the ledger module rather than deleting those rows directly, so
+the single-writer invariant survives this feature.
 
 This remains a business/legal decision point that blocks implementation of
 this section, and the user-facing deletion copy must not promise erasure of
@@ -245,7 +281,13 @@ Subscription state is keyed by `originalTransactionId` (Apple) and
 a non-null FK. Keeping any subscription row therefore requires a shape change:
 a dedicated provider-key tombstone (transaction id or purchase token marked as
 belonging to a deleted account) rather than an "anonymized subscription row",
-which the schema cannot express once the account is gone.
+which the schema cannot express once the account is gone. Concretely, the
+transition is: inside the deletion transaction, the live `Subscription` row
+(and its `BillingReceipt` children, per the retention regime) is deleted, and
+a tombstone row keyed by provider identity — unique on
+`(provider, originalTransactionId | purchaseToken)` — is inserted atomically.
+Entitlement lookups treat a tombstoned key as no entitlement; Google token
+rotation adds the rotated token to the same tombstone rather than escaping it.
 
 The tombstone must define a small state machine covering:
 
@@ -303,7 +345,12 @@ outbox, and drained with retries afterwards.
   the service's list-for-user call and delete every returned connection, not
   derive targets from `ConnectionGrant` rows. Pending OAuth link requests
   must be cancelled or swept post-deletion so one cannot complete afterwards
-  and recreate third-party state.
+  and recreate third-party state. The deletion barrier doubles as the durable
+  fence here: link completion must consult it and refuse for a deleted
+  account. Because grant-less connections are only discoverable remotely, the
+  outbox worker re-runs list-for-user discovery post-commit — not just the
+  in-transaction snapshot — and deletes everything found, with durable
+  retries.
 - Analytics and telemetry: backend builder analytics uses the account id
   directly as the PostHog distinct id. Deletion must either issue a PostHog
   person deletion or document retention; the same policy question covers
@@ -343,8 +390,11 @@ openly:
 
 Idempotency and retries:
 
-- Repeat calls while a pre-deletion token is still valid return success
-  (converging on the same deletion record).
+- Repeat calls while a pre-deletion token is still valid return success,
+  converging on the same deletion record. They do so via the deletion route's
+  endpoint-specific auth path (see the hardening notes under authentication),
+  which resolves the deletion record for an already-deleted account instead
+  of being bounced by fail-closed `requireAccount`.
 - After token expiry, a retry begins with a token mint, which hits the
   deletion barrier and returns the terminal identity-deleted response; the
   client treats that as confirmation. A generic 401 or SIWE failure is never
@@ -379,7 +429,8 @@ cannot mint tokens".
 ### Phase 1: barrier, endpoint, and transactional teardown
 
 - [ ] Deletion barrier record, checked at token mint (terminal response) and
-      wired into `requireAccount` fail-closed behavior.
+      wired into `requireAccount` fail-closed behavior, plus the deletion
+      route's endpoint-specific idempotent-retry auth path.
 - [ ] Route, auth wiring, request validation, rate limiting, operation id.
 - [ ] Deletion record, outbox snapshot, and the ordered database transaction
       (including the direct `ClientIdentifier.accountId` sweep).
@@ -418,7 +469,9 @@ cannot mint tokens".
 - Race tests, not just replay tests: deletion concurrent with Apple/Google
   webhook processing; deletion concurrent with subscription verification; a
   Composio link request completing during deletion; a push registration
-  arriving while device and client rows are being snapshotted.
+  arriving while device and client rows are being snapshotted; deletion
+  concurrent with a subscription period grant (an SSN renewal materializing
+  credits through the ledger mid-teardown).
 - Schema guards: a test asserting that deleting an `Account` with children
   still fails at the database layer (so a future schema change cannot
   silently weaken the RESTRICT protections), and an inventory-enforcement
@@ -427,15 +480,15 @@ cannot mint tokens".
 
 ## Risks & Mitigations
 
-| Risk | Impact | Mitigation |
-| --- | --- | --- |
-| SIWE auto-provisioning silently recreates a deleted account (retry, paired device, client auto-reauth) | High | Deletion barrier at token mint with a terminal response; barrier checks at verify; fail-closed requireAccount |
-| Retention framed as anonymization overpromises erasure | High | Pseudonymized-retention regime with per-class purpose, fields, access, and expiry; honest user-facing copy |
-| Store webhooks or verify recreate rows for deleted accounts | Medium | Provider-key tombstones consulted in webhooks and verify; rotation absorption; concurrency semantics plus race tests |
-| Partial failure strands external data (S3, Composio, notification server) | Medium | Transactional outbox snapshot; drain with retries; purge SLA with alerting and operator remediation |
-| Untracked S3 attachments are unenumerable per account | Medium | Explicit decision: retain-and-disclose or ownership index; bucket lifecycle policy either way |
-| Stolen JWT deletes an account | Medium | Fresh-token requirement; rate limiting; audit trail |
-| Users expect deletion to stop billing | Medium | Client-side disclosure before deletion (iOS plan); tombstones keep webhook handling sane either way |
+| Risk                                                                                                   | Impact                                  | Mitigation                                                                                                           |
+| ------------------------------------------------------------------------------------------------------ | --------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| SIWE auto-provisioning silently recreates a deleted account (retry, paired device, client auto-reauth) | High                                    | Deletion barrier at token mint with a terminal response; barrier checks at verify; fail-closed requireAccount        |
+| Retention framed as anonymization overpromises erasure                                                 | High                                    | Pseudonymized-retention regime with per-class purpose, fields, access, and expiry; honest user-facing copy           |
+| Store webhooks or verify recreate rows for deleted accounts                                            | Medium                                  | Provider-key tombstones consulted in webhooks and verify; rotation absorption; concurrency semantics plus race tests |
+| Partial failure strands external data (S3, Composio, notification server)                              | Medium                                  | Transactional outbox snapshot; drain with retries; purge SLA with alerting and operator remediation                  |
+| Untracked S3 attachments are unenumerable per account                                                  | High (blocks the iOS confirmation copy) | Explicit decision: retain-and-disclose or ownership index; bucket lifecycle policy either way                        |
+| Stolen JWT deletes an account                                                                          | Medium                                  | Fresh-token requirement; rate limiting; audit trail                                                                  |
+| Users expect deletion to stop billing                                                                  | Medium                                  | Client-side disclosure before deletion (iOS plan); tombstones keep webhook handling sane either way                  |
 
 ## Open Questions
 
@@ -461,6 +514,9 @@ cannot mint tokens".
 - [ ] Do existing `AdminAudit` entries for the account get their account id
       re-keyed at deletion time, or retained as-is under the ops-audit
       carve-out?
+- [ ] Does deletion forfeit the current period's remaining subscription
+      credits (a ledger `forfeitSubscriptionPeriod` before the wallet goes),
+      or is deleting the wallet itself sufficient erasure?
 
 ## References
 
@@ -483,8 +539,14 @@ The two plans should compose in this order:
    cross-account verification continues to return 409.
 3. Add Option A only when a fresh provider-verified transaction targets a
    provider key whose prior owner is represented by a committed deletion
-   tombstone. A tombstoned owner is provably dead, so transfer heals a paying
-   user's entitlement without turning an ordinary ownership mismatch into a
+   tombstone, and the new account makes an explicit, one-time ownership claim
+   (a deliberate restore/claim act, not a background verify). The tombstone
+   proves the old owner is dead; it does not by itself prove the caller owns
+   the entitlement, so possession of a provider key or a replayable signed
+   payload alone must never transfer. Absent a valid claim, verify keeps
+   failing cross-account and manual, support-mediated transfer remains the
+   fallback. Under those two gates, transfer heals a paying user's
+   entitlement without turning an ordinary ownership mismatch into a
    subscription hijack vector.
 
 The July 12-13 incident demonstrates the need: account recreation orphaned
