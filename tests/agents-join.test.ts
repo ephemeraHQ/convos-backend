@@ -1012,6 +1012,77 @@ describe("agents join (assistant API)", () => {
       expect(capturedBody!.ownerAccountId).toBe(DEFAULT_TEST_ACCOUNT_ID);
     });
 
+    test("idempotencyKey is forwarded to the dispatch body, lowercased", async () => {
+      let capturedBody: Record<string, unknown> | null = null;
+      mockFetchImpl = (url, init) => {
+        if (init?.method === "POST") {
+          capturedBody = JSON.parse(init.body as string) as Record<
+            string,
+            unknown
+          >;
+          return Promise.resolve(
+            jsonResponse(200, { instanceId: "inst-idem" }),
+          );
+        }
+        return Promise.resolve(
+          jsonResponse(200, { instanceId: "inst-idem", joinStatus: "joined" }),
+        );
+      };
+
+      const res = await post({
+        conversationId: "abcdef1234567890",
+        idempotencyKey: "6F0F7A8E-1B2C-4D3E-8F4A-5B6C7D8E9F0A",
+      });
+      expect(res.status).toBe(200);
+      expect(capturedBody).not.toBeNull();
+      expect(capturedBody!.idempotencyKey).toBe(
+        "6f0f7a8e-1b2c-4d3e-8f4a-5b6c7d8e9f0a",
+      );
+    });
+
+    test("dispatch body omits idempotencyKey when the caller sends none", async () => {
+      let capturedBody: Record<string, unknown> | null = null;
+      mockFetchImpl = (url, init) => {
+        if (init?.method === "POST") {
+          capturedBody = JSON.parse(init.body as string) as Record<
+            string,
+            unknown
+          >;
+          return Promise.resolve(
+            jsonResponse(200, { instanceId: "inst-no-idem" }),
+          );
+        }
+        return Promise.resolve(
+          jsonResponse(200, {
+            instanceId: "inst-no-idem",
+            joinStatus: "joined",
+          }),
+        );
+      };
+
+      const res = await post({ conversationId: "abcdef1234567890" });
+      expect(res.status).toBe(200);
+      expect(capturedBody).not.toBeNull();
+      expect(capturedBody).not.toHaveProperty("idempotencyKey");
+    });
+
+    test("non-uuid idempotencyKey → 400 INVALID_REQUEST, no dispatch", async () => {
+      let fetchCalled = false;
+      mockFetchImpl = () => {
+        fetchCalled = true;
+        return Promise.reject(new Error("should not dispatch"));
+      };
+
+      const res = await post({
+        conversationId: "abcdef1234567890",
+        idempotencyKey: "not-a-uuid",
+      });
+      expect(res.status).toBe(400);
+      const data = (await res.json()) as { error: string };
+      expect(data.error).toBe("INVALID_REQUEST");
+      expect(fetchCalled).toBe(false);
+    });
+
     test("refuses to dispatch when accountId is not a uuid", async () => {
       let fetchCalled = false;
       mockFetchImpl = () => {

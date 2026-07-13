@@ -41,4 +41,45 @@ describe("agents/join body schema — legacy client contract", () => {
     });
     expect(parsed.success).toBe(false);
   });
+
+  test("legacy join body without idempotencyKey still validates", () => {
+    assertLegacyShapeValidates(
+      bodySchema,
+      {
+        slug: "join-token-abc123",
+        templateId: "33333333-3333-4333-8333-333333333333",
+      },
+      "legacy join body (no idempotencyKey)",
+    );
+  });
+});
+
+describe("agents/join body schema — idempotencyKey", () => {
+  const KEY = "6f0f7a8e-1b2c-4d3e-8f4a-5b6c7d8e9f0a";
+
+  test("idempotencyKey is optional and accepted", () => {
+    const parsed = bodySchema.safeParse({
+      slug: "join-token-abc123",
+      idempotencyKey: KEY,
+    });
+    expect(parsed.success).toBe(true);
+    expect(parsed.success && parsed.data.idempotencyKey).toBe(KEY);
+  });
+
+  test("uppercase idempotencyKey is lowercased (early gate)", () => {
+    const parsed = bodySchema.safeParse({
+      slug: "join-token-abc123",
+      idempotencyKey: KEY.toUpperCase(),
+    });
+    expect(parsed.success).toBe(true);
+    expect(parsed.success && parsed.data.idempotencyKey).toBe(KEY);
+  });
+
+  test("non-uuid idempotencyKey is rejected", () => {
+    const parsed = bodySchema.safeParse({
+      slug: "join-token-abc123",
+      idempotencyKey: "not-a-uuid",
+    });
+    expect(parsed.success).toBe(false);
+  });
 });
