@@ -3,8 +3,10 @@ import express from "express";
 import request from "supertest";
 import { afterEach, beforeAll, describe, expect, test, vi } from "vitest";
 import { accountsMeRouter } from "@/api/v2/accounts/accountsMeRouter";
+import { REFILL_DISABLED_PERIOD_LABEL } from "@/api/v2/accounts/handlers/credits-get";
 import { authMiddleware } from "@/middleware/auth";
 import { pinoMiddleware } from "@/middleware/pino";
+import { config } from "@/payments/credits/config";
 import { getSpendableBalance } from "@/payments/spendable";
 import {
   AppleEnv,
@@ -433,6 +435,65 @@ describe("GET /v2/accounts/me/credits — free-tier (no subscription)", () => {
     expect(body.balance).toBe(0);
     expect(body.monthlyGrant).toBe(100);
     expect(body.monthlyGrantUsed).toBe(100);
+  });
+
+  // Daily-refill kill-switch (cap = 0): the refill is intentionally
+  // deactivated, so the endpoint must stop promising a FUTURE refresh. iOS's
+  // shipped `CreditBalance` model requires `nextRefreshAt` as a non-optional
+  // Date, so the key stays present — the response mirrors the iOS design
+  // fixture `CreditsStatePreset.noSubNoTrial` exactly (grant/used 0,
+  // nextRefreshAt = now, periodLabel "—") so shipped binaries render a state
+  // design already signed off. See REFILL_DISABLED_PERIOD_LABEL in the
+  // handler for the full shipped-client analysis.
+  describe("daily refill disabled (cap = 0)", () => {
+    const originalCap = config.freeTierDailyCapCredits;
+
+    afterEach(() => {
+      config.freeTierDailyCapCredits = originalCap;
+    });
+
+    test("no future refresh advertised; combo mirrors the iOS free-state fixture", async () => {
+      config.freeTierDailyCapCredits = 0;
+      const accountId = await newAccount();
+      const token = await tokenFor(accountId);
+      await prisma.userCredits.create({ data: { accountId, balance: 60n } });
+      const before = Date.now();
+      const res = await request(makeApp())
+        .get("/v2/accounts/me/credits")
+        .set("X-Convos-AuthToken", token);
+      const after = Date.now();
+      expect(res.status).toBe(200);
+      const body = res.body as BalanceBody;
+      expect(body.balance).toBe(60);
+      expect(body.monthlyGrant).toBe(0);
+      // No cap → nothing to have "used" against it.
+      expect(body.monthlyGrantUsed).toBe(0);
+      // The assertion that matters: nextRefreshAt is NOW (request time), not
+      // tomorrow — no forward promise, matching the fixture's `now`.
+      const next = new Date(body.nextRefreshAt).getTime();
+      expect(Number.isNaN(next)).toBe(false);
+      expect(next).toBeGreaterThanOrEqual(before);
+      expect(next).toBeLessThanOrEqual(after);
+      // Fixture's period label for the no-grant state.
+      expect(body.periodLabel).toBe(REFILL_DISABLED_PERIOD_LABEL);
+      expect(body.periodLabel).toBe("—");
+    });
+
+    test("re-enabling the cap restores the daily-refresh advertisement unchanged", async () => {
+      config.freeTierDailyCapCredits = originalCap;
+      const accountId = await newAccount();
+      const token = await tokenFor(accountId);
+      const res = await request(makeApp())
+        .get("/v2/accounts/me/credits")
+        .set("X-Convos-AuthToken", token);
+      const body = res.body as BalanceBody;
+      expect(body.monthlyGrant).toBe(originalCap);
+      expect(body.periodLabel).toBe("Daily");
+      const next = new Date(body.nextRefreshAt).getTime();
+      expect(next).toBeGreaterThan(Date.now());
+      // Within the next 24h — i.e. start of next UTC day, not "now".
+      expect(next).toBeLessThanOrEqual(Date.now() + 24 * 60 * 60 * 1000);
+    });
   });
 
   test("expired subscription → takes free-tier branch (NOT stale tierGrant)", async () => {
