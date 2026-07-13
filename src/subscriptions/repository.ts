@@ -474,6 +474,10 @@ export const upsertFromVerify = async (
     //   - Subscription provider-unique → the documented cold-start race (two
     //     concurrent creates of the same provider sub). Benign idempotent
     //     replay: re-read the committed row.
+    //     - EXCEPT the Apple appAccountToken unique: the colliding row holds a
+    //       DIFFERENT originalTransactionId, so the OTX re-read below finds
+    //       nothing. That case gets its own (provider, appAccountToken)
+    //       re-read further down instead of falling through to the rethrow.
     //   - BillingReceipt idempotencyKey → two concurrent /verify calls for the
     //     same transaction raced past the `existingReceipt` pre-check above and
     //     both reached `billingReceipt.create`. The loser must ALSO resolve
@@ -501,6 +505,43 @@ export const upsertFromVerify = async (
           );
         }
         return { subscription: current, receiptCreated: false };
+      }
+
+      // reReadAfterRace resolves by OTX/purchaseToken only, so an
+      // appAccountToken-unique conflict re-read null here and used to fall
+      // through to the rethrow — a raw 500 to the user. That is the
+      // account-recreation path: iOS generates the appAccountToken per
+      // INSTALL, so it survives account deletion + recreation, and the
+      // recreated account's fresh purchase (NEW originalTransactionId)
+      // collides on the AAT unique with the OLD account's row. Resolve the
+      // conflict by the index that actually fired: re-read by
+      // (provider, appAccountToken) and surface the truthful outcome — the
+      // standard account-mismatch 409 when the holder is another account, or
+      // an idempotent replay when the caller already holds the row (mirrors
+      // the same-account branch above). Mismatch semantics are unchanged;
+      // only the crash becomes an honest 409.
+      if (
+        input.provider === BillingProvider.apple &&
+        isAppleAppAccountTokenConflict(err)
+      ) {
+        const holder = await prisma.subscription.findUnique({
+          where: {
+            subscription_apple_aat_unique: {
+              provider: BillingProvider.apple,
+              appAccountToken: input.appAccountToken,
+            },
+          },
+        });
+        if (holder) {
+          if (holder.accountId !== input.accountId) {
+            throw new SubscriptionAccountMismatchError(
+              holder.accountId,
+              input.accountId,
+              externalId,
+            );
+          }
+          return { subscription: holder, receiptCreated: false };
+        }
       }
     }
     throw err;
@@ -543,6 +584,31 @@ const isSubscriptionProviderUniqueConflict = (
     (t) =>
       SUBSCRIPTION_PROVIDER_UNIQUE_FIELDS.has(t) ||
       SUBSCRIPTION_PROVIDER_UNIQUE_INDEX_NAMES.has(t),
+  );
+};
+
+// The Apple (provider, appAccountToken) unique specifically — a SUBSET of the
+// provider-unique set above, needed because reReadAfterRace cannot resolve this
+// conflict: it re-reads by originalTransactionId, and the colliding row holds a
+// DIFFERENT one (account recreation reuses the per-install AAT with a fresh
+// purchase). Same target-shape tolerance as its siblings: the Postgres driver
+// surfaces the conflicting FIELD names in `err.meta.target`; some adapters
+// surface the index NAME instead.
+const isAppleAppAccountTokenConflict = (
+  err: Prisma.PrismaClientKnownRequestError,
+): boolean => {
+  if (err.meta?.modelName && err.meta.modelName !== "Subscription") {
+    return false;
+  }
+  const target = err.meta?.target;
+  const tokens =
+    typeof target === "string"
+      ? [target]
+      : Array.isArray(target)
+        ? target.map(String)
+        : [];
+  return tokens.some(
+    (t) => t === "appAccountToken" || t === "subscription_apple_aat_unique",
   );
 };
 

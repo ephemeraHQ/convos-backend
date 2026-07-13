@@ -257,6 +257,88 @@ describe("upsertFromVerify", () => {
     expect(receiptB).toBeNull();
   });
 
+  // AAT-collision (account recreation): iOS generates the appAccountToken per
+  // INSTALL, so it survives account deletion + recreation. The recreated
+  // account's fresh purchase carries a NEW originalTransactionId, so
+  // findExistingForVerify sees no row, Subscription.create fires, and Postgres
+  // rejects it on the (provider, appAccountToken) unique held by the OLD
+  // account's row. This used to fall through reReadAfterRace (OTX-only re-read
+  // → null) to a raw rethrow — a 500 to the user. It must surface the standard
+  // account-mismatch (→ 409) instead.
+  test("same appAccountToken, different account + different OTX: account-mismatch, not a 500", async () => {
+    const accountA = await newAccount();
+    const accountB = await newAccount();
+    const aat = "cccccccc-cccc-cccc-cccc-cccccccccccc";
+
+    const first = await upsertFromVerify(
+      verifyInput({
+        accountId: accountA,
+        appAccountToken: aat,
+        originalTransactionId: "otid-aat-a",
+        transactionId: "tx-aat-a",
+      }),
+    );
+
+    let caught: unknown;
+    try {
+      await upsertFromVerify(
+        verifyInput({
+          accountId: accountB,
+          appAccountToken: aat,
+          originalTransactionId: "otid-aat-b",
+          transactionId: "tx-aat-b",
+        }),
+      );
+    } catch (err) {
+      caught = err;
+    }
+
+    expect(caught).toBeInstanceOf(SubscriptionAccountMismatchError);
+    const mismatch = caught as SubscriptionAccountMismatchError;
+    expect(mismatch.existingAccountId).toBe(accountA);
+    expect(mismatch.attemptedAccountId).toBe(accountB);
+    expect(mismatch.providerSubscriptionId).toBe("otid-aat-b");
+
+    // Account A keeps ownership; account B persisted nothing.
+    expect((await findCurrentByAccountId(accountA))?.id).toBe(
+      first.subscription.id,
+    );
+    expect(await findCurrentByAccountId(accountB)).toBeNull();
+    expect(await findAppleByOriginalTransactionId("otid-aat-b")).toBeNull();
+    expect(
+      await findReceiptByTransactionId(BillingProvider.apple, "tx-aat-b"),
+    ).toBeNull();
+  });
+
+  test("same appAccountToken, SAME account, different OTX: resolves idempotently to the existing row", async () => {
+    const accountId = await newAccount();
+    const aat = "dddddddd-dddd-dddd-dddd-dddddddddddd";
+
+    const first = await upsertFromVerify(
+      verifyInput({
+        accountId,
+        appAccountToken: aat,
+        originalTransactionId: "otid-aat-same-1",
+        transactionId: "tx-aat-same-1",
+      }),
+    );
+    // Same account re-purchasing under the same install token: the create
+    // loses on the AAT unique, and the caller already holds the row → replay
+    // semantics (mirrors the cold-start race resolution), not a crash.
+    const second = await upsertFromVerify(
+      verifyInput({
+        accountId,
+        appAccountToken: aat,
+        originalTransactionId: "otid-aat-same-2",
+        transactionId: "tx-aat-same-2",
+      }),
+    );
+    expect(second.receiptCreated).toBe(false);
+    expect(second.subscription.id).toBe(first.subscription.id);
+    // No double period grant either.
+    expect(await getBalance(accountId)).toBe(BigInt(perPeriod()));
+  });
+
   test("concurrent verifies, same accountId: exactly one creates the receipt, both return the same subscription", async () => {
     const accountId = await newAccount();
     const input = verifyInput({
