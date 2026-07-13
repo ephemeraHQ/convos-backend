@@ -75,6 +75,7 @@ const baseTemplate = (
   firstPublishedAt: new Date("2026-01-01T00:00:00.000Z"),
   status: "published",
   featured: false,
+  featuredRank: 0,
   createdAt: new Date("2026-01-01T00:00:00.000Z"),
   updatedAt: new Date("2026-01-01T00:00:00.000Z"),
   ...overrides,

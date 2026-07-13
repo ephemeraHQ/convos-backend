@@ -189,6 +189,10 @@ model AgentTemplate {
   firstPublishedAt DateTime?
   status           PublishStatus @default(draft)
   featured         Boolean       @default(false)
+  // Curation weight for the featured gallery, sorted descending: the heaviest
+  // template leads. 0 means unranked, so anything featured without an explicit
+  // weight sits below every curated row instead of displacing the lead slot.
+  featuredRank     Int           @default(0)
   createdAt        DateTime      @default(now())
   updatedAt        DateTime      @updatedAt
 
@@ -201,6 +205,7 @@ model AgentTemplate {
   @@index([status, createdAt, id])
   @@index([status, category, createdAt, id])
   @@index([status, featured, createdAt, id])
+  @@index([status, featured, featuredRank, id])
   @@index([forkedFromId])
 }
 

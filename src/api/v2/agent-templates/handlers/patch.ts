@@ -27,6 +27,7 @@ const bodySchema = z
     description: z.string().nullable().optional(),
     emoji: z.string().nullable().optional(),
     featured: z.boolean().optional(),
+    featuredRank: z.number().int().min(0).optional(),
     prompt: z
       .string()
       .max(50_000, {
@@ -101,6 +102,11 @@ const applyContentFields = (
   // published template un-featured without a status change).
   if (body.featured !== undefined) {
     data.featured = body.featured;
+  }
+  // Position within the featured gallery. The dashboard reorders by writing a
+  // new weight per moved row; the gallery reads them descending.
+  if (body.featuredRank !== undefined) {
+    data.featuredRank = body.featuredRank;
   }
   if (body.prompt !== undefined) {
     data.prompt = body.prompt;

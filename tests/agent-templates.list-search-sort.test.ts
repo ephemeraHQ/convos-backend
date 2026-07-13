@@ -13,12 +13,14 @@ import {
   agentKeyHeaders,
   createTemplate,
   listTemplates,
+  patchTemplate,
   startAgentTemplatesServer,
   validAgentAssetsApiKey,
 } from "./agent-templates.cross.helpers";
 
 // Covers the list-API additions: free-text `q`, `sort`/`order` (incl. keyset
-// cursor under a non-default sort), and the `/counts` aggregate endpoint.
+// cursor under a non-default sort), the `featuredRank` gallery ordering, and
+// the `/counts` aggregate endpoint.
 // Tokens are globally unique so search/sort assertions are unaffected by any
 // other rows in the test DB; counts assertions are delta-based for the same
 // reason.
@@ -35,6 +37,7 @@ const cleanup = () =>
         { agentName: { startsWith: "Zxq" } },
         { agentName: { startsWith: "Zsort" } },
         { agentName: { startsWith: "Zcount" } },
+        { agentName: { startsWith: "Zrank" } },
       ],
     },
   });
@@ -182,6 +185,99 @@ describe("Agent templates list — search / sort / counts", () => {
     expect(page2.body.data.map((t) => t.agentName as string)).toEqual([
       "Zsort Bravo",
     ]);
+  });
+
+  // ── Featured gallery curation ──
+  test("?sort=featuredRank&order=desc leads with the heaviest row and sinks unranked ones", async () => {
+    const seed = async (name: string, rank: number | undefined) => {
+      const created = await createTemplate({
+        baseURL,
+        headers: agentKeyHeaders(),
+        body: {
+          agentName: name,
+          prompt: "p",
+          slug: `lss-${name.toLowerCase().replace(/\s+/g, "-")}`,
+          description: "zrankmarker",
+        },
+      });
+      await patchTemplate({
+        baseURL,
+        headers: agentKeyHeaders(),
+        id: created.body.id as string,
+        body:
+          rank === undefined
+            ? { featured: true }
+            : { featured: true, featuredRank: rank },
+      });
+      return created.body.id as string;
+    };
+
+    await seed("Zrank Light", 10);
+    await seed("Zrank Heavy", 30);
+    await seed("Zrank Middle", 20);
+    // Featured with no explicit weight — the default 0 must not seize the lead.
+    await seed("Zrank Unranked", undefined);
+
+    const gallery = await listTemplates({
+      baseURL,
+      query:
+        "?q=zrankmarker&featured=true&sort=featuredRank&order=desc&limit=100",
+      headers: agentKeyHeaders(),
+    });
+    expect(gallery.response.status).toBe(200);
+    expect(gallery.body.data.map((t) => t.agentName as string)).toEqual([
+      "Zrank Heavy",
+      "Zrank Middle",
+      "Zrank Light",
+      "Zrank Unranked",
+    ]);
+    // The weight is serialized, so the dashboard can compute the next move.
+    expect(gallery.body.data.map((t) => t.featuredRank as number)).toEqual([
+      30, 20, 10, 0,
+    ]);
+
+    // keyset cursor walks the same order one page at a time
+    const page1 = await listTemplates({
+      baseURL,
+      query:
+        "?q=zrankmarker&featured=true&sort=featuredRank&order=desc&limit=1",
+      headers: agentKeyHeaders(),
+    });
+    expect(page1.body.data.map((t) => t.agentName as string)).toEqual([
+      "Zrank Heavy",
+    ]);
+    expect(page1.body.hasMore).toBe(true);
+
+    const page2 = await listTemplates({
+      baseURL,
+      query: `?q=zrankmarker&featured=true&sort=featuredRank&order=desc&limit=1&cursor=${encodeURIComponent(
+        page1.body.nextCursor as string,
+      )}`,
+      headers: agentKeyHeaders(),
+    });
+    expect(page2.body.data.map((t) => t.agentName as string)).toEqual([
+      "Zrank Middle",
+    ]);
+  });
+
+  test("a negative featuredRank is rejected", async () => {
+    const created = await createTemplate({
+      baseURL,
+      headers: agentKeyHeaders(),
+      body: {
+        agentName: "Zrank Negative",
+        prompt: "p",
+        slug: "lss-rank-negative",
+        description: "zrankmarker",
+      },
+    });
+    const patched = await patchTemplate({
+      baseURL,
+      headers: agentKeyHeaders(),
+      id: created.body.id as string,
+      body: { featuredRank: -1 },
+    });
+    expect(patched.response.status).toBe(400);
   });
 
   test("a cursor built for a different sort is rejected with 400", async () => {
