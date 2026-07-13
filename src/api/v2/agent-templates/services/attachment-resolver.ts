@@ -6,9 +6,10 @@
  * size/type (defense-in-depth over the submit-time caps), then:
  *   - image → moderate (Rekognition) + emit an `image` data-URI block,
  *   - pdf   → emit a `pdf` data-URI block,
+ *   - text  → decode UTF-8 + moderate + emit an inline `text` block,
  *   - audio → transcribe to text + moderate the transcript.
  *
- * Images/PDFs come back as `ResolvedAttachment`s; audio comes back as
+ * Images/PDFs/text files come back as `ResolvedAttachment`s; audio comes back as
  * `transcripts` the caller folds into the generation's text. Shared by the
  * async executor (moderate: true) and the admin ephemeral endpoint
  * (moderate: false — the caller is trusted and nothing is persisted).
@@ -22,6 +23,8 @@ import {
 import { AppError } from "@/utils/errors";
 import {
   classifyMime,
+  decodeTextAttachment,
+  defaultTextFilename,
   getBuildObjectBytes,
   maxBytesForKind,
   normalizeMime,
@@ -123,6 +126,29 @@ async function resolveOne(
       }
     }
     return { kind: "transcript", transcript, byteLength: bytes.length };
+  }
+
+  if (kind === "text") {
+    const filename = ref.filename || defaultTextFilename(ref.mimeType);
+    const text = decodeTextAttachment(bytes, filename);
+    // A text attachment is user-supplied prose heading straight for the prompt,
+    // so it gets the same content check the typed directive and voice transcripts
+    // get. Images go to Rekognition; PDFs are the one kind whose contents still
+    // reach the model unchecked.
+    if (opts.moderate) {
+      const verdict = await checkContent(text, opts.trace);
+      if (!verdict.allowed) {
+        throw new AttachmentModerationError(
+          verdict.reason ?? "blocked",
+          ref.objectKey,
+        );
+      }
+    }
+    return {
+      kind: "attachment",
+      byteLength: bytes.length,
+      attachment: { kind: "text", filename, text },
+    };
   }
 
   if (kind === "image" && opts.moderate) {

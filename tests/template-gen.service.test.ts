@@ -919,6 +919,69 @@ describe("templateGen service — OpenRouter integration", () => {
   });
 
   // -----------------------------------------------------------------------
+  // Text attachments: an inline block fenced with its filename, so the model
+  // can tell an attached file from the user's directive
+  // -----------------------------------------------------------------------
+  test("text attachment becomes a fenced text block, not a file block", async () => {
+    const mod = await import("@/api/v2/agent-templates/services/templateGen");
+    generateTemplate = mod.generateTemplate;
+    setOpenRouterResponse(templateResponse());
+
+    await generateTemplate({
+      attachments: [
+        {
+          kind: "text",
+          filename: "support-faq.csv",
+          text: "question,answer\nrefunds?,30 days",
+        },
+      ],
+      text: "Answer support questions from this",
+    });
+
+    const userContent = getLastOpenRouterRequest().body.messages[1].content;
+    expect(Array.isArray(userContent)).toBe(true);
+    expect(userContent).toHaveLength(2);
+
+    // The lead directive counts a text file as a document, same as a PDF.
+    expect(userContent[0].type).toBe("text");
+    expect(userContent[0].text).toContain("document");
+    expect(userContent[0].text).toContain(
+      "User's intent: Answer support questions from this",
+    );
+
+    // The file rides as text, fenced by name — never a base64 file block.
+    expect(userContent[1].type).toBe("text");
+    expect(userContent[1].text).toBe(
+      "--- support-faq.csv ---\nquestion,answer\nrefunds?,30 days\n--- end support-faq.csv ---",
+    );
+    expect(JSON.stringify(userContent)).not.toContain("base64");
+  });
+
+  test("a text file mixed with an image keeps caller order and both block types", async () => {
+    const mod = await import("@/api/v2/agent-templates/services/templateGen");
+    generateTemplate = mod.generateTemplate;
+    setOpenRouterResponse(templateResponse());
+
+    await generateTemplate({
+      attachments: [
+        { kind: "text", filename: "notes.md", text: "# Notes" },
+        {
+          kind: "image",
+          mimeType: "image/png",
+          dataUri: "data:image/png;base64,iVBORw0KGgo=",
+        },
+      ],
+    });
+
+    const userContent = getLastOpenRouterRequest().body.messages[1].content;
+    expect(userContent[0].text).toContain("1 image");
+    expect(userContent[0].text).toContain("1 document");
+    expect(userContent[1].type).toBe("text");
+    expect(userContent[1].text).toContain("--- notes.md ---");
+    expect(userContent[2].type).toBe("image_url");
+  });
+
+  // -----------------------------------------------------------------------
   // Brevity rail asymmetry: appended on production-LLM path only
   // -----------------------------------------------------------------------
   test("brevity rail appended on production-LLM path", async () => {

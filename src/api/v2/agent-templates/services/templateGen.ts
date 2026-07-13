@@ -352,7 +352,8 @@ export const DEFAULT_TEST_METRICS: GenerationMetrics = {
  *  transcribed to text upstream and folded into `text`. */
 export type ResolvedAttachment =
   | { kind: "image"; mimeType: string; dataUri: string }
-  | { kind: "pdf"; filename: string; dataUri: string };
+  | { kind: "pdf"; filename: string; dataUri: string }
+  | { kind: "text"; filename: string; text: string };
 
 export interface GenerateTemplateInput {
   /** What the user typed in the composer, plus any transcribed voice notes the
@@ -363,8 +364,9 @@ export interface GenerateTemplateInput {
    *  legacy `idea` / `content` / `url` fields into this single field at the API
    *  boundary. */
   text?: string;
-  /** Image / PDF attachments, resolved to data URIs. Images become `image_url`
-   *  vision blocks; PDFs become native `file` blocks. */
+  /** Resolved attachments. Images become `image_url` vision blocks, PDFs native
+   *  `file` blocks, and text files inlined `text` blocks labelled with their
+   *  filename — so the model can tell a CSV of FAQs from the user's directive. */
   attachments?: ResolvedAttachment[];
 }
 
@@ -438,19 +440,36 @@ function buildCapabilitiesDirective(connections?: string[] | null): string {
   );
 }
 
+/** Wrap a text attachment in a labelled fence. The filename is the point: it tells
+ *  the model this is an attached file rather than more of the user's directive, and
+ *  the name itself is signal ("support-faq.csv" says more than its rows do).
+ *
+ *  Shared with the distill stage: the two stages describe the same file to the same
+ *  model, so the fence is a contract between them, not a local formatting choice. */
+export function fenceTextAttachment(
+  attachment: Extract<ResolvedAttachment, { kind: "text" }>,
+): string {
+  return `--- ${attachment.filename} ---\n${attachment.text}\n--- end ${attachment.filename} ---`;
+}
+
 /** Lead instruction for the multimodal path, phrased for the actual mix of
  *  attached files so the model knows whether it's looking at images, reading
- *  documents, or both. */
-function describeAttachments(imageCount: number, pdfCount: number): string {
+ *  documents, or both. A text file counts as a document: to the model it reads
+ *  the same as a PDF, only inlined rather than sent as bytes. */
+function describeAttachments(attachments: ResolvedAttachment[]): string {
+  const images = attachments.filter((a) => a.kind === "image").length;
+  const docs = attachments.filter(
+    (a) => a.kind === "pdf" || a.kind === "text",
+  ).length;
   const noun = (n: number, singular: string) =>
     `${n} ${singular}${n === 1 ? "" : "s"}`;
-  if (imageCount > 0 && pdfCount > 0) {
-    return `Create an assistant based on the attached files (${noun(imageCount, "image")} and ${noun(pdfCount, "document")}). Use all of them together to infer the topic, purpose, and audience.`;
+  if (images > 0 && docs > 0) {
+    return `Create an assistant based on the attached files (${noun(images, "image")} and ${noun(docs, "document")}). Use all of them together to infer the topic, purpose, and audience.`;
   }
-  if (pdfCount > 0) {
-    return `Create an assistant based on the content of the attached ${pdfCount === 1 ? "document" : `${pdfCount} documents`}.`;
+  if (docs > 0) {
+    return `Create an assistant based on the content of the attached ${docs === 1 ? "document" : `${docs} documents`}.`;
   }
-  return `Create an assistant based on what you see in the attached ${imageCount === 1 ? "image" : `${imageCount} images`}. Infer the topic, purpose, and audience from the visual content.`;
+  return `Create an assistant based on what you see in the attached ${images === 1 ? "image" : `${images} images`}. Infer the topic, purpose, and audience from the visual content.`;
 }
 
 // ---------------------------------------------------------------------------
@@ -1493,40 +1512,33 @@ export async function generateTemplate(
   const attachments = opts.attachments ?? [];
 
   if (attachments.length > 0) {
-    // Multimodal path: text directive + N image/PDF blocks. Images go to the
-    // vision model as `image_url`; PDFs as native `file` blocks. The executor
-    // already fetched the bytes and built each data URI, so this just lays out
-    // the blocks. The URL/GitHub/passthrough logic below is text-only and
-    // doesn't apply when files are attached.
-    const images = attachments.filter(
-      (a): a is Extract<ResolvedAttachment, { kind: "image" }> =>
-        a.kind === "image",
-    );
-    const pdfs = attachments.filter(
-      (a): a is Extract<ResolvedAttachment, { kind: "pdf" }> =>
-        a.kind === "pdf",
-    );
+    // Multimodal path: a text directive + one block per file. Images go to the
+    // vision model as `image_url`, PDFs as native `file` blocks, text files as
+    // inline `text` blocks. The executor already fetched the bytes and built each
+    // data URI, so this just lays out the blocks. The URL/GitHub/passthrough logic
+    // below is text-only and doesn't apply when files are attached.
     userContent = [
       {
         type: "text",
-        text: `${describeAttachments(images.length, pdfs.length)}${intentNote}`,
+        text: `${describeAttachments(attachments)}${intentNote}`,
       },
       // Map the original `attachments` array (not the filtered ones) so a mixed
-      // image/PDF order from the caller is preserved in the content blocks.
-      ...attachments.map((attachment) =>
-        attachment.kind === "image"
-          ? {
-              type: "image_url",
-              image_url: { url: attachment.dataUri },
-            }
-          : {
-              type: "file",
-              file: {
-                filename: attachment.filename,
-                file_data: attachment.dataUri,
-              },
-            },
-      ),
+      // order from the caller is preserved in the content blocks.
+      ...attachments.map((attachment) => {
+        if (attachment.kind === "image") {
+          return { type: "image_url", image_url: { url: attachment.dataUri } };
+        }
+        if (attachment.kind === "text") {
+          return { type: "text", text: fenceTextAttachment(attachment) };
+        }
+        return {
+          type: "file",
+          file: {
+            filename: attachment.filename,
+            file_data: attachment.dataUri,
+          },
+        };
+      }),
     ];
   } else {
     // Text path: idea, content, or URL

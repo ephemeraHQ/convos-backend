@@ -25,6 +25,7 @@ import {
 } from "./openrouter-client";
 import {
   decodeEmojiEscapes,
+  fenceTextAttachment,
   getModel,
   sanitizeEmojiField,
   type GenerationPrefill,
@@ -232,31 +233,37 @@ function buildDistillUserContent(
 
   return [
     { type: "text", text: `${intro}${pinned}` },
-    // Preserve the caller's mixed image/PDF order in the content blocks.
-    ...attachments.map((attachment) =>
-      attachment.kind === "image"
-        ? { type: "image_url", image_url: { url: attachment.dataUri } }
-        : {
-            type: "file",
-            file: {
-              filename: attachment.filename,
-              file_data: attachment.dataUri,
-            },
-          },
-    ),
+    // Preserve the caller's mixed order in the content blocks.
+    ...attachments.map((attachment) => {
+      if (attachment.kind === "image") {
+        return { type: "image_url", image_url: { url: attachment.dataUri } };
+      }
+      if (attachment.kind === "text") {
+        return { type: "text", text: fenceTextAttachment(attachment) };
+      }
+      return {
+        type: "file",
+        file: {
+          filename: attachment.filename,
+          file_data: attachment.dataUri,
+        },
+      };
+    }),
   ];
 }
 
-/** Short noun phrase for the attached files, for the image/PDF-only directive. */
+/** Short noun phrase for the attached files, for the file-only directive. */
 function describeDistillFiles(attachments: ResolvedAttachment[]): string {
   const images = attachments.filter((a) => a.kind === "image").length;
-  const pdfs = attachments.filter((a) => a.kind === "pdf").length;
+  const docs = attachments.filter(
+    (a) => a.kind === "pdf" || a.kind === "text",
+  ).length;
   const noun = (n: number, singular: string) =>
     `${n} ${singular}${n === 1 ? "" : "s"}`;
-  if (images > 0 && pdfs > 0) {
-    return `files (${noun(images, "image")} and ${noun(pdfs, "document")})`;
+  if (images > 0 && docs > 0) {
+    return `files (${noun(images, "image")} and ${noun(docs, "document")})`;
   }
-  if (pdfs > 0) return noun(pdfs, "document");
+  if (docs > 0) return noun(docs, "document");
   return noun(images, "image");
 }
 
