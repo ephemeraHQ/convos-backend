@@ -16,6 +16,7 @@ import {
   parseDistillResponse,
 } from "@/api/v2/agent-templates/services/distill";
 import { __resetOpenRouterClientForTests } from "@/api/v2/agent-templates/services/openrouter-client";
+import { fenceTextAttachment } from "@/api/v2/agent-templates/services/templateGen";
 
 const VALID = {
   agentName: "Wave Boss",
@@ -205,6 +206,57 @@ describe("distill()", () => {
     expect(types).toContain("image_url");
     const imageBlock = blocks.find((b) => b.type === "image_url");
     expect(imageBlock?.image_url?.url).toBe("data:image/png;base64,AAAA");
+  });
+
+  test("a text attachment reaches distill fenced exactly as the generate stage fences it", async () => {
+    let capturedBody: { messages?: unknown } | undefined;
+    globalThis.fetch = ((_url: unknown, init?: { body?: string }) => {
+      capturedBody = init?.body
+        ? (JSON.parse(init.body) as { messages?: unknown })
+        : undefined;
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({
+            id: "cmpl-3",
+            model: "anthropic/claude-opus-4.8-fast",
+            choices: [
+              {
+                message: { role: "assistant", content: JSON.stringify(VALID) },
+              },
+            ],
+            usage: { prompt_tokens: 10, completion_tokens: 20 },
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
+      );
+    }) as typeof fetch;
+
+    const attachment = {
+      kind: "text",
+      filename: "support-faq.csv",
+      text: "question,answer\nrefunds?,30 days",
+    } as const;
+
+    await distill({ attachments: [attachment] });
+
+    const messages = (capturedBody?.messages ?? []) as Array<{
+      role: string;
+      content: unknown;
+    }>;
+    const blocks = (messages.find((m) => m.role === "user")?.content ??
+      []) as Array<{ type: string; text?: string }>;
+
+    // Never a base64 file block — a text file is inlined.
+    expect(blocks.map((b) => b.type)).toEqual(["text", "text"]);
+    expect(JSON.stringify(blocks)).not.toContain("base64");
+
+    // The two stages describe the same file to the same model, so distill must
+    // emit byte-for-byte what the generate stage emits. Comparing against the
+    // shared helper is what fails if either side ever hand-rolls the fence again.
+    expect(blocks[1].text).toBe(fenceTextAttachment(attachment));
+    expect(blocks[1].text).toBe(
+      "--- support-faq.csv ---\nquestion,answer\nrefunds?,30 days\n--- end support-faq.csv ---",
+    );
   });
 
   test("throws when there is neither text nor an attachment", async () => {
