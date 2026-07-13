@@ -7,10 +7,12 @@ import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import {
   classifyMime,
+  decodeTextAttachment,
   getBuildObjectBytes,
   headBuildObject,
   maxBytesForKind,
   presignBuildUpload,
+  TEXT_ATTACHMENT_MAX_CHARS,
 } from "@/api/v2/agent-templates/services/build-attachments";
 
 const mockSend = vi.fn(
@@ -70,13 +72,79 @@ describe("classifyMime", () => {
   test("rejects webp/gif (Rekognition can't read them) and unknown types", () => {
     expect(classifyMime("image/webp")).toBeNull();
     expect(classifyMime("image/gif")).toBeNull();
-    expect(classifyMime("text/plain")).toBeNull();
+    expect(classifyMime("application/zip")).toBeNull();
+  });
+
+  test("classifies the text family, and fails closed outside it", () => {
+    expect(classifyMime("text/plain")).toBe("text");
+    expect(classifyMime("text/markdown")).toBe("text");
+    expect(classifyMime("text/csv")).toBe("text");
+    expect(classifyMime("application/json")).toBe("text");
+
+    // The allowlist is explicit, not a `text/*` prefix match: an unlisted
+    // text-ish type is rejected rather than decoded on the client's say-so.
+    expect(classifyMime("text/html")).toBeNull();
+
+    // Office formats have no path in the generator yet.
+    expect(
+      classifyMime(
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      ),
+    ).toBeNull();
   });
 });
 
 test("maxBytesForKind caps images tighter than pdf/audio", () => {
   expect(maxBytesForKind("image")).toBeLessThan(maxBytesForKind("pdf"));
   expect(maxBytesForKind("audio")).toBe(maxBytesForKind("pdf"));
+  // The byte cap on a text file is only an upload guard — the character cap in
+  // decodeTextAttachment is what actually bounds what reaches the prompt.
+  expect(maxBytesForKind("text")).toBeLessThan(maxBytesForKind("pdf"));
+});
+
+describe("decodeTextAttachment", () => {
+  const utf8 = (s: string) => new TextEncoder().encode(s);
+
+  test("decodes UTF-8, including multi-byte characters", () => {
+    expect(decodeTextAttachment(utf8("héllo — 世界"), "a.txt")).toBe(
+      "héllo — 世界",
+    );
+  });
+
+  test("rejects invalid UTF-8 rather than producing mojibake", () => {
+    expect(() =>
+      decodeTextAttachment(new Uint8Array([0xff, 0xfe, 0xfd]), "a.txt"),
+    ).toThrow(/not valid UTF-8/i);
+  });
+
+  test("rejects a binary carrying an embedded NUL", () => {
+    expect(() =>
+      decodeTextAttachment(new Uint8Array([0x41, 0x00, 0x42]), "a.txt"),
+    ).toThrow(/not a text file/i);
+  });
+
+  test("rejects an empty file", () => {
+    expect(() => decodeTextAttachment(utf8("   \n"), "a.txt")).toThrow(
+      /empty/i,
+    );
+  });
+
+  test("truncation keeps the head and states how much was dropped", () => {
+    const out = decodeTextAttachment(
+      utf8("x".repeat(TEXT_ATTACHMENT_MAX_CHARS + 500)),
+      "big.md",
+    );
+    expect(out).toContain("500 more characters not shown");
+    expect(out.startsWith("x".repeat(TEXT_ATTACHMENT_MAX_CHARS))).toBe(true);
+  });
+
+  test("a file exactly at the cap is not truncated", () => {
+    const out = decodeTextAttachment(
+      utf8("x".repeat(TEXT_ATTACHMENT_MAX_CHARS)),
+      "exact.md",
+    );
+    expect(out).toBe("x".repeat(TEXT_ATTACHMENT_MAX_CHARS));
+  });
 });
 
 describe("presignBuildUpload", () => {

@@ -76,8 +76,8 @@ test("image → data-uri block; moderation runs when moderate:true", async () =>
   expect(out.attachments[0]).toMatchObject({
     kind: "image",
     mimeType: "image/png",
+    dataUri: expect.stringMatching(/^data:image\/png;base64,/),
   });
-  expect(out.attachments[0].dataUri).toMatch(/^data:image\/png;base64,/);
   expect(checked).toEqual(["build/a.png"]);
 });
 
@@ -122,8 +122,8 @@ test("pdf → file data-uri block carrying the filename", async () => {
   expect(out.attachments[0]).toMatchObject({
     kind: "pdf",
     filename: "report.pdf",
+    dataUri: expect.stringMatching(/^data:application\/pdf;base64,/),
   });
-  expect(out.attachments[0].dataUri).toMatch(/^data:application\/pdf;base64,/);
 });
 
 test("audio → transcript folded into transcripts, never an attachment block", async () => {
@@ -148,6 +148,80 @@ test("audio transcript blocked by content moderation → error", async () => {
       moderate: true,
     }),
   ).rejects.toBeInstanceOf(AttachmentModerationError);
+});
+
+// ---------------------------------------------------------------------------
+// Text attachments — decoded and inlined, not uploaded as opaque bytes
+// ---------------------------------------------------------------------------
+
+test("text file → decoded inline block carrying its filename", async () => {
+  stubBytes(new TextEncoder().encode("question,answer\nrefunds?,30 days\n"));
+  const out = await resolveAttachments(
+    [
+      {
+        objectKey: "build/faq.csv",
+        mimeType: "text/csv",
+        filename: "support-faq.csv",
+      },
+    ],
+    { moderate: false },
+  );
+
+  expect(out.transcripts).toEqual([]);
+  expect(out.attachments).toEqual([
+    {
+      kind: "text",
+      filename: "support-faq.csv",
+      text: "question,answer\nrefunds?,30 days\n",
+    },
+  ]);
+});
+
+test("text file contents go through content moderation", async () => {
+  stubBytes(new TextEncoder().encode("bad stuff"));
+  __resetModerationForTests(() =>
+    Promise.resolve({ allowed: false, reason: "blocked" }),
+  );
+  await expect(
+    resolveAttachments(
+      [{ objectKey: "build/n.txt", mimeType: "text/plain", filename: "n.txt" }],
+      { moderate: true },
+    ),
+  ).rejects.toBeInstanceOf(AttachmentModerationError);
+});
+
+test("a binary mislabelled as text/plain is rejected, not decoded to mojibake", async () => {
+  // Valid UTF-8 but with an embedded NUL — the shape of a binary claiming text.
+  stubBytes(new Uint8Array([0x50, 0x4b, 0x03, 0x04, 0x00, 0x41]));
+  await expect(
+    resolveAttachments(
+      [{ objectKey: "build/x.txt", mimeType: "text/plain", filename: "x.txt" }],
+      { moderate: false },
+    ),
+  ).rejects.toThrow(/not a text file/i);
+});
+
+test("invalid UTF-8 claiming to be text is rejected", async () => {
+  stubBytes(new Uint8Array([0xff, 0xfe, 0xfd]));
+  await expect(
+    resolveAttachments(
+      [{ objectKey: "build/x.md", mimeType: "text/markdown" }],
+      { moderate: false },
+    ),
+  ).rejects.toThrow(/not valid UTF-8/i);
+});
+
+test("an over-long text file keeps its head and states the omission", async () => {
+  const body = "x".repeat(25_000);
+  stubBytes(new TextEncoder().encode(body));
+  const out = await resolveAttachments(
+    [{ objectKey: "build/big.md", mimeType: "text/markdown" }],
+    { moderate: false },
+  );
+
+  const text = (out.attachments[0] as { text: string }).text;
+  expect(text).toContain("5,000 more characters not shown");
+  expect(text.startsWith("x".repeat(20_000))).toBe(true);
 });
 
 test("over-cap image → throws before any moderation", async () => {

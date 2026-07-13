@@ -2,8 +2,8 @@
  * Build-attachment storage — private-bucket upload + backend byte-fetch for the
  * agent-template generator.
  *
- * The builder uploads each generation attachment (image / PDF / voice) to the
- * PRIVATE_ASSETS_BUCKET via a presigned PUT, then sends the generation request
+ * The builder uploads each generation attachment (image / PDF / text file / voice)
+ * to the PRIVATE_ASSETS_BUCKET via a presigned PUT, then sends the generation request
  * lightweight `{ objectKey, mimeType, filename? }` references instead of base64
  * bytes. The backend reads the bytes itself (`GetObject`) for generation +
  * moderation, so decrypted conversation content never gets a public CDN URL.
@@ -33,9 +33,9 @@ import { AppError } from "@/utils/errors";
 // Allowlist + per-class size caps
 // ---------------------------------------------------------------------------
 
-/** What the generator can do with an attachment. `image`/`pdf` become LLM
+/** What the generator can do with an attachment. `image`/`pdf`/`text` become LLM
  *  content blocks; `audio` is transcribed to text before generation. */
-export type AttachmentKind = "image" | "pdf" | "audio";
+export type AttachmentKind = "image" | "pdf" | "audio" | "text";
 
 // Per-file byte caps, set against real model ceilings rather than the bucket's
 // physical limit. Images go to a vision model as an inline data URI, so they're
@@ -46,14 +46,19 @@ const MAX_BYTES_BY_KIND: Record<AttachmentKind, number> = {
   image: 10 * 1024 * 1024,
   pdf: 25 * 1024 * 1024,
   audio: 25 * 1024 * 1024,
+  // A text file is inlined into the prompt, so what actually bounds it is the
+  // character cap in the resolver, not this. This is only an upload guard.
+  text: 1 * 1024 * 1024,
 };
 
 /** MIME → kind allowlist. Anything not here is rejected at submit time.
  *  Images are PNG/JPEG only — the formats AWS Rekognition can read — so every
- *  accepted image is moderatable (webp/gif would fail moderation open). Audio
- *  covers the common mobile-recording containers (m4a/aac on iOS, ogg/webm on
- *  Android) plus mp3/wav; actual transcription-model format support is a
- *  separate concern handled in services/transcribe.ts. */
+ *  accepted image is moderatable (webp/gif would fail moderation open); clients
+ *  transcode before upload. Audio covers the common mobile-recording containers
+ *  (m4a/aac on iOS, ogg/webm on Android) plus mp3/wav; actual transcription-model
+ *  format support is a separate concern handled in services/transcribe.ts. Text
+ *  is an explicit list rather than a `text/*` prefix match, so a novel text-ish
+ *  MIME fails closed instead of being decoded on faith. */
 const KIND_BY_MIME: Record<string, AttachmentKind> = {
   "image/png": "image",
   "image/jpeg": "image",
@@ -67,6 +72,18 @@ const KIND_BY_MIME: Record<string, AttachmentKind> = {
   "audio/x-wav": "audio",
   "audio/ogg": "audio",
   "audio/webm": "audio",
+  "text/plain": "text",
+  "text/markdown": "text",
+  "text/csv": "text",
+  "text/tab-separated-values": "text",
+  "text/xml": "text",
+  "text/yaml": "text",
+  "text/vcard": "text",
+  "text/calendar": "text",
+  "application/json": "text",
+  "application/xml": "text",
+  "application/yaml": "text",
+  "application/x-yaml": "text",
 };
 
 /** Normalize a wire MIME type: lowercase + strip parameters (`; codecs=…`).
@@ -83,6 +100,40 @@ export function classifyMime(mimeType: string): AttachmentKind | null {
 /** Per-file byte cap for a kind. */
 export function maxBytesForKind(kind: AttachmentKind): number {
   return MAX_BYTES_BY_KIND[kind];
+}
+
+/** Cap on how much of a text attachment reaches the prompt. Matches the runtime's
+ *  inline-attachment cap, so a file an agent can read in a conversation is a file
+ *  the builder can read while creating that agent. */
+export const TEXT_ATTACHMENT_MAX_CHARS = 20_000;
+
+/** Decode a text attachment to UTF-8, refusing bytes that aren't really text.
+ *
+ *  The MIME allowlist is the client's claim about a file; this is where the claim
+ *  is checked. Strict UTF-8 plus a NUL-byte probe rejects a binary mislabelled as
+ *  `text/plain` — otherwise it would decode to mojibake and be fed to the model as
+ *  though it were prose. Past the cap the head is kept and the omission is stated,
+ *  so the model is never handed a silently truncated document. */
+export function decodeTextAttachment(
+  bytes: Uint8Array,
+  filename: string,
+): string {
+  let text: string;
+  try {
+    text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  } catch {
+    throw new AppError(400, `Attachment ${filename} is not valid UTF-8 text`);
+  }
+  if (text.includes("\u0000")) {
+    throw new AppError(400, `Attachment ${filename} is not a text file`);
+  }
+  if (!text.trim()) {
+    throw new AppError(400, `Attachment ${filename} is empty`);
+  }
+  if (text.length <= TEXT_ATTACHMENT_MAX_CHARS) return text;
+
+  const omitted = text.length - TEXT_ATTACHMENT_MAX_CHARS;
+  return `${text.slice(0, TEXT_ATTACHMENT_MAX_CHARS)}\n\n[${omitted.toLocaleString()} more characters not shown]`;
 }
 
 // ---------------------------------------------------------------------------
