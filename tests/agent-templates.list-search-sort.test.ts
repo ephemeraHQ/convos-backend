@@ -279,6 +279,16 @@ describe("Agent templates list — search / sort / counts", () => {
       },
     });
     const id = created.body.id as string;
+    // Put it IN the gallery, so a 400 here can only be the bound — a template
+    // outside the gallery is refused a weight whatever the value.
+    await publishTemplate({ baseURL, headers: agentKeyHeaders(), id });
+    const ok = await patchTemplate({
+      baseURL,
+      headers: agentKeyHeaders(),
+      id,
+      body: { featured: true, featuredRank: 7 },
+    });
+    expect(ok.response.status).toBe(200);
 
     const negative = await patchTemplate({
       baseURL,
@@ -315,6 +325,12 @@ describe("Agent templates list — search / sort / counts", () => {
     });
     const id = created.body.id as string;
     await publishTemplate({ baseURL, headers: agentKeyHeaders(), id });
+    await patchTemplate({
+      baseURL,
+      headers: agentKeyHeaders(),
+      id,
+      body: { featured: true },
+    });
 
     // The owner, authenticated as a user rather than as the dashboard.
     const selfPromote = await patchTemplate({
@@ -353,9 +369,9 @@ describe("Agent templates list — search / sort / counts", () => {
     expect(curated.body.featuredRank).toBe(42);
   });
 
-  // A weight is a homepage slot, and the gallery only renders published rows —
-  // so a template that isn't public holds no position in the order.
-  test("only a published template can hold a gallery position", async () => {
+  // A weight is a slot in the gallery, and the gallery renders exactly what is
+  // featured AND published — so nothing outside it holds a position.
+  test("only a featured, published template can hold a gallery position", async () => {
     const created = await createTemplate({
       baseURL,
       headers: agentKeyHeaders(),
@@ -368,7 +384,7 @@ describe("Agent templates list — search / sort / counts", () => {
     });
     const id = created.body.id as string;
 
-    // A draft can't be weighted at all.
+    // Featured but not public: no slot.
     const onDraft = await patchTemplate({
       baseURL,
       headers: agentKeyHeaders(),
@@ -377,19 +393,28 @@ describe("Agent templates list — search / sort / counts", () => {
     });
     expect(onDraft.response.status).toBe(400);
 
-    // Published, it can.
+    // Public but not featured: also no slot.
     await publishTemplate({ baseURL, headers: agentKeyHeaders(), id });
-    const curated = await patchTemplate({
+    const notFeatured = await patchTemplate({
       baseURL,
       headers: agentKeyHeaders(),
       id,
       body: { featuredRank: 9 },
     });
+    expect(notFeatured.response.status).toBe(400);
+
+    // Both: it holds one.
+    const curated = await patchTemplate({
+      baseURL,
+      headers: agentKeyHeaders(),
+      id,
+      body: { featured: true, featuredRank: 9 },
+    });
     expect(curated.response.status).toBe(200);
     expect(curated.body.featuredRank).toBe(9);
 
-    // Taken back out of public view, it gives the slot up rather than holding
-    // it — so re-publishing enters it at the end instead of silently reclaiming
+    // Taken back out of public view it gives the slot up rather than holding
+    // it, so re-publishing enters it at the end instead of silently reclaiming
     // the position it used to occupy.
     const unpublished = await patchTemplate({
       baseURL,
@@ -406,6 +431,47 @@ describe("Agent templates list — search / sort / counts", () => {
       id,
     });
     expect(republished.body.featuredRank).toBe(0);
+  });
+
+  test("unfeaturing gives the slot up too", async () => {
+    const created = await createTemplate({
+      baseURL,
+      headers: agentKeyHeaders(),
+      body: {
+        agentName: "Zrank Unfeatured",
+        prompt: "p",
+        slug: "lss-rank-unfeatured",
+        description: "zrankmarker",
+      },
+    });
+    const id = created.body.id as string;
+    await publishTemplate({ baseURL, headers: agentKeyHeaders(), id });
+    const curated = await patchTemplate({
+      baseURL,
+      headers: agentKeyHeaders(),
+      id,
+      body: { featured: true, featuredRank: 6 },
+    });
+    expect(curated.body.featuredRank).toBe(6);
+
+    // Dropping out of the gallery drops the position with it — otherwise
+    // re-featuring silently restores the old slot.
+    const unfeatured = await patchTemplate({
+      baseURL,
+      headers: agentKeyHeaders(),
+      id,
+      body: { featured: false },
+    });
+    expect(unfeatured.response.status).toBe(200);
+    expect(unfeatured.body.featuredRank).toBe(0);
+
+    const refeatured = await patchTemplate({
+      baseURL,
+      headers: agentKeyHeaders(),
+      id,
+      body: { featured: true },
+    });
+    expect(refeatured.body.featuredRank).toBe(0);
   });
 
   test("a template made public in the same PATCH may be weighted by it", async () => {
