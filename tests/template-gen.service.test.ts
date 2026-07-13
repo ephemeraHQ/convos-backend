@@ -1946,6 +1946,21 @@ describe("templateGen service — OpenRouter integration", () => {
       url: "https://example.com",
       residual: "Read it's great",
     });
+    // Several links: the first is the source material. The rest stay in the
+    // residual and reach the model as intent rather than being fetched.
+    expect(extractFirstUrl("compare https://a.com and https://b.com")).toEqual({
+      url: "https://a.com",
+      residual: "compare and https://b.com",
+    });
+
+    // A link wrapped in prose delimiters keeps them out of the URL. They stay
+    // behind in the residual, which only ever becomes an intent note — so the
+    // leftover brackets cost nothing and aren't worth a cleanup rule.
+    expect(extractFirstUrl("see <https://example.com> for more")).toEqual({
+      url: "https://example.com",
+      residual: "see <> for more",
+    });
+
     expect(extractFirstUrl("just some text")).toBeNull();
     expect(extractFirstUrl("https://[invalid-url")).toBeNull();
   });

@@ -484,14 +484,25 @@ export interface SubmittedUrl {
   residual: string;
 }
 
-// A link stops at whitespace and at the delimiters that wrap one in prose
-// rather than belong to it. Trailing sentence punctuation is stripped
-// separately: `.` and `?` are legal in a URL but usually end the sentence.
+// A link stops at whitespace, and at the delimiters that wrap one in prose rather
+// than belong to it: angle brackets (`<https://…>`), quotes, backticks, and the
+// bracket pairs a link gets parenthesised or markdown-linked with. All of these
+// are legal inside a URL but overwhelmingly appear around one, and a link that
+// genuinely needs them can percent-encode them.
+//
+// Trailing sentence punctuation is stripped separately rather than excluded from
+// the token, because `.` `?` and `!` are common *inside* a URL and only ambiguous
+// at the very end ("see https://x.com/a." — the period ends the sentence).
 const URL_TOKEN_RE = /https?:\/\/[^\s<>"'`()[\]{}]+/i;
 const URL_TRAILING_PUNCT_RE = /[.,;:!?]+$/;
 
-/** First usable link anywhere in the text, with the surrounding prose split
- *  out. Null when the text holds no parseable link. Exported for tests. */
+/** First usable link anywhere in the text, with the surrounding prose split out.
+ *  Null when the text holds no parseable link.
+ *
+ *  Only the FIRST link is returned. A build is generated from one source, so a
+ *  submission carrying several links is read as being about the first one; any
+ *  others stay in `residual` and reach the model as part of the user's intent
+ *  rather than being fetched. Exported for tests. */
 export function extractFirstUrl(text: string): SubmittedUrl | null {
   const match = URL_TOKEN_RE.exec(text);
   if (!match) return null;
