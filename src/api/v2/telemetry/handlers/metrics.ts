@@ -77,10 +77,14 @@ export async function postMetrics(req: Request, res: Response) {
   // an unexpected throw without double-deleting.
   let accepted = false;
   let released = false;
+  // Only a delete that actually landed marks the claim released. Latching the
+  // flag before the await would let a failed explicit release swallow the
+  // `finally`'s retry, stranding the claim until the TTL sweep — the same
+  // dropped-retry outcome this is here to avoid.
   const releaseClaim = async () => {
     if (released) return;
-    released = true;
     await releaseBatch(batchId);
+    released = true;
   };
 
   try {
