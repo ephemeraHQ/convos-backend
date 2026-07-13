@@ -12,13 +12,17 @@ import { prisma } from "@/utils/prisma";
 import {
   agentKeyHeaders,
   createTemplate,
+  getTemplate,
+  jwtHeaders,
   listTemplates,
+  patchTemplate,
   startAgentTemplatesServer,
   validAgentAssetsApiKey,
 } from "./agent-templates.cross.helpers";
 
 // Covers the list-API additions: free-text `q`, `sort`/`order` (incl. keyset
-// cursor under a non-default sort), and the `/counts` aggregate endpoint.
+// cursor under a non-default sort), the `featuredRank` gallery ordering, and
+// the `/counts` aggregate endpoint.
 // Tokens are globally unique so search/sort assertions are unaffected by any
 // other rows in the test DB; counts assertions are delta-based for the same
 // reason.
@@ -35,6 +39,7 @@ const cleanup = () =>
         { agentName: { startsWith: "Zxq" } },
         { agentName: { startsWith: "Zsort" } },
         { agentName: { startsWith: "Zcount" } },
+        { agentName: { startsWith: "Zrank" } },
       ],
     },
   });
@@ -182,6 +187,164 @@ describe("Agent templates list — search / sort / counts", () => {
     expect(page2.body.data.map((t) => t.agentName as string)).toEqual([
       "Zsort Bravo",
     ]);
+  });
+
+  // ── Featured gallery curation ──
+  test("?sort=featuredRank&order=desc leads with the heaviest row and sinks unranked ones", async () => {
+    const seed = async (name: string, rank: number | undefined) => {
+      const created = await createTemplate({
+        baseURL,
+        headers: agentKeyHeaders(),
+        body: {
+          agentName: name,
+          prompt: "p",
+          slug: `lss-${name.toLowerCase().replace(/\s+/g, "-")}`,
+          description: "zrankmarker",
+        },
+      });
+      await patchTemplate({
+        baseURL,
+        headers: agentKeyHeaders(),
+        id: created.body.id as string,
+        body:
+          rank === undefined
+            ? { featured: true }
+            : { featured: true, featuredRank: rank },
+      });
+      return created.body.id as string;
+    };
+
+    await seed("Zrank Light", 10);
+    await seed("Zrank Heavy", 30);
+    await seed("Zrank Middle", 20);
+    // Featured with no explicit weight — the default 0 must not seize the lead.
+    await seed("Zrank Unranked", undefined);
+
+    const gallery = await listTemplates({
+      baseURL,
+      query:
+        "?q=zrankmarker&featured=true&sort=featuredRank&order=desc&limit=100",
+      headers: agentKeyHeaders(),
+    });
+    expect(gallery.response.status).toBe(200);
+    expect(gallery.body.data.map((t) => t.agentName as string)).toEqual([
+      "Zrank Heavy",
+      "Zrank Middle",
+      "Zrank Light",
+      "Zrank Unranked",
+    ]);
+    // The weight is serialized, so the dashboard can compute the next move.
+    expect(gallery.body.data.map((t) => t.featuredRank as number)).toEqual([
+      30, 20, 10, 0,
+    ]);
+
+    // keyset cursor walks the same order one page at a time
+    const page1 = await listTemplates({
+      baseURL,
+      query:
+        "?q=zrankmarker&featured=true&sort=featuredRank&order=desc&limit=1",
+      headers: agentKeyHeaders(),
+    });
+    expect(page1.body.data.map((t) => t.agentName as string)).toEqual([
+      "Zrank Heavy",
+    ]);
+    expect(page1.body.hasMore).toBe(true);
+
+    const page2 = await listTemplates({
+      baseURL,
+      query: `?q=zrankmarker&featured=true&sort=featuredRank&order=desc&limit=1&cursor=${encodeURIComponent(
+        page1.body.nextCursor as string,
+      )}`,
+      headers: agentKeyHeaders(),
+    });
+    expect(page2.body.data.map((t) => t.agentName as string)).toEqual([
+      "Zrank Middle",
+    ]);
+  });
+
+  test("a featuredRank outside the column's Int range is rejected", async () => {
+    const created = await createTemplate({
+      baseURL,
+      headers: agentKeyHeaders(),
+      body: {
+        agentName: "Zrank Bounds",
+        prompt: "p",
+        slug: "lss-rank-bounds",
+        description: "zrankmarker",
+      },
+    });
+    const id = created.body.id as string;
+
+    const negative = await patchTemplate({
+      baseURL,
+      headers: agentKeyHeaders(),
+      id,
+      body: { featuredRank: -1 },
+    });
+    expect(negative.response.status).toBe(400);
+
+    // Above Postgres' Int ceiling. Without the cap this clears Zod and dies at
+    // persistence, surfacing as a 500 rather than a validation error.
+    const tooLarge = await patchTemplate({
+      baseURL,
+      headers: agentKeyHeaders(),
+      id,
+      body: { featuredRank: 2_147_483_648 },
+    });
+    expect(tooLarge.response.status).toBe(400);
+  });
+
+  // Curation is not an ownership right: the PATCH guard admits the template's
+  // owner, so without a separate gate an owner could weight their own template
+  // to the top of the convos.org homepage, above the whole curated gallery.
+  test("only the dashboard's API key may write featuredRank", async () => {
+    const created = await createTemplate({
+      baseURL,
+      headers: agentKeyHeaders(),
+      body: {
+        agentName: "Zrank Owner",
+        prompt: "p",
+        slug: "lss-rank-owner",
+        description: "zrankmarker",
+      },
+    });
+    const id = created.body.id as string;
+
+    // The owner, authenticated as a user rather than as the dashboard.
+    const selfPromote = await patchTemplate({
+      baseURL,
+      headers: await jwtHeaders(),
+      id,
+      body: { featuredRank: 2_000_000_000 },
+    });
+    expect(selfPromote.response.status).toBe(403);
+
+    // …and the weight did not move.
+    const after = await getTemplate({
+      baseURL,
+      path: id,
+      headers: agentKeyHeaders(),
+    });
+    expect(after.body.featuredRank).toBe(0);
+
+    // The same owner still edits their own content — only curation is gated.
+    const contentEdit = await patchTemplate({
+      baseURL,
+      headers: await jwtHeaders(),
+      id,
+      body: { emoji: "🛶" },
+    });
+    expect(contentEdit.response.status).toBe(200);
+
+    // The dashboard writes the weight.
+    const curated = await patchTemplate({
+      baseURL,
+      headers: agentKeyHeaders(),
+      id,
+      body: { featuredRank: 42 },
+    });
+    expect(curated.response.status).toBe(200);
+    expect(curated.body.featuredRank).toBe(42);
   });
 
   test("a cursor built for a different sort is rejected with 400", async () => {

@@ -105,6 +105,7 @@ const expectTemplateShape = (body: TemplateBody) => {
     "description",
     "emoji",
     "featured",
+    "featuredRank",
     "firstPublishedAt",
     "forkedFromId",
     "id",

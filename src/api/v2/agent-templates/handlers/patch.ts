@@ -27,6 +27,9 @@ const bodySchema = z
     description: z.string().nullable().optional(),
     emoji: z.string().nullable().optional(),
     featured: z.boolean().optional(),
+    // Capped to the column's `Int` range — a larger value would clear Zod and
+    // then blow up at persistence as a 500 rather than a 400.
+    featuredRank: z.number().int().min(0).max(2_147_483_647).optional(),
     prompt: z
       .string()
       .max(50_000, {
@@ -102,6 +105,11 @@ const applyContentFields = (
   if (body.featured !== undefined) {
     data.featured = body.featured;
   }
+  // Position within the featured gallery. The dashboard reorders by writing a
+  // new weight per moved row; the gallery reads them descending.
+  if (body.featuredRank !== undefined) {
+    data.featuredRank = body.featuredRank;
+  }
   if (body.prompt !== undefined) {
     data.prompt = body.prompt;
   }
@@ -174,6 +182,25 @@ export async function patchHandler(req: Request, res: Response) {
         "Unauthorized agent-template access attempt",
       );
       res.status(403).json({ error: "Not authorized to modify this template" });
+      return;
+    }
+
+    // Gallery curation is not an ownership right. `featuredRank` decides what
+    // leads the convos.org homepage, and the guard above admits the template's
+    // owner — so without this an owner could weight their own template above
+    // the whole curated set. Only the dashboard (API-key) caller may write it.
+    if (parsedBody.data.featuredRank !== undefined && !isApiKeyListener) {
+      req.log.warn(
+        {
+          callerAccountId,
+          templateId: template.id,
+          action: "patch.featuredRank",
+        },
+        "Unauthorized agent-template curation attempt",
+      );
+      res
+        .status(403)
+        .json({ error: "Not authorized to set the featured gallery order" });
       return;
     }
 

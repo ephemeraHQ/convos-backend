@@ -50,6 +50,7 @@ const rowFromSnapshot = (
       : new Date(snapshot.firstPublishedAt as string),
   status: snapshot.status as PublishStatus,
   featured: snapshot.featured as boolean,
+  featuredRank: 0,
   createdAt: new Date(snapshot.createdAt as string),
   updatedAt: new Date(snapshot.createdAt as string),
   ...overrides,
