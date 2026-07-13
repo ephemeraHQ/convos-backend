@@ -1914,6 +1914,102 @@ describe("templateGen service — OpenRouter integration", () => {
   });
 
   // -----------------------------------------------------------------------
+  // Link extraction: the link is the material, the prose around it is the
+  // instruction. Both survive into the prompt.
+  // -----------------------------------------------------------------------
+
+  test("extractFirstUrl finds a link anywhere in the text and splits off the prose", async () => {
+    const { extractFirstUrl } =
+      await import("@/api/v2/agent-templates/services/templateGen");
+
+    expect(extractFirstUrl("https://example.com")).toEqual({
+      url: "https://example.com",
+      residual: "",
+    });
+    expect(
+      extractFirstUrl("Make me an agent about https://example.com"),
+    ).toEqual({
+      url: "https://example.com",
+      residual: "Make me an agent about",
+    });
+    expect(extractFirstUrl("https://example.com check this out")).toEqual({
+      url: "https://example.com",
+      residual: "check this out",
+    });
+    // The link ends at whitespace — a trailing word is prose, not query string.
+    expect(extractFirstUrl("https://example.com/a?b=1 and more")).toEqual({
+      url: "https://example.com/a?b=1",
+      residual: "and more",
+    });
+    // Sentence punctuation that trails a link is not part of it.
+    expect(extractFirstUrl("Read https://example.com, it's great")).toEqual({
+      url: "https://example.com",
+      residual: "Read it's great",
+    });
+    expect(extractFirstUrl("just some text")).toBeNull();
+    expect(extractFirstUrl("https://[invalid-url")).toBeNull();
+  });
+
+  test("a link wrapped in an instruction is fetched, and the instruction rides the prompt", async () => {
+    const mod = await import("@/api/v2/agent-templates/services/templateGen");
+    generateTemplate = mod.generateTemplate;
+    mod.__setExaKeyOverrideForTests("test-exa-key");
+
+    fetchMockResponses.set("api.exa.ai", {
+      status: 200,
+      body: { results: [{ text: "Widgets Inc sells widgets." }] },
+    });
+    setOpenRouterResponse(templateResponse());
+
+    await generateTemplate({
+      text: "Make me an agent about https://example.com that answers support questions",
+    });
+
+    // The bare link is what gets fetched — not the whole sentence.
+    const exaReq = capturedRequests.find((r) => r.url.includes("api.exa.ai"));
+    expect(exaReq?.body.urls).toEqual(["https://example.com"]);
+
+    const userMsg = getLastOpenRouterRequest().body.messages.at(-1).content;
+    expect(userMsg).toContain("Widgets Inc sells widgets.");
+    expect(userMsg).toContain(
+      "User's intent: Make me an agent about that answers support questions",
+    );
+  });
+
+  test("a long paste that merely cites a link is the material — the link is not fetched", async () => {
+    const mod = await import("@/api/v2/agent-templates/services/templateGen");
+    generateTemplate = mod.generateTemplate;
+    mod.__setExaKeyOverrideForTests("test-exa-key");
+
+    const paste = `${"Our support playbook says to greet the customer warmly. ".repeat(
+      8,
+    )} See https://example.com for details.`;
+    expect(paste.length).toBeGreaterThan(300); // long enough for the classifier
+
+    setOpenRouterResponseQueue([
+      // classifier: raw material, not an agent definition
+      {
+        model: BUILDER_CLASSIFIER_MODEL,
+        choices: [
+          {
+            message: { content: JSON.stringify({ isPassthrough: false }) },
+          },
+        ],
+        usage: { prompt_tokens: 10, completion_tokens: 5 },
+      },
+      templateResponse(),
+    ]);
+
+    await generateTemplate({ text: paste });
+
+    expect(capturedRequests.some((r) => r.url.includes("api.exa.ai"))).toBe(
+      false,
+    );
+    const userMsg = getLastOpenRouterRequest().body.messages.at(-1).content;
+    expect(userMsg).toContain("Our support playbook");
+  });
+
+  // -----------------------------------------------------------------------
   // parseTemplateResponse handles various input formats
   // -----------------------------------------------------------------------
   test("parseTemplateResponse handles clean JSON", async () => {

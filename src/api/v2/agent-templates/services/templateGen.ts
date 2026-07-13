@@ -51,6 +51,12 @@ import {
 
 const MAX_CONTENT_LENGTH = 10_000;
 
+/** Longest prose around a link that still reads as an instruction about it
+ *  ("build me an agent from this"). Past this the submission is a paste that
+ *  merely cites a link, and the paste is itself the source material — fetching
+ *  the citation would throw away what the user actually sent. */
+const URL_INTENT_MAX_RESIDUAL = 300;
+
 /** The only tool values a generated template may use. Mirrors the SUPERPOWERS
  *  table + field requirements in `data/template-generator-prompt.txt`; the
  *  json_schema enum on the generate call enforces it at decode time so a custom
@@ -469,6 +475,41 @@ export function appendBrevityRail(
  *  to be tolerant of pasted content. Exported for tests. */
 export function looksLikeUrl(text: string): boolean {
   return /^https?:\/\//i.test(text.trim());
+}
+
+/** A link found in a submission, plus whatever the user typed around it. */
+export interface SubmittedUrl {
+  url: string;
+  /** The submission with the link removed — the user's instruction, if any. */
+  residual: string;
+}
+
+// A link stops at whitespace and at the delimiters that wrap one in prose
+// rather than belong to it. Trailing sentence punctuation is stripped
+// separately: `.` and `?` are legal in a URL but usually end the sentence.
+const URL_TOKEN_RE = /https?:\/\/[^\s<>"'`()[\]{}]+/i;
+const URL_TRAILING_PUNCT_RE = /[.,;:!?]+$/;
+
+/** First usable link anywhere in the text, with the surrounding prose split
+ *  out. Null when the text holds no parseable link. Exported for tests. */
+export function extractFirstUrl(text: string): SubmittedUrl | null {
+  const match = URL_TOKEN_RE.exec(text);
+  if (!match) return null;
+
+  const url = match[0].replace(URL_TRAILING_PUNCT_RE, "");
+  try {
+    new URL(url);
+  } catch {
+    return null;
+  }
+
+  const residual = (
+    text.slice(0, match.index) + text.slice(match.index + match[0].length)
+  )
+    .replace(/\s+/g, " ")
+    .trim();
+
+  return { url, residual };
 }
 
 // ---------------------------------------------------------------------------
@@ -1479,14 +1520,16 @@ export async function generateTemplate(
   } else {
     // Text path: idea, content, or URL
     let extracted = intentText;
+    // Fetched content replaces the submission, so an instruction the user wrapped
+    // around the link ("make this summarize every morning") is the only part of
+    // what they typed that survives. Carry it into the prompt. A bare link has none.
+    let urlIntent = "";
 
-    if (intentText && looksLikeUrl(intentText)) {
-      const url = intentText.trim();
-      try {
-        new URL(url);
-      } catch {
-        throw new AppError(400, "Invalid URL");
-      }
+    const submitted = intentText ? extractFirstUrl(intentText) : null;
+
+    if (submitted && submitted.residual.length <= URL_INTENT_MAX_RESIDUAL) {
+      const { url, residual } = submitted;
+      urlIntent = residual;
 
       // For GitHub URLs, try to short-circuit:
       //  - `passthrough`: the repo/file IS an agent prompt → return verbatim.
@@ -1516,6 +1559,11 @@ export async function generateTemplate(
         githubResult?.kind === "rawContent"
           ? githubResult.content
           : await extractUrl(url, trace);
+    } else if (!submitted && looksLikeUrl(intentText)) {
+      // URL-shaped submission with no parseable link in it. The user meant to
+      // send a link, so say the link is broken rather than quietly building an
+      // agent out of the malformed string.
+      throw new AppError(400, "Invalid URL");
     }
 
     if (!extracted.trim()) {
@@ -1545,7 +1593,8 @@ export async function generateTemplate(
       extracted = extracted.slice(0, MAX_CONTENT_LENGTH);
     }
 
-    userContent = `Create an assistant based on the following content:\n\n---\n${extracted}\n---`;
+    const urlIntentNote = urlIntent ? `\n\nUser's intent: ${urlIntent}` : "";
+    userContent = `Create an assistant based on the following content:\n\n---\n${extracted}\n---${urlIntentNote}`;
   }
 
   // Fold two user-message addenda into the directive text:
