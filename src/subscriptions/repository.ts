@@ -10,6 +10,7 @@ import {
 import {
   forfeitSubscriptionPeriod,
   grantSubscriptionPeriod,
+  subGrantKey,
 } from "@/subscriptions/grants";
 import {
   effectiveSubscriptionStatus,
@@ -376,8 +377,44 @@ export const upsertFromVerify = async (
       });
 
       if (existingReceipt) {
+        // Exact VERIFY replay — but do NOT return before the grant check.
+        // Subscribers who bought BEFORE the single-ledger deploy (#324) have a
+        // Subscription + BillingReceipt but no `sub_grant` ledger row for the
+        // period they are living in: their original verify predates the grant
+        // write. This short-circuit used to return here unconditionally, so a
+        // re-verify could never heal them — their wallet stayed unfunded (and
+        // could sit negative) until the next renewal. Instead, make re-verify a
+        // universal materializer: when the replayed subscription is entitled
+        // and this verify is not stale, backfill the CURRENT period's grant if
+        // its canonical `sub_grant` row is missing. `grantSubscriptionPeriod`
+        // is idempotent per (sub, periodStart) and lock-serialized, so a
+        // concurrent renewal/verify cannot double-grant; the pre-check below
+        // only avoids taking the wallet lock on the common already-granted
+        // replay. Replay semantics stay intact: receiptCreated stays false.
+        const replayed = existingReceipt.subscription;
+        const isStaleReplay =
+          input.currentPeriodEnd < replayed.currentPeriodEnd;
+        if (!isStaleReplay && isEntitledSubscriptionStatus(replayed.status)) {
+          const currentPeriodGrant = await tx.creditLedger.findUnique({
+            where: {
+              accountId_idempotencyKey: {
+                accountId: replayed.accountId,
+                idempotencyKey: subGrantKey(
+                  replayed.id,
+                  replayed.currentPeriodStart,
+                ),
+              },
+            },
+          });
+          if (!currentPeriodGrant) {
+            await grantSubscriptionPeriod(tx, {
+              subscription: replayed,
+              periodStart: replayed.currentPeriodStart,
+            });
+          }
+        }
         return {
-          subscription: existingReceipt.subscription,
+          subscription: replayed,
           receiptCreated: false,
         };
       }
