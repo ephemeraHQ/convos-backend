@@ -12,6 +12,7 @@ import {
 } from "@/api/v2/agent-templates/services/attachment-resolver";
 import { __resetImageModerationForTests } from "@/api/v2/agent-templates/services/image-moderation";
 import { __resetModerationForTests } from "@/api/v2/agent-templates/services/moderation";
+import type { ResolvedAttachment } from "@/api/v2/agent-templates/services/templateGen";
 import { __resetTranscribeForTests } from "@/api/v2/agent-templates/services/transcribe";
 
 const mockSend = vi.fn(
@@ -51,6 +52,16 @@ function stubBytes(bytes: Uint8Array): void {
   });
 }
 
+/** Assert an attachment's kind and narrow to that variant, so a test can read the
+ *  fields that only exist on it (`dataUri` on image/pdf, `text` on text). */
+function expectKind<K extends ResolvedAttachment["kind"]>(
+  attachment: ResolvedAttachment,
+  kind: K,
+): Extract<ResolvedAttachment, { kind: K }> {
+  expect(attachment.kind).toBe(kind);
+  return attachment as Extract<ResolvedAttachment, { kind: K }>;
+}
+
 afterEach(() => {
   mockSend.mockReset();
   __resetImageModerationForTests(null);
@@ -73,11 +84,9 @@ test("image → data-uri block; moderation runs when moderate:true", async () =>
 
   expect(out.transcripts).toEqual([]);
   expect(out.attachments).toHaveLength(1);
-  expect(out.attachments[0]).toMatchObject({
-    kind: "image",
-    mimeType: "image/png",
-    dataUri: expect.stringMatching(/^data:image\/png;base64,/),
-  });
+  const image = expectKind(out.attachments[0], "image");
+  expect(image.mimeType).toBe("image/png");
+  expect(image.dataUri).toMatch(/^data:image\/png;base64,/);
   expect(checked).toEqual(["build/a.png"]);
 });
 
@@ -119,11 +128,9 @@ test("pdf → file data-uri block carrying the filename", async () => {
     ],
     { moderate: true },
   );
-  expect(out.attachments[0]).toMatchObject({
-    kind: "pdf",
-    filename: "report.pdf",
-    dataUri: expect.stringMatching(/^data:application\/pdf;base64,/),
-  });
+  const pdf = expectKind(out.attachments[0], "pdf");
+  expect(pdf.filename).toBe("report.pdf");
+  expect(pdf.dataUri).toMatch(/^data:application\/pdf;base64,/);
 });
 
 test("audio → transcript folded into transcripts, never an attachment block", async () => {
@@ -219,7 +226,7 @@ test("an over-long text file keeps its head and states the omission", async () =
     { moderate: false },
   );
 
-  const text = (out.attachments[0] as { text: string }).text;
+  const { text } = expectKind(out.attachments[0], "text");
   expect(text).toContain("5,000 more characters not shown");
   expect(text.startsWith("x".repeat(20_000))).toBe(true);
 });

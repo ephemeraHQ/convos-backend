@@ -102,9 +102,17 @@ export function maxBytesForKind(kind: AttachmentKind): number {
   return MAX_BYTES_BY_KIND[kind];
 }
 
-/** Cap on how much of a text attachment reaches the prompt. Matches the runtime's
- *  inline-attachment cap, so a file an agent can read in a conversation is a file
- *  the builder can read while creating that agent. */
+/** Cap on how much of a text attachment reaches the prompt.
+ *
+ *  The cap exists to bound prompt budget: the decoded text rides into the model's
+ *  context, so an unbounded paste of a large CSV would soak it. 20k specifically is
+ *  the Hermes runtime's existing inline-attachment cap — matching it means a file an
+ *  agent can read in a conversation is a file the builder can read while creating
+ *  that agent, and it's one number across the two pipelines instead of two.
+ *
+ *  This is per file, and nothing below it bounds the total: the byte caps are far
+ *  looser than the character cap, so with BUILD_ATTACHMENTS_MAX_COUNT at 9 a single
+ *  generation's inlined text tops out near 180k characters. */
 export const TEXT_ATTACHMENT_MAX_CHARS = 20_000;
 
 /** Name to fence a text attachment with when the client didn't send a filename.
