@@ -152,8 +152,18 @@ export function decodeTextAttachment(
   }
   if (text.length <= TEXT_ATTACHMENT_MAX_CHARS) return text;
 
-  const omitted = text.length - TEXT_ATTACHMENT_MAX_CHARS;
-  return `${text.slice(0, TEXT_ATTACHMENT_MAX_CHARS)}\n\n[${omitted.toLocaleString()} more characters not shown]`;
+  // The cap counts UTF-16 code units, so it can land between the halves of a
+  // surrogate pair — an emoji in a markdown file is enough. Back off one unit in
+  // that case: a lone surrogate isn't valid text and would reach the model as a
+  // replacement character.
+  let end = TEXT_ATTACHMENT_MAX_CHARS;
+  const lastUnit = text.charCodeAt(end - 1);
+  if (lastUnit >= 0xd800 && lastUnit <= 0xdbff) end -= 1;
+
+  // Fixed locale: the host's would otherwise decide whether the model reads
+  // "5,000" or "5.000".
+  const omitted = (text.length - end).toLocaleString("en-US");
+  return `${text.slice(0, end)}\n\n[${omitted} more characters not shown]`;
 }
 
 // ---------------------------------------------------------------------------

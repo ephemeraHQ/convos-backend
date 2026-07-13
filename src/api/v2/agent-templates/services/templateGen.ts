@@ -445,22 +445,22 @@ function fenceTextAttachment(
 
 /** Lead instruction for the multimodal path, phrased for the actual mix of
  *  attached files so the model knows whether it's looking at images, reading
- *  documents, or both. */
-function describeAttachments(
-  imageCount: number,
-  pdfCount: number,
-  textCount: number,
-): string {
+ *  documents, or both. A text file counts as a document: to the model it reads
+ *  the same as a PDF, only inlined rather than sent as bytes. */
+function describeAttachments(attachments: ResolvedAttachment[]): string {
+  const images = attachments.filter((a) => a.kind === "image").length;
+  const docs = attachments.filter(
+    (a) => a.kind === "pdf" || a.kind === "text",
+  ).length;
   const noun = (n: number, singular: string) =>
     `${n} ${singular}${n === 1 ? "" : "s"}`;
-  const docCount = pdfCount + textCount;
-  if (imageCount > 0 && docCount > 0) {
-    return `Create an assistant based on the attached files (${noun(imageCount, "image")} and ${noun(docCount, "document")}). Use all of them together to infer the topic, purpose, and audience.`;
+  if (images > 0 && docs > 0) {
+    return `Create an assistant based on the attached files (${noun(images, "image")} and ${noun(docs, "document")}). Use all of them together to infer the topic, purpose, and audience.`;
   }
-  if (docCount > 0) {
-    return `Create an assistant based on the content of the attached ${docCount === 1 ? "document" : `${docCount} documents`}.`;
+  if (docs > 0) {
+    return `Create an assistant based on the content of the attached ${docs === 1 ? "document" : `${docs} documents`}.`;
   }
-  return `Create an assistant based on what you see in the attached ${imageCount === 1 ? "image" : `${imageCount} images`}. Infer the topic, purpose, and audience from the visual content.`;
+  return `Create an assistant based on what you see in the attached ${images === 1 ? "image" : `${images} images`}. Infer the topic, purpose, and audience from the visual content.`;
 }
 
 // ---------------------------------------------------------------------------
@@ -1457,27 +1457,15 @@ export async function generateTemplate(
   const attachments = opts.attachments ?? [];
 
   if (attachments.length > 0) {
-    // Multimodal path: text directive + N image/PDF blocks. Images go to the
-    // vision model as `image_url`; PDFs as native `file` blocks. The executor
-    // already fetched the bytes and built each data URI, so this just lays out
-    // the blocks. The URL/GitHub/passthrough logic below is text-only and
-    // doesn't apply when files are attached.
-    const images = attachments.filter(
-      (a): a is Extract<ResolvedAttachment, { kind: "image" }> =>
-        a.kind === "image",
-    );
-    const pdfs = attachments.filter(
-      (a): a is Extract<ResolvedAttachment, { kind: "pdf" }> =>
-        a.kind === "pdf",
-    );
-    const texts = attachments.filter(
-      (a): a is Extract<ResolvedAttachment, { kind: "text" }> =>
-        a.kind === "text",
-    );
+    // Multimodal path: a text directive + one block per file. Images go to the
+    // vision model as `image_url`, PDFs as native `file` blocks, text files as
+    // inline `text` blocks. The executor already fetched the bytes and built each
+    // data URI, so this just lays out the blocks. The URL/GitHub/passthrough logic
+    // below is text-only and doesn't apply when files are attached.
     userContent = [
       {
         type: "text",
-        text: `${describeAttachments(images.length, pdfs.length, texts.length)}${intentNote}`,
+        text: `${describeAttachments(attachments)}${intentNote}`,
       },
       // Map the original `attachments` array (not the filtered ones) so a mixed
       // order from the caller is preserved in the content blocks.

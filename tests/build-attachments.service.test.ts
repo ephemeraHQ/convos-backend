@@ -146,6 +146,22 @@ describe("decodeTextAttachment", () => {
     );
     expect(out).toBe("x".repeat(TEXT_ATTACHMENT_MAX_CHARS));
   });
+
+  test("truncation never splits a surrogate pair", () => {
+    // "😀" is two UTF-16 code units. Place it so the cap falls exactly between
+    // them — the naive slice would leave a lone high surrogate at the cut.
+    const head = "x".repeat(TEXT_ATTACHMENT_MAX_CHARS - 1);
+    const out = decodeTextAttachment(
+      utf8(`${head}😀${"y".repeat(100)}`),
+      "emoji.md",
+    );
+
+    const body = out.split("\n\n[")[0];
+    expect(body).toBe(head);
+    // No high surrogate left without its partner.
+    expect(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/.test(out)).toBe(false);
+    expect(out).toContain("102 more characters not shown");
+  });
 });
 
 describe("defaultTextFilename", () => {
