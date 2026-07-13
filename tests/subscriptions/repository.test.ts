@@ -407,8 +407,17 @@ describe("upsertFromVerify", () => {
   // before the grant, so re-verify could never heal them. These tests pin the
   // new behavior: a replayed verify backfills a MISSING current-period grant,
   // and only that — no double-grant, no grant on stale replays, no grant for
-  // non-entitled rows.
+  // rows whose EFFECTIVE (time-aware) status is not entitled, including
+  // stored-`active` rows whose entitlement window already elapsed (lost
+  // EXPIRED webhook).
   describe("replay materializes missing current-period grant", () => {
+    // The backfill gate is time-aware (`isEntitledSubscription`), so entitled
+    // fixtures need a period window that actually spans "now" — fixed calendar
+    // dates would silently lapse as the wall clock passes them.
+    const DAY = 24 * 60 * 60 * 1000;
+    const CURRENT_START = new Date(Date.now() - 5 * DAY);
+    const CURRENT_END = new Date(Date.now() + 25 * DAY);
+
     // Simulate the pre-deploy state: subscription + receipt exist, but the
     // period's sub_grant ledger row was never written (grants only started
     // being written at deploy time). Deleting the row and unwinding its delta
@@ -443,6 +452,8 @@ describe("upsertFromVerify", () => {
         accountId,
         originalTransactionId: "otid-materialize",
         transactionId: "tx-materialize",
+        currentPeriodStart: CURRENT_START,
+        currentPeriodEnd: CURRENT_END,
       });
       const first = await upsertFromVerify(input);
       expect(await getBalance(accountId)).toBe(BigInt(perPeriod()));
@@ -473,6 +484,8 @@ describe("upsertFromVerify", () => {
         accountId,
         originalTransactionId: "otid-no-double",
         transactionId: "tx-no-double",
+        currentPeriodStart: CURRENT_START,
+        currentPeriodEnd: CURRENT_END,
       });
       await upsertFromVerify(input);
       const replay = await upsertFromVerify(input);
@@ -488,18 +501,18 @@ describe("upsertFromVerify", () => {
         accountId,
         originalTransactionId: otid,
         transactionId: "tx-stale-old",
-        currentPeriodStart: new Date("2026-05-01T00:00:00.000Z"),
-        currentPeriodEnd: new Date("2026-06-01T00:00:00.000Z"),
+        currentPeriodStart: new Date(CURRENT_START.getTime() - 30 * DAY),
+        currentPeriodEnd: CURRENT_START,
       });
       await upsertFromVerify(oldInput);
-      // Renewal advances the row to period 2 and grants it.
+      // Renewal advances the row to period 2 (spanning now) and grants it.
       const renewed = await upsertFromVerify(
         verifyInput({
           accountId,
           originalTransactionId: otid,
           transactionId: "tx-stale-new",
-          currentPeriodStart: new Date("2026-06-01T00:00:00.000Z"),
-          currentPeriodEnd: new Date("2026-07-01T00:00:00.000Z"),
+          currentPeriodStart: CURRENT_START,
+          currentPeriodEnd: CURRENT_END,
         }),
       );
       expect(await getBalance(accountId)).toBe(BigInt(perPeriod() * 2));
@@ -527,6 +540,44 @@ describe("upsertFromVerify", () => {
       });
       await upsertFromVerify(input);
       expect(await getBalance(accountId)).toBe(0n);
+      const replay = await upsertFromVerify(input);
+      expect(replay.receiptCreated).toBe(false);
+      expect(await getBalance(accountId)).toBe(0n);
+      expect(await countSubGrants(accountId)).toBe(0);
+    });
+
+    // Time-aware gate regression: a row whose STORED status is still `active`
+    // but whose currentPeriodEnd already passed (lost/delayed EXPIRED webhook
+    // — prod holds such rows) must NOT get a backfill for the lapsed period.
+    // effectiveSubscriptionStatus resolves it to `expired`; the stored-status
+    // check alone would have minted a full sub_grant that credits-get
+    // simultaneously frames as free-tier state.
+    test("stored-active row with an elapsed period: replay does NOT backfill the lapsed grant", async () => {
+      const accountId = await newAccount();
+      const input = verifyInput({
+        accountId,
+        originalTransactionId: "otid-lapsed-active",
+        transactionId: "tx-lapsed-active",
+        status: SubscriptionStatus.active,
+        currentPeriodStart: new Date(Date.now() - 35 * DAY),
+        currentPeriodEnd: new Date(Date.now() - 5 * DAY),
+      });
+      // The FRESH verify still grants (stored-status gate, provider-fresh
+      // input; forfeit-on-expiry is the reconciliation path) — pinned
+      // elsewhere by account-credits "past-ended active subscription".
+      const first = await upsertFromVerify(input);
+      expect(await getBalance(accountId)).toBe(BigInt(perPeriod()));
+
+      // Simulate the pre-deploy shape: the grant row is missing.
+      await stripPeriodGrant(
+        first.subscription.id,
+        accountId,
+        first.subscription.currentPeriodStart,
+      );
+      expect(await getBalance(accountId)).toBe(0n);
+
+      // Replay: NOT stale (same period), stored status entitled — but the
+      // effective status is expired, so the healer must refuse.
       const replay = await upsertFromVerify(input);
       expect(replay.receiptCreated).toBe(false);
       expect(await getBalance(accountId)).toBe(0n);

@@ -15,6 +15,7 @@ import {
 import {
   effectiveSubscriptionStatus,
   ENTITLED_SUBSCRIPTION_STATUSES,
+  isEntitledSubscription,
   isEntitledSubscriptionStatus,
 } from "@/subscriptions/status";
 import {
@@ -391,10 +392,19 @@ export const upsertFromVerify = async (
         // concurrent renewal/verify cannot double-grant; the pre-check below
         // only avoids taking the wallet lock on the common already-granted
         // replay. Replay semantics stay intact: receiptCreated stays false.
+        //
+        // The gate MUST be the TIME-AWARE `isEntitledSubscription` (the same
+        // helper credits-get uses), not the stored-status check: a replay can
+        // arrive long after the stored state went stale. Prod holds rows whose
+        // stored status is still `active`/`grace` because the terminal EXPIRED
+        // webhook was lost or delayed — their entitlement window has already
+        // elapsed, and effectiveSubscriptionStatus resolves them to `expired`.
+        // Backfilling a full period grant for such a LAPSED period would mint
+        // credits that credits-get simultaneously frames as free-tier state.
         const replayed = existingReceipt.subscription;
         const isStaleReplay =
           input.currentPeriodEnd < replayed.currentPeriodEnd;
-        if (!isStaleReplay && isEntitledSubscriptionStatus(replayed.status)) {
+        if (!isStaleReplay && isEntitledSubscription(replayed)) {
           const currentPeriodGrant = await tx.creditLedger.findUnique({
             where: {
               accountId_idempotencyKey: {
@@ -452,6 +462,16 @@ export const upsertFromVerify = async (
       // re-verify of the same period, or an S2S DID_RENEW racing this verify
       // all resolve to one row. Only grant when the verified state is
       // entitled and the verify is not a stale (out-of-order) replay.
+      //
+      // DELIBERATELY the stored-status gate here (unlike the time-aware gate
+      // on the replay backfill above): this status was just derived from the
+      // provider-verified input — deriveSubscriptionStatusFromTransaction
+      // already maps a past expiresDate to `expired`, so stored ≈ effective at
+      // this instant. The single-ledger contract is grant-then-forfeit: a
+      // fresh verify grants the period and an expiry webhook claws back the
+      // unused portion (pinned by account-credits.test.ts "past-ended active
+      // subscription … wallet credits persist until forfeit"). Switching this
+      // to the effective check would break that pinned semantic for nothing.
       if (!isStaleVerify && isEntitledSubscriptionStatus(subscription.status)) {
         const grantResult = await grantSubscriptionPeriod(tx, {
           subscription,
