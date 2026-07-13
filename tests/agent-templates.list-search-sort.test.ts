@@ -12,6 +12,8 @@ import { prisma } from "@/utils/prisma";
 import {
   agentKeyHeaders,
   createTemplate,
+  getTemplate,
+  jwtHeaders,
   listTemplates,
   patchTemplate,
   startAgentTemplatesServer,
@@ -260,24 +262,89 @@ describe("Agent templates list — search / sort / counts", () => {
     ]);
   });
 
-  test("a negative featuredRank is rejected", async () => {
+  test("a featuredRank outside the column's Int range is rejected", async () => {
     const created = await createTemplate({
       baseURL,
       headers: agentKeyHeaders(),
       body: {
-        agentName: "Zrank Negative",
+        agentName: "Zrank Bounds",
         prompt: "p",
-        slug: "lss-rank-negative",
+        slug: "lss-rank-bounds",
         description: "zrankmarker",
       },
     });
-    const patched = await patchTemplate({
+    const id = created.body.id as string;
+
+    const negative = await patchTemplate({
       baseURL,
       headers: agentKeyHeaders(),
-      id: created.body.id as string,
+      id,
       body: { featuredRank: -1 },
     });
-    expect(patched.response.status).toBe(400);
+    expect(negative.response.status).toBe(400);
+
+    // Above Postgres' Int ceiling. Without the cap this clears Zod and dies at
+    // persistence, surfacing as a 500 rather than a validation error.
+    const tooLarge = await patchTemplate({
+      baseURL,
+      headers: agentKeyHeaders(),
+      id,
+      body: { featuredRank: 2_147_483_648 },
+    });
+    expect(tooLarge.response.status).toBe(400);
+  });
+
+  // Curation is not an ownership right: the PATCH guard admits the template's
+  // owner, so without a separate gate an owner could weight their own template
+  // to the top of the convos.org homepage, above the whole curated gallery.
+  test("only the dashboard's API key may write featuredRank", async () => {
+    const created = await createTemplate({
+      baseURL,
+      headers: agentKeyHeaders(),
+      body: {
+        agentName: "Zrank Owner",
+        prompt: "p",
+        slug: "lss-rank-owner",
+        description: "zrankmarker",
+      },
+    });
+    const id = created.body.id as string;
+
+    // The owner, authenticated as a user rather than as the dashboard.
+    const selfPromote = await patchTemplate({
+      baseURL,
+      headers: await jwtHeaders(),
+      id,
+      body: { featuredRank: 2_000_000_000 },
+    });
+    expect(selfPromote.response.status).toBe(403);
+
+    // …and the weight did not move.
+    const after = await getTemplate({
+      baseURL,
+      path: id,
+      headers: agentKeyHeaders(),
+    });
+    expect(after.body.featuredRank).toBe(0);
+
+    // The same owner still edits their own content — only curation is gated.
+    const contentEdit = await patchTemplate({
+      baseURL,
+      headers: await jwtHeaders(),
+      id,
+      body: { emoji: "🛶" },
+    });
+    expect(contentEdit.response.status).toBe(200);
+
+    // The dashboard writes the weight.
+    const curated = await patchTemplate({
+      baseURL,
+      headers: agentKeyHeaders(),
+      id,
+      body: { featuredRank: 42 },
+    });
+    expect(curated.response.status).toBe(200);
+    expect(curated.body.featuredRank).toBe(42);
   });
 
   test("a cursor built for a different sort is rejected with 400", async () => {
