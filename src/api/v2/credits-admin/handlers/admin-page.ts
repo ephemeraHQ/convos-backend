@@ -51,8 +51,7 @@ function buildHTML(nonce: string, creditsPerUsd: number): string {
   .balance { padding: 12px 16px; border-radius: 8px; background: #f5f5f7; min-width: 160px; }
   .balance .k { font-size: 12px; color: #6e6e73; }
   .balance .v { font-size: 20px; font-weight: 700; }
-  .balance.spendable { background: #e3f2e8; }
-  .balance.raw { background: #eef0ff; }
+  .balance.primary { background: #e3f2e8; }
   .badge { display: inline-block; padding: 2px 10px; border-radius: 999px; font-size: 12px; font-weight: 600; }
   .badge-yes { background: #d1f0d6; color: #14752a; }
   .badge-no { background: #f7d6d6; color: #a3151f; }
@@ -98,8 +97,7 @@ function buildHTML(nonce: string, creditsPerUsd: number): string {
   <div class="card">
     <h2>Account <span id="detail-id" style="font-weight:400;font-size:13px"></span></h2>
     <div class="balances">
-      <div class="balance spendable"><div class="k">Spendable (derived)</div><div class="v" id="b-spendable"></div></div>
-      <div class="balance raw"><div class="k">Raw parked balance</div><div class="v" id="b-raw"></div></div>
+      <div class="balance primary"><div class="k">Balance</div><div class="v" id="b-balance"></div></div>
       <div class="balance"><div class="k">Entitled</div><div class="v"><span id="b-entitled"></span></div></div>
     </div>
     <div id="sub-block" style="margin-top:16px"></div>
@@ -228,8 +226,7 @@ function buildHTML(nonce: string, creditsPerUsd: number): string {
   function renderDetail(j) {
     document.getElementById("detail").classList.remove("hidden");
     document.getElementById("detail-id").textContent = j.accountId;
-    document.getElementById("b-spendable").textContent = fmtCredits(j.spendableCredits);
-    document.getElementById("b-raw").textContent = fmtCredits(j.rawBalanceCredits);
+    document.getElementById("b-balance").textContent = fmtCredits(j.balanceCredits);
     document.getElementById("b-entitled").innerHTML = j.isEntitled
       ? '<span class="badge badge-yes">entitled</span>'
       : '<span class="badge badge-no">not entitled</span>';
