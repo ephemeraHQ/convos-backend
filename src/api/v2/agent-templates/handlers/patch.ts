@@ -185,6 +185,29 @@ export async function patchHandler(req: Request, res: Response) {
       return;
     }
 
+    // Getting INTO the gallery is curation too, not just where you sit in it.
+    // The guard above admits the template's owner, so without this an owner
+    // could feature their own template onto convos.org — they couldn't pick a
+    // slot (that's gated below, and they'd enter at weight 0, last), but they
+    // would be in the gallery, and in front of everyone the moment it holds
+    // fewer than a homepage's worth of curated templates.
+    //
+    // Taking a template back OUT stays theirs: `featured: false` is a
+    // withdrawal, like unpublishing, and it can only ever remove something from
+    // the homepage.
+    if (parsedBody.data.featured === true && !isApiKeyListener) {
+      req.log.warn(
+        {
+          callerAccountId,
+          templateId: template.id,
+          action: "patch.featured",
+        },
+        "Unauthorized agent-template curation attempt",
+      );
+      res.status(403).json({ error: "Not authorized to feature a template" });
+      return;
+    }
+
     // Gallery curation is not an ownership right. `featuredRank` decides what
     // leads the convos.org homepage, and the guard above admits the template's
     // owner — so without this an owner could weight their own template above
