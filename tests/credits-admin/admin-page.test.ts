@@ -46,4 +46,11 @@ describe("credits-admin page", () => {
     expect(res.text).toContain("Allotment");
     expect(res.text).toContain("perPeriodCredits");
   });
+
+  it("renders subscription state as a colored status chip (none/entitled/lapsed)", async () => {
+    const res = await adminRequest(app, false).get("/api/v2/credits-admin/");
+    expect(res.text).toContain('id="b-substate"');
+    expect(res.text).toContain("badge-none");
+    expect(res.text).toContain("effectiveStatus");
+  });
 });
