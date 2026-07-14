@@ -251,6 +251,7 @@ function buildHTML(nonce: string, creditsPerUsd: number): string {
         "<tr><th>Effective status</th><td>" + esc(s.effectiveStatus) + "</td></tr>" +
         "<tr><th>Period</th><td>" + fmtDate(s.currentPeriodStart) + " → " + fmtDate(s.currentPeriodEnd) + "</td></tr>" +
         "<tr><th>Environment</th><td>" + esc(s.environment) + "</td></tr>" +
+        "<tr><th>Allotment (per period)</th><td>" + fmtCredits(s.perPeriodCredits) + " credits</td></tr>" +
         "<tr><th>Period consumes</th><td>" + fmtCredits(j.periodConsumesCredits) + " credits</td></tr>" +
         "</tbody></table>";
     } else {

@@ -40,4 +40,10 @@ describe("credits-admin page", () => {
     expect(res.text).toContain('id="usage-spark"');
     expect(res.text).toContain("usageDaily");
   });
+
+  it("renders the per-period allotment in the subscription block", async () => {
+    const res = await adminRequest(app, false).get("/api/v2/credits-admin/");
+    expect(res.text).toContain("Allotment");
+    expect(res.text).toContain("perPeriodCredits");
+  });
 });
