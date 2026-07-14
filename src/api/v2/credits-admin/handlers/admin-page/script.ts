@@ -92,7 +92,82 @@ export const clientScript = (): string => `
   }
   el("search-btn").addEventListener("click", doSearch);
   el("search-value").addEventListener("keydown", function(e){ if(e.key==="Enter") doSearch(); });
-  function openDetail(accountId){ /* Task 6 */ }
+  var currentAccountId=null;
+  function subChip(j){
+    var state=j.subscription?j.subscription.effectiveStatus:"none";
+    var cls=!j.subscription?"badge-none":(j.isEntitled?"badge-yes":"badge-no");
+    return '<span class="badge '+cls+'">'+esc(state)+"</span>";
+  }
+  function renderSpark(usage){
+    if(!usage||!usage.length) return '<span style="color:var(--muted)">No usage in the last 30 days.</span>';
+    var max=usage.reduce(function(m,u){ var c=Number(u.consumed); return c>m?c:m; },0);
+    return usage.map(function(u){ var c=Number(u.consumed); var h=max>0?Math.max(2,Math.round(c/max*100)):2;
+      return '<div class="bar" style="height:'+h+'%" title="'+esc(u.bucketStart+" · "+fmtCredits(u.consumed)+" credits")+'"></div>'; }).join("");
+  }
+  function rowsHtml(rows, cols){
+    return (rows||[]).map(function(r){ return "<tr>"+cols.map(function(c){ return "<td>"+c(r)+"</td>"; }).join("")+"</tr>"; }).join("");
+  }
+  function renderDetail(j){
+    var sub=j.subscription;
+    var subBlock = sub
+      ? '<table><tbody>'
+        +"<tr><th>Tier</th><td>"+esc(sub.tier)+"</td></tr>"
+        +"<tr><th>Stored status</th><td>"+esc(sub.storedStatus)+"</td></tr>"
+        +"<tr><th>Effective status</th><td>"+esc(sub.effectiveStatus)+"</td></tr>"
+        +"<tr><th>Period</th><td>"+fmtDate(sub.currentPeriodStart)+" → "+fmtDate(sub.currentPeriodEnd)+"</td></tr>"
+        +"<tr><th>Environment</th><td>"+esc(sub.environment)+"</td></tr>"
+        +"<tr><th>Allotment (per period)</th><td>"+fmtCredits(sub.perPeriodCredits)+" credits</td></tr>"
+        +"<tr><th>Period consumes</th><td>"+fmtCredits(j.periodConsumesCredits)+" credits</td></tr>"
+        +"</tbody></table>"
+      : '<div style="color:var(--muted)">No subscription on record.</div>';
+    el("detail-body").innerHTML =
+      '<h2 style="font-size:16px">Account '+esc(shortId(j.accountId))+'</h2>'
+      +'<div class="card"><div class="k">Balance</div><div style="font-size:22px;font-weight:700">'+fmtCredits(j.balanceCredits)+'</div>'
+      +'<div style="margin-top:6px">Subscription: '+subChip(j)+'</div></div>'
+      +'<div class="card">'+subBlock+'</div>'
+      +'<div class="card"><h3>Grant</h3><input id="d-grant-credits" type="number" min="1" placeholder="credits"><input id="d-grant-reason" placeholder="reason"><button id="d-grant-btn" class="btn btn-primary">Grant</button></div>'
+      +'<div class="card"><h3>Adjust</h3><input id="d-adjust-delta" type="number" placeholder="±credits"><input id="d-adjust-reason" placeholder="reason"><button id="d-adjust-btn" class="btn btn-danger">Adjust</button></div>'
+      +'<div class="card"><h3>Usage (30d)</h3><div id="usage-spark" class="spark"></div></div>'
+      +'<div class="card"><h3>Daily refills</h3><div class="tablewrap"><table><tbody id="d-refills"></tbody></table></div></div>'
+      +'<div class="card"><h3>Recent ledger</h3><div class="tablewrap"><table><tbody id="d-ledger"></tbody></table></div></div>'
+      +'<div class="card"><h3>Admin audit</h3><div class="tablewrap"><table><tbody id="d-audit"></tbody></table></div></div>';
+    el("usage-spark").innerHTML = renderSpark(j.usageDaily);
+    el("d-refills").innerHTML = (j.dailyRefills&&j.dailyRefills.length)
+      ? rowsHtml(j.dailyRefills,[function(r){return fmtDate(r.createdAt);},function(r){return esc(r.delta);},function(r){return esc(r.note||"");}])
+      : '<tr><td style="color:var(--muted)">No daily refills.</td></tr>';
+    el("d-ledger").innerHTML = rowsHtml(j.ledger,[function(r){return fmtDate(r.createdAt);},function(r){return esc(r.delta);},function(r){return esc(r.reason);},function(r){return esc(r.grantKindId||"—");},function(r){return esc(r.note||"");}]);
+    el("d-grant-btn").addEventListener("click", function(){ mutate("grant"); });
+    el("d-adjust-btn").addEventListener("click", function(){ mutate("adjust"); });
+  }
+  function loadAudit(accountId){
+    guardFetch("/audit?accountId="+encodeURIComponent(accountId)).then(function(r){ return r.json(); }).then(function(j){
+      el("d-audit").innerHTML = rowsHtml(j.audit,[function(r){return fmtDate(r.createdAt);},function(r){return esc(r.actorEmail);},function(r){return esc(r.action);},function(r){return esc(r.deltaCredits);},function(r){return esc(r.reason);}]);
+    }).catch(function(){});
+  }
+  function openDetail(accountId){
+    currentAccountId=accountId;
+    el("detail-body").innerHTML='<div style="color:var(--muted)">Loading…</div>';
+    el("detail").classList.add("open"); el("detail").setAttribute("aria-hidden","false"); el("detail-scrim").classList.remove("hidden");
+    guardFetch("/accounts/"+encodeURIComponent(accountId)).then(function(r){ if(r.status===404){ throw new Error("not_found"); } return r.json(); })
+      .then(function(j){ renderDetail(j); loadAudit(accountId); })
+      .catch(function(e){ if(e.message==="not_found"){ el("detail-body").innerHTML='<div class="badge badge-no">Account not found</div>'; } else if(e.message!=="reauth"){ toast("Failed to load account","error"); } });
+  }
+  function mutate(kind){
+    if(!currentAccountId) return;
+    var body, path, btn;
+    if(kind==="grant"){ var c=parseInt(el("d-grant-credits").value,10); var gr=el("d-grant-reason").value.trim();
+      if(!c||c<=0){ toast("Positive credits required","error"); return; } if(!gr){ toast("Reason required","error"); return; }
+      body={credits:c,reason:gr,idempotencyKey:newKey("admin_grant")}; path="/grant"; btn=el("d-grant-btn"); }
+    else { var d=parseInt(el("d-adjust-delta").value,10); var ar=el("d-adjust-reason").value.trim();
+      if(!d){ toast("Non-zero delta required","error"); return; } if(!ar){ toast("Reason required","error"); return; }
+      body={delta:d,reason:ar,idempotencyKey:newKey("admin_adjust")}; path="/adjust"; btn=el("d-adjust-btn"); }
+    if(btn) btn.disabled=true;
+    guardFetch("/accounts/"+encodeURIComponent(currentAccountId)+path,{method:"POST",body:JSON.stringify(body)})
+      .then(function(r){ return r.json().then(function(j){ return {ok:r.ok,j:j}; }); })
+      .then(function(res){ if(!res.ok){ if(btn) btn.disabled=false; toast(res.j.code==="insufficient_balance"?"Below floor":(res.j.code==="idempotency_mismatch"?"Idempotency mismatch":"Failed"),"error"); return; }
+        toast(res.j.replayed?"Already applied":(kind==="grant"?"Granted":"Adjusted"),"success"); openDetail(currentAccountId); loadActivity(true); })
+      .catch(function(e){ if(btn) btn.disabled=false; if(e.message!=="reauth") toast("Failed","error"); });
+  }
   function closeDetail(){ var d=el("detail"); if(d){ d.classList.remove("open"); d.setAttribute("aria-hidden","true"); } var s=el("detail-scrim"); if(s) s.classList.add("hidden"); }
 
   // --- boot: silent re-auth if a token is already stored ---

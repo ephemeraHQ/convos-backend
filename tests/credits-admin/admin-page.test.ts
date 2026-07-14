@@ -52,4 +52,13 @@ describe("credits-admin page (console shell)", () => {
     expect(res.text).toContain('data-action="grant"');
     expect(res.text).toContain("/search?"); // search routes to /search, not audit/recent
   });
+
+  it("wires the detail panel: account view, grant, adjust, sub-state chip", async () => {
+    const res = await adminRequest(app, false).get("/api/v2/credits-admin/");
+    expect(res.text).toContain("/grant");
+    expect(res.text).toContain("/adjust");
+    expect(res.text).toContain("badge-none"); // sub-state chip (none/entitled/lapsed)
+    expect(res.text).toContain("usage-spark");
+    expect(res.text).toContain("perPeriodCredits");
+  });
 });
