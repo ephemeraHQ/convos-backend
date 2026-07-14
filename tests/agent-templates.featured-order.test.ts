@@ -126,6 +126,30 @@ describe("Agent templates — featured gallery order", () => {
     ]);
   });
 
+  // Ranking a template is not editing it. An update-per-row would touch
+  // `updatedAt` on every row, so a reorder would stamp the whole gallery as
+  // freshly edited — and `updatedAt` is a sort the list API offers.
+  test("a reorder doesn't mark the gallery as edited", async () => {
+    const one = await seedGalleryTemplate("Fone");
+    const two = await seedGalleryTemplate("Ftwo");
+
+    const before = await prisma.agentTemplate.findMany({
+      where: { slug: { startsWith: "fo-" } },
+      select: { id: true, updatedAt: true },
+      orderBy: { id: "asc" },
+    });
+
+    const res = await setOrder({ templateIds: [two, one] });
+    expect(res.response.status).toBe(200);
+
+    const after = await prisma.agentTemplate.findMany({
+      where: { slug: { startsWith: "fo-" } },
+      select: { id: true, updatedAt: true },
+      orderBy: { id: "asc" },
+    });
+    expect(after).toEqual(before);
+  });
+
   test("a partial list is refused — it would collide with the rows it omits", async () => {
     const one = await seedGalleryTemplate("Fone");
     await seedGalleryTemplate("Ftwo");

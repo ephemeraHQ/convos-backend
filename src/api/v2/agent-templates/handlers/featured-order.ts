@@ -20,6 +20,27 @@ const sendError = (
 };
 
 /**
+ * Did Postgres refuse this transaction because another one moved the gallery
+ * under it?
+ *
+ * Two shapes, because the transaction mixes query styles: Prisma maps a
+ * serialization failure in its OWN queries to `P2034`, while a raw query
+ * surfaces the driver's code instead — `40001`, serialization_failure — wrapped
+ * as `P2010`. Matching only the first lets a genuine, expected conflict escape
+ * as a 500.
+ */
+export const isSerializationFailure = (error: unknown): boolean => {
+  if (!(error instanceof Prisma.PrismaClientKnownRequestError)) {
+    return false;
+  }
+  if (error.code === "P2034") {
+    return true;
+  }
+  const meta = error.meta as { code?: string } | undefined;
+  return error.code === "P2010" && meta?.code === "40001";
+};
+
+/**
  * Write the featured gallery's order — the whole thing, in one transaction.
  *
  * A reorder used to be one PATCH per row, and convos.org renders those as they
@@ -103,12 +124,29 @@ export async function featuredOrderHandler(req: Request, res: Response) {
           return null;
         }
 
-        // Heaviest leads, so the first id gets the largest weight.
-        for (const [index, id] of templateIds.entries()) {
-          await tx.agentTemplate.update({
-            where: { id },
-            data: { featuredRank: total - index },
-          });
+        // Heaviest leads, so the first id gets the largest weight. One statement
+        // for the whole gallery, rather than an update per row: it keeps the
+        // SERIALIZABLE window to a single round trip (fewer aborts under a
+        // concurrent write), and it leaves `updatedAt` alone — Prisma's `update`
+        // would touch it on every row, so a reorder would stamp the entire
+        // gallery as freshly edited, and `updatedAt` is a sort the list API
+        // offers. Ranking a template is not editing it.
+        const written = await tx.$executeRaw`
+          UPDATE "AgentTemplate" AS t
+          SET "featuredRank" = v.rank
+          FROM (VALUES ${Prisma.join(
+            templateIds.map(
+              (id, index) => Prisma.sql`(${id}::uuid, ${total - index}::int)`,
+            ),
+          )}) AS v(id, rank)
+          WHERE t."id" = v.id
+        `;
+        // Membership was checked in this same snapshot, so every id must land.
+        // If one didn't, the order we'd be storing isn't the one we validated.
+        if (written !== total) {
+          throw new Error(
+            `featured-order wrote ${written} of ${total} templates`,
+          );
         }
         return total;
       },
@@ -128,10 +166,7 @@ export async function featuredOrderHandler(req: Request, res: Response) {
   } catch (error) {
     // A serialization failure means the gallery moved under this write. The
     // caller's answer is the same as for a set that was already stale.
-    if (
-      error instanceof Prisma.PrismaClientKnownRequestError &&
-      error.code === "P2034"
-    ) {
+    if (isSerializationFailure(error)) {
       sendError(res, 409, {
         code: "GALLERY_CHANGED",
         message:
