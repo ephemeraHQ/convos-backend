@@ -499,6 +499,7 @@ model AdminAudit {
   @@unique([accountId, idempotencyKey])
   @@index([accountId, createdAt])
   @@index([actorEmail, createdAt])
+  @@index([createdAt, id])
 }
 
 /// Per-PR agent variant (dev XMTP network only). A named bundle pinning an

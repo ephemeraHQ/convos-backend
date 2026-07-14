@@ -50,6 +50,7 @@ export const clientScript = (): string => `
   // --- stubs completed in later tasks ---
   var activityAction="all";
   var activityCursor=null;
+  var activityGen=0;
   function renderActivityRows(rows, append){
     var tb=document.querySelector("#activity-table tbody");
     var html=rows.map(function(r){
@@ -64,8 +65,10 @@ export const clientScript = (): string => `
   }
   function loadActivity(reset){
     if(reset){ activityCursor=null; }
+    var gen=++activityGen;
     var qs="?action="+encodeURIComponent(activityAction)+(activityCursor?("&cursor="+encodeURIComponent(activityCursor)):"");
     guardFetch("/audit/recent"+qs).then(function(r){ return r.json(); }).then(function(j){
+      if(gen!==activityGen) return;
       renderActivityRows(j.rows||[], !reset);
       activityCursor=j.nextCursor;
       el("load-more").classList.toggle("hidden", !j.nextCursor);
