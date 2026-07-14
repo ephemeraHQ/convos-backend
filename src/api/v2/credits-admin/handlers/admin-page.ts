@@ -55,6 +55,7 @@ function buildHTML(nonce: string, creditsPerUsd: number): string {
   .badge { display: inline-block; padding: 2px 10px; border-radius: 999px; font-size: 12px; font-weight: 600; }
   .badge-yes { background: #d1f0d6; color: #14752a; }
   .badge-no { background: #f7d6d6; color: #a3151f; }
+  .badge-none { background: #e8e8ed; color: #6e6e73; }
   table { width: 100%; border-collapse: collapse; font-size: 13px; }
   th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid #ececec; }
   th { color: #6e6e73; font-weight: 600; }
@@ -100,7 +101,7 @@ function buildHTML(nonce: string, creditsPerUsd: number): string {
     <h2>Account <span id="detail-id" style="font-weight:400;font-size:13px"></span></h2>
     <div class="balances">
       <div class="balance primary"><div class="k">Balance</div><div class="v" id="b-balance"></div></div>
-      <div class="balance"><div class="k">Entitled</div><div class="v"><span id="b-entitled"></span></div></div>
+      <div class="balance"><div class="k">Subscription</div><div class="v"><span id="b-substate"></span></div></div>
     </div>
     <div id="sub-block" style="margin-top:16px"></div>
   </div>
@@ -239,9 +240,14 @@ function buildHTML(nonce: string, creditsPerUsd: number): string {
     document.getElementById("detail").classList.remove("hidden");
     document.getElementById("detail-id").textContent = j.accountId;
     document.getElementById("b-balance").textContent = fmtCredits(j.balanceCredits);
-    document.getElementById("b-entitled").innerHTML = j.isEntitled
-      ? '<span class="badge badge-yes">entitled</span>'
-      : '<span class="badge badge-no">not entitled</span>';
+    var subState = j.subscription ? j.subscription.effectiveStatus : "none";
+    var subClass = !j.subscription
+      ? "badge-none"
+      : j.isEntitled
+        ? "badge-yes"
+        : "badge-no";
+    document.getElementById("b-substate").innerHTML =
+      '<span class="badge ' + subClass + '">' + esc(subState) + "</span>";
     var sb = document.getElementById("sub-block");
     if (j.subscription) {
       var s = j.subscription;
