@@ -101,6 +101,18 @@ export const bodySchema = z
       .transform((v) => v.toLowerCase())
       .optional(),
     templateId: z.string().uuid().optional(),
+    // Client-minted join idempotency key. Forwarded verbatim to the
+    // assistants service, where it becomes the Workflow instance id — a
+    // retried join whose response was lost (timeout, app suspension)
+    // adopts the already-provisioned instance instead of creating a
+    // duplicate. Optional for backwards compatibility with shipped
+    // clients. Lowercased here as an early gate; the assistants boundary
+    // is the authoritative normalizer (instance ids are lowercase-only).
+    idempotencyKey: z
+      .string()
+      .uuid()
+      .transform((v) => v.toLowerCase())
+      .optional(),
     name: z.string().min(1).max(256).optional(),
     profileImage: z.string().min(1).max(2048).optional(),
     options: optionsSchema.optional(),
@@ -174,6 +186,10 @@ const dispatchBodySchema = z
     ownerAccountId: accountIdSchema,
     options: optionsSchema.optional(),
     timezone: timezoneSchema.optional(),
+    // Join idempotency key, already lowercased by the inbound schema's
+    // transform. The worker uses it as the Workflow instance id to dedup
+    // retried creates.
+    idempotencyKey: z.string().uuid().optional(),
     // Free-form XMTP-profile metadata seed forwarded to the worker. Used to
     // carry the per-PR variant descriptor ({ variant: <json> }), which the
     // worker stamps onto the agent's profile at Herald-join.
@@ -429,6 +445,7 @@ export async function joinHandler(req: Request, res: Response) {
     slug,
     conversationId,
     templateId,
+    idempotencyKey,
     name,
     profileImage,
     options,
@@ -687,6 +704,9 @@ export async function joinHandler(req: Request, res: Response) {
     }
     if (timezone !== undefined) {
       dispatchBody.timezone = timezone;
+    }
+    if (idempotencyKey !== undefined) {
+      dispatchBody.idempotencyKey = idempotencyKey;
     }
     // Stamp the variant onto the agent: the worker reads metadata.variant at
     // Herald-join and emits it into the XMTP profile so every participant sees
