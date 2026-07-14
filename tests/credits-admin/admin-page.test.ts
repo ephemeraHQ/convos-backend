@@ -44,4 +44,12 @@ describe("credits-admin page (console shell)", () => {
     expect(res.text).not.toContain('credentials: "include"');
     expect(res.text).toContain('id="lock"');
   });
+
+  it("wires the activity list, facets, and load-more to audit/recent", async () => {
+    const res = await adminRequest(app, false).get("/api/v2/credits-admin/");
+    expect(res.text).toContain("/audit/recent");
+    expect(res.text).toContain("load-more");
+    expect(res.text).toContain('data-action="grant"');
+    expect(res.text).toContain("/search?"); // search routes to /search, not audit/recent
+  });
 });
