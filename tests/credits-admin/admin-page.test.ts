@@ -28,4 +28,16 @@ describe("credits-admin page", () => {
     expect(res.text).not.toContain('credentials: "include"');
     expect(res.text).toContain('id="clear-token"');
   });
+
+  it("renders the daily-refills panel and consumes j.dailyRefills", async () => {
+    const res = await adminRequest(app, false).get("/api/v2/credits-admin/");
+    expect(res.text).toContain('id="refills-table"');
+    expect(res.text).toContain("dailyRefills");
+  });
+
+  it("renders the usage sparkline and consumes j.usageDaily", async () => {
+    const res = await adminRequest(app, false).get("/api/v2/credits-admin/");
+    expect(res.text).toContain('id="usage-spark"');
+    expect(res.text).toContain("usageDaily");
+  });
 });
