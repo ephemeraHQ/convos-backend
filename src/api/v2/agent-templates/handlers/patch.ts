@@ -207,6 +207,33 @@ export async function patchHandler(req: Request, res: Response) {
     const data: Prisma.AgentTemplateUncheckedUpdateInput = {};
     applyContentFields(data, parsedBody.data);
 
+    // A curation weight IS a slot in the gallery, and the gallery renders
+    // exactly what is `featured` AND `published`. Anything else holds no slot,
+    // so it holds no weight: a template that drops out of the gallery — by
+    // being unfeatured or taken out of public view — gives its place up, and
+    // comes back at the end to be curated again like anything else.
+    //
+    // Without this a template inherits a slot nobody gave it: it keeps its
+    // weight while out of the gallery and silently reclaims its old position on
+    // the way back in, and a long-featured draft published for the first time
+    // lands wherever the weight it was seeded with happens to sit.
+    const nextStatus = parsedBody.data.status ?? template.status;
+    const nextFeatured = parsedBody.data.featured ?? template.featured;
+    const inGallery = nextFeatured && nextStatus === "published";
+    if (!inGallery) {
+      if (parsedBody.data.featuredRank !== undefined) {
+        sendBadRequest(res, {
+          code: "TEMPLATE_NOT_IN_GALLERY",
+          message:
+            "Only a featured, published template can hold a position in the featured gallery",
+        });
+        return;
+      }
+      if (template.featuredRank !== 0) {
+        data.featuredRank = 0;
+      }
+    }
+
     // PII redaction — scrub the content fields being written. Only the fields
     // present in this PATCH are scanned (partial update). Fails CLOSED: a scan
     // error rejects the edit rather than persisting un-scanned content.
