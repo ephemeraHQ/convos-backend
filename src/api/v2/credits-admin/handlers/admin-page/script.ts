@@ -123,6 +123,7 @@ export const clientScript = (): string => `
     el("detail-body").innerHTML =
       '<h2 style="font-size:16px">Account '+esc(shortId(j.accountId))+'</h2>'
       +'<div class="card"><div class="k">Balance</div><div style="font-size:22px;font-weight:700">'+fmtCredits(j.balanceCredits)+'</div>'
+      +'<div class="k">'+usdHint(j.balanceCredits)+'</div>'
       +'<div style="margin-top:6px">Subscription: '+subChip(j)+'</div></div>'
       +'<div class="card">'+subBlock+'</div>'
       +'<div class="card"><h3>Grant</h3><input id="d-grant-credits" type="number" min="1" placeholder="credits"><input id="d-grant-reason" placeholder="reason"><button id="d-grant-btn" class="btn btn-primary">Grant</button></div>'
