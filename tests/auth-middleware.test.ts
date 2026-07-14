@@ -260,17 +260,23 @@ describe("agent-templates router auth wiring", () => {
     expect(source).toContain("requireAccount");
     expect(source).toContain('from "@/middleware/auth"');
 
-    // Write routes (POST /, PUT /featured-order, PATCH /:id, DELETE /:id,
-    // POST /:id/publish) chain `authOrAgentApiKeyAuth + requireAccount`. That's
-    // 5 routes, and one import, for 6 occurrences of `requireAccount` total.
+    // Write routes (POST /, PATCH /:id, DELETE /:id, POST /:id/publish)
+    // chain `authOrAgentApiKeyAuth + requireAccount`. That's 4 routes,
+    // and one import, for 5 occurrences of `requireAccount` total.
     const requireAccountCount = (source.match(/requireAccount/g) ?? []).length;
-    expect(requireAccountCount).toBe(6);
+    expect(requireAccountCount).toBe(5);
 
     expect(source).toContain("requireAccount,\n  createHandler");
-    expect(source).toContain("requireAccount,\n  featuredOrderHandler");
     expect(source).toContain("requireAccount,\n  patchHandler");
     expect(source).toContain("requireAccount,\n  deleteHandler");
     expect(source).toContain("requireAccount,\n  publishHandler");
+
+    // Curating the featured gallery is not a user action, so the order endpoint
+    // takes the agent key ALONE — no JWT path reaches it, and there is no
+    // account to require. Chaining `authOrAgentApiKeyAuth` here would admit a
+    // signed-in caller and leave the refusal to the handler.
+    expect(source).toContain("agentApiKeyAuth,\n  featuredOrderHandler");
+    expect(source).not.toContain("requireAccount,\n  featuredOrderHandler");
 
     // Public routes use the optional middleware: GET /, GET /:idOrUrlSlug,
     // POST /generations, GET /generations/:generationId. The optional

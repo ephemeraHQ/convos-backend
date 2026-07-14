@@ -1,5 +1,6 @@
 import { Router } from "express";
 import {
+  agentApiKeyAuth,
   authOrAgentApiKeyAuth,
   optionalAuthOrAgentApiKeyAuth,
 } from "@/middleware/agentAuth";
@@ -77,12 +78,18 @@ agentTemplatesRouter.get(
   listCountsHandler,
 );
 
-// The featured gallery's order, written whole and in one transaction. Mounted
-// before /:id so the wildcard doesn't capture "featured-order" as a template id.
+// The featured gallery's order, written whole and in one transaction.
+//
+// Curation is not something a user does, so this isn't an endpoint a user
+// reaches: the agent key is required outright, and a signed-in caller is turned
+// away at the door rather than admitted and refused inside. The key IS the
+// identity here — there is no account to require.
+//
+// Mounted before /:id so the wildcard doesn't capture "featured-order" as a
+// template id.
 agentTemplatesRouter.put(
   "/featured-order",
-  authOrAgentApiKeyAuth,
-  requireAccount,
+  agentApiKeyAuth,
   featuredOrderHandler,
 );
 
