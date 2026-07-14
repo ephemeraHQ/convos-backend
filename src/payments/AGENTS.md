@@ -130,6 +130,31 @@ keys. The `consume` key is client-supplied by the assistants harness
    one key.
 5. Test balance movement, idempotent replay (same key → no double move), and
    floor behavior on debits.
+6. Did the change alter the balance model, add a `GrantKind` / `LedgerReason`,
+   or touch entitlement math (not just add a flow)? Update the credits admin
+   page too — see the next section.
+
+## The credits admin page mirrors this domain — keep it in sync
+
+`src/api/v2/credits-admin/` is a live read/write mirror of the ledger: it shows
+`getBalance`, the `CreditLedger` history, per-period consume sums, and the
+subscription entitlement view, and it mutates through `grant` / `adjust`. It is
+**not** generated — it hard-codes the current balance model, so it drifts
+silently when the model changes underneath it.
+
+Any change to how credits are stored, computed, or displayed MUST carry a
+matching update to the admin page, or its numbers become a lie:
+
+- New `GrantKind` / `LedgerReason` → surface it in the ledger view.
+- Changed meaning of `getBalance` / spendable, or a removed derived path →
+  update the balance cards and their labels. (The Option-B → single-ledger
+  migration left "Spendable (derived)" and "Raw parked balance" cards rendering
+  identical numbers precisely because this step was skipped.)
+- Changed subscription entitlement math (tier grant, period, forfeit) → update
+  the subscription view and per-period figures.
+
+Treat the admin page as part of the blast radius of any money-model change, the
+same as any downstream consumer.
 
 ## Deeper reference
 
