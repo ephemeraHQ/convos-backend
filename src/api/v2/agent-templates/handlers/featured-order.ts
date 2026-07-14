@@ -56,22 +56,10 @@ export const isSerializationFailure = (error: unknown): boolean => {
  * won't match and the write is refused rather than clobbering a set the caller
  * never saw.
  */
+// Reachable only behind `agentApiKeyAuth` (see the router): curation is not a
+// thing a user does, so there is no caller here to authorize — a request without
+// the agent key never arrives.
 export async function featuredOrderHandler(req: Request, res: Response) {
-  // Curation is the dashboard's, not an owner's — same rule the rank field
-  // itself carries in PATCH.
-  const isApiKeyListener = res.locals.isApiKeyListener ?? false;
-  if (!isApiKeyListener) {
-    req.log.warn(
-      { callerAccountId: res.locals.accountId, action: "featured-order" },
-      "Unauthorized agent-template curation attempt",
-    );
-    sendError(res, 403, {
-      code: "FORBIDDEN",
-      message: "Not authorized to set the featured gallery order",
-    });
-    return;
-  }
-
   const parsed = bodySchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({

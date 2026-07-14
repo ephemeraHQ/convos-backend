@@ -284,18 +284,29 @@ describe("Agent templates — featured gallery order", () => {
     expect(stranded).toEqual([]);
   });
 
-  test("only the dashboard's API key may write the order", async () => {
+  // Curation isn't something a user does, so this isn't an endpoint a user
+  // reaches: a signed-in caller is turned away at the door (401, no agent key)
+  // rather than admitted and refused inside.
+  test("a signed-in caller can't reach the endpoint at all", async () => {
     const one = await seedGalleryTemplate("Fone");
     const two = await seedGalleryTemplate("Ftwo");
     const before = await weights();
 
     // The templates' own owner, authenticated as a user rather than as the
-    // dashboard: curation is not an ownership right.
-    const res = await setOrder({
+    // dashboard.
+    const asUser = await setOrder({
       templateIds: [two, one],
       headers: await jwtHeaders(),
     });
-    expect(res.response.status).toBe(403);
+    expect(asUser.response.status).toBe(401);
+    expect(await weights()).toBe(before);
+
+    // And with no credentials at all.
+    const anonymous = await setOrder({
+      templateIds: [two, one],
+      headers: { "Content-Type": "application/json" },
+    });
+    expect(anonymous.response.status).toBe(401);
     expect(await weights()).toBe(before);
   });
 });
