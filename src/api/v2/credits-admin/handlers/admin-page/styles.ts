@@ -43,6 +43,7 @@ export const STYLES = `
   .spark { display:flex; align-items:flex-end; gap:2px; height:56px; }
   .spark .bar { flex:1 1 0; min-width:3px; min-height:2px; background:var(--brand); border-radius:2px 2px 0 0; }
   .card { background:var(--surface); border-radius:var(--radius); padding:16px; margin-bottom:14px; }
+  .k { font-size:12px; color:var(--muted); margin-bottom:4px; }
   .toast { position:fixed; bottom:24px; right:24px; padding:12px 18px; border-radius:8px; color:#fff; opacity:0; transition:opacity .2s; pointer-events:none; }
   .toast.show { opacity:1; } .toast-success { background:var(--ok); } .toast-error { background:var(--bad); }
 

@@ -30,7 +30,7 @@ export const consoleView = (): string => `
           <tbody></tbody>
         </table>
       </div>
-      <div id="activity-empty" class="hidden" style="color:var(--muted);padding:12px">No admin activity yet.</div>
+      <div id="activity-empty" class="hidden" style="color:var(--muted);padding:12px">No matching activity.</div>
       <button id="load-more" class="btn btn-secondary hidden" style="margin-top:12px">Load more</button>
     </section>
   </div>
