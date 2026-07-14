@@ -23,6 +23,7 @@ type AccountViewBody = {
     environment: string | null;
     willRenew: boolean;
     isInTrial: boolean;
+    perPeriodCredits: number;
   } | null;
   isEntitled: boolean;
   balanceCredits: string;
@@ -66,6 +67,7 @@ describe("GET /api/v2/credits-admin/accounts/:accountId", () => {
     expect(body.isEntitled).toBe(true);
     expect(body.subscription?.effectiveStatus).toBe("active");
     expect(BigInt(body.balanceCredits)).toBeGreaterThan(0n);
+    expect(body.subscription?.perPeriodCredits).toBeGreaterThan(0);
   });
 
   it("non-subscriber → no subscription, single wallet balance", async () => {

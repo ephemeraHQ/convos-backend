@@ -7,6 +7,8 @@ import {
   effectiveSubscriptionStatus,
   ENTITLED_SUBSCRIPTION_STATUSES,
 } from "@/subscriptions/status";
+import { tierGrant } from "@/subscriptions/tier-config";
+import { requireSubscriptionTier } from "@/subscriptions/tiers";
 import { prisma } from "@/utils/prisma";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -54,6 +56,7 @@ export const accountViewGetHandler = async (
     environment: string | null;
     willRenew: boolean;
     isInTrial: boolean;
+    perPeriodCredits: number;
   } | null = null;
   let periodConsumesCredits = 0;
 
@@ -76,6 +79,10 @@ export const accountViewGetHandler = async (
       environment: subscription.environment ?? null,
       willRenew: subscription.willRenew,
       isInTrial: subscription.isInTrial,
+      perPeriodCredits: tierGrant(
+        requireSubscriptionTier(subscription.tier),
+        subscription.period,
+      ).perPeriod,
     };
   }
 
