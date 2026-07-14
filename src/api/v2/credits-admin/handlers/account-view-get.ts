@@ -1,7 +1,7 @@
 import type { CreditLedger } from "@prisma/client";
 import type { Request, Response } from "express";
 import { getBalance, getBucketedConsumption } from "@/payments";
-import { getSpendableBalance, sumPeriodConsumes } from "@/payments/spendable";
+import { sumPeriodConsumes } from "@/payments/spendable";
 import { findCurrentByAccountId } from "@/subscriptions/repository";
 import {
   effectiveSubscriptionStatus,
@@ -79,8 +79,7 @@ export const accountViewGetHandler = async (
     };
   }
 
-  const [spendable, raw, ledgerRows, refillRows, usage] = await Promise.all([
-    getSpendableBalance(accountId),
+  const [balance, ledgerRows, refillRows, usage] = await Promise.all([
     getBalance(accountId),
     prisma.creditLedger.findMany({
       where: { accountId },
@@ -104,8 +103,7 @@ export const accountViewGetHandler = async (
     accountCreatedAt: account.createdAt.toISOString(),
     subscription: subView,
     isEntitled: subView?.isEntitled ?? false,
-    spendableCredits: spendable.toString(),
-    rawBalanceCredits: raw.toString(),
+    balanceCredits: balance.toString(),
     periodConsumesCredits,
     ledger: ledgerRows.map(serializeLedger),
     dailyRefills: refillRows.map(serializeLedger),
