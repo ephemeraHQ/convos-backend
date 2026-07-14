@@ -14,11 +14,12 @@ const parsePositiveInt = (key: string, raw: string | undefined): number => {
 };
 
 /**
- * Per-tier monthly credit allotment, env-driven.
+ * Per-tier per-period credit allotment, env-driven.
  *
- * These values are the source of truth for `monthlyGrant` in the iOS
- * `CreditBalance` model. They do NOT write to the ledger — subscription
- * allotments are derived (Subscription row + this config) at read time.
+ * Single-ledger model: `grantSubscriptionPeriod` writes this amount into the
+ * wallet as a real `sub_grant` credit row on subscribe/renewal — balances are
+ * materialized, never derived at read time. The same value also frames
+ * `monthlyGrant` in the iOS `CreditBalance` model.
  *
  * Annual subscriptions inherit the monthly amount per period; the renewal
  * cycle is just 12× longer. iOS displays `monthlyGrant` either way; the
