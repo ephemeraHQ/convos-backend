@@ -2,55 +2,46 @@ import type { Express } from "express";
 import { beforeAll, describe, expect, it } from "vitest";
 import { adminRequest, buildCreditsAdminApp } from "./helpers";
 
-describe("credits-admin page", () => {
+describe("credits-admin page (console shell)", () => {
   let app: Express;
   beforeAll(() => {
     app = buildCreditsAdminApp();
   });
 
-  it("serves the shell without auth (public page)", async () => {
-    const res = await adminRequest(app, false).get("/api/v2/credits-admin/");
+  const get = () => adminRequest(app, false).get("/api/v2/credits-admin/");
+
+  it("serves HTML without server auth", async () => {
+    const res = await get();
     expect(res.status).toBe(200);
     expect(res.headers["content-type"]).toContain("text/html");
   });
 
-  it("does NOT server-render any actor identity", async () => {
-    const res = await adminRequest(app, false).get("/api/v2/credits-admin/");
+  it("is auth-first: login present, console present but hidden", async () => {
+    const res = await get();
+    expect(res.text).toContain('id="login"');
+    expect(res.text).toContain('id="console"');
+    // console starts hidden until whoami succeeds
+    expect(res.text).toMatch(/id="console"[^>]*class="[^"]*hidden/);
+  });
+
+  it("shell is data-free: no identity, token, or creditsPerUsd inlined", async () => {
+    const res = await get();
     expect(res.text).not.toContain("Cf-Access-Authenticated-User-Email");
     expect(res.text).not.toContain("(Cloudflare Access)");
     expect(res.text).not.toMatch(/var ADMIN_EMAIL\s*=/);
+    // The real pricing constant (creditsPerDollar ≥ 1) must NOT be inlined — it
+    // comes from whoami now. The script's placeholder init `= null` is fine; only
+    // an actual inlined number (leading 1-9) is a violation.
+    expect(res.text).not.toMatch(/var CREDITS_PER_USD\s*=\s*[1-9]/);
   });
 
-  it("sends Bearer (not cookies) and exposes a clear-token control", async () => {
-    const res = await adminRequest(app, false).get("/api/v2/credits-admin/");
+  it("wires bearer auth + whoami + guardFetch, no cookies", async () => {
+    const res = await get();
     expect(res.text).toContain("Authorization");
     expect(res.text).toContain("Bearer ");
+    expect(res.text).toContain("/whoami");
+    expect(res.text).toContain("guardFetch");
     expect(res.text).not.toContain('credentials: "include"');
-    expect(res.text).toContain('id="clear-token"');
-  });
-
-  it("renders the daily-refills panel and consumes j.dailyRefills", async () => {
-    const res = await adminRequest(app, false).get("/api/v2/credits-admin/");
-    expect(res.text).toContain('id="refills-table"');
-    expect(res.text).toContain("dailyRefills");
-  });
-
-  it("renders the usage sparkline and consumes j.usageDaily", async () => {
-    const res = await adminRequest(app, false).get("/api/v2/credits-admin/");
-    expect(res.text).toContain('id="usage-spark"');
-    expect(res.text).toContain("usageDaily");
-  });
-
-  it("renders the per-period allotment in the subscription block", async () => {
-    const res = await adminRequest(app, false).get("/api/v2/credits-admin/");
-    expect(res.text).toContain("Allotment");
-    expect(res.text).toContain("perPeriodCredits");
-  });
-
-  it("renders subscription state as a colored status chip (none/entitled/lapsed)", async () => {
-    const res = await adminRequest(app, false).get("/api/v2/credits-admin/");
-    expect(res.text).toContain('id="b-substate"');
-    expect(res.text).toContain("badge-none");
-    expect(res.text).toContain("effectiveStatus");
+    expect(res.text).toContain('id="lock"');
   });
 });
