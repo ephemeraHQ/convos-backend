@@ -59,6 +59,8 @@ function buildHTML(nonce: string, creditsPerUsd: number): string {
   table { width: 100%; border-collapse: collapse; font-size: 13px; }
   th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid #ececec; }
   th { color: #6e6e73; font-weight: 600; }
+  .spark { display: flex; align-items: flex-end; gap: 2px; height: 56px; }
+  .spark .bar { flex: 1 1 0; min-width: 3px; min-height: 2px; background: #0071e3; border-radius: 2px 2px 0 0; }
   .hidden { display: none; }
   .toast { position: fixed; bottom: 24px; right: 24px; padding: 12px 18px; border-radius: 8px; color: #fff; opacity: 0; transition: opacity .2s; pointer-events: none; }
   .toast.show { opacity: 1; }
@@ -126,6 +128,16 @@ function buildHTML(nonce: string, creditsPerUsd: number): string {
   <div class="card">
     <h2>Recent ledger</h2>
     <div style="overflow-x:auto"><table id="ledger-table"><thead><tr><th>When</th><th>Δ</th><th>Reason</th><th>Kind</th><th>Note</th></tr></thead><tbody></tbody></table></div>
+  </div>
+
+  <div class="card">
+    <h2>Usage (last 30 days)</h2>
+    <div id="usage-spark" class="spark"></div>
+  </div>
+
+  <div class="card">
+    <h2>Daily refills</h2>
+    <div style="overflow-x:auto"><table id="refills-table"><thead><tr><th>When</th><th>Δ</th><th>Note</th></tr></thead><tbody></tbody></table></div>
   </div>
 
   <div class="card">
@@ -251,6 +263,31 @@ function buildHTML(nonce: string, creditsPerUsd: number): string {
     lt.innerHTML = (j.ledger || []).map(function (r) {
       return "<tr><td>" + fmtDate(r.createdAt) + "</td><td>" + esc(r.delta) + "</td><td>" + esc(r.reason) + "</td><td>" + esc(r.grantKindId || "—") + "</td><td>" + esc(r.note || "") + "</td></tr>";
     }).join("");
+
+    var refills = j.dailyRefills || [];
+    var ft = document.querySelector("#refills-table tbody");
+    ft.innerHTML = refills.length
+      ? refills.map(function (r) {
+          return "<tr><td>" + fmtDate(r.createdAt) + "</td><td>" + esc(r.delta) + "</td><td>" + esc(r.note || "") + "</td></tr>";
+        }).join("")
+      : '<tr><td colspan="3" class="hint">No daily refills.</td></tr>';
+
+    var usage = j.usageDaily || [];
+    var spark = document.getElementById("usage-spark");
+    if (!usage.length) {
+      spark.innerHTML = '<span class="hint">No usage in the last 30 days.</span>';
+    } else {
+      var maxUsage = usage.reduce(function (m, u) {
+        var c = Number(u.consumed);
+        return c > m ? c : m;
+      }, 0);
+      spark.innerHTML = usage.map(function (u) {
+        var c = Number(u.consumed);
+        var h = maxUsage > 0 ? Math.max(2, Math.round((c / maxUsage) * 100)) : 2;
+        var title = esc(u.bucketStart + " · " + fmtCredits(u.consumed) + " credits");
+        return '<div class="bar" style="height:' + h + '%" title="' + title + '"></div>';
+      }).join("");
+    }
   }
 
   function loadAudit(accountId) {
