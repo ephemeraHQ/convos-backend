@@ -1,3 +1,4 @@
+import { Prisma } from "@prisma/client";
 import type { Request, Response } from "express";
 import { z } from "zod";
 import { prisma } from "@/utils/prisma";
@@ -70,16 +71,51 @@ export async function featuredOrderHandler(req: Request, res: Response) {
   }
 
   try {
-    const gallery = await prisma.agentTemplate.findMany({
-      where: { featured: true, status: "published" },
-      select: { id: true },
-    });
+    const total = templateIds.length;
 
-    const galleryIds = new Set(gallery.map((template) => template.id));
-    const matchesGallery =
-      galleryIds.size === unique.size &&
-      templateIds.every((id) => galleryIds.has(id));
-    if (!matchesGallery) {
+    // The membership check and the writes are one transaction, at SERIALIZABLE.
+    //
+    // Both halves are needed. Reading the gallery outside the write would make
+    // this a check-then-act across two round trips; and moving the read inside a
+    // default (READ COMMITTED) transaction wouldn't close it either, since every
+    // statement there takes a fresh snapshot — a template featured or dropped
+    // between the check and the writes would still slip past. The damaging case
+    // is a row LEAVING the gallery mid-write: it stays in `templateIds`, takes a
+    // weight it's no longer entitled to, and — because a weight is a slot —
+    // silently reclaims that slot when it comes back. Exactly the invariant the
+    // patch handler enforces, walked around from the side.
+    //
+    // SERIALIZABLE makes the read and the writes see one snapshot and aborts the
+    // loser of a conflicting pair, which surfaces below as the same 409 a stale
+    // set gets: re-read the gallery and try again.
+    const updated = await prisma.$transaction(
+      async (tx) => {
+        const gallery = await tx.agentTemplate.findMany({
+          where: { featured: true, status: "published" },
+          select: { id: true },
+        });
+
+        const galleryIds = new Set(gallery.map((template) => template.id));
+        const matchesGallery =
+          galleryIds.size === unique.size &&
+          templateIds.every((id) => galleryIds.has(id));
+        if (!matchesGallery) {
+          return null;
+        }
+
+        // Heaviest leads, so the first id gets the largest weight.
+        for (const [index, id] of templateIds.entries()) {
+          await tx.agentTemplate.update({
+            where: { id },
+            data: { featuredRank: total - index },
+          });
+        }
+        return total;
+      },
+      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+    );
+
+    if (updated === null) {
       sendError(res, 409, {
         code: "GALLERY_CHANGED",
         message:
@@ -88,20 +124,21 @@ export async function featuredOrderHandler(req: Request, res: Response) {
       return;
     }
 
-    // Heaviest leads, so the first id gets the largest weight. One transaction:
-    // the gallery is never half-ordered, not even for a moment.
-    const total = templateIds.length;
-    await prisma.$transaction(
-      templateIds.map((id, index) =>
-        prisma.agentTemplate.update({
-          where: { id },
-          data: { featuredRank: total - index },
-        }),
-      ),
-    );
-
-    res.status(200).json({ updated: total });
+    res.status(200).json({ updated });
   } catch (error) {
+    // A serialization failure means the gallery moved under this write. The
+    // caller's answer is the same as for a set that was already stale.
+    if (
+      error instanceof Prisma.PrismaClientKnownRequestError &&
+      error.code === "P2034"
+    ) {
+      sendError(res, 409, {
+        code: "GALLERY_CHANGED",
+        message:
+          "the gallery changed while this order was being written — re-read it and try again",
+      });
+      return;
+    }
     req.log.error(
       { error, stack: error instanceof Error ? error.stack : undefined },
       "Failed to set featured gallery order",

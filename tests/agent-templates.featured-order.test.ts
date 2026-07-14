@@ -196,6 +196,70 @@ describe("Agent templates — featured gallery order", () => {
     expect(await weights()).toBe(before);
   });
 
+  // The membership check and the writes run in one SERIALIZABLE transaction, so
+  // the gallery can't move between them. These assert the invariants that a
+  // torn read-then-write would break — not which racer wins, so they don't hinge
+  // on timing.
+  test("concurrent reorders never leave the gallery half-ordered", async () => {
+    const one = await seedGalleryTemplate("Fone");
+    const two = await seedGalleryTemplate("Ftwo");
+    const three = await seedGalleryTemplate("Fthree");
+
+    const [a, b] = await Promise.all([
+      setOrder({ templateIds: [one, two, three] }),
+      setOrder({ templateIds: [three, two, one] }),
+    ]);
+
+    // A loser is refused, never served a 500.
+    for (const res of [a, b]) {
+      expect([200, 409]).toContain(res.response.status);
+    }
+    expect([a.response.status, b.response.status]).toContain(200);
+
+    // Whoever won, the gallery is a total order: dense, distinct, top-down.
+    const rows = await prisma.agentTemplate.findMany({
+      where: {
+        slug: { startsWith: "fo-" },
+        featured: true,
+        status: "published",
+      },
+      select: { featuredRank: true },
+      orderBy: { featuredRank: "desc" },
+    });
+    expect(rows.map((r) => r.featuredRank)).toEqual([3, 2, 1]);
+  });
+
+  test("a template that leaves the gallery mid-write keeps no weight", async () => {
+    const one = await seedGalleryTemplate("Fone");
+    const two = await seedGalleryTemplate("Ftwo");
+    const three = await seedGalleryTemplate("Fthree");
+
+    // The reorder is in flight when `Fthree` is unfeatured. Whichever lands
+    // first, the rule survives: a weight belongs to a featured, published
+    // template — so a row that walked out of the gallery must not be holding
+    // one, or it would silently reclaim that slot on the way back in.
+    const [order] = await Promise.all([
+      setOrder({ templateIds: [three, one, two] }),
+      patchTemplate({
+        baseURL,
+        headers: agentKeyHeaders(),
+        id: three,
+        body: { featured: false },
+      }),
+    ]);
+    expect([200, 409]).toContain(order.response.status);
+
+    const stranded = await prisma.agentTemplate.findMany({
+      where: {
+        slug: { startsWith: "fo-" },
+        featuredRank: { not: 0 },
+        OR: [{ featured: false }, { status: { not: "published" } }],
+      },
+      select: { agentName: true, featuredRank: true },
+    });
+    expect(stranded).toEqual([]);
+  });
+
   test("only the dashboard's API key may write the order", async () => {
     const one = await seedGalleryTemplate("Fone");
     const two = await seedGalleryTemplate("Ftwo");
