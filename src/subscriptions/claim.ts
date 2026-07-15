@@ -360,15 +360,6 @@ const restoreTombstonedLineage = async (
     return { kind: "rejected", reason: "pending_contest" };
   }
 
-  const journalId = randomUUID();
-  const subscription = await tx.subscription.create({
-    data: {
-      ...args.subscriptionSeed,
-      accountId: args.callerAccountId,
-      lineageId: ctx.lineageId,
-    },
-  });
-
   // Restoration = escrow release, not a grant: the period's funding-registry
   // row already exists. Release ONLY the escrow row for the provider-verified
   // current funding event, selected by its exact provider period key
@@ -393,9 +384,62 @@ const restoreTombstonedLineage = async (
         custody.periodEnd.getTime() > args.currentPeriodStart.getTime(),
     ) ??
     null;
+
+  // Fail closed when the provider-proven current funding event has no
+  // custody row on this lineage (e.g. the renewal notification that would
+  // have funded escrow was lost while tombstoned). Restoring anyway would
+  // silently mint a live lineage holding zero credits for a period the
+  // provider says is paid - and the drift sweep, seeing "entitled", would
+  // never backfill it. Park for an operator (alerted) and reject retryably.
+  if (!releaseTarget) {
+    const quarantineToken =
+      args.subscriptionSeed.purchaseToken ??
+      args.subscriptionSeed.originalTransactionId ??
+      args.providerPeriodKey;
+    const alreadyParked = await tx.lineageQuarantine.findFirst({
+      where: {
+        token: quarantineToken,
+        reason: "restoration_missing_funding_event",
+        resolvedAt: null,
+      },
+      select: { id: true },
+    });
+    if (!alreadyParked) {
+      await tx.lineageQuarantine.create({
+        data: {
+          provider: args.subscriptionSeed.provider,
+          token: quarantineToken,
+          reason: "restoration_missing_funding_event",
+          payload: {
+            lineageId: ctx.lineageId,
+            providerPeriodKey: args.providerPeriodKey,
+            callerAccountId: args.callerAccountId,
+          },
+        },
+      });
+    }
+    logger.error(
+      {
+        lineageId: ctx.lineageId,
+        providerPeriodKey: args.providerPeriodKey,
+      },
+      "subscription.claim.restoration_missing_funding_event",
+    );
+    return { kind: "rejected", reason: "lineage_unresolved" };
+  }
+
+  const journalId = randomUUID();
+  const subscription = await tx.subscription.create({
+    data: {
+      ...args.subscriptionSeed,
+      accountId: args.callerAccountId,
+      lineageId: ctx.lineageId,
+    },
+  });
+
   let released = 0n;
   for (const custody of escrows) {
-    if (releaseTarget && custody.id === releaseTarget.id) {
+    if (custody.id === releaseTarget.id) {
       released += await releaseCustody(tx, ctx, {
         custody,
         toAccountId: args.callerAccountId,
