@@ -425,10 +425,37 @@ describe("post-transfer provider events", () => {
     });
     // The deletion escrow (current period) plus the renewal escrow.
     expect(escrows.length).toBe(2);
+    expect(await prisma.lineagePeriodGrant.count()).toBe(2);
 
-    // Refund of the renewal while tombstoned: escrow invalidated, nothing
-    // moves (Play-shaped path exercised via a Play lineage below; here we
-    // assert the registry rows stayed once-per-event).
+    // The stated Apple refund of that renewal arrives while still
+    // tombstoned: the renewal's escrow is invalidated (cap 0) so no later
+    // restoration can release refunded value; nothing moves (the value
+    // already left a wallet at deletion time).
+    const refund = await applyNotification({
+      provider: BillingProvider.apple,
+      originalTransactionId: otx,
+      transactionId: "renewal-tx-1",
+      notificationUUID: randomUUID(),
+      notificationType: "REVOKE",
+      signedPayload: "jws",
+      update: {
+        status: SubscriptionStatus.revoked,
+        willRenew: false,
+        cancelledAt: new Date(),
+        currentPeriodEnd: nextEnd,
+      },
+    });
+    expect(refund.kind).toBe("tombstoned");
+    const renewalEscrow = await prisma.lineagePeriodCustody.findFirst({
+      where: { providerPeriodKey: "apple_txn_renewal-tx-1" },
+    });
+    expect(renewalEscrow?.state).toBe("invalidated");
+    expect(renewalEscrow?.remainderCap).toBe(0n);
+    // Late-event isolation: the deletion escrow for the earlier period is
+    // untouched, and the registry still records exactly one row per event.
+    expect(
+      await prisma.lineagePeriodCustody.count({ where: { state: "escrow" } }),
+    ).toBe(1);
     expect(await prisma.lineagePeriodGrant.count()).toBe(2);
   });
 

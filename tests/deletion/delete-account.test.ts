@@ -333,6 +333,19 @@ describe("DELETE /v2/accounts/me", () => {
     expect(deletionAudit?.reason).toContain(hashAccountRef(accountId));
   });
 
+  // The two replay tests carry the response body and durable DB state in
+  // their assertion messages: a rare flake was once observed here and the
+  // bare status assertion discarded the actual failure (see the build log).
+  const replayDiagnostics = async (
+    label: string,
+    res: request.Response,
+  ): Promise<string> => {
+    const records = await prisma.deletionRecord.findMany();
+    return `${label}: status=${res.status} body=${JSON.stringify(
+      res.body,
+    )} deletionRecords=${JSON.stringify(records)}`;
+  };
+
   test("replay with the same operationId returns the identical stored record", async () => {
     const { accountId } = await populateAccount();
     const operationId = randomUUID();
@@ -342,14 +355,14 @@ describe("DELETE /v2/accounts/me", () => {
       .delete("/v2/accounts/me")
       .set("X-Convos-AuthToken", token)
       .send({ operationId });
-    expect(first.status).toBe(200);
+    expect(first.status, await replayDiagnostics("first", first)).toBe(200);
 
     // The unexpired pre-deletion token still authenticates this one route.
     const second = await request(makeApp())
       .delete("/v2/accounts/me")
       .set("X-Convos-AuthToken", token)
       .send({ operationId });
-    expect(second.status).toBe(200);
+    expect(second.status, await replayDiagnostics("replay", second)).toBe(200);
     expect(second.body).toEqual(first.body);
   });
 
@@ -358,17 +371,18 @@ describe("DELETE /v2/accounts/me", () => {
     const storedOperationId = randomUUID();
     const token = await tokenFor(accountId);
 
-    await request(makeApp())
+    const first = await request(makeApp())
       .delete("/v2/accounts/me")
       .set("X-Convos-AuthToken", token)
       .send({ operationId: storedOperationId });
+    expect(first.status, await replayDiagnostics("first", first)).toBe(200);
 
     const retry = await request(makeApp())
       .delete("/v2/accounts/me")
       .set("X-Convos-AuthToken", token)
       .send({ operationId: randomUUID() });
 
-    expect(retry.status).toBe(200);
+    expect(retry.status, await replayDiagnostics("retry", retry)).toBe(200);
     expect((retry.body as { operationId: string }).operationId).toBe(
       storedOperationId,
     );

@@ -87,12 +87,21 @@ const createTemplate = async (
 // templates visible).
 const READER_ACCOUNT_ID = "00000000-0000-4000-8000-cccccccc0002";
 
-const readerAuthHeaders = async (): Promise<Record<string, string>> => ({
-  "X-Convos-AuthToken": await createJwtToken({
-    deviceId: "test-device-agent-templates-conventions",
-    accountId: READER_ACCOUNT_ID,
-  }),
-});
+const readerAuthHeaders = async (): Promise<Record<string, string>> => {
+  // Fail-closed auth: a JWT accountId claim must reference a live Account
+  // row, so the synthetic reader account has to exist.
+  await prisma.account.upsert({
+    where: { id: READER_ACCOUNT_ID },
+    update: {},
+    create: { id: READER_ACCOUNT_ID },
+  });
+  return {
+    "X-Convos-AuthToken": await createJwtToken({
+      deviceId: "test-device-agent-templates-conventions",
+      accountId: READER_ACCOUNT_ID,
+    }),
+  };
+};
 
 const readJson = async (args: { path: string }) => {
   const response = await fetch(`${baseURL}${args.path}`, {
