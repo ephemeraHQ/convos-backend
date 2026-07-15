@@ -155,11 +155,12 @@ export const clientScript = (): string => `
     });
   }
   function loadAccounts(reset){
-    if(reset){ accountsPageNo=0; } else { accountsPageNo++; }
-    var view=currentView, gen=++accountsGen;
-    guardFetch("/accounts"+accountsQuery(view, accountsPageNo)).then(function(r){ if(!r.ok){ throw new Error("load_failed"); } return r.json(); }).then(function(j){
+    if(reset){ accountsPageNo=0; }
+    var view=currentView, gen=++accountsGen, pageNo=reset?0:accountsPageNo+1;
+    guardFetch("/accounts"+accountsQuery(view, pageNo)).then(function(r){ if(!r.ok){ throw new Error("load_failed"); } return r.json(); }).then(function(j){
       if(gen!==accountsGen) return;
       if(view!==currentView) return;
+      accountsPageNo=pageNo;
       renderAccountRows(j.rows||[], view, !reset);
       el("load-more").classList.toggle("hidden", !j.hasMore);
       var empty = reset && (!j.rows || j.rows.length===0);
