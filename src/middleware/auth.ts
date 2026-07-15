@@ -34,8 +34,10 @@ const isDeleteReplayCarveOut = (req: Request): boolean => {
  * database. Returns false after writing the response when the request must
  * not proceed.
  *
- * Live requests also stamp lastAuthAt (throttled, fire-and-forget): the
- * claim contest window treats any authenticated act as a veto.
+ * Live requests also stamp lastAuthAt (awaited, fail-closed; throttled only
+ * while no outgoing transfer is pending): the claim contest window treats
+ * any authenticated act as a veto, so a request that cannot durably stamp
+ * fails with a 5xx rather than proceeding unstamped.
  */
 type VerifiedJwtPayload = Awaited<ReturnType<typeof verifyJwtToken>>;
 
@@ -59,9 +61,20 @@ const enforceLiveAccountClaim = async (
     return false;
   }
   if (!isNotificationExtensionOnlyToken(payload)) {
-    // Awaited: the contest-window veto depends on this stamp being durable
-    // before the request proceeds (see stampAuthActivity).
-    await stampAuthActivity(account.id, account.lastAuthAt);
+    // Awaited and fail-closed: the contest-window veto depends on this stamp
+    // being durable before the request proceeds (see stampAuthActivity). A
+    // stamp failure fails the request - proceeding unstamped could silently
+    // cost a legitimate owner their veto during a contest window.
+    try {
+      await stampAuthActivity(account.id, account.lastAuthAt);
+    } catch (err) {
+      req.log.error(
+        { err, deviceId: payload.deviceId },
+        "auth.activity_stamp_failed",
+      );
+      res.status(500).json({ error: "Internal server error" });
+      return false;
+    }
   }
   return true;
 };

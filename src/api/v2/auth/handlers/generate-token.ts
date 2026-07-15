@@ -1,5 +1,6 @@
 import type { Request, Response } from "express";
 import { z } from "zod";
+import { stampAuthActivity } from "@/accounts/auth-activity";
 import { isIdentityBarred } from "@/accounts/deletion/barrier";
 import {
   IdentityBarredError,
@@ -171,19 +172,20 @@ export async function generateToken(
     }
     accountId = upserted.accountId;
 
-    // Best-effort activity stamp: lastAuthAt records the most recent
-    // authenticated mint for this account (consumed by activity-recency
-    // checks such as the subscription-claim dead-or-silent gate). updateMany
-    // no-ops instead of throwing when the row vanished (deletion racing this
-    // mint); a transient failure here never fails token mint.
+    // Activity stamp: lastAuthAt records the most recent authenticated mint
+    // for this account (consumed by activity-recency checks such as the
+    // subscription-claim dead-or-silent gate, and by the contest-window
+    // veto). Fail closed: a mint that cannot durably stamp fails with a 5xx
+    // so the client retries - proceeding unstamped could silently cost the
+    // owner their veto on a pending transfer. The raw UPDATE no-ops (zero
+    // rows) when the row vanished (deletion racing this mint) - that is not
+    // a failure, there is no veto left to preserve.
     try {
-      // Database now(): the contest-window veto compares this stamp against
-      // the pending row's DB-clock createdAt, so both must share a clock.
-      await prisma.$executeRaw`
-        UPDATE "Account" SET "lastAuthAt" = now() WHERE id = ${accountId}::uuid
-      `;
+      await stampAuthActivity(accountId, null);
     } catch (err) {
-      req.log.warn({ err, accountId }, "auth.account.last_auth_stamp_failed");
+      req.log.error({ err, accountId }, "auth.account.last_auth_stamp_failed");
+      res.status(500).json({ error: "Failed to generate token" });
+      return;
     }
 
     // Best-effort backfill of DeviceRegistration.accountId.
