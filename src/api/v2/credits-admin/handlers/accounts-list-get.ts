@@ -62,6 +62,14 @@ export const accountsListGetHandler = async (
           })),
         };
       }
+      default: {
+        // Forcing function: a new mode in accountsListQuerySchema that isn't
+        // handled above narrows to that mode here instead of `never`, so this
+        // assignment fails to compile. Load-bearing — do not delete.
+        const _exhaustive: never = q;
+        void _exhaustive;
+        throw new Error("unhandled accounts-list mode");
+      }
     }
   })();
   res.status(200).json({

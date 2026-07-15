@@ -36,22 +36,30 @@ export const adjustBodySchema = z.object({
   idempotencyKey: idempotencyKeySchema,
 });
 
+export const MAX_ACCOUNTS_PAGE = 10_000;
+
+const balanceFilterCredits = z.coerce
+  .number()
+  .int()
+  .min(-MAX_ADMIN_GRANT_CREDITS)
+  .max(MAX_ADMIN_GRANT_CREDITS);
+
 const accountsPageLimit = {
-  page: z.coerce.number().int().min(0).default(0),
+  page: z.coerce.number().int().min(0).max(MAX_ACCOUNTS_PAGE).default(0),
   limit: z.coerce.number().int().min(1).max(100).default(50),
 };
 
 export const accountsListQuerySchema = z.discriminatedUnion("mode", [
   z.object({
     mode: z.literal("balance"),
-    min: z.coerce.number().int().optional(),
-    max: z.coerce.number().int().optional(),
+    min: balanceFilterCredits.optional(),
+    max: balanceFilterCredits.optional(),
     sort: z.enum(["asc", "desc"]).default("desc"),
     ...accountsPageLimit,
   }),
   z.object({
     mode: z.literal("broken"),
-    maxBalance: z.coerce.number().int().default(0),
+    maxBalance: balanceFilterCredits.default(0),
     ...accountsPageLimit,
   }),
   z.object({
