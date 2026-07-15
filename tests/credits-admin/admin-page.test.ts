@@ -74,6 +74,10 @@ describe("credits-admin page (console shell)", () => {
     expect(res.text).toContain('value="grantKind"');
     expect(res.text).toContain('id="accounts-table"');
     expect(res.text).toContain("loadAccounts");
+    // setView() hides the activity feed by this id. It used to walk
+    // #activity-table.parentNode, which silently broke if the markup grew a
+    // wrapper. Pin the id so a restyle can't reintroduce that coupling.
+    expect(res.text).toContain('id="activity-wrap"');
     // setView() retitles this per view; pins the element's existence only —
     // the label swap itself is runtime behaviour a string assertion can't reach.
     expect(res.text).toContain('id="center-title"');

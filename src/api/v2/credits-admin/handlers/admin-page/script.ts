@@ -169,7 +169,7 @@ export const clientScript = (): string => `
     showModeControls(view);
     el("center-title").textContent=viewTitles[view];
     var isActivity = view==="activity";
-    el("activity-table").parentNode.classList.toggle("hidden", !isActivity);
+    el("activity-wrap").classList.toggle("hidden", !isActivity);
     accountsPage().classList.toggle("hidden", isActivity);
     el("activity-empty").classList.add("hidden");
     el("load-more").classList.add("hidden");

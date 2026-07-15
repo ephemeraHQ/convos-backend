@@ -55,7 +55,7 @@ export const consoleView = (): string => `
     </aside>
     <section class="center">
       <h2 id="center-title" style="font-size:16px;margin:0 0 12px">Recent admin activity</h2>
-      <div class="tablewrap">
+      <div id="activity-wrap" class="tablewrap">
         <table id="activity-table">
           <thead><tr><th>When</th><th>Actor</th><th>Account</th><th>Action</th><th>Δ</th><th>Reason</th></tr></thead>
           <tbody></tbody>
