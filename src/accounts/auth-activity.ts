@@ -26,6 +26,15 @@ import { prisma } from "@/utils/prisma";
  */
 const STAMP_INTERVAL_MS = 5 * 60 * 1000;
 
+let stampFailureForTests: Error | null = null;
+
+/** Test seam: make stamp writes fail with the given error (null clears). */
+export const __setAuthActivityStampFailureForTests = (
+  err: Error | null,
+): void => {
+  stampFailureForTests = err;
+};
+
 export const stampAuthActivity = async (
   accountId: string,
   knownLastAuthAt: Date | null,
@@ -40,6 +49,7 @@ export const stampAuthActivity = async (
     });
     if (!pending) return;
   }
+  if (stampFailureForTests) throw stampFailureForTests;
   await prisma.$executeRaw`
     UPDATE "Account" SET "lastAuthAt" = now() WHERE id = ${accountId}::uuid
   `;
