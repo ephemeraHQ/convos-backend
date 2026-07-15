@@ -1,6 +1,7 @@
 import { getDeletionExecutor } from "@/accounts/deletion/executors";
 import { PURGE_WINDOW_HOURS } from "@/accounts/deletion/service";
 import { settlePendingTransfers } from "@/subscriptions/claim";
+import { runReclaimReconciliationSweep } from "@/subscriptions/reconciliation";
 import logger from "@/utils/logger";
 import { prisma } from "@/utils/prisma";
 
@@ -212,6 +213,34 @@ export const runDeletionOutboxSweep = async (): Promise<void> => {
   } catch (err) {
     logger.error({ err }, "deletion.outbox.pending_transfer_pass_failed");
   }
+  try {
+    // Reclaim reconciliation (quarantine drain + post-transfer drift)
+    // rides the same tick, self-throttled: it makes provider calls, so it
+    // runs at most once per interval rather than every minute.
+    if (
+      _reconcileIntervalMs !== null &&
+      Date.now() - _lastReconcileAt >= _reconcileIntervalMs
+    ) {
+      _lastReconcileAt = Date.now();
+      await runReclaimReconciliationSweep();
+    }
+  } catch (err) {
+    logger.error({ err }, "deletion.outbox.reconciliation_pass_failed");
+  }
+};
+
+/** Reconciliation cadence: provider-calling, so hourly, not per-tick. */
+const DEFAULT_RECONCILE_INTERVAL_MS = 60 * 60 * 1000;
+let _reconcileIntervalMs: number | null = DEFAULT_RECONCILE_INTERVAL_MS;
+let _lastReconcileAt = 0;
+
+/** Test seam: force the reconciliation cadence (0 = every tick), or null
+ *  to disable the pass entirely. */
+export const __setReconciliationIntervalForTests = (
+  ms: number | null,
+): void => {
+  _reconcileIntervalMs = ms;
+  _lastReconcileAt = 0;
 };
 
 /** Test seam: override the sweep interval, or null to disable. */
