@@ -71,6 +71,7 @@ export const clientScript = (): string => `
     var qs="?action="+encodeURIComponent(activityAction)+(activityCursor?("&cursor="+encodeURIComponent(activityCursor)):"");
     guardFetch("/audit/recent"+qs).then(function(r){ if(!r.ok){ throw new Error("load_failed"); } return r.json(); }).then(function(j){
       if(gen!==activityGen) return;
+      if(currentView!=="activity") return;
       renderActivityRows(j.rows||[], !reset);
       activityCursor=j.nextCursor;
       el("load-more").classList.toggle("hidden", !j.nextCursor);
@@ -146,10 +147,11 @@ export const clientScript = (): string => `
     var view=currentView, gen=++accountsGen;
     guardFetch("/accounts"+accountsQuery(view, accountsPageNo)).then(function(r){ if(!r.ok){ throw new Error("load_failed"); } return r.json(); }).then(function(j){
       if(gen!==accountsGen) return;
+      if(view!==currentView) return;
       renderAccountRows(j.rows||[], view, !reset);
       el("load-more").classList.toggle("hidden", !j.hasMore);
       var empty = reset && (!j.rows || j.rows.length===0);
-      el("activity-empty").textContent = empty ? "No matching accounts." : "No matching activity.";
+      el("activity-empty").textContent = "No matching accounts.";
       el("activity-empty").classList.toggle("hidden", !empty);
     }).catch(function(e){ if(e.message!=="reauth") toast("Failed to load accounts","error"); });
   }
