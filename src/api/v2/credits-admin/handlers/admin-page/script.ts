@@ -244,8 +244,8 @@ export const clientScript = (): string => `
     el("detail-body").innerHTML='<div class="muted-note">Loading…</div>';
     el("detail").classList.add("open"); el("detail").setAttribute("aria-hidden","false"); el("detail-scrim").classList.remove("hidden");
     guardFetch("/accounts/"+encodeURIComponent(accountId)).then(function(r){ if(r.status===404){ throw new Error("not_found"); } return r.json(); })
-      .then(function(j){ renderDetail(j); loadAudit(accountId); })
-      .catch(function(e){ if(e.message==="not_found"){ el("detail-body").innerHTML='<div class="badge badge-no">Account not found</div>'; } else if(e.message!=="reauth"){ toast("Failed to load account","error"); } });
+      .then(function(j){ if(accountId!==currentAccountId) return; renderDetail(j); loadAudit(accountId); })
+      .catch(function(e){ if(accountId!==currentAccountId) return; if(e.message==="not_found"){ el("detail-body").innerHTML='<div class="badge badge-no">Account not found</div>'; } else if(e.message!=="reauth"){ toast("Failed to load account","error"); } });
   }
   function mutate(kind){
     if(!currentAccountId) return;
