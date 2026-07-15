@@ -1,4 +1,8 @@
-import { BillingProvider, SubscriptionStatus } from "@prisma/client";
+import {
+  BillingProvider,
+  SubscriptionStatus,
+  type Subscription,
+} from "@prisma/client";
 import { getSubscriptionStatuses } from "@/subscriptions/apple-server-api";
 import {
   CUSTODY_STATE_HELD,
@@ -31,49 +35,68 @@ import { prisma } from "@/utils/prisma";
  * Reclaim reconciliation sweep — the consumer for everything the online
  * paths fail closed into, plus a custody-versus-provider drift check.
  * Modeled on the deletion outbox drain (same tick, bounded batches,
- * idempotent re-runs, observable counts).
+ * idempotent re-runs, observable counts). The whole sweep runs under a
+ * Postgres advisory lock (single runner across replicas — provider calls
+ * are not duplicated; a lost lease degrades to idempotent re-runs).
  *
  * Pass 1 — quarantine drain. LineageQuarantine rows are written by the
  * fail-closed paths (keyless verify/RTDN/claim events, keyless or unmatched
- * voids) and by the lineage resolver (chain conflicts). Retryable reasons
- * are re-driven against fresh provider state through the SAME hardened
- * code paths (atomic resolver, applyNotification with its receipt/registry
- * idempotency keys), so re-running the sweep never double-applies anything.
- * Conflict-class reasons are never auto-resolved (never auto-merge) — they
- * stay for an operator and are only counted.
+ * voids, restorations missing their funding event) and by the lineage
+ * resolver (chain conflicts). Retryable reasons are re-driven against fresh
+ * provider state through the SAME hardened code paths (atomic resolver,
+ * applyNotification with its receipt/registry idempotency keys), so
+ * re-running the sweep never double-applies anything. Every row carries its
+ * own retry state (attempts + nextAttemptAt backoff): a persistent row backs
+ * off and eventually escalates to an operator instead of occupying the batch
+ * forever, so newer recoverable rows are never starved. Conflict-class
+ * reasons are never auto-resolved (never auto-merge) — they stay for an
+ * operator and are only counted.
  *
  * Pass 2 — post-transfer drift. Lineages with a committed transfer /
- * restore / undo inside the last 24 hours are re-checked against
- * authoritative provider state; a non-entitled result invalidates the
- * current held custody from the current owner (bounded, conservative move)
- * and raises an ops alert log. This is the v2-finding-9 sweep: webhook
- * compensation cannot close missing, delayed, or mis-ordered provider
- * events, and tombstone restorations never pass through the contest-window
- * settlement recheck.
+ * restore / undo are re-checked against authoritative provider state,
+ * cursored by the journal's committedAt (a watermark persisted in
+ * RuntimeConfig — settlement of a default 72h-contested transfer happens
+ * long after the pending row's createdAt, so creation time can never drive
+ * selection). A non-entitled answer invalidates the affected held custody
+ * (current-window or, when the period just ended, the latest held row) and
+ * writes the provider-derived terminal state onto the Subscription row — but
+ * only after re-reading the row under the lineage lock and fencing on its
+ * version: a renewal that landed between the provider fetch and the lock
+ * must never be clawed with the stale answer. Deferred rows hold the
+ * watermark, so a provider outage postpones — never loses — a journal.
  */
 
 const QUARANTINE_BATCH = 25;
-const DRIFT_LOOKBACK_MS = 24 * 60 * 60 * 1000;
+/** Retries before a quarantine row escalates to an operator. */
+const QUARANTINE_MAX_ATTEMPTS = 10;
+const QUARANTINE_BACKOFF_BASE_MS = 60 * 60 * 1000;
+const QUARANTINE_BACKOFF_MAX_MS = 7 * 24 * 60 * 60 * 1000;
+
 const DRIFT_BATCH = 50;
+/** Initial watermark lookback when none is stored yet. */
+const DRIFT_DEFAULT_LOOKBACK_MS = 24 * 60 * 60 * 1000;
+const DRIFT_WATERMARK_KEY = "subscription_reclaim_drift_watermark";
+/**
+ * committedAt is stamped inside the committing transaction, so a journal can
+ * become visible up to a transaction-lifetime after its stamp. The watermark
+ * never advances into this margin; rows inside it are (idempotently)
+ * re-checked next sweep.
+ */
+const DRIFT_COMMIT_VISIBILITY_MS = 2 * 60 * 1000;
+
+/** Single-runner lease for the whole sweep (distinct from other app locks). */
+const SWEEP_ADVISORY_LOCK_KEY = 728_193_642;
+const SWEEP_LEASE_TIMEOUT_MS = 10 * 60 * 1000;
 
 /** Reasons the sweep may retry against fresh provider state. */
-const RETRYABLE_REASONS = new Set([
+const RETRYABLE_REASONS = [
   "missing_latest_order_id",
   "voided_purchase_keyless",
   "voided_purchase_unmatched_order",
-]);
-
-/** Conflict-class reasons: operator-only, never auto-merged. */
-const OPERATOR_REASONS = new Set([
-  "alias_conflict_between_lineages",
-  "alias_points_at_other_lineage",
-  "chain_loop",
-  "chain_depth_exceeded",
-  "alias_race_exhausted",
-  "tombstone_rotation_mismatch",
-]);
+];
 
 export type ReconciliationCounts = {
+  leaseAcquired: boolean;
   quarantineRecovered: number;
   quarantineDeferred: number;
   quarantineNeedsOperator: number;
@@ -89,26 +112,44 @@ const ENTITLED_STATUSES = new Set<SubscriptionStatus>([
   SubscriptionStatus.trial,
 ]);
 
-/**
- * Re-drive one parked Google token against fresh provider state through the
- * normal notification path. Returns true when the row's condition is
- * resolved (event applied or superseded), false to leave it parked.
- */
-const reconcileGoogleToken = async (row: {
+type QuarantineRow = {
   id: string;
   token: string;
   reason: string;
   payload: unknown;
-}): Promise<"recovered" | "deferred" | "needs_operator"> => {
+  attempts: number;
+};
+
+/**
+ * Re-drive one parked Google token against fresh provider state through the
+ * normal notification path. Returns "recovered" when the row's condition is
+ * resolved (event applied or superseded), "deferred" to retry after backoff,
+ * "needs_operator" when fresh provider state can never resolve it.
+ */
+const reconcileGoogleToken = async (
+  row: QuarantineRow,
+): Promise<"recovered" | "deferred" | "needs_operator"> => {
   const purchase = await fetchSubscriptionPurchaseV2(row.token);
   if (!purchase.latestOrderId) {
     // Still keyless: nothing new to act on.
     return "deferred";
   }
+  const status = deriveStatusFromPurchase(purchase);
+  const entitled = ENTITLED_STATUSES.has(status);
 
-  // Unmatched-order voids: only resolvable once the exact custody row
-  // exists (e.g. after a legacy bootstrap); re-check by key and compensate
-  // through the normal path — which no longer parks, since the row exists.
+  // Keyless voids: the void notification named no order. Fresh state
+  // resolves it only when the subscription itself is no longer entitled —
+  // the void hit the current order and the generic terminal path below
+  // applies state + compensation. While the subscription stays entitled the
+  // voided order is historical and current state cannot identify it: that
+  // is an operator's call, never a silent "recovered".
+  if (row.reason === "voided_purchase_keyless" && entitled) {
+    return "needs_operator";
+  }
+
+  // Unmatched-order voids: resolvable once the exact custody row exists
+  // (e.g. after a legacy bootstrap); re-check by key and compensate through
+  // the normal path — which no longer parks, since the row exists.
   if (row.reason === "voided_purchase_unmatched_order") {
     const payload =
       row.payload && typeof row.payload === "object"
@@ -127,20 +168,31 @@ const reconcileGoogleToken = async (row: {
         return findCustody(tx, ctx, `play_order_${orderId}`);
       }),
     );
-    if (!custody) return "deferred";
-    const result = await compensateVoidedPurchase(row.token, orderId);
-    return result.kind === "compensated" ? "recovered" : "deferred";
+    if (custody) {
+      const result = await compensateVoidedPurchase(row.token, orderId);
+      return result.kind === "compensated" ? "recovered" : "deferred";
+    }
+    // No exact custody row (a legacy period holds a legacy_ key no void can
+    // name). When the voided order is the CURRENT latest order and the
+    // subscription is no longer entitled, the generic terminal path below
+    // resolves it — applyNotification's clawback falls back to the legacy
+    // window row. Anything else stays parked (and escalates after enough
+    // attempts) rather than guessing which period to claw.
+    if (orderId !== purchase.latestOrderId || entitled) {
+      return "deferred";
+    }
   }
 
   // Keyless funding/void events: the purchase now carries its order
   // identity — re-apply authoritative state through applyNotification (all
   // idempotency keys and gates apply; a tombstoned lineage funds escrow or
-  // invalidates it; a live row grants/claws exactly once).
-  const status = deriveStatusFromPurchase(purchase);
+  // invalidates it; a live row grants/claws exactly once). Terminal updates
+  // omit currentPeriodEnd: the provider truncates the reported window to
+  // the revocation time, which the staleness guard would misread as an
+  // out-of-order event and skip the state-apply (and its clawback).
   const window = extractPeriodWindow(purchase);
   const productId = extractProductId(purchase);
   const { tier } = productMapping(productId);
-  const entitled = ENTITLED_STATUSES.has(status);
   const update: NotificationStateUpdate = entitled
     ? {
         status,
@@ -153,7 +205,6 @@ const reconcileGoogleToken = async (row: {
       }
     : {
         status,
-        currentPeriodEnd: window.currentPeriodEnd,
         willRenew: false,
         ...(status === SubscriptionStatus.revoked
           ? { cancelledAt: new Date() }
@@ -175,21 +226,76 @@ const reconcileGoogleToken = async (row: {
   return "recovered";
 };
 
+const quarantineBackoffMs = (attempts: number): number => {
+  const exp = QUARANTINE_BACKOFF_BASE_MS * 2 ** Math.max(0, attempts - 1);
+  return Math.min(exp, QUARANTINE_BACKOFF_MAX_MS);
+};
+
+/** Defer with backoff; escalate to an operator once retries are exhausted. */
+const deferQuarantineRow = async (
+  row: QuarantineRow,
+  counts: ReconciliationCounts,
+): Promise<void> => {
+  const attempts = row.attempts + 1;
+  if (attempts >= QUARANTINE_MAX_ATTEMPTS) {
+    await escalateQuarantineRow(row, counts, "retries_exhausted");
+    return;
+  }
+  await prisma.lineageQuarantine.update({
+    where: { id: row.id },
+    data: {
+      attempts,
+      nextAttemptAt: new Date(Date.now() + quarantineBackoffMs(attempts)),
+    },
+  });
+  counts.quarantineDeferred += 1;
+};
+
+const escalateQuarantineRow = async (
+  row: QuarantineRow,
+  counts: ReconciliationCounts,
+  cause: string,
+): Promise<void> => {
+  await prisma.lineageQuarantine.update({
+    where: { id: row.id },
+    data: { attempts: row.attempts + 1, needsOperatorAt: new Date() },
+  });
+  counts.quarantineNeedsOperator += 1;
+  // Ops alert: the sweep has given up on auto-resolving this row.
+  logger.error(
+    { quarantineId: row.id, reason: row.reason, cause },
+    "subscription.reconcile.quarantine_escalated",
+  );
+};
+
 const drainQuarantine = async (counts: ReconciliationCounts): Promise<void> => {
+  // Standing operator queue (counted before the batch so rows escalated in
+  // this run are not double-counted): unresolved rows the retry batch will
+  // never pick — conflict-class reasons, unknown reasons, escalated rows.
+  counts.quarantineNeedsOperator += await prisma.lineageQuarantine.count({
+    where: {
+      resolvedAt: null,
+      OR: [
+        { reason: { notIn: RETRYABLE_REASONS } },
+        { needsOperatorAt: { not: null } },
+      ],
+    },
+  });
+  // Only rows the sweep can act on enter the batch: retryable reasons, due
+  // for their next attempt, not escalated. Conflict-class and other
+  // operator-only rows are excluded here — they can never occupy (let alone
+  // exhaust) the batch.
   const rows = await prisma.lineageQuarantine.findMany({
-    where: { resolvedAt: null },
-    orderBy: { createdAt: "asc" },
+    where: {
+      resolvedAt: null,
+      needsOperatorAt: null,
+      reason: { in: RETRYABLE_REASONS },
+      nextAttemptAt: { lte: new Date() },
+    },
+    orderBy: { nextAttemptAt: "asc" },
     take: QUARANTINE_BATCH,
   });
   for (const row of rows) {
-    if (OPERATOR_REASONS.has(row.reason)) {
-      counts.quarantineNeedsOperator += 1;
-      continue;
-    }
-    if (!RETRYABLE_REASONS.has(row.reason)) {
-      counts.quarantineNeedsOperator += 1;
-      continue;
-    }
     try {
       const outcome = await reconcileGoogleToken(row);
       if (outcome === "recovered") {
@@ -203,9 +309,9 @@ const drainQuarantine = async (counts: ReconciliationCounts): Promise<void> => {
           "subscription.reconcile.quarantine_recovered",
         );
       } else if (outcome === "needs_operator") {
-        counts.quarantineNeedsOperator += 1;
+        await escalateQuarantineRow(row, counts, "unresolvable_from_provider");
       } else {
-        counts.quarantineDeferred += 1;
+        await deferQuarantineRow(row, counts);
       }
     } catch (err) {
       if (err instanceof LineageUnresolvedError) {
@@ -219,7 +325,7 @@ const drainQuarantine = async (counts: ReconciliationCounts): Promise<void> => {
         counts.quarantineNeedsOperator += 1;
         continue;
       }
-      counts.quarantineDeferred += 1;
+      await deferQuarantineRow(row, counts);
       logger.warn(
         { err, quarantineId: row.id, reason: row.reason },
         "subscription.reconcile.quarantine_deferred",
@@ -228,15 +334,20 @@ const drainQuarantine = async (counts: ReconciliationCounts): Promise<void> => {
   }
 };
 
+type DriftCheck =
+  | { verdict: "entitled" }
+  | { verdict: "unknown" }
+  | { verdict: "not_entitled"; terminalStatus: SubscriptionStatus };
+
 /** Provider-authoritative entitlement for one live subscription row. */
 const checkEntitlement = async (row: {
   provider: BillingProvider;
   originalTransactionId: string | null;
   purchaseToken: string | null;
-}): Promise<"entitled" | "not_entitled" | "unknown"> => {
+}): Promise<DriftCheck> => {
   try {
     if (row.provider === BillingProvider.apple) {
-      if (!row.originalTransactionId) return "unknown";
+      if (!row.originalTransactionId) return { verdict: "unknown" };
       const statuses = await getSubscriptionStatuses(row.originalTransactionId);
       for (const group of statuses.data ?? []) {
         for (const item of group.lastTransactions ?? []) {
@@ -245,79 +356,226 @@ const checkEntitlement = async (row: {
             item.status !== undefined &&
             ENTITLED_APPLE_STATUSES.has(item.status)
           ) {
-            return "entitled";
+            return { verdict: "entitled" };
           }
         }
       }
-      return "not_entitled";
+      // The status API does not distinguish refund from natural expiry
+      // here; expired is the conservative terminal state either way (the
+      // custody clawback is identical).
+      return {
+        verdict: "not_entitled",
+        terminalStatus: SubscriptionStatus.expired,
+      };
     }
-    if (!row.purchaseToken) return "unknown";
+    if (!row.purchaseToken) return { verdict: "unknown" };
     const purchase = await fetchSubscriptionPurchaseV2(row.purchaseToken);
     const status = deriveStatusFromPurchase(purchase);
-    return ENTITLED_STATUSES.has(status) ? "entitled" : "not_entitled";
+    if (ENTITLED_STATUSES.has(status)) return { verdict: "entitled" };
+    return { verdict: "not_entitled", terminalStatus: status };
   } catch (err) {
     logger.warn({ err }, "subscription.reconcile.entitlement_check_failed");
-    return "unknown";
+    return { verdict: "unknown" };
   }
+};
+
+/**
+ * Version fence material captured before the provider call. The clawback
+ * transaction re-reads the row under the lineage lock and applies the
+ * provider verdict only if the row is byte-identical on identity and
+ * version — a concurrent renewal/claim/webhook makes the verdict stale.
+ */
+type DriftSnapshot = Pick<
+  Subscription,
+  | "id"
+  | "provider"
+  | "originalTransactionId"
+  | "purchaseToken"
+  | "currentPeriodEnd"
+  | "updatedAt"
+>;
+
+const driftFenceHolds = (
+  snapshot: DriftSnapshot,
+  current: Subscription,
+): boolean =>
+  current.updatedAt.getTime() === snapshot.updatedAt.getTime() &&
+  current.purchaseToken === snapshot.purchaseToken &&
+  current.originalTransactionId === snapshot.originalTransactionId &&
+  current.currentPeriodEnd.getTime() === snapshot.currentPeriodEnd.getTime();
+
+/**
+ * Re-check one lineage against provider truth. Returns true when the
+ * journal that selected this lineage is settled (entitled, compensated, or
+ * no longer applicable) and the watermark may advance past it; false defers
+ * it to the next sweep (provider unreachable, or the fence tripped).
+ */
+const checkLineageDrift = async (
+  lineageId: string,
+  counts: ReconciliationCounts,
+): Promise<boolean> => {
+  const snapshot = await prisma.subscription.findFirst({
+    where: { lineageId },
+  });
+  if (!snapshot) {
+    // No live row: the lineage tombstoned (escrow/teardown paths own it) or
+    // the row was torn down — nothing to drift-check.
+    return true;
+  }
+  counts.driftChecked += 1;
+  const check = await checkEntitlement(snapshot);
+  if (check.verdict === "unknown") {
+    counts.driftDeferred += 1;
+    return false;
+  }
+  if (check.verdict === "entitled") return true;
+  const { terminalStatus } = check;
+  // Provider says the recently transferred/restored subscription is no
+  // longer entitled: claw the conservative remainder from the current
+  // holder (idempotent — a second pass finds no held custody) and write the
+  // provider-derived terminal state on the row. Both happen under the
+  // lineage lock behind the version fence.
+  const outcome = await withDeadlockRetry(
+    () =>
+      prisma.$transaction(
+        async (tx) => {
+          const ctx = await lockLineage(tx, lineageId);
+          const current = await tx.subscription.findUnique({
+            where: { id: snapshot.id },
+          });
+          if (!current) return { kind: "settled" as const, compensated: null };
+          if (!driftFenceHolds(snapshot, current)) {
+            // The row changed between the provider fetch and the lock (a
+            // renewal webhook advancing the window, a claim re-homing the
+            // row, ...). The verdict is stale: defer and re-fetch next
+            // sweep. A renewed period is never invalidated on a stale read.
+            return { kind: "fenced" as const };
+          }
+          await tx.subscription.update({
+            where: { id: current.id },
+            data: {
+              status: terminalStatus,
+              willRenew: false,
+              ...(terminalStatus === SubscriptionStatus.revoked
+                ? { cancelledAt: new Date() }
+                : {}),
+            },
+          });
+          // The affected period's custody: the row covering now or — when
+          // the period ended just before this sweep (lost terminal event) —
+          // the latest held row. Covering-now alone would let a
+          // just-expired period keep its unspent value forever.
+          const custody =
+            (await findCustodyCovering(tx, ctx, new Date(), [
+              CUSTODY_STATE_HELD,
+            ])) ??
+            (await tx.lineagePeriodCustody.findFirst({
+              where: { lineageId, state: CUSTODY_STATE_HELD },
+              orderBy: { periodEnd: "desc" },
+            }));
+          // Already settled (a prior sweep or the webhook invalidated it):
+          // nothing further to claw — idempotent re-run.
+          if (!custody) return { kind: "settled" as const, compensated: null };
+          const moved = await invalidateCustody(tx, ctx, {
+            custody,
+            journalId: custody.id,
+          });
+          return { kind: "settled" as const, compensated: moved };
+        },
+        { timeout: 30_000 },
+      ),
+    { label: "reconcile_drift_compensation" },
+  );
+  if (outcome.kind === "fenced") {
+    counts.driftDeferred += 1;
+    return false;
+  }
+  if (outcome.compensated !== null) {
+    counts.driftCompensated += 1;
+    // Ops alert: a post-transfer entitlement mismatch is page-worthy.
+    logger.error(
+      {
+        lineageId,
+        compensated: outcome.compensated.toString(),
+      },
+      "subscription.reconcile.drift_compensated",
+    );
+  }
+  return true;
+};
+
+const readDriftWatermark = async (now: number): Promise<Date> => {
+  const stored = await prisma.runtimeConfig.findUnique({
+    where: { key: DRIFT_WATERMARK_KEY },
+  });
+  if (stored) {
+    const parsed = new Date(stored.value);
+    if (!Number.isNaN(parsed.getTime())) return parsed;
+  }
+  return new Date(now - DRIFT_DEFAULT_LOOKBACK_MS);
 };
 
 const sweepTransferDrift = async (
   counts: ReconciliationCounts,
 ): Promise<void> => {
-  const recent = await prisma.subscriptionTransfer.findMany({
+  const now = Date.now();
+  const watermark = await readDriftWatermark(now);
+  const journals = await prisma.subscriptionTransfer.findMany({
     where: {
       status: "committed",
       kind: { in: ["transfer", "restore", "undo"] },
-      createdAt: { gte: new Date(Date.now() - DRIFT_LOOKBACK_MS) },
+      committedAt: { gt: watermark },
     },
-    select: { lineageId: true },
-    distinct: ["lineageId"],
+    orderBy: { committedAt: "asc" },
     take: DRIFT_BATCH,
+    select: { lineageId: true, committedAt: true },
   });
-  for (const { lineageId } of recent) {
-    const row = await prisma.subscription.findFirst({ where: { lineageId } });
-    if (!row) continue;
-    counts.driftChecked += 1;
-    const entitlement = await checkEntitlement(row);
-    if (entitlement === "unknown") {
+  if (journals.length === 0) return;
+
+  const lineageSettled = new Map<string, boolean>();
+  for (const journal of journals) {
+    if (lineageSettled.has(journal.lineageId)) continue;
+    let settled = false;
+    try {
+      settled = await checkLineageDrift(journal.lineageId, counts);
+    } catch (err) {
       counts.driftDeferred += 1;
-      continue;
+      logger.warn(
+        { err, lineageId: journal.lineageId },
+        "subscription.reconcile.drift_check_failed",
+      );
     }
-    if (entitlement === "entitled") continue;
-    // Provider says the recently transferred/restored subscription is no
-    // longer entitled: claw the conservative remainder from the current
-    // holder (idempotent — a second pass finds no held custody covering
-    // now). The webhook, when it arrives, replays as a no-op.
-    const compensated = await withDeadlockRetry(
-      () =>
-        prisma.$transaction(async (tx) => {
-          const ctx = await lockLineage(tx, lineageId);
-          const custody = await findCustodyCovering(tx, ctx, new Date(), [
-            CUSTODY_STATE_HELD,
-          ]);
-          // Already settled (a prior sweep or the webhook invalidated it):
-          // nothing further to claw — idempotent re-run.
-          if (!custody) return null;
-          return invalidateCustody(tx, ctx, {
-            custody,
-            journalId: custody.id,
-          });
-        }),
-      { label: "reconcile_drift_compensation" },
-    );
-    if (compensated === null) continue;
-    counts.driftCompensated += 1;
-    // Ops alert: a post-transfer entitlement mismatch is page-worthy.
-    logger.error(
-      { lineageId, compensated: compensated.toString() },
-      "subscription.reconcile.drift_compensated",
-    );
+    lineageSettled.set(journal.lineageId, settled);
   }
+
+  // Advance the watermark across the longest fully-settled prefix. A
+  // deferred lineage holds it, so a provider outage postpones — never
+  // loses — a journal, no matter how long the outage lasts. The advance is
+  // capped below now minus the visibility margin so an in-flight commit
+  // whose committedAt predates our query can never be skipped; rows inside
+  // the margin are simply re-checked (idempotently) next sweep.
+  let advanceTo: Date | null = null;
+  for (const journal of journals) {
+    if (!journal.committedAt) continue;
+    if (!lineageSettled.get(journal.lineageId)) break;
+    advanceTo = journal.committedAt;
+  }
+  if (!advanceTo) return;
+  const visibilityCap = new Date(now - DRIFT_COMMIT_VISIBILITY_MS);
+  const next =
+    advanceTo.getTime() > visibilityCap.getTime() ? visibilityCap : advanceTo;
+  if (next.getTime() <= watermark.getTime()) return;
+  await prisma.runtimeConfig.upsert({
+    where: { key: DRIFT_WATERMARK_KEY },
+    create: { key: DRIFT_WATERMARK_KEY, value: next.toISOString() },
+    update: { value: next.toISOString() },
+  });
 };
 
 export const runReclaimReconciliationSweep =
   async (): Promise<ReconciliationCounts> => {
     const counts: ReconciliationCounts = {
+      leaseAcquired: false,
       quarantineRecovered: 0,
       quarantineDeferred: 0,
       quarantineNeedsOperator: 0,
@@ -325,8 +583,27 @@ export const runReclaimReconciliationSweep =
       driftCompensated: 0,
       driftDeferred: 0,
     };
-    await drainQuarantine(counts);
-    await sweepTransferDrift(counts);
+    // Single-runner lease: the transaction exists only to hold the advisory
+    // lock while the sweep works on ordinary pooled connections. Replicas
+    // that fail the try-lock skip this interval (the holder is doing the
+    // work). If the lease transaction times out mid-sweep the lock releases
+    // early and another replica may overlap — every sweep operation is
+    // idempotent, so overlap only costs duplicate provider calls.
+    await prisma.$transaction(
+      async (tx) => {
+        const lockRows = await tx.$queryRaw<{ locked: boolean }[]>`
+          SELECT pg_try_advisory_xact_lock(${SWEEP_ADVISORY_LOCK_KEY}) AS locked
+        `;
+        if (!lockRows[0]?.locked) {
+          logger.info("subscription.reconcile.lease_held_elsewhere");
+          return;
+        }
+        counts.leaseAcquired = true;
+        await drainQuarantine(counts);
+        await sweepTransferDrift(counts);
+      },
+      { timeout: SWEEP_LEASE_TIMEOUT_MS, maxWait: 5_000 },
+    );
     const total =
       counts.quarantineRecovered +
       counts.quarantineDeferred +
