@@ -20,9 +20,10 @@ BEGIN
             -- transaction's start timestamp.
             NEW."committedAt" := clock_timestamp();
         END IF;
-    ELSIF NEW.status = 'committed'
-          AND (OLD.status IS DISTINCT FROM 'committed'
-               OR NEW."committedAt" IS NULL) THEN
+    ELSIF NEW.status = 'committed' THEN
+        -- Every committedAt write remains database-owned. This also lets the
+        -- post-install backfill normalize journals written before the trigger
+        -- acquired its table lock without accepting a caller's future stamp.
         NEW."committedAt" := clock_timestamp();
     END IF;
     RETURN NEW;
@@ -35,12 +36,12 @@ ON "SubscriptionTransfer"
 FOR EACH ROW
 EXECUTE FUNCTION "stamp_subscription_transfer_committed_at"();
 
--- Protection is live before either backfill. A concurrent old replica's
--- committed insert/transition is stamped by the trigger, while an omitted
--- value on a pending insert receives the default.
+-- Protection is live before either backfill. Normalize every committed row,
+-- including a non-null application timestamp written before trigger install;
+-- a fresh monitoring window is conservative and compensation is idempotent.
 UPDATE "SubscriptionTransfer"
 SET "committedAt" = clock_timestamp()
-WHERE status = 'committed' AND "committedAt" IS NULL;
+WHERE status = 'committed';
 
 -- Pending rows only need a non-null placeholder for the rolling-safe
 -- constraint; the trigger replaces it when status first becomes committed.
