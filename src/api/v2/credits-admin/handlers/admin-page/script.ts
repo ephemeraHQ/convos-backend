@@ -159,11 +159,11 @@ export const clientScript = (): string => `
   function mutate(kind){
     if(!currentAccountId) return;
     var body, path, btn;
-    if(kind==="grant"){ var c=parseInt(el("d-grant-credits").value,10); var gr=el("d-grant-reason").value.trim();
-      if(!c||c<=0){ toast("Positive credits required","error"); return; } if(!gr){ toast("Reason required","error"); return; }
+    if(kind==="grant"){ var c=Number(el("d-grant-credits").value); var gr=el("d-grant-reason").value.trim();
+      if(!isFinite(c)||c<=0||Math.floor(c)!==c){ toast("Positive integer credits required","error"); return; } if(!gr){ toast("Reason required","error"); return; }
       body={credits:c,reason:gr,idempotencyKey:newKey("admin_grant")}; path="/grant"; btn=el("d-grant-btn"); }
-    else { var d=parseInt(el("d-adjust-delta").value,10); var ar=el("d-adjust-reason").value.trim();
-      if(!d){ toast("Non-zero delta required","error"); return; } if(!ar){ toast("Reason required","error"); return; }
+    else { var d=Number(el("d-adjust-delta").value); var ar=el("d-adjust-reason").value.trim();
+      if(!isFinite(d)||d===0||Math.floor(d)!==d){ toast("Non-zero integer delta required","error"); return; } if(!ar){ toast("Reason required","error"); return; }
       body={delta:d,reason:ar,idempotencyKey:newKey("admin_adjust")}; path="/adjust"; btn=el("d-adjust-btn"); }
     if(btn) btn.disabled=true;
     guardFetch("/accounts/"+encodeURIComponent(currentAccountId)+path,{method:"POST",body:JSON.stringify(body)})
