@@ -4,6 +4,7 @@ import { beforeAll, describe, expect, test, vi } from "vitest";
 import { authMiddleware, requireAccount } from "@/middleware/auth";
 import { pinoMiddleware } from "@/middleware/pino";
 import { createJwtToken, validateJWTKeys } from "@/utils/jwt";
+import { prisma } from "@/utils/prisma";
 
 vi.mock("firebase-admin/app");
 vi.mock("firebase-admin/app-check");
@@ -29,13 +30,35 @@ beforeAll(async () => {
 
 describe("/account-auth-check", () => {
   test("SIWE-upgraded JWT (with accountId) → 200", async () => {
-    const accountId = "33333333-3333-3333-3333-333333333333";
-    const token = await createJwtToken({ deviceId: "dev-siwe", accountId });
+    // requireAccount is fail-closed: the account row must exist.
+    const account = await prisma.account.create({ data: {} });
+    try {
+      const token = await createJwtToken({
+        deviceId: "dev-siwe",
+        accountId: account.id,
+      });
+      const res = await request(makeApp())
+        .get("/account-auth-check")
+        .set("X-Convos-AuthToken", token);
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({ success: true });
+    } finally {
+      await prisma.account.delete({ where: { id: account.id } });
+    }
+  });
+
+  test("SIWE-upgraded JWT for a deleted account → generic 401", async () => {
+    const account = await prisma.account.create({ data: {} });
+    const token = await createJwtToken({
+      deviceId: "dev-deleted",
+      accountId: account.id,
+    });
+    await prisma.account.delete({ where: { id: account.id } });
     const res = await request(makeApp())
       .get("/account-auth-check")
       .set("X-Convos-AuthToken", token);
-    expect(res.status).toBe(200);
-    expect(res.body).toEqual({ success: true });
+    expect(res.status).toBe(401);
+    expect(res.body).toEqual({ error: "Unauthorized" });
   });
 
   test("legacy device-only JWT (no accountId) → 403 Account required", async () => {

@@ -1,4 +1,3 @@
-import { randomUUID } from "node:crypto";
 import type { Server } from "node:http";
 import express from "express";
 import {
@@ -303,7 +302,10 @@ describe("Agent prompt hints admin endpoints", () => {
   });
 
   test("non-admin authenticated account is rejected (403), and no row is created", async () => {
-    const headers = await jwtHeaders(randomUUID());
+    // requireAccount is fail-closed, so the non-admin account must exist for
+    // the request to reach the admin gate at all.
+    const nonAdmin = await prisma.account.create({ data: {} });
+    const headers = await jwtHeaders(nonAdmin.id);
 
     // Write route (POST /) is admin-gated.
     const text = `${TEST_PREFIX}non-admin`;
@@ -316,6 +318,8 @@ describe("Agent prompt hints admin endpoints", () => {
     // Admin read route (GET /admin) is admin-gated too.
     const adminList = await listAdmin(headers);
     expect(adminList.response.status).toBe(403);
+
+    await prisma.account.delete({ where: { id: nonAdmin.id } });
   });
 
   test("admin account's own JWT passes the admin gate (201)", async () => {

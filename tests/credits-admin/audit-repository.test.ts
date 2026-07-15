@@ -11,12 +11,15 @@ describe("AdminAudit repository", () => {
   afterEach(async () => {
     for (const accountId of accounts) {
       await prisma.adminAudit.deleteMany({ where: { accountId } });
+      await prisma.account.deleteMany({ where: { id: accountId } });
     }
     accounts.length = 0;
   });
 
   it("writes a row and lists it back, newest first", async () => {
-    const accountId = randomUUID();
+    // writeAdminAudit is fenced by requireLiveAccount: the account row must
+    // exist for the write to land.
+    const { id: accountId } = await prisma.account.create({ data: {} });
     accounts.push(accountId);
 
     await writeAdminAudit({

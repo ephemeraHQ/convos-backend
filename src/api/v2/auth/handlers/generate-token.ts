@@ -1,5 +1,6 @@
 import type { Request, Response } from "express";
 import { z } from "zod";
+import { isIdentityBarred } from "@/accounts/deletion/barrier";
 import { upsertAuthMethodAndAccount } from "@/accounts/repository";
 import { consumeNonce } from "@/api/v2/auth/auth-nonce.repository";
 import { InvalidSiweError, verifySiwe } from "@/api/v2/auth/handlers/siwe";
@@ -101,7 +102,31 @@ export async function generateToken(
       throw err;
     }
 
-    // 3d. Upsert Account + AuthMethod. On first creation, grant the signup
+    // 3d. Deletion barrier. Checked only after full SIWE validation succeeded
+    // (never for bad nonce/signature — no unauthenticated deletion oracle).
+    // A barred identity gets the terminal identity-deleted response, the one
+    // signal clients may treat as deletion confirmation, and never reaches
+    // the auto-provisioning upsert below (so no account or signup bonus can
+    // ever be silently recreated).
+    try {
+      if (await isIdentityBarred("SIWE", address)) {
+        req.log.info(
+          { deviceId: body.deviceId },
+          "auth.token.identity_deleted",
+        );
+        res.status(410).json({
+          error: "This identity has been deleted",
+          code: "identity_deleted",
+        });
+        return;
+      }
+    } catch (err) {
+      req.log.error({ err }, "auth.token.barrier_check_failed");
+      res.status(500).json({ error: "Failed to generate token" });
+      return;
+    }
+
+    // 3e. Upsert Account + AuthMethod. On first creation, grant the signup
     // bonus inside the same transaction (atomic) so a new account can never
     // exist without its bonus. A failure rolls the account back and surfaces
     // as a retryable 500 rather than silently dropping the bonus.
@@ -126,6 +151,20 @@ export async function generateToken(
       return;
     }
     accountId = upserted.accountId;
+
+    // Best-effort activity stamp: lastAuthAt records the most recent
+    // authenticated mint for this account (consumed by activity-recency
+    // checks such as the subscription-claim dead-or-silent gate). updateMany
+    // no-ops instead of throwing when the row vanished (deletion racing this
+    // mint); a transient failure here never fails token mint.
+    try {
+      await prisma.account.updateMany({
+        where: { id: accountId },
+        data: { lastAuthAt: new Date() },
+      });
+    } catch (err) {
+      req.log.warn({ err, accountId }, "auth.account.last_auth_stamp_failed");
+    }
 
     // Best-effort backfill of DeviceRegistration.accountId.
     //

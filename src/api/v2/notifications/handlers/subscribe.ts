@@ -1,6 +1,10 @@
 import type { Request, Response } from "express";
 import { hexToUint8Array } from "uint8array-extras";
 import { z } from "zod";
+import {
+  AccountNotLiveError,
+  requireLiveAccount,
+} from "@/accounts/require-live-account";
 import { createNotificationClient } from "@/notifications/client";
 import { verifyDeviceOwnership } from "@/utils/auth-guards";
 import { deviceIdSchema } from "@/utils/device-id";
@@ -147,17 +151,28 @@ export async function subscribe(
     // authentication on the same row) is not clobbered.
     const accountId = res.locals.accountId;
     try {
-      await prisma.clientIdentifier.upsert({
-        where: { id: body.clientId },
-        create: {
-          id: body.clientId,
-          deviceId: body.deviceId,
-          accountId,
-        },
-        update: {
-          deviceId: body.deviceId,
-          ...(accountId !== undefined ? { accountId } : {}),
-        },
+      // ClientIdentifier.accountId is a plain scalar (no FK to Account), so
+      // this upsert must fence itself against a concurrent account deletion:
+      // requireLiveAccount takes FOR KEY SHARE on the Account row inside the
+      // same transaction, serializing against the deletion's FOR UPDATE. A
+      // deleted account aborts here instead of attaching a stale row the
+      // teardown sweep already passed.
+      await prisma.$transaction(async (tx) => {
+        if (accountId !== undefined) {
+          await requireLiveAccount(tx, accountId);
+        }
+        await tx.clientIdentifier.upsert({
+          where: { id: body.clientId },
+          create: {
+            id: body.clientId,
+            deviceId: body.deviceId,
+            accountId,
+          },
+          update: {
+            deviceId: body.deviceId,
+            ...(accountId !== undefined ? { accountId } : {}),
+          },
+        });
       });
     } catch (dbErr) {
       // Compensate: delete installation to maintain consistency (only if we created one)
@@ -197,6 +212,17 @@ export async function subscribe(
         details: error.errors,
         hint: "topics must be an array of objects with { topic: string, hmacKeys: [{ thirtyDayPeriodsSinceEpoch: number, key: string }] }",
       });
+      return;
+    }
+    if (error instanceof AccountNotLiveError) {
+      // Account deleted between requireAccount and the fenced write. Generic
+      // 401 like every other fail-closed route (the compensation above
+      // already removed the just-registered installation).
+      req.log.warn(
+        { deviceId: res.locals.deviceId },
+        "notifications.subscribe.account_not_live",
+      );
+      res.status(401).json({ error: "Unauthorized" });
       return;
     }
     req.log.error({ error }, "Failed to subscribe to topics");
