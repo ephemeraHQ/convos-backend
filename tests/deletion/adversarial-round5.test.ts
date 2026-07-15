@@ -154,12 +154,16 @@ const installLocalTestingVerifier = () => {
   );
 };
 
-const appleStatuses = (args: { status: number; signedLatest: string }) => ({
+const appleStatuses = (args: {
+  status: number;
+  signedLatest: string;
+  originalTransactionId?: string;
+}) => ({
   data: [
     {
       lastTransactions: [
         {
-          originalTransactionId: OTX,
+          originalTransactionId: args.originalTransactionId ?? OTX,
           status: args.status,
           signedTransactionInfo: args.signedLatest,
         },
@@ -171,6 +175,7 @@ const appleStatuses = (args: { status: number; signedLatest: string }) => ({
 const installAppleStatuses = (args: {
   status: number;
   signedLatest: string;
+  originalTransactionId?: string;
 }) => {
   setAppleApiClientForTests({
     getAllSubscriptionStatuses: () => Promise.resolve(appleStatuses(args)),
@@ -346,6 +351,35 @@ const createCommittedTransfer = async () => {
   return { owner, claimer, jws };
 };
 
+/** Minimal live Apple lineage + subscription for cursor-only drift tests. */
+const createDriftFixture = async (
+  accountId: string,
+  originalTransactionId: string,
+) => {
+  const lineage = await prisma.subscriptionLineage.create({
+    data: {
+      provider: BillingProvider.apple,
+      lineageKey: originalTransactionId,
+    },
+  });
+  await prisma.subscription.create({
+    data: {
+      accountId,
+      provider: BillingProvider.apple,
+      productId: PRODUCT_ID,
+      tier: SUBSCRIPTION_TIER_PLUS,
+      period: SubscriptionPeriod.monthly,
+      status: SubscriptionStatus.active,
+      originalTransactionId,
+      startedAt: PERIOD_START,
+      currentPeriodStart: PERIOD_START,
+      currentPeriodEnd: PERIOD_END,
+      lineageId: lineage.id,
+    },
+  });
+  return lineage.id;
+};
+
 describe("activity stamp fails closed", () => {
   test("a stamp DB failure during a contest window fails the request; the retry still vetoes", async () => {
     const { owner, pendingRow } = await createPendingTransfer();
@@ -436,6 +470,153 @@ describe("drift reconciliation sweeps 72h-contested settlements", () => {
     });
     expect(row.status).toBe(SubscriptionStatus.expired);
     expect(row.willRenew).toBe(false);
+  });
+});
+
+describe("drift composite cursor and rolling safety", () => {
+  test(">50 equal-millisecond journals are each swept once across keyset batches", async () => {
+    const owner = await newAccount();
+    const timestamp = new Date(Date.now() - HOUR_MS);
+    const journalIds: string[] = [];
+    const providerCalls = new Map<string, number>();
+
+    for (let i = 0; i < 51; i += 1) {
+      const originalTransactionId = `r6-cursor-${i}`;
+      const lineageId = await createDriftFixture(owner, originalTransactionId);
+      const journal = await prisma.subscriptionTransfer.create({
+        data: {
+          lineageId,
+          kind: "transfer",
+          status: "committed",
+          fromAccountId: owner,
+          toAccountId: owner,
+        },
+      });
+      journalIds.push(journal.id);
+    }
+    // Force the exact collision boundary after inserts. The DB trigger owns
+    // initial/transition stamps but intentionally permits maintenance of an
+    // already-committed row's non-null value.
+    await prisma.subscriptionTransfer.updateMany({
+      where: { id: { in: journalIds } },
+      data: { committedAt: timestamp },
+    });
+    setAppleApiClientForTests({
+      getAllSubscriptionStatuses: (originalTransactionId: string) => {
+        providerCalls.set(
+          originalTransactionId,
+          (providerCalls.get(originalTransactionId) ?? 0) + 1,
+        );
+        return Promise.resolve(
+          appleStatuses({
+            status: 1,
+            signedLatest: "fresh",
+            originalTransactionId,
+          }),
+        );
+      },
+    } as never);
+
+    const first = await runReclaimReconciliationSweep();
+    expect(first.driftChecked).toBe(50);
+    const ordered = await prisma.subscriptionTransfer.findMany({
+      orderBy: [{ committedAt: "asc" }, { id: "asc" }],
+      select: { id: true },
+    });
+    const stored = await prisma.runtimeConfig.findUniqueOrThrow({
+      where: { key: DRIFT_WATERMARK_KEY },
+    });
+    expect(JSON.parse(stored.value)).toEqual({
+      committedAt: timestamp.toISOString(),
+      id: ordered[49].id,
+    });
+
+    const second = await runReclaimReconciliationSweep();
+    expect(second.driftChecked).toBe(1);
+    expect(providerCalls.size).toBe(51);
+    expect([...providerCalls.values()]).toEqual(Array(51).fill(1));
+  });
+
+  test("DB commit time overrides a slow replica stamp behind the watermark", async () => {
+    const owner = await newAccount();
+    const originalTransactionId = "r6-slow-clock";
+    const lineageId = await createDriftFixture(owner, originalTransactionId);
+    const [{ now: watermarkTime }] = await prisma.$queryRaw<
+      Array<{ now: Date }>
+    >`SELECT clock_timestamp() AS now`;
+    await prisma.runtimeConfig.create({
+      data: {
+        key: DRIFT_WATERMARK_KEY,
+        value: JSON.stringify({
+          committedAt: watermarkTime.toISOString(),
+          id: "00000000-0000-0000-0000-000000000000",
+        }),
+      },
+    });
+    const journalId = randomUUID();
+    const slowReplicaTime = new Date(watermarkTime.getTime() - HOUR_MS);
+    await prisma.$executeRaw`
+      INSERT INTO "SubscriptionTransfer"
+        (id, "lineageId", kind, status, "committedAt", "updatedAt")
+      VALUES
+        (${journalId}::uuid, ${lineageId}::uuid, 'transfer', 'committed', ${slowReplicaTime}, CURRENT_TIMESTAMP)
+    `;
+    const journal = await prisma.subscriptionTransfer.findUniqueOrThrow({
+      where: { id: journalId },
+    });
+    expect(journal.committedAt.getTime()).toBeGreaterThanOrEqual(
+      watermarkTime.getTime(),
+    );
+    expect(journal.committedAt.getTime()).toBeGreaterThan(
+      slowReplicaTime.getTime(),
+    );
+    installAppleStatuses({
+      status: 1,
+      signedLatest: "fresh",
+      originalTransactionId,
+    });
+    expect((await runReclaimReconciliationSweep()).driftChecked).toBe(1);
+  });
+
+  test("an old-replica committed insert with NULL is DB-stamped and swept", async () => {
+    const owner = await newAccount();
+    const originalTransactionId = "r6-old-replica-null";
+    const lineageId = await createDriftFixture(owner, originalTransactionId);
+    const journalId = randomUUID();
+    await prisma.$executeRaw`
+      INSERT INTO "SubscriptionTransfer"
+        (id, "lineageId", kind, status, "committedAt", "updatedAt")
+      VALUES
+        (${journalId}::uuid, ${lineageId}::uuid, 'transfer', 'committed', NULL, CURRENT_TIMESTAMP)
+    `;
+    const journal = await prisma.subscriptionTransfer.findUniqueOrThrow({
+      where: { id: journalId },
+    });
+    expect(journal.committedAt).toBeInstanceOf(Date);
+    installAppleStatuses({
+      status: 1,
+      signedLatest: "fresh",
+      originalTransactionId,
+    });
+    expect((await runReclaimReconciliationSweep()).driftChecked).toBe(1);
+  });
+
+  test("a later sweep catches revocation after an earlier entitled answer", async () => {
+    const { claimer, jws } = await createCommittedTransfer();
+    expect(await getBalance(claimer)).toBe(PERIOD_CREDITS);
+
+    installAppleStatuses({ status: 1, signedLatest: jws });
+    const first = await runReclaimReconciliationSweep();
+    expect(first.driftChecked).toBe(1);
+    expect(first.driftCompensated).toBe(0);
+
+    // Still inside committedAt + 24h, the provider revokes and its webhook
+    // is lost. Completing the prior scan cycle must not retire the lineage.
+    installAppleStatuses({ status: 2, signedLatest: "irrelevant" });
+    const later = await runReclaimReconciliationSweep();
+    expect(later.driftChecked).toBe(1);
+    expect(later.driftCompensated).toBe(1);
+    expect(await getBalance(claimer)).toBe(0n);
   });
 });
 
