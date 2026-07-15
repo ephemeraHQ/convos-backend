@@ -3,6 +3,10 @@ import cookieParser from "cookie-parser";
 import cors from "cors";
 import express from "express";
 import helmet from "helmet";
+import {
+  startDeletionOutboxSweep,
+  stopDeletionOutboxSweep,
+} from "@/accounts/deletion/outbox";
 import { shutdownPostHog } from "@/api/v2/agent-templates/services/posthog";
 import {
   startTtlSweep as startGenerationTtlSweep,
@@ -116,6 +120,10 @@ validateJWTKeys()
       startGenerationTtlSweep();
       // Telemetry dedup sweep — trims dedup rows past their retention window.
       startTelemetryTtlSweep();
+      // Account-deletion outbox drain — executes external purges (S3,
+      // notification server, Composio, PostHog) queued by the deletion
+      // transaction, with retries, SLA alerting, and record expiry.
+      startDeletionOutboxSweep();
 
       // One-time data migration: move Composio connections from deviceId to the
       // stable accountId. Self-guards via a RuntimeConfig ledger marker so it
@@ -137,6 +145,7 @@ validateJWTKeys()
         // window. No-op if the sweep was never started.
         stopGenerationTtlSweep();
         stopTelemetryTtlSweep();
+        stopDeletionOutboxSweep();
         // Flush buffered PostHog events before the process exits. The SDK
         // buffers up to flushAt (default 20) or flushInterval (default 10s)
         // — without an explicit shutdown, low-volume captures get dropped
