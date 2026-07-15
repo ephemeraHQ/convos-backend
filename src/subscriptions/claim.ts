@@ -142,7 +142,6 @@ export const executeClaim = async (args: {
       const undoTarget =
         lastTransfer &&
         lastTransfer.fromAccountId === callerAccountId &&
-        lastTransfer.undoneByTransferId === null &&
         lastTransfer.undoDeadlineAt !== null &&
         lastTransfer.undoDeadlineAt.getTime() > Date.now()
           ? lastTransfer
@@ -151,6 +150,10 @@ export const executeClaim = async (args: {
       if (undoTarget) {
         if (lineage.liveTransferFrozenAt) {
           return { kind: "rejected" as const, reason: "transfer_frozen" };
+        }
+        if (undoTarget.undoneByTransferId !== null) {
+          // The one-shot undo for this transfer was already spent.
+          return { kind: "rejected" as const, reason: "undo_consumed" };
         }
         const journalId = randomUUID();
         // The one-shot CAS: zero rows updated means another undo consumed it.

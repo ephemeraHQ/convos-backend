@@ -934,8 +934,15 @@ export const applyNotification = async (
         if (!custody) {
           await forfeitSubscriptionPeriod(tx, { subscription: updated });
         } else if (custody.state === CUSTODY_STATE_HELD) {
-          if (custody.ownerAccountId === updated.accountId) {
-            await forfeitSubscriptionPeriod(tx, { subscription: updated });
+          // Prefer the legacy per-subscription forfeit shape when it
+          // applies — it only does when the holder carries the original
+          // account-scoped sub_grant row. A holder who received the value
+          // via transfer (no sub_grant row on their account: the forfeit
+          // skips) is compensated through custody instead.
+          const forfeited = await forfeitSubscriptionPeriod(tx, {
+            subscription: updated,
+          });
+          if (forfeited.kind === "forfeited" || forfeited.kind === "replayed") {
             await tx.lineagePeriodCustody.update({
               where: { id: custody.id },
               data: { remainderCap: 0n, state: CUSTODY_STATE_INVALIDATED },

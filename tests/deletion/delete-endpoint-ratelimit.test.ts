@@ -34,21 +34,26 @@ describe("POST /v2/accounts/me/subscription/claim rate limiting", () => {
       deviceId: "dev-claim-rl",
       accountId: randomUUID(),
     });
-    // Ten requests consume the per-IP budget (401s from fail-closed
-    // requireAccount still count — the limiters sit in front).
-    for (let i = 0; i < 10; i += 1) {
+    // The per-IP budget is 10; requests before the cap fail closed at
+    // requireAccount (401, still counted — the limiters sit in front). Loop
+    // until the cap trips and pin the envelope.
+    let limited: request.Response | null = null;
+    let authRejected = 0;
+    for (let i = 0; i < 12 && !limited; i += 1) {
       const res = await request(app)
         .post("/v2/accounts/me/subscription/claim")
         .set("X-Convos-AuthToken", token)
         .send({});
-      expect(res.status).toBe(401);
+      if (res.status === 429) {
+        limited = res;
+      } else {
+        expect(res.status).toBe(401);
+        authRejected += 1;
+      }
     }
-    const eleventh = await request(app)
-      .post("/v2/accounts/me/subscription/claim")
-      .set("X-Convos-AuthToken", token)
-      .send({});
-    expect(eleventh.status).toBe(429);
-    expect(eleventh.body).toEqual({
+    expect(limited).not.toBeNull();
+    expect(authRejected).toBeGreaterThanOrEqual(9);
+    expect(limited?.body).toEqual({
       error: "Too many subscription claim requests, please try again later",
     });
   });

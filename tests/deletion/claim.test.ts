@@ -544,9 +544,15 @@ describe("live transfer tier", () => {
     expect((await claimRequest(claimer, jws)).status).toBe(202);
 
     // Old account authenticates during the window (lastAuthAt stamp).
+    // Anchored to the pending row's DB timestamp: the container's DB clock
+    // can sit ahead of the JS clock, so "new Date()" is not reliably after
+    // journal.createdAt.
+    const pendingRow = await prisma.subscriptionTransfer.findFirstOrThrow({
+      where: { status: "pending" },
+    });
     await prisma.account.update({
       where: { id: owner },
-      data: { lastAuthAt: new Date() },
+      data: { lastAuthAt: new Date(pendingRow.createdAt.getTime() + 1000) },
     });
     await prisma.subscriptionTransfer.updateMany({
       where: { status: "pending" },
