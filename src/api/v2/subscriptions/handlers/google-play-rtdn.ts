@@ -127,28 +127,37 @@ export async function googlePlayRtdnHandler(req: Request, res: Response) {
     return;
   }
 
-  // Voided purchase: compensate the CURRENT custody holder (works whether
-  // the value sits with the original owner, a claim transferee, or in
-  // deletion escrow), then ack.
+  // Voided purchase: compensate the exact voided order's custody holder
+  // (works whether the value sits with the original owner, a claim
+  // transferee, or in deletion escrow), then ack. A void with no orderId or
+  // no provably matching custody is PARKED for the reconciliation sweep —
+  // never resolved by revoking current entitlement.
   if (notification.voidedPurchaseNotification) {
     const voidedToken = notification.voidedPurchaseNotification.purchaseToken;
     const voidedOrderId = notification.voidedPurchaseNotification.orderId;
     try {
-      // The orderId pins the exact play_order_<orderId> custody row, so a
-      // late void for an old order compensates only that period.
-      const compensated = await compensateVoidedPurchase(
+      const result = await compensateVoidedPurchase(
         voidedToken,
         voidedOrderId ?? null,
       );
-      req.log.info(
-        {
-          messageId: message.messageId,
-          purchaseToken: voidedToken.slice(0, 12),
-          orderId: voidedOrderId ?? null,
-          compensated: compensated?.toString() ?? null,
-        },
-        "play.rtdn.voided_purchase_compensated",
-      );
+      const logPayload = {
+        messageId: message.messageId,
+        purchaseToken: voidedToken.slice(0, 12),
+        orderId: voidedOrderId ?? null,
+      };
+      if (result.kind === "parked") {
+        req.log.error(logPayload, "play.rtdn.voided_purchase_parked");
+      } else {
+        req.log.info(
+          {
+            ...logPayload,
+            outcome: result.kind,
+            compensated:
+              result.kind === "compensated" ? result.amount.toString() : null,
+          },
+          "play.rtdn.voided_purchase_compensated",
+        );
+      }
     } catch (err) {
       req.log.error(
         {

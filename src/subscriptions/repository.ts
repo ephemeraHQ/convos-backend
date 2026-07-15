@@ -569,11 +569,17 @@ export const upsertFromVerify = async (
       // Play token rotation onto a tombstoned lineage: record the presented
       // token as an alias so future lookups need no chain-walk. Done here,
       // outside the rolled-back transaction, so the absorption survives the
-      // throw. Apple keys never rotate (matchedKey === presentedKey), so
-      // this is Play-only in practice.
+      // throw. Routed through the atomic conflict-detecting resolver; a
+      // conflicting alias quarantines (the 409 to the caller is unchanged —
+      // the claim path re-resolves authoritatively). Apple keys never
+      // rotate (matchedKey === presentedKey), so this is Play-only.
       if (err.matchedKey !== err.presentedKey) {
-        await absorbTombstoneRotation(prisma, {
+        await absorbTombstoneRotation({
           token: err.presentedKey,
+          linkedPurchaseToken:
+            input.provider === BillingProvider.googlePlay
+              ? input.linkedPurchaseToken
+              : undefined,
           lineageId: err.lineageId,
         });
       }
@@ -808,11 +814,24 @@ const notificationTombstoneProbe = async (
       : input.purchaseToken;
   if (lineage.lineageKey !== presentedKey) {
     // Play rotation onto a tombstoned lineage: absorb the new token so
-    // future notifications resolve without chain-walking.
-    await absorbTombstoneRotation(prisma, {
+    // future notifications resolve without chain-walking. Resolution runs
+    // BEFORE any funding/invalidation effect, through the atomic
+    // conflict-detecting resolver: a presented token that belongs to a
+    // different lineage is a two-lineage conflict — quarantined by the
+    // resolver — and the event must not mutate this lineage. Ack it
+    // (existing RTDN semantics: quarantined events are acked but
+    // preserved); the reconciliation sweep picks the row up.
+    const absorption = await absorbTombstoneRotation({
       token: presentedKey,
+      linkedPurchaseToken:
+        input.provider === BillingProvider.googlePlay
+          ? input.linkedPurchaseToken
+          : undefined,
       lineageId: lineage.id,
     });
+    if (absorption === "conflict") {
+      return { kind: "tombstoned" };
+    }
   }
 
   const { update } = input;
@@ -1231,40 +1250,56 @@ const applyNotificationOnce = async (
   }
 };
 
+export type VoidedPurchaseCompensation =
+  | { kind: "compensated"; amount: bigint }
+  | { kind: "untracked" }
+  /** No provably matching custody: fail closed — the void is parked in
+   *  LineageQuarantine for the reconciliation sweep; nothing is revoked. */
+  | { kind: "parked" };
+
 /**
  * Play voided-purchase compensation: claw the conservative remainder back
  * from whoever currently holds the VOIDED ORDER's custody (original owner,
  * claim transferee, or deletion escrow). The voided notification's orderId
  * pins the exact `play_order_<orderId>` custody row, so a late void for an
- * old order claws only that period — never the current one; the covering-now
- * lookup is only the fallback for keyless payloads and legacy periods. The
- * subscription row is terminated only when the voided period is (or covers)
- * its current entitlement window. Returns the compensated amount, or null
- * when the token resolves to nothing we track.
+ * old order claws only that period — never the current one. Fail-closed
+ * rule: a void with NO orderId, or whose exact custody row is absent
+ * (pre-lineage legacy period, unseen order), proves nothing about the
+ * current period — it is PARKED for reconciliation, never resolved by
+ * revoking current entitlement. The subscription row is terminated only
+ * when the matched custody covers its current entitlement window.
  */
 export const compensateVoidedPurchase = async (
   purchaseToken: string,
   orderId?: string | null,
-): Promise<bigint | null> => {
+): Promise<VoidedPurchaseCompensation> => {
   const lineageId = await resolveLineageId(prisma, BillingProvider.googlePlay, [
     purchaseToken,
   ]);
-  if (!lineageId) return null;
-  return withDeadlockRetry(
+  if (!lineageId) return { kind: "untracked" };
+  const park = async (reason: string): Promise<VoidedPurchaseCompensation> => {
+    await prisma.lineageQuarantine.create({
+      data: {
+        provider: BillingProvider.googlePlay,
+        token: purchaseToken,
+        reason,
+        payload: { source: "voided_purchase", orderId: orderId ?? null },
+      },
+    });
+    return { kind: "parked" };
+  };
+  if (!orderId) {
+    return park("voided_purchase_keyless");
+  }
+  const compensated = await withDeadlockRetry(
     () =>
       prisma.$transaction(async (tx) => {
         const ctx = await lockLineage(tx, lineageId);
-        const custody = orderId
-          ? await findCustody(tx, ctx, `play_order_${orderId}`)
-          : await findCustodyCovering(tx, ctx, new Date(), [
-              CUSTODY_STATE_HELD,
-              CUSTODY_STATE_ESCROW,
-            ]);
+        const custody = await findCustody(tx, ctx, `play_order_${orderId}`);
+        if (!custody) return null;
         const row = await tx.subscription.findFirst({ where: { lineageId } });
         const voidsCurrentPeriod =
-          !custody ||
-          !row ||
-          custody.periodEnd.getTime() >= row.currentPeriodEnd.getTime();
+          !row || custody.periodEnd.getTime() >= row.currentPeriodEnd.getTime();
         if (row && voidsCurrentPeriod) {
           await tx.subscription.update({
             where: { id: row.id },
@@ -1276,7 +1311,6 @@ export const compensateVoidedPurchase = async (
           });
         }
         if (
-          !custody ||
           custody.state === CUSTODY_STATE_INVALIDATED ||
           custody.state === CUSTODY_STATE_EXHAUSTED
         ) {
@@ -1286,6 +1320,10 @@ export const compensateVoidedPurchase = async (
       }),
     { label: "compensate_voided_purchase" },
   );
+  if (compensated === null) {
+    return park("voided_purchase_unmatched_order");
+  }
+  return { kind: "compensated", amount: compensated };
 };
 
 export type UserSubscriptionDto = {

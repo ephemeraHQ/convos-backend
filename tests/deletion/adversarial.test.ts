@@ -470,8 +470,9 @@ describe("post-transfer provider events", () => {
     });
     expect(escrowBefore?.remainderCap).toBe(PERIOD_CREDITS);
 
-    const compensated = await compensateVoidedPurchase(token);
-    expect(compensated).toBe(0n);
+    // The void names its exact order (the one that funded the period).
+    const compensated = await compensateVoidedPurchase(token, `order-${token}`);
+    expect(compensated).toEqual({ kind: "compensated", amount: 0n });
     const escrowAfter = await prisma.lineagePeriodCustody.findFirst({
       where: { id: escrowBefore?.id ?? "" },
     });

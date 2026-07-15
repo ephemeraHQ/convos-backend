@@ -5,7 +5,10 @@ import type {
 } from "@prisma/client";
 import {
   LINEAGE_STATE_TOMBSTONED,
+  LineageUnresolvedError,
+  quarantineLineageToken,
   resolveLineageId,
+  resolveOrCreateGoogleLineage,
 } from "@/subscriptions/lineage";
 import type { prisma } from "@/utils/prisma";
 
@@ -59,15 +62,41 @@ export const findTombstonedLineage = async (
 
 /**
  * Absorb a rotated token into the lineage's alias set so future lookups by
- * the new token resolve without chain-walking. Idempotent.
+ * the new token resolve without chain-walking. Routed through the atomic
+ * conflict-detecting lineage resolver — never a bare alias upsert: a token
+ * that already belongs to ANOTHER lineage is a genuine two-lineage conflict
+ * that must quarantine (the resolver writes the LineageQuarantine row), not
+ * silently no-op and let the event mutate the wrong lineage.
+ *
+ * Returns "absorbed" when the token verifiably resolves to the expected
+ * lineage, "conflict" when it does not (already quarantined; the caller
+ * must not apply any funding/invalidation effect for the event).
  */
-export const absorbTombstoneRotation = async (
-  db: DbClient,
-  args: { token: string; lineageId: string },
-): Promise<void> => {
-  await db.lineageTokenAlias.upsert({
-    where: { token: args.token },
-    update: {},
-    create: { token: args.token, lineageId: args.lineageId },
-  });
+export const absorbTombstoneRotation = async (args: {
+  token: string;
+  linkedPurchaseToken?: string | null;
+  lineageId: string;
+}): Promise<"absorbed" | "conflict"> => {
+  try {
+    const resolved = await resolveOrCreateGoogleLineage({
+      token: args.token,
+      linkedPurchaseToken: args.linkedPurchaseToken,
+    });
+    if (resolved === args.lineageId) return "absorbed";
+    // Consistent chain, but it resolves to a different lineage than the
+    // tombstone lookup matched: ambiguous attribution — quarantine.
+    await quarantineLineageToken(
+      "googlePlay",
+      args.token,
+      "tombstone_rotation_mismatch",
+      { expectedLineageId: args.lineageId, resolvedLineageId: resolved },
+    );
+    return "conflict";
+  } catch (err) {
+    if (err instanceof LineageUnresolvedError) {
+      // The resolver already quarantined (alias conflict, loop, depth).
+      return "conflict";
+    }
+    throw err;
+  }
 };
