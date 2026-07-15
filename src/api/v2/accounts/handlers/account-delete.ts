@@ -35,11 +35,14 @@ const serializeOutcome = (outcome: DeletionOutcome) => ({
  * mismatch).
  */
 export async function accountDeleteHandler(req: Request, res: Response) {
-  // Ops kill switch (RuntimeConfig, no redeploy needed): covers the rolling-
-  // deploy window where some replicas may not yet run the tombstone-aware
-  // verify/webhook code, and any emergency rollback.
+  // Rollout barrier (RuntimeConfig, no redeploy needed). Deletion defaults
+  // to DISABLED: a fresh replica must never delete accounts while older
+  // replicas without the lineage/tombstone-aware verify/webhook code are
+  // still serving. Ops flips account_deletion_enabled to "true" only after
+  // migrations are complete and every replica runs this build; the same
+  // switch is the emergency kill switch afterwards.
   const deletionEnabled =
-    (await getRuntimeConfig("account_deletion_enabled", "true")) === "true";
+    (await getRuntimeConfig("account_deletion_enabled", "false")) === "true";
   if (!deletionEnabled) {
     req.log.warn({}, "account.delete.disabled");
     res

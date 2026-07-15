@@ -1,7 +1,11 @@
 import { randomUUID } from "node:crypto";
 import { BillingProvider, type Prisma } from "@prisma/client";
 import { barIdentityWithTx } from "@/accounts/deletion/barrier";
-import { hashAccountRef } from "@/accounts/deletion/identity-hash";
+import {
+  hashAccountRef,
+  hashDeletedIdentity,
+} from "@/accounts/deletion/identity-hash";
+import { lockIdentityForMintOrDeletion } from "@/accounts/repository";
 import { deleteWalletForAccountWithTx } from "@/payments/ledger";
 import {
   bootstrapLegacyCustody,
@@ -15,6 +19,7 @@ import {
   resolveLineageId,
   resolveOrCreateLineageForKeys,
 } from "@/subscriptions/lineage";
+import { isRetryableTxConflict } from "@/utils/deadlock-retry";
 import logger from "@/utils/logger";
 import { prisma } from "@/utils/prisma";
 
@@ -127,12 +132,16 @@ export const deleteAccount = async (args: {
   const { operationId } = args;
 
   // Restart discipline: a restart is a full rollback plus a fresh
-  // transaction — never a new lower-sorted lock acquired mid-flight.
+  // transaction — never a new lower-sorted lock acquired mid-flight. A
+  // Postgres deadlock/serialization failure (40P01/40001) restarts the same
+  // way: the teardown is idempotent under its operationId.
   for (let attempt = 0; ; attempt += 1) {
     try {
       return await runDeleteAccountTransaction(args);
     } catch (err) {
-      if (err instanceof TeardownRestart && attempt < TEARDOWN_RESTART_LIMIT) {
+      const restartable =
+        err instanceof TeardownRestart || isRetryableTxConflict(err);
+      if (restartable && attempt < TEARDOWN_RESTART_LIMIT) {
         logger.warn(
           { operationId, attempt },
           "account.delete.teardown_restarted",
@@ -178,6 +187,17 @@ const runDeleteAccountTransaction = async (args: {
         where: { accountId },
         select: { type: true, externalKey: true },
       });
+      // Serialize against token mint per identity (the same advisory lock
+      // the mint upsert takes): a mint holding the lock finishes first and
+      // its rows are swept below; a mint arriving later blocks here and then
+      // sees the committed barrier inside its own transaction. Sorted for a
+      // deterministic acquisition order.
+      const identityHashes = authMethods
+        .map((method) => hashDeletedIdentity(method.type, method.externalKey))
+        .sort();
+      for (const identityHash of identityHashes) {
+        await lockIdentityForMintOrDeletion(tx, identityHash);
+      }
       const subscriptions = await tx.subscription.findMany({
         where: { accountId },
       });

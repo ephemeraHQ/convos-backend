@@ -1,7 +1,10 @@
 import type { Request, Response } from "express";
 import { z } from "zod";
 import { isIdentityBarred } from "@/accounts/deletion/barrier";
-import { upsertAuthMethodAndAccount } from "@/accounts/repository";
+import {
+  IdentityBarredError,
+  upsertAuthMethodAndAccount,
+} from "@/accounts/repository";
 import { requireLiveAccount } from "@/accounts/require-live-account";
 import { consumeNonce } from "@/api/v2/auth/auth-nonce.repository";
 import { InvalidSiweError, verifySiwe } from "@/api/v2/auth/handlers/siwe";
@@ -131,6 +134,10 @@ export async function generateToken(
     // bonus inside the same transaction (atomic) so a new account can never
     // exist without its bonus. A failure rolls the account back and surfaces
     // as a retryable 500 rather than silently dropping the bonus.
+    // The upsert re-checks the deletion barrier inside its own transaction
+    // under the per-identity advisory lock (shared with the teardown), so a
+    // deletion committing after the pre-check above can never be followed by
+    // a silent account re-creation — it surfaces here as IdentityBarredError.
     let upserted: { accountId: string; created: boolean };
     try {
       upserted = await upsertAuthMethodAndAccount({
@@ -147,6 +154,17 @@ export async function generateToken(
             : undefined,
       });
     } catch (err) {
+      if (err instanceof IdentityBarredError) {
+        req.log.info(
+          { deviceId: body.deviceId },
+          "auth.token.identity_deleted",
+        );
+        res.status(410).json({
+          error: "This identity has been deleted",
+          code: "identity_deleted",
+        });
+        return;
+      }
       req.log.error({ err }, "auth.account.create_failed");
       res.status(500).json({ error: "Failed to create account" });
       return;

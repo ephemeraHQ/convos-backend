@@ -1,4 +1,5 @@
 import type { NextFunction, Request, Response } from "express";
+import { stampAuthActivity } from "@/accounts/auth-activity";
 import { accountIdSchema } from "@/utils/account-id";
 import { ADMIN_ACCOUNT_ID } from "@/utils/constants";
 import { AppError } from "@/utils/errors";
@@ -10,6 +11,58 @@ import { getRuntimeConfig } from "@/utils/runtimeConfig";
 
 export const AUTH_HEADER = "X-Convos-AuthToken";
 export const APPCHECK_HEADER = "X-Firebase-AppCheck";
+
+/**
+ * The single deleted-account carve-out: DELETE /v2/accounts/me accepts a
+ * validly-signed, unexpired token whose account is already gone, so an
+ * idempotent deletion retry can re-read its stored record. Every other
+ * accountId-bearing request is fenced below.
+ */
+const isDeleteReplayCarveOut = (req: Request): boolean => {
+  if (req.method !== "DELETE") return false;
+  const fullPath = `${req.baseUrl}${req.path}`.replace(/\/+$/, "");
+  return fullPath.endsWith("/accounts/me");
+};
+
+/**
+ * Deletion fence, applied inside JWT authentication itself so no route
+ * registration can forget it: a JWT carrying an accountId claim is only
+ * accepted while the Account row still exists. A deleted account's
+ * unexpired token gets a generic 401 on every route (never a
+ * deletion-specific signal — the mint-path 410 is the only confirmation
+ * channel). No positive caching: fail-closed means every check hits the
+ * database. Returns false after writing the response when the request must
+ * not proceed.
+ *
+ * Live requests also stamp lastAuthAt (throttled, fire-and-forget): the
+ * claim contest window treats any authenticated act as a veto.
+ */
+type VerifiedJwtPayload = Awaited<ReturnType<typeof verifyJwtToken>>;
+
+const enforceLiveAccountClaim = async (
+  req: Request,
+  res: Response,
+  payload: VerifiedJwtPayload,
+): Promise<boolean> => {
+  if (!payload.accountId || isDeleteReplayCarveOut(req)) return true;
+  if (!accountIdSchema.safeParse(payload.accountId).success) {
+    res.status(401).json({ error: "Unauthorized" });
+    return false;
+  }
+  const account = await prisma.account.findUnique({
+    where: { id: payload.accountId },
+    select: { id: true, lastAuthAt: true },
+  });
+  if (!account) {
+    req.log.warn({ deviceId: payload.deviceId }, "auth.fence.account_not_live");
+    res.status(401).json({ error: "Unauthorized" });
+    return false;
+  }
+  if (!isNotificationExtensionOnlyToken(payload)) {
+    stampAuthActivity(account.id, account.lastAuthAt);
+  }
+  return true;
+};
 
 export const appCheckOnlyMiddleware = async (
   req: Request,
@@ -96,6 +149,11 @@ export const authMiddleware = async (
       return;
     }
 
+    // Deletion fence: an accountId claim is only honored while the account
+    // row exists (fail-closed on every route, delete-replay carve-out
+    // excepted).
+    if (!(await enforceLiveAccountClaim(req, res, payload))) return;
+
     req.log.info({ deviceId: payload.deviceId }, "JWT verification successful");
     next();
   } catch (error) {
@@ -159,6 +217,11 @@ export const authMiddlewareAllowNSE = async (
         return;
       }
     }
+
+    // Deletion fence: same fail-closed rule as authMiddleware — a deleted
+    // account's unexpired token must not pass even the diagnostic
+    // auth-check.
+    if (!(await enforceLiveAccountClaim(req, res, payload))) return;
 
     req.log.info(
       {

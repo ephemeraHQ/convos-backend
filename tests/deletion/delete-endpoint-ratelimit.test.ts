@@ -6,6 +6,8 @@ import { accountsMeRouter } from "@/api/v2/accounts/accountsMeRouter";
 import { authMiddleware } from "@/middleware/auth";
 import { pinoMiddleware } from "@/middleware/pino";
 import { createJwtToken, validateJWTKeys } from "@/utils/jwt";
+import { prisma } from "@/utils/prisma";
+import { setRuntimeConfig } from "@/utils/runtimeConfig";
 
 vi.mock("firebase-admin/app");
 vi.mock("firebase-admin/app-check");
@@ -25,20 +27,25 @@ const makeApp = () => {
 
 beforeAll(async () => {
   await validateJWTKeys();
+  // Deletion ships default-OFF (rollout barrier); tests opt in explicitly.
+  await setRuntimeConfig("account_deletion_enabled", "true");
 });
 
 describe("POST /v2/accounts/me/subscription/claim rate limiting", () => {
   test("11th request within the window is 429 with the contract envelope", async () => {
     const app = makeApp();
+    // A live account: the deletion fence inside authMiddleware would 401 a
+    // token for a nonexistent account before the limiters are reached.
+    const account = await prisma.account.create({ data: {} });
     const token = await createJwtToken({
       deviceId: "dev-claim-rl",
-      accountId: randomUUID(),
+      accountId: account.id,
     });
-    // The per-IP budget is 10; requests before the cap fail closed at
-    // requireAccount (401, still counted — the limiters sit in front). Loop
-    // until the cap trips and pin the envelope.
+    // The per-IP budget is 10; requests before the cap fail closed at the
+    // claim App Check gate (403, still counted — the limiters sit in
+    // front). Loop until the cap trips and pin the envelope.
     let limited: request.Response | null = null;
-    let authRejected = 0;
+    let appCheckRejected = 0;
     for (let i = 0; i < 12 && !limited; i += 1) {
       const res = await request(app)
         .post("/v2/accounts/me/subscription/claim")
@@ -47,12 +54,12 @@ describe("POST /v2/accounts/me/subscription/claim rate limiting", () => {
       if (res.status === 429) {
         limited = res;
       } else {
-        expect(res.status).toBe(401);
-        authRejected += 1;
+        expect(res.status).toBe(403);
+        appCheckRejected += 1;
       }
     }
     expect(limited).not.toBeNull();
-    expect(authRejected).toBeGreaterThanOrEqual(9);
+    expect(appCheckRejected).toBeGreaterThanOrEqual(9);
     expect(limited?.body).toEqual({
       error: "Too many subscription claim requests, please try again later",
     });

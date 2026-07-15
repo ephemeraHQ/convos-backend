@@ -19,6 +19,7 @@ import {
 } from "@/subscriptions/repository";
 import { createJwtToken, validateJWTKeys } from "@/utils/jwt";
 import { prisma } from "@/utils/prisma";
+import { setRuntimeConfig } from "@/utils/runtimeConfig";
 
 vi.mock("firebase-admin/app");
 vi.mock("firebase-admin/app-check");
@@ -209,6 +210,8 @@ const wipe = async () => {
 
 beforeAll(async () => {
   await validateJWTKeys();
+  // Deletion ships default-OFF (rollout barrier); tests opt in explicitly.
+  await setRuntimeConfig("account_deletion_enabled", "true");
 });
 
 afterEach(wipe);
