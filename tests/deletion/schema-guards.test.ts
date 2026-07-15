@@ -57,6 +57,10 @@ describe("deletion schema guards", () => {
       "LineagePeriodCustody",
       "SubscriptionTransfer",
       "LineageQuarantine",
+      // Superseded by lineage state; kept additively for rollback safety.
+      // No code path writes it, so it never accumulates new account data
+      // (keyed accountRef only, same regime as SubscriptionLineage).
+      "SubscriptionTombstone",
     ]);
     // Ownerless infrastructure — carries no account correlation.
     const ownerless = new Set([
@@ -68,6 +72,7 @@ describe("deletion schema guards", () => {
       "TelemetryBatch",
       "AgentVariant",
       "AgentPromptHint",
+      "RateLimitCounter",
     ]);
 
     const accountCorrelatableFieldNames = [

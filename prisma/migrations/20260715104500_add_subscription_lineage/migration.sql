@@ -1,7 +1,9 @@
 -- Subscription lineage model (reclaim v3): lineage rows as the canonical
 -- lockable object, token aliases, the global once-per-period funding
 -- registry, custody/escrow state, the transfer journal, and quarantine.
--- Replaces SubscriptionTombstone (tombstone becomes a lineage state).
+-- Supersedes SubscriptionTombstone (tombstone becomes a lineage state); the
+-- old table is retained additively so a rollback never references a dropped
+-- relation.
 
 -- AlterTable
 ALTER TABLE "Subscription" ADD COLUMN     "lineageId" UUID;
@@ -97,6 +99,24 @@ CREATE TABLE "LineageQuarantine" (
 -- CreateIndex
 CREATE UNIQUE INDEX "SubscriptionLineage_provider_lineageKey_key" ON "SubscriptionLineage"("provider", "lineageKey");
 
+-- Money-state invariants, database-enforced (not just application code):
+-- custody caps never go negative, states stay in their closed vocabularies,
+-- and escrow custody is exactly the ownerless state.
+ALTER TABLE "LineagePeriodCustody"
+  ADD CONSTRAINT "LineagePeriodCustody_cap_nonnegative_check" CHECK ("remainderCap" >= 0),
+  ADD CONSTRAINT "LineagePeriodCustody_state_check" CHECK ("state" IN ('held', 'escrow', 'invalidated', 'exhausted')),
+  ADD CONSTRAINT "LineagePeriodCustody_owner_state_check" CHECK (
+    ("state" = 'escrow' AND "ownerAccountId" IS NULL)
+    OR ("state" = 'held' AND "ownerAccountId" IS NOT NULL)
+    OR "state" IN ('invalidated', 'exhausted')
+  );
+ALTER TABLE "SubscriptionTransfer"
+  ADD CONSTRAINT "SubscriptionTransfer_kind_check" CHECK ("kind" IN ('transfer', 'restore', 'undo', 'escrow')),
+  ADD CONSTRAINT "SubscriptionTransfer_status_check" CHECK ("status" IN ('pending', 'committed', 'cancelled')),
+  ADD CONSTRAINT "SubscriptionTransfer_conserved_nonnegative_check" CHECK ("conservedCredits" >= 0);
+ALTER TABLE "SubscriptionLineage"
+  ADD CONSTRAINT "SubscriptionLineage_state_check" CHECK ("state" IN ('live', 'tombstoned'));
+
 -- CreateIndex
 CREATE INDEX "LineageTokenAlias_lineageId_idx" ON "LineageTokenAlias"("lineageId");
 
@@ -155,8 +175,10 @@ FROM "Subscription" s
 WHERE s."provider" = 'googlePlay' AND s."linkedPurchaseToken" IS NOT NULL AND s."lineageId" IS NOT NULL
 ON CONFLICT ("token") DO NOTHING;
 
--- Migrate any SubscriptionTombstone rows into tombstoned lineages, then drop
--- the table (superseded by lineage state).
+-- Migrate any SubscriptionTombstone rows into tombstoned lineages. The old
+-- table stays in place (additive-only migration: a rollback or older replica
+-- that still references it must keep working); lineage state is the single
+-- source of truth from here on.
 INSERT INTO "SubscriptionLineage" ("provider", "lineageKey", "state", "tombstonedAt", "deletedAccountRef", "updatedAt")
 SELECT t."provider", t."providerKey", 'tombstoned', t."deletedAt", t."accountRef", CURRENT_TIMESTAMP
 FROM "SubscriptionTombstone" t
@@ -166,8 +188,21 @@ DO UPDATE SET "state" = 'tombstoned',
               "deletedAccountRef" = EXCLUDED."deletedAccountRef",
               "updatedAt" = CURRENT_TIMESTAMP;
 
--- DropTable
-DROP TABLE "SubscriptionTombstone";
+-- One live Subscription row per lineage, database-enforced (claim and
+-- webhook lookups by lineageId must be deterministic). Defensive dedupe
+-- first: keep the row with the newest entitlement window, detach the rest
+-- (they re-resolve through verify).
+UPDATE "Subscription" s SET "lineageId" = NULL
+WHERE s."lineageId" IS NOT NULL
+  AND s."id" <> (
+    SELECT s2."id" FROM "Subscription" s2
+    WHERE s2."lineageId" = s."lineageId"
+    ORDER BY s2."currentPeriodEnd" DESC, s2."updatedAt" DESC
+    LIMIT 1
+  );
+
+-- CreateIndex
+CREATE UNIQUE INDEX "Subscription_lineageId_key" ON "Subscription"("lineageId");
 
 -- Widen the ledger scope CHECK to admit the lineage custody-move scope
 -- (claim transfers, undo, deletion escrow, refund compensation). Same
