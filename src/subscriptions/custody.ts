@@ -139,12 +139,27 @@ export const bootstrapLegacyCustody = async (
   });
   if (!grantRow) return null;
   const cap = grantRow.delta < 0n ? -grantRow.delta : grantRow.delta;
+  const providerPeriodKey = `legacy_${args.subscriptionId}_${Math.floor(
+    args.periodStart.getTime() / 1000,
+  )}`;
+  // Keep the "every funded period has exactly one registry row" invariant:
+  // the legacy period was funded pre-lineage, so its registry row is written
+  // here (idempotently) when the custody row is bootstrapped.
+  await tx.lineagePeriodGrant.createMany({
+    data: [
+      {
+        lineageId: ctx.lineageId,
+        providerPeriodKey,
+        accountId: args.ownerAccountId,
+        ledgerKey: grantRow.idempotencyKey,
+      },
+    ],
+    skipDuplicates: true,
+  });
   return tx.lineagePeriodCustody.create({
     data: {
       lineageId: ctx.lineageId,
-      providerPeriodKey: `legacy_${args.subscriptionId}_${Math.floor(
-        args.periodStart.getTime() / 1000,
-      )}`,
+      providerPeriodKey,
       ownerAccountId: args.ownerAccountId,
       remainderCap: cap,
       custodyStartedAt: args.periodStart,
@@ -194,6 +209,14 @@ export const transferCustody = async (
   const { custody } = args;
   const fromAccountId = custody.ownerAccountId;
   if (!fromAccountId) return 0n;
+  // Lock-order rule 4: prelock BOTH wallets in sorted account order before
+  // any read or debit. Without this, an A->B transfer on one lineage and a
+  // B->A transfer on another lock the two wallets in opposite orders and
+  // deadlock (40P01).
+  const walletLockOrder = [fromAccountId, args.toAccountId].sort();
+  for (const accountId of walletLockOrder) {
+    await lockUserCreditsBalance(tx, accountId);
+  }
   const amount = await computeMoveAmount(tx, custody);
   if (amount > 0n) {
     await applyDeltaWithTx(tx, {

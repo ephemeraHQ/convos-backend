@@ -9,6 +9,7 @@ import {
   PubsubAuthError,
   verifyPubsubPushAuth,
 } from "@/subscriptions/google-play/verifier";
+import { quarantineLineageToken } from "@/subscriptions/lineage";
 import {
   applyNotification,
   BillingProvider,
@@ -131,12 +132,19 @@ export async function googlePlayRtdnHandler(req: Request, res: Response) {
   // deletion escrow), then ack.
   if (notification.voidedPurchaseNotification) {
     const voidedToken = notification.voidedPurchaseNotification.purchaseToken;
+    const voidedOrderId = notification.voidedPurchaseNotification.orderId;
     try {
-      const compensated = await compensateVoidedPurchase(voidedToken);
+      // The orderId pins the exact play_order_<orderId> custody row, so a
+      // late void for an old order compensates only that period.
+      const compensated = await compensateVoidedPurchase(
+        voidedToken,
+        voidedOrderId ?? null,
+      );
       req.log.info(
         {
           messageId: message.messageId,
           purchaseToken: voidedToken.slice(0, 12),
+          orderId: voidedOrderId ?? null,
           compensated: compensated?.toString() ?? null,
         },
         "play.rtdn.voided_purchase_compensated",
@@ -220,7 +228,31 @@ export async function googlePlayRtdnHandler(req: Request, res: Response) {
     return;
   }
 
-  const playOrderId = purchase.latestOrderId ?? sub.purchaseToken;
+  if (!purchase.latestOrderId) {
+    // Keyless funding event (no order identity): fail closed — park the
+    // event in quarantine for reconciliation and ack so Pub/Sub stops
+    // retrying. Never synthesize a period key from the purchase token: a
+    // token identifies the subscription line, not a charge, so a rotated
+    // token would read as fresh funding without proof of a new charge.
+    await quarantineLineageToken(
+      BillingProvider.googlePlay,
+      sub.purchaseToken,
+      "missing_latest_order_id",
+      {
+        source: "rtdn",
+        messageId: message.messageId,
+        notificationType: sub.notificationType,
+        payload: raw,
+      },
+    );
+    req.log.error(
+      { messageId: message.messageId, notificationType: sub.notificationType },
+      "play.rtdn.missing_order_id_parked",
+    );
+    res.status(200).json({ ok: true, applied: false, kind: "keyless_parked" });
+    return;
+  }
+  const playOrderId = purchase.latestOrderId;
 
   try {
     const result = await applyNotification({

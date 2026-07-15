@@ -1,4 +1,9 @@
-import { LedgerReason, type Prisma, type Subscription } from "@prisma/client";
+import {
+  BillingProvider,
+  LedgerReason,
+  type Prisma,
+  type Subscription,
+} from "@prisma/client";
 import { applyDeltaWithTx, lockUserCreditsBalance } from "@/payments/ledger";
 import { createHeldCustody } from "@/subscriptions/custody";
 import type { LineageLockContext } from "@/subscriptions/lineage";
@@ -34,6 +39,24 @@ export const subGrantKey = (
   subscriptionId: string,
   periodStart: Date,
 ): string => `sub_grant_${subscriptionId}_${periodEpoch(periodStart)}`;
+
+/** Ledger keys admit `[A-Za-z0-9_-]` only; provider event ids can carry
+ *  dots (Google order ids like `GPA.xxxx..0`). */
+const sanitizeKeyPart = (value: string): string =>
+  value.replace(/[^A-Za-z0-9_-]/g, "-");
+
+/**
+ * Event-derived grant key for providers whose reported period start never
+ * advances. Google's `startTime` is the subscription-lifetime start, so the
+ * epoch-based key above collides across renewals and would suppress every
+ * grant after the first; the funding-event identity (`play_order_<id>`) is
+ * the correct per-charge key.
+ */
+export const subGrantKeyForEvent = (
+  subscriptionId: string,
+  providerPeriodKey: string,
+): string =>
+  `sub_grant_${subscriptionId}_${sanitizeKeyPart(providerPeriodKey)}`;
 
 /** Idempotency key for the per-period forfeit. One row per (sub, period). */
 export const subForfeitKey = (
@@ -113,6 +136,13 @@ export type GrantLineageContext = {
   ctx: LineageLockContext;
   /** Provider funding-event key: apple_txn_<id> / play_order_<id>. */
   providerPeriodKey: string;
+  /**
+   * Effective custody-window start for this funding event. Callers derive it
+   * provider-correctly: Apple uses the transaction's purchaseDate; Google
+   * clamps the lifetime `startTime` up to the previous known period end so
+   * consecutive custody rows do not overlap.
+   */
+  periodStart: Date;
   periodEnd: Date;
 };
 
@@ -146,7 +176,16 @@ export const grantSubscriptionPeriod = async (
     return { kind: "skipped_nonpositive" };
   }
 
-  const idempotencyKey = subGrantKey(subscription.id, periodStart);
+  // Apple keeps the legacy epoch-based key (per-period purchaseDate advances
+  // every renewal, and pre-lineage production rows were written under this
+  // shape, so replays must keep resolving). Google derives the key from the
+  // funding-event identity: its reported period start is the lifetime
+  // startTime and never advances, so the epoch key would collide across
+  // renewals and suppress every grant after the first.
+  const idempotencyKey =
+    lineage && subscription.provider === BillingProvider.googlePlay
+      ? subGrantKeyForEvent(subscription.id, lineage.providerPeriodKey)
+      : subGrantKey(subscription.id, periodStart);
 
   if (lineage) {
     // Global funding-registry dedupe: this provider event (or any event that
@@ -163,13 +202,16 @@ export const grantSubscriptionPeriod = async (
     if (registryHit) {
       return { kind: "replayed" };
     }
-    // New-period gate: grant only when the window advances beyond every
-    // funded period (upgrade/proration: new event id, same window -> no
-    // grant, no custody change; tier applies from the next funded period).
+    // New-period gate: grant only when the window's END advances beyond
+    // every funded period (upgrade/proration: new event id, same window ->
+    // no grant, no custody change; tier applies from the next funded
+    // period). Gating on the period end — not the start — is what keeps
+    // Google renewals fundable: their reported start (lifetime startTime)
+    // never advances, while the expiry advances on every real renewal.
     const newerFunded = await tx.lineagePeriodCustody.findFirst({
       where: {
         lineageId: lineage.ctx.lineageId,
-        periodStart: { gte: periodStart },
+        periodEnd: { gte: lineage.periodEnd },
       },
       select: { id: true },
     });
@@ -217,7 +259,7 @@ export const grantSubscriptionPeriod = async (
       providerPeriodKey: lineage.providerPeriodKey,
       ownerAccountId: subscription.accountId,
       credits: BigInt(credits),
-      periodStart,
+      periodStart: lineage.periodStart,
       periodEnd: lineage.periodEnd,
     });
   }

@@ -18,6 +18,7 @@ import {
   extractProductId,
 } from "@/subscriptions/google-play/status";
 import { verifyAndDecodeTransaction } from "@/subscriptions/jws-verifier";
+import { quarantineLineageToken } from "@/subscriptions/lineage";
 import { productMapping } from "@/subscriptions/product-mapping";
 import {
   AppleEnv,
@@ -145,6 +146,21 @@ const buildAppleInput = (
   };
 };
 
+/**
+ * Thrown when a Google purchase carries no `latestOrderId`. The order id is
+ * the funding-event identity (reclaim v3 item 2): without it there is no
+ * period key, and synthesizing one from the purchase token would let token
+ * rotation masquerade as a new funding event. Fail closed: the event is
+ * parked in LineageQuarantine for reconciliation and no grant is issued.
+ */
+export class MissingPlayOrderIdError extends Error {
+  constructor(public readonly purchaseToken: string) {
+    super("Google Play purchase has no latestOrderId");
+    this.name = "MissingPlayOrderIdError";
+    Object.setPrototypeOf(this, MissingPlayOrderIdError.prototype);
+  }
+}
+
 const buildPlayInput = (
   accountId: string,
   body: z.infer<typeof playBodySchema>,
@@ -172,7 +188,12 @@ const buildPlayInput = (
   const startedAt = purchase.startTime
     ? new Date(purchase.startTime)
     : window.currentPeriodStart;
-  const playOrderId = purchase.latestOrderId ?? body.purchaseToken;
+  if (!purchase.latestOrderId) {
+    // No funding-event identity: fail closed (no key, no grant) — never
+    // synthesize a key from the purchase token.
+    throw new MissingPlayOrderIdError(body.purchaseToken);
+  }
+  const playOrderId = purchase.latestOrderId;
   const lineItem = purchase.lineItems?.[0];
   const willRenew = lineItem?.autoRenewingPlan?.autoRenewEnabled !== false;
   return {
@@ -321,6 +342,24 @@ const handlePlayBranch = async (
     const input = buildPlayInput(accountId, body, purchase);
     return { input, purchase };
   } catch (err) {
+    if (err instanceof MissingPlayOrderIdError) {
+      // Keyless funding event: park it for reconciliation and fail closed.
+      // Retryable server-side condition, not a client fault.
+      await quarantineLineageToken(
+        BillingProvider.googlePlay,
+        body.purchaseToken,
+        "missing_latest_order_id",
+        { source: "verify", accountId },
+      );
+      req.log.error(
+        { accountId },
+        "subscription.verify.play_missing_order_id_parked",
+      );
+      res
+        .status(502)
+        .json({ error: "Google Play purchase is missing its order identity" });
+      return null;
+    }
     if (err instanceof AppError) {
       res.status(err.statusCode).json({ error: err.message });
       return null;

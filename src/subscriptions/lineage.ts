@@ -1,5 +1,6 @@
 import { BillingProvider, Prisma } from "@prisma/client";
 import { fetchSubscriptionPurchaseV2 } from "@/subscriptions/google-play/play-api";
+import { isRetryableTxConflict } from "@/utils/deadlock-retry";
 import logger from "@/utils/logger";
 import { prisma } from "@/utils/prisma";
 
@@ -91,7 +92,7 @@ export const resolveLineageId = async (
   return null;
 };
 
-const quarantine = async (
+export const quarantineLineageToken = async (
   provider: BillingProvider,
   token: string,
   reason: string,
@@ -102,6 +103,8 @@ const quarantine = async (
   });
   logger.error({ provider, token, reason }, "subscription.lineage.quarantined");
 };
+
+const quarantine = quarantineLineageToken;
 
 /**
  * Insert-or-adopt a lineage row. Prisma's upsert is select-then-insert under
@@ -160,137 +163,184 @@ const defaultChainFetcher: GoogleChainFetcher = async (token) => {
 };
 
 const CHAIN_DEPTH_LIMIT = 10;
+const INSERT_RESTART_LIMIT = 3;
+
+/** Control-flow signal: lost an alias race, roll back and re-resolve. */
+class AliasRaceRestart extends Error {}
+
+/** Control-flow signal: chain resolves to two lineages (never auto-merge). */
+class ChainConflict extends Error {
+  constructor(public readonly conflictToken: string) {
+    super("chain conflict");
+  }
+}
 
 /**
- * Google resolve-or-create. Resolves the token chain (recursively when
- * `fetchChain` is set — the claim path; verify/webhooks pass the pair they
- * already hold), records every member as an alias, and creates the lineage
- * rooted at the oldest known member when none exists. Conflicting chains
- * (members resolving to two different lineages) quarantine and throw.
+ * One atomic insert-or-adopt pass over a resolved chain: the lineage row and
+ * every alias commit in a single transaction (INSERT ... ON CONFLICT DO
+ * NOTHING via createMany/skipDuplicates), then every alias is re-selected.
+ * An alias committed by a concurrent resolver against a different lineage
+ * rolls the provisional lineage back (AliasRaceRestart) so the caller can
+ * restart against the winner's row — a half-created lineage can never leak.
+ */
+const insertOrAdoptChain = async (chain: string[]): Promise<string> =>
+  prisma.$transaction(async (tx) => {
+    const provider = BillingProvider.googlePlay;
+    const aliasRows = await tx.lineageTokenAlias.findMany({
+      where: { token: { in: chain } },
+      select: { lineageId: true, token: true },
+    });
+    const directRows = await tx.subscriptionLineage.findMany({
+      where: { provider, lineageKey: { in: chain } },
+      select: { id: true },
+    });
+    const resolved = new Set<string>([
+      ...aliasRows.map((a) => a.lineageId),
+      ...directRows.map((d) => d.id),
+    ]);
+    if (resolved.size > 1) {
+      throw new ChainConflict(chain[0]);
+    }
+
+    let lineageId = [...resolved][0];
+    if (!lineageId) {
+      // Root = oldest chain member. createMany/skipDuplicates is a true
+      // INSERT ... ON CONFLICT DO NOTHING, so a same-key race is adopted by
+      // the re-select rather than aborting the transaction.
+      const rootKey = chain[chain.length - 1];
+      await tx.subscriptionLineage.createMany({
+        data: [{ provider, lineageKey: rootKey }],
+        skipDuplicates: true,
+      });
+      const row = await tx.subscriptionLineage.findUnique({
+        where: { provider_lineageKey: { provider, lineageKey: rootKey } },
+        select: { id: true },
+      });
+      if (!row) throw new AliasRaceRestart();
+      lineageId = row.id;
+    }
+
+    // Deterministic insert order (sorted tokens): two competitors inserting
+    // overlapping chains acquire the unique-index waits in the same order,
+    // so they serialize instead of deadlocking.
+    const sortedTokens = [...chain].sort();
+    await tx.lineageTokenAlias.createMany({
+      data: sortedTokens.map((token) => ({ token, lineageId })),
+      skipDuplicates: true,
+    });
+    // Re-select every alias: any one resolving elsewhere means a concurrent
+    // resolver won a member — roll back (including any provisional lineage)
+    // and restart against the committed state.
+    const committed = await tx.lineageTokenAlias.findMany({
+      where: { token: { in: chain } },
+      select: { lineageId: true },
+    });
+    if (
+      committed.length !== chain.length ||
+      committed.some((a) => a.lineageId !== lineageId)
+    ) {
+      throw new AliasRaceRestart();
+    }
+    return lineageId;
+  });
+
+/**
+ * Google resolve-or-create. Resolves the full token chain first (following
+ * `linkedPurchaseToken` recursively with loop detection and a depth bound;
+ * a chain member already known to us short-circuits the walk), then commits
+ * the lineage row and every alias atomically. Fails closed — quarantine plus
+ * a retryable LineageUnresolvedError — on loops, depth overflow, conflicting
+ * chains (never auto-merge), and exhausted insert races; it never silently
+ * adopts a truncated root.
  */
 export const resolveOrCreateGoogleLineage = async (args: {
   token: string;
   linkedPurchaseToken?: string | null;
+  /** Kept for call-site compatibility; the chain is always resolved. */
   fetchChain?: boolean;
   fetcher?: GoogleChainFetcher;
 }): Promise<string> => {
   const fetcher = args.fetcher ?? defaultChainFetcher;
+  const provider = BillingProvider.googlePlay;
 
-  // Collect the chain, newest first.
+  const failClosed = async (
+    reason: string,
+    message: string,
+    payload: Prisma.InputJsonValue,
+  ): Promise<never> => {
+    await quarantine(provider, args.token, reason, payload);
+    throw new LineageUnresolvedError(provider, args.token, message);
+  };
+
+  // Collect the chain, newest first. An unfetchable-but-named predecessor
+  // still enters the chain (its identity comes from the successor's
+  // linkedPurchaseToken), so a later appearance can never mint a second
+  // lineage.
   const chain: string[] = [args.token];
   const seen = new Set<string>(chain);
   let next: string | null | undefined = args.linkedPurchaseToken;
-  let depth = 0;
-  while (next && !seen.has(next) && depth < CHAIN_DEPTH_LIMIT) {
+  while (next) {
+    if (seen.has(next)) {
+      return failClosed("chain_loop", "token chain contains a loop", {
+        chain,
+        loopToken: next,
+      });
+    }
+    if (chain.length >= CHAIN_DEPTH_LIMIT) {
+      return failClosed(
+        "chain_depth_exceeded",
+        "token chain exceeds the depth bound",
+        { chain, next },
+      );
+    }
     chain.push(next);
     seen.add(next);
-    depth += 1;
-    if (!args.fetchChain) break;
-    // Stop early once a chain member is already known to us.
-    const known = await resolveLineageId(prisma, BillingProvider.googlePlay, [
-      next,
-    ]);
+    // Stop early once a chain member is already known to us — the rest of
+    // the chain is already recorded on its lineage.
+    const known = await resolveLineageId(prisma, provider, [next]);
     if (known) break;
     const purchase = await fetcher(next);
     next = purchase?.linkedPurchaseToken;
   }
 
-  // Any member already resolving to a lineage? Conflicts quarantine.
-  const lineageIds = new Set<string>();
-  for (const member of chain) {
-    const id = await resolveLineageId(prisma, BillingProvider.googlePlay, [
-      member,
-    ]);
-    if (id) lineageIds.add(id);
-  }
-  if (lineageIds.size > 1) {
-    await quarantine(
-      BillingProvider.googlePlay,
-      args.token,
-      "alias_conflict_between_lineages",
-      { chain },
-    );
-    throw new LineageUnresolvedError(
-      BillingProvider.googlePlay,
-      args.token,
-      "alias conflict between lineages",
-    );
-  }
-
-  let lineageId: string;
-  const known = [...lineageIds][0];
-  if (known) {
-    lineageId = known;
-  } else {
-    // Root = oldest chain member. Insert with conflict-adopt: if a
-    // concurrent resolver won, adopt its row.
-    lineageId = await upsertLineageRow(
-      BillingProvider.googlePlay,
-      chain[chain.length - 1],
-    );
-  }
-
-  // Record every chain member as an alias of the lineage. An alias that
-  // already points elsewhere is a genuine inconsistency -> quarantine.
-  for (const member of chain) {
-    const existing = await prisma.lineageTokenAlias.findUnique({
-      where: { token: member },
-    });
-    if (existing && existing.lineageId !== lineageId) {
-      await quarantine(
-        BillingProvider.googlePlay,
-        member,
-        "alias_points_at_other_lineage",
-        { chain, lineageId },
-      );
-      throw new LineageUnresolvedError(
-        BillingProvider.googlePlay,
-        member,
-        "alias points at another lineage",
-      );
-    }
-    if (!existing) {
-      try {
-        await prisma.lineageTokenAlias.upsert({
-          where: { token: member },
-          update: {},
-          create: { token: member, lineageId },
-        });
-      } catch (err) {
-        if (
-          !(
-            err instanceof Prisma.PrismaClientKnownRequestError &&
-            err.code === "P2002"
-          )
-        ) {
-          throw err;
-        }
-        // Lost the alias race; verify the winner points at our lineage.
-        const winner = await prisma.lineageTokenAlias.findUnique({
-          where: { token: member },
-        });
-        if (winner && winner.lineageId !== lineageId) {
-          await quarantine(
-            BillingProvider.googlePlay,
-            member,
-            "alias_points_at_other_lineage",
-            { chain, lineageId },
-          );
-          throw new LineageUnresolvedError(
-            BillingProvider.googlePlay,
-            member,
-            "alias points at another lineage",
-          );
-        }
+  for (let attempt = 0; attempt < INSERT_RESTART_LIMIT; attempt += 1) {
+    try {
+      return await insertOrAdoptChain(chain);
+    } catch (err) {
+      if (err instanceof ChainConflict) {
+        return failClosed(
+          "alias_conflict_between_lineages",
+          "alias conflict between lineages",
+          { chain },
+        );
       }
+      if (err instanceof AliasRaceRestart) {
+        continue;
+      }
+      if (
+        err instanceof Prisma.PrismaClientKnownRequestError &&
+        err.code === "P2002"
+      ) {
+        // Serialization artifact of the same race; restart resolves it.
+        continue;
+      }
+      if (isRetryableTxConflict(err)) {
+        continue;
+      }
+      throw err;
     }
   }
-
-  return lineageId;
+  return failClosed(
+    "alias_race_exhausted",
+    "alias insert races exhausted the restart budget",
+    { chain },
+  );
 };
 
 /**
  * Ensure a lineage exists for a verify/notification input and return its id.
+ * Google inputs resolve their full token chain (item 5 of the reclaim v3
+ * addendum applies to every creation path, not only claim).
  */
 export const resolveOrCreateLineageForKeys = async (args: {
   provider: BillingProvider;
