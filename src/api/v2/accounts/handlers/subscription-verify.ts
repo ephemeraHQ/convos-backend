@@ -4,6 +4,7 @@ import {
 } from "@apple/app-store-server-library";
 import type { Request, Response } from "express";
 import { z } from "zod";
+import { evaluateClaimable } from "@/subscriptions/claim-eligibility";
 import {
   acknowledgePurchase,
   fetchSubscriptionPurchaseV2,
@@ -29,6 +30,7 @@ import {
   type VerifyInput,
 } from "@/subscriptions/repository";
 import { deriveSubscriptionStatusFromTransaction } from "@/subscriptions/status";
+import { SubscriptionTombstonedError } from "@/subscriptions/tombstones";
 import { AppError } from "@/utils/errors";
 
 const uuidPattern =
@@ -435,17 +437,47 @@ export async function subscriptionVerifyHandler(req: Request, res: Response) {
     return;
   } catch (error) {
     if (error instanceof SubscriptionAccountMismatchError) {
+      // `claimable` is additive and informative only: whether the claim
+      // endpoint may succeed for this caller. The claim flow re-evaluates
+      // authoritatively.
+      const claimable = await evaluateClaimable({
+        provider: input.provider,
+        keys:
+          input.provider === BillingProvider.apple
+            ? [input.originalTransactionId]
+            : [input.purchaseToken, input.linkedPurchaseToken],
+      });
       req.log.warn(
         {
           accountId,
           existingAccountId: error.existingAccountId,
           providerSubscriptionId: error.providerSubscriptionId,
+          claimable,
         },
         "subscription.verify.account_mismatch",
       );
       res.status(409).json({
         error: "Subscription belongs to a different account. Contact support.",
         code: "subscription_account_mismatch",
+        claimable,
+      });
+      return;
+    }
+    if (error instanceof SubscriptionTombstonedError) {
+      // Tombstoned provider key (deleted account's subscription): same 409
+      // envelope as an ownership mismatch (append-only law - no new code),
+      // claimable by definition. No entitlement, no row created.
+      req.log.warn(
+        {
+          accountId,
+          providerKey: error.matchedKey,
+        },
+        "subscription.verify.tombstoned",
+      );
+      res.status(409).json({
+        error: "Subscription belongs to a different account. Contact support.",
+        code: "subscription_account_mismatch",
+        claimable: true,
       });
       return;
     }

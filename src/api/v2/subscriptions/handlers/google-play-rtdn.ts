@@ -207,6 +207,7 @@ export async function googlePlayRtdnHandler(req: Request, res: Response) {
     const result = await applyNotification({
       provider: BillingProvider.googlePlay,
       purchaseToken: sub.purchaseToken,
+      linkedPurchaseToken: purchase.linkedPurchaseToken ?? null,
       playOrderId,
       messageId: message.messageId,
       notificationType: `PLAY_${sub.notificationType}`,
@@ -225,6 +226,21 @@ export async function googlePlayRtdnHandler(req: Request, res: Response) {
           notificationType: sub.notificationType,
         },
         "play.rtdn.unknown_subscription — acking",
+      );
+      res.status(200).json({ ok: true, applied: false });
+      return;
+    }
+
+    if (result.kind === "tombstoned") {
+      // The purchase token (or its rotation predecessor) belongs to a
+      // deleted account. Explicit, counted no-op: ack so Pub/Sub stops
+      // retrying; never recreate account-linked state.
+      req.log.info(
+        {
+          messageId: message.messageId,
+          notificationType: sub.notificationType,
+        },
+        "play.rtdn.tombstoned_noop",
       );
       res.status(200).json({ ok: true, applied: false });
       return;

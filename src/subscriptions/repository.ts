@@ -21,6 +21,11 @@ import {
   SUBSCRIPTION_TIER_PLUS,
   type SubscriptionTier,
 } from "@/subscriptions/tiers";
+import {
+  absorbTombstoneRotation,
+  findTombstoneForKeys,
+  SubscriptionTombstonedError,
+} from "@/subscriptions/tombstones";
 import { prisma } from "@/utils/prisma";
 
 export type { Subscription, BillingReceipt, SubscriptionTier };
@@ -369,6 +374,32 @@ export const upsertFromVerify = async (
         );
       }
 
+      // No live row: consult the deletion tombstones before the create path.
+      // A deleted account's still-active store subscription must not
+      // silently rebind to whichever account verifies it next. A live row
+      // for the key always wins over a tombstone (the claim flow re-homes a
+      // tombstoned key by creating a fresh row; the tombstone stays as
+      // history), which is why this check is gated on `!existing`.
+      if (!existing) {
+        const tombstone = await findTombstoneForKeys(
+          tx,
+          input.provider,
+          input.provider === BillingProvider.apple
+            ? [input.originalTransactionId]
+            : [input.purchaseToken, input.linkedPurchaseToken],
+        );
+        if (tombstone) {
+          // Thrown inside the tx (rolls back nothing of consequence — the
+          // rotation absorption happens durably in the catch below).
+          throw new SubscriptionTombstonedError(
+            input.provider,
+            tombstone.providerKey,
+            externalId,
+            tombstone.accountRef,
+          );
+        }
+      }
+
       const receiptShape = verifyReceiptShape(input);
       const existingReceipt = await tx.billingReceipt.findUnique({
         where: { idempotencyKey: receiptShape.idempotencyKey },
@@ -433,6 +464,21 @@ export const upsertFromVerify = async (
       return { subscription, receiptCreated: true };
     });
   } catch (err) {
+    if (err instanceof SubscriptionTombstonedError) {
+      // Play token rotation onto a tombstoned token: give the presented key
+      // its own tombstone row so future lookups need no chain-walk. Done
+      // here, outside the rolled-back transaction, so the absorption
+      // survives the throw. Apple keys never rotate (matchedKey ===
+      // presentedKey), so this is Play-only in practice.
+      if (err.matchedKey !== err.presentedKey) {
+        await absorbTombstoneRotation(prisma, {
+          provider: err.provider,
+          newKey: err.presentedKey,
+          accountRef: err.accountRef,
+        });
+      }
+      throw err;
+    }
     // Route the P2002 by WHICH unique index fired:
     //   - Subscription provider-unique → the documented cold-start race (two
     //     concurrent creates of the same provider sub). Benign idempotent
@@ -563,6 +609,10 @@ export type GooglePlayApplyNotificationInput = {
   provider: typeof BillingProvider.googlePlay;
   /** Lookup key — the purchaseToken from the RTDN payload. */
   purchaseToken: string;
+  /** Rotation predecessor from the refreshed Play purchase, when present.
+   *  Used by the deletion-tombstone probe so a rotation onto a tombstoned
+   *  token is absorbed rather than escaping the tombstone. */
+  linkedPurchaseToken?: string | null;
   /** Audit transactionId — Google's latestOrderId from the refreshed purchase. */
   playOrderId: string;
   /** Pub/Sub messageId; used as the externalNotificationId for replay dedup. */
@@ -580,7 +630,10 @@ export type ApplyNotificationInput =
 export type ApplyNotificationResult =
   | { kind: "replayed"; subscription: Subscription }
   | { kind: "applied"; subscription: Subscription }
-  | { kind: "unknown_subscription" };
+  | { kind: "unknown_subscription" }
+  /** The provider key belongs to a deleted account: acknowledged, counted
+   *  no-op. No state was touched. */
+  | { kind: "tombstoned" };
 
 const notificationLookup = (
   input: ApplyNotificationInput,
@@ -617,11 +670,43 @@ const notificationReceiptShape = (input: ApplyNotificationInput) => {
  *      state and do not re-apply changes.
  *   3. Apply the state update to the Subscription row.
  */
+const notificationTombstoneProbe = async (
+  input: ApplyNotificationInput,
+): Promise<ApplyNotificationResult | null> => {
+  const tombstone = await findTombstoneForKeys(
+    prisma,
+    input.provider,
+    input.provider === BillingProvider.apple
+      ? [input.originalTransactionId]
+      : [input.purchaseToken, input.linkedPurchaseToken],
+  );
+  if (!tombstone) return null;
+  const presentedKey =
+    input.provider === BillingProvider.apple
+      ? input.originalTransactionId
+      : input.purchaseToken;
+  if (tombstone.providerKey !== presentedKey) {
+    // Play rotation onto a tombstoned token: absorb the new token so future
+    // notifications resolve without chain-walking.
+    await absorbTombstoneRotation(prisma, {
+      provider: input.provider,
+      newKey: presentedKey,
+      accountRef: tombstone.accountRef,
+    });
+  }
+  return { kind: "tombstoned" };
+};
+
 export const applyNotification = async (
   input: ApplyNotificationInput,
 ): Promise<ApplyNotificationResult> => {
   const subscription = await notificationLookup(input);
   if (!subscription) {
+    // Unknown key: distinguish "verify hasn't created the row yet" from
+    // "the row was deleted with its account" — the latter is a counted
+    // no-op, never a recreate.
+    const tombstoned = await notificationTombstoneProbe(input);
+    if (tombstoned) return tombstoned;
     return { kind: "unknown_subscription" };
   }
 
@@ -704,15 +789,29 @@ export const applyNotification = async (
       return { kind: "applied" as const, subscription: updated };
     });
   } catch (err) {
-    if (
-      err instanceof Prisma.PrismaClientKnownRequestError &&
-      err.code === "P2002"
-    ) {
-      const current = await prisma.subscription.findUnique({
-        where: { id: subscription.id },
-      });
-      if (current) {
-        return { kind: "replayed", subscription: current };
+    if (err instanceof Prisma.PrismaClientKnownRequestError) {
+      if (err.code === "P2002") {
+        const current = await prisma.subscription.findUnique({
+          where: { id: subscription.id },
+        });
+        if (current) {
+          return { kind: "replayed", subscription: current };
+        }
+      }
+      // Deletion raced this notification: the row (captured by the pre-tx
+      // lookup) was torn down mid-flight, so the receipt insert hits the
+      // Subscription FK (P2003) or the update finds no row (P2025). Converge
+      // to the same outcome as delete-then-notify: a tombstoned (or unknown)
+      // no-op, not a 500-and-retry.
+      if (err.code === "P2003" || err.code === "P2025") {
+        const current = await prisma.subscription.findUnique({
+          where: { id: subscription.id },
+        });
+        if (!current) {
+          const tombstoned = await notificationTombstoneProbe(input);
+          if (tombstoned) return tombstoned;
+          return { kind: "unknown_subscription" };
+        }
       }
     }
     throw err;
