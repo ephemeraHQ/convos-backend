@@ -106,6 +106,10 @@ model Account {
   id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+  /// Stamped on every SIWE token mint (generate-token.ts). Supports
+  /// activity-recency checks (e.g. the subscription-claim dead-or-silent
+  /// gate). Null for accounts that have not minted since the column landed.
+  lastAuthAt DateTime?
 
   authMethods              AuthMethod[]
   agentTemplates           AgentTemplate[]
@@ -310,6 +314,70 @@ model AuthNonce {
   createdAt DateTime @default(now())
 }
 
+/// Durable deletion barrier. One row per deleted identity, keyed by an
+/// HMAC-SHA256 (DELETION_HASH_SECRET) of the auth-method type plus the
+/// lowercased external key that lived in AuthMethod.externalKey. Consulted at
+/// token mint before auto-provisioning: a barred identity gets the terminal
+/// identity-deleted response and can never mint tokens or silently re-create
+/// an account. The bar is permanent — a genuinely new account requires new
+/// identity keys. The keyed hash is retained pseudonymous data; scope and
+/// rationale are documented in docs/plans/delete-my-account.md.
+model DeletedIdentity {
+  identityHash String   @id
+  deletedAt    DateTime @default(now())
+}
+
+/// Durable record of one account deletion, keyed by the client-generated
+/// operationId. Lets an idempotent retry (an unexpired pre-deletion JWT
+/// re-sending the same operationId) re-return the stored success after the
+/// account row is gone. accountRef is the keyed hash of the deleted
+/// accountId (same HMAC as DeletedIdentity) — the raw id is never retained.
+model DeletionRecord {
+  operationId String    @id @db.Uuid
+  accountRef  String
+  /// Lifecycle: purging (outbox still draining) | completed (drain done).
+  /// Plain string column, validated in app code (see the AuthMethod.type
+  /// comment for why Postgres enums are avoided).
+  status      String    @default("purging")
+  requestedAt DateTime  @default(now())
+  completedAt DateTime?
+  /// When the retention job may delete this record (set once the drain
+  /// completes, plus a bounded audit window).
+  expiresAt   DateTime?
+  updatedAt   DateTime  @updatedAt
+
+  @@index([accountRef])
+  @@index([status, requestedAt])
+  @@index([expiresAt])
+}
+
+/// Transactional-outbox row for one external purge action (S3 object,
+/// notification-server installation, Composio user, PostHog person),
+/// snapshotted inside the deletion transaction and drained asynchronously
+/// with retries. The payload necessarily retains account-linked identifiers
+/// until the drain completes; rows are removed as they finish and the
+/// deletion record tracks the overall purge SLA.
+model DeletionTask {
+  id            String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  operationId   String    @db.Uuid
+  /// Purge executor id: s3_object | notification_installation |
+  /// composio_user | posthog_person. Plain string, validated in app code.
+  kind          String
+  /// Executor-specific target (bucket/key, installation id, ...).
+  payload       Json
+  /// pending | done | failed (terminal — operator remediation path).
+  status        String    @default("pending")
+  attempts      Int       @default(0)
+  nextAttemptAt DateTime  @default(now())
+  lastError     String?   @db.Text
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  completedAt   DateTime?
+
+  @@index([status, nextAttemptAt])
+  @@index([operationId])
+}
+
 enum LedgerReason {
   consume
   grant
@@ -472,6 +540,26 @@ model BillingReceipt {
   @@index([transactionId])
   @@index([provider, transactionId])
   @@index([subscriptionId, receivedAt])
+}
+
+/// Provider-key billing tombstone, written inside the deletion transaction
+/// when the deleted account carried Subscription rows. Marks the provider
+/// identity (Apple originalTransactionId / Google Play purchaseToken) as
+/// belonging to a deleted account: webhooks ack tombstoned keys as a counted
+/// no-op, verify grants no entitlement, and Play token rotation adds the
+/// rotated token as a new row rather than escaping the tombstone.
+model SubscriptionTombstone {
+  id          String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  provider    BillingProvider
+  /// Apple originalTransactionId or Play purchaseToken (one row per key;
+  /// rotations of a tombstoned Play token append rows).
+  providerKey String
+  /// Keyed hash of the deleted accountId (same minimization as DeletionRecord).
+  accountRef  String
+  deletedAt   DateTime        @default(now())
+
+  @@unique([provider, providerKey])
+  @@index([accountRef])
 }
 
 model TelemetryBatch {
