@@ -1,4 +1,5 @@
 import { rateLimit } from "express-rate-limit";
+import { PgRateLimitStore } from "./pgRateLimitStore";
 
 // General rate limit for API to 1000 requests per 5 minutes
 export const rateLimitMiddleware = rateLimit({
@@ -144,10 +145,16 @@ export const subscriptionClaimAccountLimiter = rateLimit({
     "unknown",
 });
 
+// The GLOBAL ceiling must hold across every replica (a per-process
+// MemoryStore would multiply it by the replica count), so it is backed by
+// the shared Postgres counter store. The per-IP/per-account limiters above
+// stay in-process: they are per-caller ceilings whose replica slack is
+// bounded and acceptable.
 export const subscriptionClaimGlobalLimiter = rateLimit({
   windowMs: 60 * 60 * 1000, // 1 hour
   limit: 200,
   keyGenerator: () => "subscription-claim-global",
+  store: new PgRateLimitStore("claim_global_"),
   legacyHeaders: false,
   standardHeaders: "draft-8",
   message: {

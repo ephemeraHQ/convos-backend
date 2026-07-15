@@ -3,6 +3,9 @@ import { BillingProvider, SubscriptionStatus } from "@prisma/client";
 import type { NextFunction, Request, Response } from "express";
 import { z } from "zod";
 import { AccountNotLiveError } from "@/accounts/require-live-account";
+import { createApnsService } from "@/api/v2/notifications/apns-push.service";
+import { createFcmService } from "@/api/v2/notifications/fcm-push.service";
+import type { SubscriptionClaimPendingPayload } from "@/api/v2/notifications/types";
 import { APPCHECK_HEADER } from "@/middleware/auth";
 import { getSubscriptionStatuses } from "@/subscriptions/apple-server-api";
 import {
@@ -31,6 +34,7 @@ import { deriveSubscriptionStatusFromTransaction } from "@/subscriptions/status"
 import { getFirebaseApp } from "@/utils/firebase";
 import logger from "@/utils/logger";
 import { prisma } from "@/utils/prisma";
+import { getRuntimeConfig } from "@/utils/runtimeConfig";
 
 /**
  * POST /v2/accounts/me/subscription/claim.
@@ -94,14 +98,24 @@ export const __setClaimAppCheckVerifierForTests = (
  * code for every failure mode (missing, invalid, replayed, attestation
  * disabled) — no oracle. Deliberately does NOT use the global
  * appCheckOnlyMiddleware: its app_attest_enabled=false bypass would leave
- * this route open; here a disabled attestation config means the endpoint is
- * off, never open.
+ * this route open; here the flag is read directly and a disabled
+ * attestation config means the endpoint is OFF — even a valid token is
+ * rejected, never waved through.
  */
 export const claimAppCheckMiddleware = async (
   req: Request,
   res: Response,
   next: NextFunction,
 ) => {
+  const appAttestEnabled =
+    (await getRuntimeConfig("app_attest_enabled", "true")) === "true";
+  if (!appAttestEnabled) {
+    req.log.warn({}, "subscription.claim.app_check_disabled_fail_closed");
+    res
+      .status(403)
+      .json({ error: "App attestation required", code: "app_check_required" });
+    return;
+  }
   const token = req.header(APPCHECK_HEADER);
   if (!token) {
     res
@@ -318,23 +332,80 @@ const verifyPlayProof = async (
 type PendingTransferNotifier = (args: {
   oldAccountId: string;
   contestEndsAt: Date;
+  provider: "apple" | "googlePlay";
 }) => Promise<void>;
 
+/**
+ * Send the contract's SubscriptionClaimPending push to every registered
+ * device of the old account — the one notification channel we have, and the
+ * structural bound on the bearer-theft residual: the legitimate owner learns
+ * a transfer is pending while any authenticated act still vetoes it. Each
+ * device send is individually caught; a push failure never fails the claim.
+ */
 const defaultPendingTransferNotifier: PendingTransferNotifier = async ({
   oldAccountId,
   contestEndsAt,
+  provider,
 }) => {
-  // The one notification channel we have is the account's registered device
-  // push tokens. The concrete APNs/FCM payload is the cross-repo
-  // subscription-transfer notification type; enumeration + telemetry here,
-  // delivery wiring rides the iOS notification-type work.
   const devices = await prisma.deviceRegistration.findMany({
-    where: { accountId: oldAccountId, pushToken: { not: null } },
-    select: { deviceId: true },
+    where: {
+      accountId: oldAccountId,
+      disabled: false,
+      pushToken: { not: null },
+    },
+    select: {
+      deviceId: true,
+      pushToken: true,
+      pushTokenType: true,
+      apnsEnv: true,
+    },
   });
   logger.warn(
     { deviceCount: devices.length, contestEndsAt: contestEndsAt.toISOString() },
     "subscription.claim.pending_transfer_push",
+  );
+  if (devices.length === 0) return;
+
+  const apns = createApnsService();
+  const fcm = createFcmService();
+  await Promise.all(
+    devices.map(async (device) => {
+      const payload: SubscriptionClaimPendingPayload = {
+        clientId: device.deviceId,
+        notificationType: "SubscriptionClaimPending",
+        notificationData: {
+          contestEndsAt: contestEndsAt.toISOString(),
+          provider,
+        },
+      };
+      const adapted = { ...device, id: device.deviceId };
+      try {
+        const service = device.pushTokenType === "apns" ? apns : fcm;
+        if (!service) {
+          logger.warn(
+            { deviceId: device.deviceId, pushTokenType: device.pushTokenType },
+            "subscription.claim.pending_push_service_unavailable",
+          );
+          return;
+        }
+        const result = await service.sendPushNotification({
+          device: adapted,
+          notification: payload,
+          isSilent: false,
+        });
+        if (!result.success) {
+          logger.warn(
+            { deviceId: device.deviceId, error: result.error },
+            "subscription.claim.pending_push_send_failed",
+          );
+        }
+      } catch (err) {
+        logger.warn(
+          { err, deviceId: device.deviceId },
+          "subscription.claim.pending_push_send_error",
+        );
+      }
+    }),
   );
 };
 
@@ -408,6 +479,7 @@ export async function subscriptionClaimHandler(req: Request, res: Response) {
           await notifier({
             oldAccountId: result.oldAccountId,
             contestEndsAt: result.contestEndsAt,
+            provider: parsed.data.platform,
           });
         } catch (error) {
           req.log.warn({ error }, "subscription.claim.pending_push_failed");

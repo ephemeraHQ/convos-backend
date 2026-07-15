@@ -67,8 +67,12 @@ const makeApp = () => {
 let signingPrivateKey: string;
 const createdAccountIds: string[] = [];
 
+// lastAuthAt is backdated: real accounts always carry a stamp (mint +
+// migration backfill), and settlement defensively treats null as a veto.
 const newAccount = async () => {
-  const account = await prisma.account.create({ data: {} });
+  const account = await prisma.account.create({
+    data: { lastAuthAt: new Date(Date.now() - 60 * 60 * 1000) },
+  });
   createdAccountIds.push(account.id);
   return account.id;
 };
