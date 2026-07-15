@@ -177,10 +177,11 @@ export async function generateToken(
     // no-ops instead of throwing when the row vanished (deletion racing this
     // mint); a transient failure here never fails token mint.
     try {
-      await prisma.account.updateMany({
-        where: { id: accountId },
-        data: { lastAuthAt: new Date() },
-      });
+      // Database now(): the contest-window veto compares this stamp against
+      // the pending row's DB-clock createdAt, so both must share a clock.
+      await prisma.$executeRaw`
+        UPDATE "Account" SET "lastAuthAt" = now() WHERE id = ${accountId}::uuid
+      `;
     } catch (err) {
       req.log.warn({ err, accountId }, "auth.account.last_auth_stamp_failed");
     }

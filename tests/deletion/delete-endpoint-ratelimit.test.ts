@@ -21,7 +21,7 @@ const makeApp = () => {
   const app = express();
   app.use(pinoMiddleware);
   app.use(json());
-  app.use("/v2/accounts/me", authMiddleware, accountsMeRouter);
+  app.use("/api/v2/accounts/me", authMiddleware, accountsMeRouter);
   return app;
 };
 
@@ -48,7 +48,7 @@ describe("POST /v2/accounts/me/subscription/claim rate limiting", () => {
     let appCheckRejected = 0;
     for (let i = 0; i < 12 && !limited; i += 1) {
       const res = await request(app)
-        .post("/v2/accounts/me/subscription/claim")
+        .post("/api/v2/accounts/me/subscription/claim")
         .set("X-Convos-AuthToken", token)
         .send({});
       if (res.status === 429) {
@@ -78,14 +78,14 @@ describe("DELETE /v2/accounts/me rate limiting", () => {
     // counted — the limiters sit in front of the handler).
     for (let i = 0; i < 5; i += 1) {
       const res = await request(app)
-        .delete("/v2/accounts/me")
+        .delete("/api/v2/accounts/me")
         .set("X-Convos-AuthToken", token)
         .send({});
       expect(res.status).toBe(400);
     }
 
     const sixth = await request(app)
-      .delete("/v2/accounts/me")
+      .delete("/api/v2/accounts/me")
       .set("X-Convos-AuthToken", token)
       .send({});
     expect(sixth.status).toBe(429);

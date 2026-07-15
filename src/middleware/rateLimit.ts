@@ -1,5 +1,5 @@
 import { rateLimit } from "express-rate-limit";
-import { PgRateLimitStore } from "./pgRateLimitStore";
+import { makeClaimGlobalCeiling } from "./claimGlobalCeiling";
 
 // General rate limit for API to 1000 requests per 5 minutes
 export const rateLimitMiddleware = rateLimit({
@@ -146,20 +146,15 @@ export const subscriptionClaimAccountLimiter = rateLimit({
 });
 
 // The GLOBAL ceiling must hold across every replica (a per-process
-// MemoryStore would multiply it by the replica count), so it is backed by
-// the shared Postgres counter store. The per-IP/per-account limiters above
-// stay in-process: they are per-caller ceilings whose replica slack is
-// bounded and acceptable.
-export const subscriptionClaimGlobalLimiter = rateLimit({
-  windowMs: 60 * 60 * 1000, // 1 hour
+// MemoryStore would multiply it by the replica count), so it is a dedicated
+// middleware over the shared Postgres counter table, with DB-time window
+// identity and fail-CLOSED (503) semantics on counter-store errors — it is
+// the batch-theft tripwire, not a convenience limiter. The per-IP and
+// per-account limiters above stay in-process: they are per-caller ceilings
+// whose replica slack is bounded and acceptable.
+export const subscriptionClaimGlobalLimiter = makeClaimGlobalCeiling({
+  windowSeconds: 60 * 60, // 1 hour
   limit: 200,
-  keyGenerator: () => "subscription-claim-global",
-  store: new PgRateLimitStore("claim_global_"),
-  legacyHeaders: false,
-  standardHeaders: "draft-8",
-  message: {
-    error: "Too many subscription claim requests, please try again later",
-  },
 });
 
 // Rate limiting for invite code redemption (5 attempts per 15 minutes per IP)

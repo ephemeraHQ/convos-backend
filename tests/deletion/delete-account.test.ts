@@ -37,9 +37,9 @@ const makeApp = () => {
   const app = express();
   app.use(pinoMiddleware);
   app.use(json());
-  app.delete("/v2/accounts/me", authMiddleware, accountDeleteHandler);
+  app.delete("/api/v2/accounts/me", authMiddleware, accountDeleteHandler);
   app.get(
-    "/v2/accounts/me/credits",
+    "/api/v2/accounts/me/credits",
     authMiddleware,
     requireAccount,
     (_req, res) => {
@@ -224,7 +224,7 @@ describe("DELETE /v2/accounts/me", () => {
     const token = await tokenFor(accountId);
 
     const res = await request(makeApp())
-      .delete("/v2/accounts/me")
+      .delete("/api/v2/accounts/me")
       .set("X-Convos-AuthToken", token)
       .send({ operationId });
 
@@ -352,14 +352,14 @@ describe("DELETE /v2/accounts/me", () => {
     const token = await tokenFor(accountId);
 
     const first = await request(makeApp())
-      .delete("/v2/accounts/me")
+      .delete("/api/v2/accounts/me")
       .set("X-Convos-AuthToken", token)
       .send({ operationId });
     expect(first.status, await replayDiagnostics("first", first)).toBe(200);
 
     // The unexpired pre-deletion token still authenticates this one route.
     const second = await request(makeApp())
-      .delete("/v2/accounts/me")
+      .delete("/api/v2/accounts/me")
       .set("X-Convos-AuthToken", token)
       .send({ operationId });
     expect(second.status, await replayDiagnostics("replay", second)).toBe(200);
@@ -372,13 +372,13 @@ describe("DELETE /v2/accounts/me", () => {
     const token = await tokenFor(accountId);
 
     const first = await request(makeApp())
-      .delete("/v2/accounts/me")
+      .delete("/api/v2/accounts/me")
       .set("X-Convos-AuthToken", token)
       .send({ operationId: storedOperationId });
     expect(first.status, await replayDiagnostics("first", first)).toBe(200);
 
     const retry = await request(makeApp())
-      .delete("/v2/accounts/me")
+      .delete("/api/v2/accounts/me")
       .set("X-Convos-AuthToken", token)
       .send({ operationId: randomUUID() });
 
@@ -394,12 +394,12 @@ describe("DELETE /v2/accounts/me", () => {
     const app = makeApp();
 
     await request(app)
-      .delete("/v2/accounts/me")
+      .delete("/api/v2/accounts/me")
       .set("X-Convos-AuthToken", token)
       .send({ operationId: randomUUID() });
 
     const res = await request(app)
-      .get("/v2/accounts/me/credits")
+      .get("/api/v2/accounts/me/credits")
       .set("X-Convos-AuthToken", token);
     expect(res.status).toBe(401);
     expect(res.body).toEqual({ error: "Unauthorized" });
@@ -410,7 +410,7 @@ describe("DELETE /v2/accounts/me", () => {
     const token = await tokenFor(accountId);
 
     const res = await request(makeApp())
-      .delete("/v2/accounts/me")
+      .delete("/api/v2/accounts/me")
       .set("X-Convos-AuthToken", token)
       .send({});
     expect(res.status).toBe(400);
@@ -422,7 +422,7 @@ describe("DELETE /v2/accounts/me", () => {
   test("403 for a device-only token (no account claim)", async () => {
     const token = await createJwtToken({ deviceId: "dev-only" });
     const res = await request(makeApp())
-      .delete("/v2/accounts/me")
+      .delete("/api/v2/accounts/me")
       .set("X-Convos-AuthToken", token)
       .send({ operationId: randomUUID() });
     expect(res.status).toBe(403);
@@ -435,7 +435,7 @@ describe("DELETE /v2/accounts/me", () => {
       accountId: randomUUID(),
     });
     const res = await request(makeApp())
-      .delete("/v2/accounts/me")
+      .delete("/api/v2/accounts/me")
       .set("X-Convos-AuthToken", token)
       .send({ operationId: randomUUID() });
     expect(res.status).toBe(401);
@@ -449,11 +449,11 @@ describe("DELETE /v2/accounts/me", () => {
 
     const [a, b] = await Promise.all([
       request(app)
-        .delete("/v2/accounts/me")
+        .delete("/api/v2/accounts/me")
         .set("X-Convos-AuthToken", token)
         .send({ operationId: randomUUID() }),
       request(app)
-        .delete("/v2/accounts/me")
+        .delete("/api/v2/accounts/me")
         .set("X-Convos-AuthToken", token)
         .send({ operationId: randomUUID() }),
     ]);

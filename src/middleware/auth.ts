@@ -21,7 +21,7 @@ export const APPCHECK_HEADER = "X-Firebase-AppCheck";
 const isDeleteReplayCarveOut = (req: Request): boolean => {
   if (req.method !== "DELETE") return false;
   const fullPath = `${req.baseUrl}${req.path}`.replace(/\/+$/, "");
-  return fullPath.endsWith("/accounts/me");
+  return fullPath === "/api/v2/accounts/me";
 };
 
 /**
@@ -59,7 +59,9 @@ const enforceLiveAccountClaim = async (
     return false;
   }
   if (!isNotificationExtensionOnlyToken(payload)) {
-    stampAuthActivity(account.id, account.lastAuthAt);
+    // Awaited: the contest-window veto depends on this stamp being durable
+    // before the request proceeds (see stampAuthActivity).
+    await stampAuthActivity(account.id, account.lastAuthAt);
   }
   return true;
 };
