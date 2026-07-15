@@ -1,17 +1,17 @@
 export const STYLES = `
   :root {
-    --brand: #0b5cff; --brand-strong: #0847cc; --brand-weak: #eef3ff;
-    --brand-ring: rgba(11,92,255,.28);
-    --fg: #0c111d; --fg-2: #344054; --muted: #667085;
-    --surface: #fff; --surface-2: #f9fafb; --bg: #f2f4f7;
-    --edge: #e4e7ec; --edge-2: #d0d5dd;
-    --ok: #067647; --ok-bg: #e7f6ee;
-    --bad: #b42318; --bad-bg: #fee4e2; --bad-solid: #d92d20; --bad-strong: #912018;
+    --brand: #283a75; --brand-strong: #1d2b58; --brand-weak: #e8e9f2;
+    --brand-ring: rgba(40,58,117,.30);
+    --fg: #211f1a; --fg-2: #3f3a32; --muted: #6b6455;
+    --surface: #fbfaf6; --surface-2: #f2efe6; --bg: #e9e5da;
+    --edge: #dcd7c9; --edge-2: #c3bca8;
+    --ok: #17603d; --ok-bg: #e4eddf;
+    --bad: #97231a; --bad-bg: #f7e2dc; --bad-solid: #bf2d1e; --bad-strong: #8f1f14;
     --rail-w: 260px; --header-h: 60px; --center-max: 1160px; --control-h: 36px;
     --radius-sm: 8px; --radius: 12px; --radius-lg: 16px;
-    --shadow-1: 0 1px 2px rgba(16,24,40,.04), 0 1px 3px rgba(16,24,40,.06);
-    --shadow-2: 0 2px 4px -1px rgba(16,24,40,.05), 0 8px 16px -4px rgba(16,24,40,.08);
-    --shadow-pop: 0 12px 24px -8px rgba(16,24,40,.18), 0 32px 64px -16px rgba(16,24,40,.22);
+    --shadow-1: 0 1px 2px rgba(33,31,26,.05), 0 1px 3px rgba(33,31,26,.07);
+    --shadow-2: 0 2px 4px -1px rgba(33,31,26,.06), 0 8px 16px -4px rgba(33,31,26,.10);
+    --shadow-pop: 0 12px 24px -8px rgba(33,31,26,.20), 0 32px 64px -16px rgba(33,31,26,.24);
     --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
     --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
     --ease: cubic-bezier(0.22, 1, 0.36, 1);
@@ -28,8 +28,8 @@ export const STYLES = `
   #login {
     min-height:100vh; display:flex; align-items:center; justify-content:center; padding:24px;
     background:
-      radial-gradient(120% 90% at 50% -10%, #fff 0%, rgba(255,255,255,0) 60%),
-      radial-gradient(80% 60% at 85% 110%, var(--brand-weak) 0%, rgba(238,243,255,0) 70%),
+      radial-gradient(120% 90% at 50% -10%, var(--surface) 0%, rgba(251,250,246,0) 60%),
+      radial-gradient(80% 60% at 85% 110%, var(--brand-weak) 0%, rgba(232,233,242,0) 70%),
       var(--bg);
   }
   .login-card {
@@ -49,7 +49,7 @@ export const STYLES = `
   /* Header */
   .header {
     position:sticky; top:0; height:var(--header-h); display:flex; align-items:center; gap:12px;
-    padding:0 20px; background:rgba(255,255,255,.82); backdrop-filter:saturate(1.6) blur(10px);
+    padding:0 20px; background:rgba(251,250,246,.82); backdrop-filter:saturate(1.6) blur(10px);
     -webkit-backdrop-filter:saturate(1.6) blur(10px);
     border-bottom:1px solid var(--edge); z-index:20;
   }
@@ -136,8 +136,8 @@ export const STYLES = `
     display:inline-flex; align-items:center; padding:3px 10px; border-radius:999px;
     border:1px solid transparent; font-size:11px; font-weight:600; letter-spacing:.02em;
   }
-  .badge-yes { background:var(--ok-bg); color:var(--ok); border-color:rgba(6,118,71,.18); }
-  .badge-no { background:var(--bad-bg); color:var(--bad); border-color:rgba(180,35,24,.18); }
+  .badge-yes { background:var(--ok-bg); color:var(--ok); border-color:rgba(23,96,61,.22); }
+  .badge-no { background:var(--bad-bg); color:var(--bad); border-color:rgba(151,35,26,.22); }
   .badge-none { background:var(--surface-2); color:var(--muted); border-color:var(--edge-2); }
 
   /* Tables */
@@ -171,7 +171,7 @@ export const STYLES = `
   .spark { display:flex; align-items:flex-end; gap:3px; height:64px; }
   .spark .bar {
     flex:1 1 0; min-width:3px; min-height:2px; border-radius:3px 3px 1px 1px;
-    background:linear-gradient(180deg, #4d8bff 0%, var(--brand) 100%);
+    background:linear-gradient(180deg, #46589c 0%, var(--brand) 100%);
     transition:opacity .15s;
   }
   .spark .bar:hover { opacity:.65; }
@@ -210,7 +210,7 @@ export const STYLES = `
 
   /* Detail slide-over */
   .detail-scrim {
-    position:fixed; inset:0; background:rgba(12,17,29,.38);
+    position:fixed; inset:0; background:rgba(33,31,26,.42);
     backdrop-filter:blur(2px); -webkit-backdrop-filter:blur(2px); z-index:30;
   }
   .detail {
