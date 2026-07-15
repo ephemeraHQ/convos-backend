@@ -29,15 +29,17 @@ export const clientScript = (): string => `
 
   function applyWhoami(j){ CREDITS_PER_USD=Number(j.creditsPerUsd)||0; el("identity").textContent=j.actorEmail||""; }
 
+  var loginGen=0;
   function attemptLogin(token){
+    var gen=++loginGen;
     setToken(token);
     return fetch(apiBase()+"/whoami",{headers:{"Authorization":"Bearer "+token}})
       .then(function(r){ if(r.status!==200){ throw new Error(r.status===401?"Invalid token":"Auth unavailable ("+r.status+")"); } return r.json(); })
-      .then(function(j){ applyWhoami(j); showConsole(); loadActivity(true); })
-      .catch(function(err){ clearToken(); showLogin(err.message||"Login failed"); });
+      .then(function(j){ if(gen!==loginGen) return; applyWhoami(j); showConsole(); loadActivity(true); })
+      .catch(function(err){ if(gen!==loginGen) return; clearToken(); showLogin(err.message||"Login failed"); });
   }
 
-  function lock(){ clearToken(); showLogin("Locked"); }
+  function lock(){ loginGen++; clearToken(); showLogin("Locked"); }
 
   // --- wiring ---
   el("unlock").addEventListener("click", function(){ var t=el("token-input").value.trim(); if(!t){ el("login-error").textContent="Enter a token"; return; } el("login-error").textContent=""; attemptLogin(t); });
