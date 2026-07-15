@@ -36,11 +36,46 @@ const MONTH_LABEL_FORMATTER = new Intl.DateTimeFormat("en-US", {
  *     `PAYMENTS_FREE_TIER_DAILY_CAP_CREDITS`; `monthlyGrantUsed` =
  *     `max(0, cap − balance)`; `nextRefreshAt` = start of next UTC day;
  *     `periodLabel` = "Daily".
+ *   - When the daily refill is DISABLED (cap = 0, the config kill-switch): do
+ *     not promise a refresh that will not come. The response mirrors the iOS
+ *     app's own design-approved free-state fixture —
+ *     `CreditsStatePreset.noSubNoTrial` (ConvosCore/Services/Credits/
+ *     CreditsStatePreset.swift): `monthlyGrant`/`Used` = 0, `nextRefreshAt` =
+ *     now, `periodLabel` = REFILL_DISABLED_PERIOD_LABEL ("—"). See the
+ *     constant below for why every key must stay present.
  *
  * Note for v1: field names reuse `monthlyGrant`/`monthlyGrantUsed` for the
  * daily cap so iOS doesn't need a client-side change. Proper `dailyCap` /
  * `dailyUsed` fields are a follow-up requiring iOS coordination.
  */
+
+/**
+ * `periodLabel` when the daily refill is disabled — the exact label the iOS
+ * design fixture uses for the "no sub / no trial" state.
+ *
+ * Shipped-client constraints (all verified against convos-ios origin/dev):
+ * - `CreditBalance.nextRefreshAt` is a NON-OPTIONAL `Date`
+ *   (ConvosCore/Storage/Models/CreditBalance.swift:7): omitting the key or
+ *   sending null makes Codable throw and breaks the whole credits fetch for
+ *   every installed build, so the key must stay present and parseable.
+ * - The only user-facing renders of these fields are on
+ *   SubscriptionSettingsView: "\(balance) / \(monthlyGrant)" and
+ *   "Refreshes \(mediumDate(nextRefreshAt))", shown whenever a balance
+ *   exists — there is no data-driven hide condition, so we cannot suppress
+ *   the footer; we can only choose the least-wrong date.
+ * - `periodLabel` and `monthlyGrantUsed` render in the debug menu only;
+ *   `fractionRemaining`/`isLow` have no shipped consumers, and grant = 0 is
+ *   guarded in the model (`guard monthlyGrant > 0 else nil`) — no NaN risk.
+ *
+ * Emitting `{ monthlyGrant: 0, monthlyGrantUsed: 0, nextRefreshAt: now,
+ * periodLabel: "—" }` therefore reproduces `CreditsStatePreset.noSubNoTrial`
+ * exactly — the canned state designers/QA already dogfooded and signed off —
+ * rather than inventing a new one. The footer reads "Refreshes <today>",
+ * which is the least-wrong string the shipped format can produce: unlike
+ * tomorrow's date it makes no forward promise, and unlike a far-future
+ * sentinel it doesn't render an absurd year. No iOS update is required.
+ */
+export const REFILL_DISABLED_PERIOD_LABEL = "—";
 export async function creditsGetHandler(req: Request, res: Response) {
   const accountId = res.locals.accountId as string;
 
@@ -52,14 +87,21 @@ export async function creditsGetHandler(req: Request, res: Response) {
 
     if (!subscription || !isEntitledSubscription(subscription)) {
       const cap = config.freeTierDailyCapCredits;
+      // cap = 0 → the refill kill-switch is on; there is no daily grant and no
+      // refresh coming, so advertise neither (used clamps to 0 with cap 0) and
+      // emit the iOS design fixture's free-state combo instead — see
+      // REFILL_DISABLED_PERIOD_LABEL for the shipped-client rendering analysis.
+      const refillEnabled = cap > 0;
       const used = Math.max(0, cap - balanceCredits);
       const now = new Date();
       res.status(200).json({
         balance: balanceCredits,
         monthlyGrant: cap,
         monthlyGrantUsed: used,
-        nextRefreshAt: startOfNextUtcDay(now).toISOString(),
-        periodLabel: "Daily",
+        nextRefreshAt: refillEnabled
+          ? startOfNextUtcDay(now).toISOString()
+          : now.toISOString(),
+        periodLabel: refillEnabled ? "Daily" : REFILL_DISABLED_PERIOD_LABEL,
       });
       return;
     }

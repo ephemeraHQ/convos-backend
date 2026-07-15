@@ -10,10 +10,12 @@ import {
 import {
   forfeitSubscriptionPeriod,
   grantSubscriptionPeriod,
+  subGrantKey,
 } from "@/subscriptions/grants";
 import {
   effectiveSubscriptionStatus,
   ENTITLED_SUBSCRIPTION_STATUSES,
+  isEntitledSubscription,
   isEntitledSubscriptionStatus,
 } from "@/subscriptions/status";
 import {
@@ -376,8 +378,53 @@ export const upsertFromVerify = async (
       });
 
       if (existingReceipt) {
+        // Exact VERIFY replay — but do NOT return before the grant check.
+        // Subscribers who bought BEFORE the single-ledger deploy (#324) have a
+        // Subscription + BillingReceipt but no `sub_grant` ledger row for the
+        // period they are living in: their original verify predates the grant
+        // write. This short-circuit used to return here unconditionally, so a
+        // re-verify could never heal them — their wallet stayed unfunded (and
+        // could sit negative) until the next renewal. Instead, make re-verify a
+        // universal materializer: when the replayed subscription is entitled
+        // and this verify is not stale, backfill the CURRENT period's grant if
+        // its canonical `sub_grant` row is missing. `grantSubscriptionPeriod`
+        // is idempotent per (sub, periodStart) and lock-serialized, so a
+        // concurrent renewal/verify cannot double-grant; the pre-check below
+        // only avoids taking the wallet lock on the common already-granted
+        // replay. Replay semantics stay intact: receiptCreated stays false.
+        //
+        // The gate MUST be the TIME-AWARE `isEntitledSubscription` (the same
+        // helper credits-get uses), not the stored-status check: a replay can
+        // arrive long after the stored state went stale. Prod holds rows whose
+        // stored status is still `active`/`grace` because the terminal EXPIRED
+        // webhook was lost or delayed — their entitlement window has already
+        // elapsed, and effectiveSubscriptionStatus resolves them to `expired`.
+        // Backfilling a full period grant for such a LAPSED period would mint
+        // credits that credits-get simultaneously frames as free-tier state.
+        const replayed = existingReceipt.subscription;
+        const isStaleReplay =
+          input.currentPeriodEnd < replayed.currentPeriodEnd;
+        if (!isStaleReplay && isEntitledSubscription(replayed)) {
+          const currentPeriodGrant = await tx.creditLedger.findUnique({
+            where: {
+              accountId_idempotencyKey: {
+                accountId: replayed.accountId,
+                idempotencyKey: subGrantKey(
+                  replayed.id,
+                  replayed.currentPeriodStart,
+                ),
+              },
+            },
+          });
+          if (!currentPeriodGrant) {
+            await grantSubscriptionPeriod(tx, {
+              subscription: replayed,
+              periodStart: replayed.currentPeriodStart,
+            });
+          }
+        }
         return {
-          subscription: existingReceipt.subscription,
+          subscription: replayed,
           receiptCreated: false,
         };
       }
@@ -415,6 +462,16 @@ export const upsertFromVerify = async (
       // re-verify of the same period, or an S2S DID_RENEW racing this verify
       // all resolve to one row. Only grant when the verified state is
       // entitled and the verify is not a stale (out-of-order) replay.
+      //
+      // DELIBERATELY the stored-status gate here (unlike the time-aware gate
+      // on the replay backfill above): this status was just derived from the
+      // provider-verified input — deriveSubscriptionStatusFromTransaction
+      // already maps a past expiresDate to `expired`, so stored ≈ effective at
+      // this instant. The single-ledger contract is grant-then-forfeit: a
+      // fresh verify grants the period and an expiry webhook claws back the
+      // unused portion (pinned by account-credits.test.ts "past-ended active
+      // subscription … wallet credits persist until forfeit"). Switching this
+      // to the effective check would break that pinned semantic for nothing.
       if (!isStaleVerify && isEntitledSubscriptionStatus(subscription.status)) {
         const grantResult = await grantSubscriptionPeriod(tx, {
           subscription,
@@ -437,6 +494,10 @@ export const upsertFromVerify = async (
     //   - Subscription provider-unique → the documented cold-start race (two
     //     concurrent creates of the same provider sub). Benign idempotent
     //     replay: re-read the committed row.
+    //     - EXCEPT the Apple appAccountToken unique: the colliding row holds a
+    //       DIFFERENT originalTransactionId, so the OTX re-read below finds
+    //       nothing. That case gets its own (provider, appAccountToken)
+    //       re-read further down instead of falling through to the rethrow.
     //   - BillingReceipt idempotencyKey → two concurrent /verify calls for the
     //     same transaction raced past the `existingReceipt` pre-check above and
     //     both reached `billingReceipt.create`. The loser must ALSO resolve
@@ -464,6 +525,43 @@ export const upsertFromVerify = async (
           );
         }
         return { subscription: current, receiptCreated: false };
+      }
+
+      // reReadAfterRace resolves by OTX/purchaseToken only, so an
+      // appAccountToken-unique conflict re-read null here and used to fall
+      // through to the rethrow — a raw 500 to the user. That is the
+      // account-recreation path: iOS generates the appAccountToken per
+      // INSTALL, so it survives account deletion + recreation, and the
+      // recreated account's fresh purchase (NEW originalTransactionId)
+      // collides on the AAT unique with the OLD account's row. Resolve the
+      // conflict by the index that actually fired: re-read by
+      // (provider, appAccountToken) and surface the truthful outcome — the
+      // standard account-mismatch 409 when the holder is another account, or
+      // an idempotent replay when the caller already holds the row (mirrors
+      // the same-account branch above). Mismatch semantics are unchanged;
+      // only the crash becomes an honest 409.
+      if (
+        input.provider === BillingProvider.apple &&
+        isAppleAppAccountTokenConflict(err)
+      ) {
+        const holder = await prisma.subscription.findUnique({
+          where: {
+            subscription_apple_aat_unique: {
+              provider: BillingProvider.apple,
+              appAccountToken: input.appAccountToken,
+            },
+          },
+        });
+        if (holder) {
+          if (holder.accountId !== input.accountId) {
+            throw new SubscriptionAccountMismatchError(
+              holder.accountId,
+              input.accountId,
+              externalId,
+            );
+          }
+          return { subscription: holder, receiptCreated: false };
+        }
       }
     }
     throw err;
@@ -506,6 +604,31 @@ const isSubscriptionProviderUniqueConflict = (
     (t) =>
       SUBSCRIPTION_PROVIDER_UNIQUE_FIELDS.has(t) ||
       SUBSCRIPTION_PROVIDER_UNIQUE_INDEX_NAMES.has(t),
+  );
+};
+
+// The Apple (provider, appAccountToken) unique specifically — a SUBSET of the
+// provider-unique set above, needed because reReadAfterRace cannot resolve this
+// conflict: it re-reads by originalTransactionId, and the colliding row holds a
+// DIFFERENT one (account recreation reuses the per-install AAT with a fresh
+// purchase). Same target-shape tolerance as its siblings: the Postgres driver
+// surfaces the conflicting FIELD names in `err.meta.target`; some adapters
+// surface the index NAME instead.
+const isAppleAppAccountTokenConflict = (
+  err: Prisma.PrismaClientKnownRequestError,
+): boolean => {
+  if (err.meta?.modelName && err.meta.modelName !== "Subscription") {
+    return false;
+  }
+  const target = err.meta?.target;
+  const tokens =
+    typeof target === "string"
+      ? [target]
+      : Array.isArray(target)
+        ? target.map(String)
+        : [];
+  return tokens.some(
+    (t) => t === "appAccountToken" || t === "subscription_apple_aat_unique",
   );
 };
 

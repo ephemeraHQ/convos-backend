@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from "vitest";
 import { getBalance } from "@/payments";
+import { subGrantKey } from "@/subscriptions/grants";
 import {
   applyNotification,
   BillingProvider,
@@ -256,6 +257,88 @@ describe("upsertFromVerify", () => {
     expect(receiptB).toBeNull();
   });
 
+  // AAT-collision (account recreation): iOS generates the appAccountToken per
+  // INSTALL, so it survives account deletion + recreation. The recreated
+  // account's fresh purchase carries a NEW originalTransactionId, so
+  // findExistingForVerify sees no row, Subscription.create fires, and Postgres
+  // rejects it on the (provider, appAccountToken) unique held by the OLD
+  // account's row. This used to fall through reReadAfterRace (OTX-only re-read
+  // → null) to a raw rethrow — a 500 to the user. It must surface the standard
+  // account-mismatch (→ 409) instead.
+  test("same appAccountToken, different account + different OTX: account-mismatch, not a 500", async () => {
+    const accountA = await newAccount();
+    const accountB = await newAccount();
+    const aat = "cccccccc-cccc-cccc-cccc-cccccccccccc";
+
+    const first = await upsertFromVerify(
+      verifyInput({
+        accountId: accountA,
+        appAccountToken: aat,
+        originalTransactionId: "otid-aat-a",
+        transactionId: "tx-aat-a",
+      }),
+    );
+
+    let caught: unknown;
+    try {
+      await upsertFromVerify(
+        verifyInput({
+          accountId: accountB,
+          appAccountToken: aat,
+          originalTransactionId: "otid-aat-b",
+          transactionId: "tx-aat-b",
+        }),
+      );
+    } catch (err) {
+      caught = err;
+    }
+
+    expect(caught).toBeInstanceOf(SubscriptionAccountMismatchError);
+    const mismatch = caught as SubscriptionAccountMismatchError;
+    expect(mismatch.existingAccountId).toBe(accountA);
+    expect(mismatch.attemptedAccountId).toBe(accountB);
+    expect(mismatch.providerSubscriptionId).toBe("otid-aat-b");
+
+    // Account A keeps ownership; account B persisted nothing.
+    expect((await findCurrentByAccountId(accountA))?.id).toBe(
+      first.subscription.id,
+    );
+    expect(await findCurrentByAccountId(accountB)).toBeNull();
+    expect(await findAppleByOriginalTransactionId("otid-aat-b")).toBeNull();
+    expect(
+      await findReceiptByTransactionId(BillingProvider.apple, "tx-aat-b"),
+    ).toBeNull();
+  });
+
+  test("same appAccountToken, SAME account, different OTX: resolves idempotently to the existing row", async () => {
+    const accountId = await newAccount();
+    const aat = "dddddddd-dddd-dddd-dddd-dddddddddddd";
+
+    const first = await upsertFromVerify(
+      verifyInput({
+        accountId,
+        appAccountToken: aat,
+        originalTransactionId: "otid-aat-same-1",
+        transactionId: "tx-aat-same-1",
+      }),
+    );
+    // Same account re-purchasing under the same install token: the create
+    // loses on the AAT unique, and the caller already holds the row → replay
+    // semantics (mirrors the cold-start race resolution), not a crash.
+    const second = await upsertFromVerify(
+      verifyInput({
+        accountId,
+        appAccountToken: aat,
+        originalTransactionId: "otid-aat-same-2",
+        transactionId: "tx-aat-same-2",
+      }),
+    );
+    expect(second.receiptCreated).toBe(false);
+    expect(second.subscription.id).toBe(first.subscription.id);
+    // No double period grant either.
+    expect(await getBalance(accountId)).toBe(BigInt(perPeriod()));
+  });
+
   test("concurrent verifies, same accountId: exactly one creates the receipt, both return the same subscription", async () => {
     const accountId = await newAccount();
     const input = verifyInput({
@@ -316,6 +399,190 @@ describe("upsertFromVerify", () => {
       });
       expect(receipts).toHaveLength(1);
     }
+  });
+
+  // Verify-replay materializer: subscribers who bought BEFORE the single-ledger
+  // deploy (#324) have a Subscription + BillingReceipt but no `sub_grant` row
+  // for the period they are living in — the replay short-circuit used to return
+  // before the grant, so re-verify could never heal them. These tests pin the
+  // new behavior: a replayed verify backfills a MISSING current-period grant,
+  // and only that — no double-grant, no grant on stale replays, no grant for
+  // rows whose EFFECTIVE (time-aware) status is not entitled, including
+  // stored-`active` rows whose entitlement window already elapsed (lost
+  // EXPIRED webhook).
+  describe("replay materializes missing current-period grant", () => {
+    // The backfill gate is time-aware (`isEntitledSubscription`), so entitled
+    // fixtures need a period window that actually spans "now" — fixed calendar
+    // dates would silently lapse as the wall clock passes them.
+    const DAY = 24 * 60 * 60 * 1000;
+    const CURRENT_START = new Date(Date.now() - 5 * DAY);
+    const CURRENT_END = new Date(Date.now() + 25 * DAY);
+
+    // Simulate the pre-deploy state: subscription + receipt exist, but the
+    // period's sub_grant ledger row was never written (grants only started
+    // being written at deploy time). Deleting the row and unwinding its delta
+    // reproduces exactly that shape.
+    const stripPeriodGrant = async (
+      subscriptionId: string,
+      accountId: string,
+      periodStart: Date,
+    ) => {
+      const key = subGrantKey(subscriptionId, periodStart);
+      const row = await prisma.creditLedger.findUnique({
+        where: {
+          accountId_idempotencyKey: { accountId, idempotencyKey: key },
+        },
+      });
+      if (!row) return;
+      await prisma.creditLedger.delete({ where: { id: row.id } });
+      await prisma.userCredits.update({
+        where: { accountId },
+        data: { balance: { decrement: row.delta } },
+      });
+    };
+
+    const countSubGrants = (accountId: string) =>
+      prisma.creditLedger.count({
+        where: { accountId, grantKindId: "sub_grant" },
+      });
+
+    test("replayed verify backfills the missing grant (pre-deploy subscriber heals)", async () => {
+      const accountId = await newAccount();
+      const input = verifyInput({
+        accountId,
+        originalTransactionId: "otid-materialize",
+        transactionId: "tx-materialize",
+        currentPeriodStart: CURRENT_START,
+        currentPeriodEnd: CURRENT_END,
+      });
+      const first = await upsertFromVerify(input);
+      expect(await getBalance(accountId)).toBe(BigInt(perPeriod()));
+
+      await stripPeriodGrant(
+        first.subscription.id,
+        accountId,
+        first.subscription.currentPeriodStart,
+      );
+      expect(await getBalance(accountId)).toBe(0n);
+
+      const replay = await upsertFromVerify(input);
+      expect(replay.receiptCreated).toBe(false);
+      expect(replay.subscription.id).toBe(first.subscription.id);
+      // The missing period grant was materialized by the replay.
+      expect(await getBalance(accountId)).toBe(BigInt(perPeriod()));
+      expect(await countSubGrants(accountId)).toBe(1);
+      // Still exactly one receipt — replay semantics intact.
+      const receipts = await prisma.billingReceipt.findMany({
+        where: { transactionId: "tx-materialize" },
+      });
+      expect(receipts).toHaveLength(1);
+    });
+
+    test("replayed verify with the grant present does not double-grant", async () => {
+      const accountId = await newAccount();
+      const input = verifyInput({
+        accountId,
+        originalTransactionId: "otid-no-double",
+        transactionId: "tx-no-double",
+        currentPeriodStart: CURRENT_START,
+        currentPeriodEnd: CURRENT_END,
+      });
+      await upsertFromVerify(input);
+      const replay = await upsertFromVerify(input);
+      expect(replay.receiptCreated).toBe(false);
+      expect(await getBalance(accountId)).toBe(BigInt(perPeriod()));
+      expect(await countSubGrants(accountId)).toBe(1);
+    });
+
+    test("stale replay does not materialize the advanced period's grant", async () => {
+      const accountId = await newAccount();
+      const otid = "otid-stale-no-materialize";
+      const oldInput = verifyInput({
+        accountId,
+        originalTransactionId: otid,
+        transactionId: "tx-stale-old",
+        currentPeriodStart: new Date(CURRENT_START.getTime() - 30 * DAY),
+        currentPeriodEnd: CURRENT_START,
+      });
+      await upsertFromVerify(oldInput);
+      // Renewal advances the row to period 2 (spanning now) and grants it.
+      const renewed = await upsertFromVerify(
+        verifyInput({
+          accountId,
+          originalTransactionId: otid,
+          transactionId: "tx-stale-new",
+          currentPeriodStart: CURRENT_START,
+          currentPeriodEnd: CURRENT_END,
+        }),
+      );
+      expect(await getBalance(accountId)).toBe(BigInt(perPeriod() * 2));
+
+      // Remove period 2's grant, then replay the OLD transaction. Its period
+      // end predates the stored one → stale → must NOT backfill period 2.
+      await stripPeriodGrant(
+        renewed.subscription.id,
+        accountId,
+        renewed.subscription.currentPeriodStart,
+      );
+      const replay = await upsertFromVerify(oldInput);
+      expect(replay.receiptCreated).toBe(false);
+      expect(await getBalance(accountId)).toBe(BigInt(perPeriod()));
+      expect(await countSubGrants(accountId)).toBe(1);
+    });
+
+    test("replay of a non-entitled (expired) subscription does not grant", async () => {
+      const accountId = await newAccount();
+      const input = verifyInput({
+        accountId,
+        originalTransactionId: "otid-expired-replay",
+        transactionId: "tx-expired-replay",
+        status: SubscriptionStatus.expired,
+      });
+      await upsertFromVerify(input);
+      expect(await getBalance(accountId)).toBe(0n);
+      const replay = await upsertFromVerify(input);
+      expect(replay.receiptCreated).toBe(false);
+      expect(await getBalance(accountId)).toBe(0n);
+      expect(await countSubGrants(accountId)).toBe(0);
+    });
+
+    // Time-aware gate regression: a row whose STORED status is still `active`
+    // but whose currentPeriodEnd already passed (lost/delayed EXPIRED webhook
+    // — prod holds such rows) must NOT get a backfill for the lapsed period.
+    // effectiveSubscriptionStatus resolves it to `expired`; the stored-status
+    // check alone would have minted a full sub_grant that credits-get
+    // simultaneously frames as free-tier state.
+    test("stored-active row with an elapsed period: replay does NOT backfill the lapsed grant", async () => {
+      const accountId = await newAccount();
+      const input = verifyInput({
+        accountId,
+        originalTransactionId: "otid-lapsed-active",
+        transactionId: "tx-lapsed-active",
+        status: SubscriptionStatus.active,
+        currentPeriodStart: new Date(Date.now() - 35 * DAY),
+        currentPeriodEnd: new Date(Date.now() - 5 * DAY),
+      });
+      // The FRESH verify still grants (stored-status gate, provider-fresh
+      // input; forfeit-on-expiry is the reconciliation path) — pinned
+      // elsewhere by account-credits "past-ended active subscription".
+      const first = await upsertFromVerify(input);
+      expect(await getBalance(accountId)).toBe(BigInt(perPeriod()));
+
+      // Simulate the pre-deploy shape: the grant row is missing.
+      await stripPeriodGrant(
+        first.subscription.id,
+        accountId,
+        first.subscription.currentPeriodStart,
+      );
+      expect(await getBalance(accountId)).toBe(0n);
+
+      // Replay: NOT stale (same period), stored status entitled — but the
+      // effective status is expired, so the healer must refuse.
+      const replay = await upsertFromVerify(input);
+      expect(replay.receiptCreated).toBe(false);
+      expect(await getBalance(accountId)).toBe(0n);
+      expect(await countSubGrants(accountId)).toBe(0);
+    });
   });
 
   test("concurrent verifies, different accountId: exactly one wins, the other rejects with account-mismatch", async () => {
