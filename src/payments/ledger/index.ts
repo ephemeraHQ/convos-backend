@@ -1,6 +1,7 @@
 export {
   applyDelta,
   applyDeltaWithTx,
+  deleteWalletForAccountWithTx,
   findLedgerByIdempotencyKey,
   getBalance,
   getBucketedConsumption,

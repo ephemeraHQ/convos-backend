@@ -2,6 +2,7 @@ import type { Request, Response } from "express";
 import { z } from "zod";
 import { isIdentityBarred } from "@/accounts/deletion/barrier";
 import { upsertAuthMethodAndAccount } from "@/accounts/repository";
+import { requireLiveAccount } from "@/accounts/require-live-account";
 import { consumeNonce } from "@/api/v2/auth/auth-nonce.repository";
 import { InvalidSiweError, verifySiwe } from "@/api/v2/auth/handlers/siwe";
 import {
@@ -186,6 +187,10 @@ export async function generateToken(
     // valid one of the two — no torn writes).
     try {
       const count = await prisma.$transaction(async (tx) => {
+        // Account lock first (lock-order law: Account before the device
+        // row) — fences the backfill against a concurrent deletion of this
+        // account. AccountNotLiveError lands in the fail-soft catch below.
+        await requireLiveAccount(tx, upserted.accountId);
         // Acquire row-level lock; no-op if device row doesn't exist
         // (returns 0 rows, no lock taken, subsequent updateMany also 0).
         await tx.$queryRaw`

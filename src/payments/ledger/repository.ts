@@ -1,4 +1,5 @@
 import { Prisma, type CreditLedger, type LedgerReason } from "@prisma/client";
+import { requireLiveAccount } from "@/accounts/require-live-account";
 import { prisma } from "@/utils/prisma";
 import type { UsageBucket } from "../credits/usage-window";
 import { IdempotencyMismatchError } from "../errors";
@@ -198,6 +199,13 @@ const buildLedgerData = (input: ApplyDeltaInput, balanceAfter: bigint) => ({
  *
  * Does NOT handle the P2002 idempotent-replay path — that lives in `applyDelta`
  * because replay requires a fresh top-level read after the inner tx aborted.
+ *
+ * Lock order: the Account lock (requireLiveAccount, FOR KEY SHARE) is taken
+ * BEFORE the UserCredits row lock. Every writer that touches account-linked
+ * state acquires its Account lock as the first locking statement, so the
+ * account-deletion teardown (Account FOR UPDATE first) can never deadlock
+ * against a ledger writer holding UserCredits and waiting on Account. A
+ * deleted account surfaces as AccountNotLiveError instead of an FK violation.
  */
 export const applyDeltaWithTx = async (
   tx: TxClient,
@@ -205,6 +213,7 @@ export const applyDeltaWithTx = async (
 ): Promise<ApplyDeltaResult> => {
   assertIdempotencyKey(input.idempotencyKey);
 
+  await requireLiveAccount(tx, input.accountId);
   const before = await lockOrCreateBalance(tx, input.accountId);
   const after = before + input.delta;
 
@@ -273,6 +282,28 @@ export const applyDelta = async (
     }
     throw err;
   }
+};
+
+/**
+ * Account-deletion teardown helper: remove the account's ledger journal and
+ * wallet inside the deletion transaction. Lives inside src/payments/ledger/
+ * so the single-writer law (nothing outside this module touches UserCredits /
+ * CreditLedger) survives the deletion feature. This is row removal, not
+ * balance movement — the caller (the teardown) holds the Account FOR UPDATE
+ * lock, which fences every concurrent ledger writer at its Account lock.
+ *
+ * Retention note: full deletion of CreditLedger rows is the current retention
+ * default for deleted accounts (the provider-key tombstone is the retained
+ * billing trace). If the retention decision changes to pseudonymized
+ * preservation, this helper is the single place to swap.
+ */
+export const deleteWalletForAccountWithTx = async (
+  tx: TxClient,
+  accountId: string,
+): Promise<{ ledgerRows: number }> => {
+  const { count } = await tx.creditLedger.deleteMany({ where: { accountId } });
+  await tx.userCredits.deleteMany({ where: { accountId } });
+  return { ledgerRows: count };
 };
 
 export const getHistory = async (

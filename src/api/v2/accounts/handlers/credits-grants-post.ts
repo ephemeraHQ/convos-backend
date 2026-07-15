@@ -1,5 +1,6 @@
 import { Prisma } from "@prisma/client";
 import type { Request, Response } from "express";
+import { AccountNotLiveError } from "@/accounts/require-live-account";
 import {
   accountIdParamSchema,
   grantRequestSchema,
@@ -109,13 +110,16 @@ export const creditsGrantsPostHandler = async (
       return;
     }
     if (
-      err instanceof Prisma.PrismaClientKnownRequestError &&
-      // P2003 = Prisma model FK violation.
-      // P2010 wrapping PG SQLSTATE 23503 = same FK violation surfaced via $queryRaw
-      // (lockOrCreateBalance writes UserCredits with raw SQL).
-      (err.code === "P2003" ||
-        (err.code === "P2010" &&
-          (err.meta as { code?: string } | undefined)?.code === "23503"))
+      err instanceof AccountNotLiveError ||
+      (err instanceof Prisma.PrismaClientKnownRequestError &&
+        // AccountNotLiveError = the ledger's live-account fence found no
+        // Account row (the usual nonexistent/deleted-account path).
+        // P2003 = Prisma model FK violation.
+        // P2010 wrapping PG SQLSTATE 23503 = same FK violation surfaced via
+        // $queryRaw (lockOrCreateBalance writes UserCredits with raw SQL).
+        (err.code === "P2003" ||
+          (err.code === "P2010" &&
+            (err.meta as { code?: string } | undefined)?.code === "23503")))
     ) {
       req.log.warn({ accountId }, "credits.grant.account_not_found");
       res.status(404).json({ code: "account_not_found" });

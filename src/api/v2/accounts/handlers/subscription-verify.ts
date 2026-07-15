@@ -4,6 +4,7 @@ import {
 } from "@apple/app-store-server-library";
 import type { Request, Response } from "express";
 import { z } from "zod";
+import { AccountNotLiveError } from "@/accounts/require-live-account";
 import { evaluateClaimable } from "@/subscriptions/claim-eligibility";
 import {
   acknowledgePurchase,
@@ -461,6 +462,13 @@ export async function subscriptionVerifyHandler(req: Request, res: Response) {
         code: "subscription_account_mismatch",
         claimable,
       });
+      return;
+    }
+    if (error instanceof AccountNotLiveError) {
+      // Caller's account was deleted between requireAccount and the verify
+      // transaction. Generic 401 like every fail-closed route.
+      req.log.warn({ accountId }, "subscription.verify.account_not_live");
+      res.status(401).json({ error: "Unauthorized" });
       return;
     }
     if (error instanceof SubscriptionTombstonedError) {

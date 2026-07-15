@@ -8,6 +8,10 @@ import {
   type SubscriptionPeriod,
 } from "@prisma/client";
 import {
+  AccountNotLiveError,
+  requireLiveAccount,
+} from "@/accounts/require-live-account";
+import {
   forfeitSubscriptionPeriod,
   grantSubscriptionPeriod,
 } from "@/subscriptions/grants";
@@ -364,6 +368,11 @@ export const upsertFromVerify = async (
   const externalId = providerSubscriptionId(input);
   try {
     return await prisma.$transaction(async (tx) => {
+      // Account lock first (lock-order law: Account before any other row) —
+      // fences this verify against a concurrent deletion of the caller's
+      // account and keeps the global lock order deadlock-free.
+      await requireLiveAccount(tx, input.accountId);
+
       const existing = await findExistingForVerify(tx, input);
 
       if (existing && existing.accountId !== input.accountId) {
@@ -714,6 +723,13 @@ export const applyNotification = async (
 
   try {
     return await prisma.$transaction(async (tx) => {
+      // Account lock first (lock-order law: Account before Subscription /
+      // UserCredits rows). A teardown holding the Account FOR UPDATE makes
+      // this throw AccountNotLiveError, converged below to a tombstone
+      // probe — and a notification already past this lock blocks the
+      // teardown until it commits, so neither side can deadlock.
+      await requireLiveAccount(tx, subscription.accountId);
+
       await tx.billingReceipt.create({
         data: {
           subscriptionId: subscription.id,
@@ -789,6 +805,13 @@ export const applyNotification = async (
       return { kind: "applied" as const, subscription: updated };
     });
   } catch (err) {
+    if (err instanceof AccountNotLiveError) {
+      // The owning account was deleted between the pre-tx lookup and the
+      // Account lock. Same convergence as delete-then-notify.
+      const tombstoned = await notificationTombstoneProbe(input);
+      if (tombstoned) return tombstoned;
+      return { kind: "unknown_subscription" };
+    }
     if (err instanceof Prisma.PrismaClientKnownRequestError) {
       if (err.code === "P2002") {
         const current = await prisma.subscription.findUnique({

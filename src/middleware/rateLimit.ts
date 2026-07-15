@@ -88,6 +88,34 @@ export const buildAttachmentPresignedLimiter = rateLimit({
   },
 });
 
+// Account deletion (DELETE /v2/accounts/me): destructive and cheap to call.
+// Two stacked limiters — 5 per 15 minutes per IP and 5 per 15 minutes per
+// account — so neither a single IP fanning out across stolen tokens nor a
+// single account hammered through proxies escapes the cap. Server-tunable,
+// not client-contractual.
+const accountDeletionLimiterConfig = {
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  limit: 5,
+  legacyHeaders: false,
+  standardHeaders: "draft-8" as const,
+  message: {
+    error: "Too many account deletion requests, please try again later",
+  },
+};
+
+export const accountDeletionIpLimiter = rateLimit({
+  ...accountDeletionLimiterConfig,
+  keyGenerator: (req) => req.ip || "unknown",
+});
+
+export const accountDeletionAccountLimiter = rateLimit({
+  ...accountDeletionLimiterConfig,
+  keyGenerator: (req, res) =>
+    (res as { locals?: { accountId?: string } }).locals?.accountId ||
+    req.ip ||
+    "unknown",
+});
+
 // Rate limiting for invite code redemption (5 attempts per 15 minutes per IP)
 export const inviteCodeRedeemLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes

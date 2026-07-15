@@ -1,5 +1,10 @@
 import { Router } from "express";
 import { requireAccount } from "@/middleware/auth";
+import {
+  accountDeletionAccountLimiter,
+  accountDeletionIpLimiter,
+} from "@/middleware/rateLimit";
+import { accountDeleteHandler } from "./handlers/account-delete";
 import { creditsGetHandler } from "./handlers/credits-get";
 import { subscriptionGetHandler } from "./handlers/subscription-get";
 import { subscriptionVerifyHandler } from "./handlers/subscription-verify";
@@ -18,4 +23,14 @@ accountsMeRouter.post(
   "/subscription/verify",
   requireAccount,
   subscriptionVerifyHandler,
+);
+// Account deletion. Deliberately not behind requireAccount: the handler owns
+// an endpoint-specific auth carve-out so an unexpired pre-deletion token can
+// re-read the stored deletion record (idempotent retry) after the account
+// row is gone. See the handler doc comment.
+accountsMeRouter.delete(
+  "/",
+  accountDeletionIpLimiter,
+  accountDeletionAccountLimiter,
+  accountDeleteHandler,
 );
