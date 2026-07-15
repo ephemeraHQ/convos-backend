@@ -74,5 +74,8 @@ describe("credits-admin page (console shell)", () => {
     expect(res.text).toContain('value="grantKind"');
     expect(res.text).toContain('id="accounts-table"');
     expect(res.text).toContain("loadAccounts");
+    // setView() retitles this per view; pins the element's existence only —
+    // the label swap itself is runtime behaviour a string assertion can't reach.
+    expect(res.text).toContain('id="center-title"');
   });
 });

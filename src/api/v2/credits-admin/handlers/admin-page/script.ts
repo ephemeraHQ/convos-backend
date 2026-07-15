@@ -122,12 +122,21 @@ export const clientScript = (): string => `
     return qs;
   }
   var accountsPageNo=0;
+  var userListCols=[["Account",function(r){return shortId(r.accountId);}],["Balance",function(r){return fmtCredits(r.balanceCredits);}],["Last consume",function(r){return fmtDate(r.lastConsumeAt);}]];
   var accountCols={
     balance:[["Account",function(r){return shortId(r.accountId);}],["Balance",function(r){return fmtCredits(r.balanceCredits);}]],
     broken:[["Account",function(r){return shortId(r.accountId);}],["Balance",function(r){return fmtCredits(r.balanceCredits);}],["Tier",function(r){return r.tier||"—";}],["Status",function(r){return r.effectiveStatus||"—";}]],
     grantKind:[["Account",function(r){return shortId(r.accountId);}],["Balance",function(r){return fmtCredits(r.balanceCredits);}],["Latest grant",function(r){return fmtDate(r.latestGrantAt);}]],
-    active:[["Account",function(r){return shortId(r.accountId);}],["Balance",function(r){return fmtCredits(r.balanceCredits);}],["Last consume",function(r){return fmtDate(r.lastConsumeAt);}]],
-    dormant:[["Account",function(r){return shortId(r.accountId);}],["Balance",function(r){return fmtCredits(r.balanceCredits);}],["Last consume",function(r){return fmtDate(r.lastConsumeAt);}]]
+    active:userListCols,
+    dormant:userListCols
+  };
+  var viewTitles={
+    activity:"Recent admin activity",
+    balance:"Accounts by balance",
+    broken:"Broken subscribers",
+    grantKind:"Accounts by grant kind",
+    active:"Active users",
+    dormant:"Dormant users"
   };
   function renderAccountRows(rows, view, append){
     var cols=accountCols[view];
@@ -158,6 +167,7 @@ export const clientScript = (): string => `
   function setView(view){
     currentView=view;
     showModeControls(view);
+    el("center-title").textContent=viewTitles[view];
     var isActivity = view==="activity";
     el("activity-table").parentNode.classList.toggle("hidden", !isActivity);
     accountsPage().classList.toggle("hidden", isActivity);
