@@ -12,6 +12,7 @@ import {
   executeClaim,
   type ClaimSubscriptionSeed,
 } from "@/subscriptions/claim";
+import { isGoogleClaimEnabled } from "@/subscriptions/claim-flags";
 import {
   fetchSubscriptionPurchaseV2,
   type SubscriptionPurchaseV2,
@@ -25,6 +26,7 @@ import {
 import { verifyAndDecodeTransaction } from "@/subscriptions/jws-verifier";
 import {
   LineageUnresolvedError,
+  quarantineLineageToken,
   resolveOrCreateAppleLineage,
   resolveOrCreateGoogleLineage,
 } from "@/subscriptions/lineage";
@@ -146,6 +148,8 @@ const ENTITLED_APPLE_STATUSES = new Set([1, 4]);
 type VerifiedProof = {
   lineageId: string;
   currentPeriodStart: Date;
+  /** Exact funding-event key of the provider-verified current period. */
+  providerPeriodKey: string;
   seed: ClaimSubscriptionSeed;
   proofMetadata: Record<string, string>;
 };
@@ -241,6 +245,9 @@ const verifyAppleProof = async (
   return {
     lineageId,
     currentPeriodStart,
+    // The presented artifact equals Apple's latest transaction (checked
+    // above), so its transactionId names the current funding event.
+    providerPeriodKey: `apple_txn_${transactionId}`,
     seed: {
       provider: BillingProvider.apple,
       productId,
@@ -281,6 +288,20 @@ const verifyPlayProof = async (
     status === SubscriptionStatus.grace ||
     status === SubscriptionStatus.trial;
   if (!entitled) return { status: 409, reason: "not_entitled" };
+  if (!purchase.latestOrderId) {
+    // No funding-event identity: fail closed, same rule as verify/RTDN —
+    // park for reconciliation and reject retryably. A keyless claim would
+    // otherwise reach restoration with no exact escrow key.
+    await quarantineLineageToken(
+      BillingProvider.googlePlay,
+      body.purchaseToken,
+      "missing_latest_order_id",
+      { source: "claim" },
+    );
+    req.log.error({}, "subscription.claim.play_missing_order_id_parked");
+    return { status: 409, reason: "lineage_unresolved" };
+  }
+  const playOrderId = purchase.latestOrderId;
 
   const { tier, period } = productMapping(fetchedProductId);
   const window = extractPeriodWindow(purchase);
@@ -300,6 +321,7 @@ const verifyPlayProof = async (
   return {
     lineageId,
     currentPeriodStart: window.currentPeriodStart,
+    providerPeriodKey: `play_order_${playOrderId}`,
     seed: {
       provider: BillingProvider.googlePlay,
       productId: fetchedProductId,
@@ -320,7 +342,7 @@ const verifyPlayProof = async (
     },
     proofMetadata: {
       purchaseToken: body.purchaseToken,
-      orderId: purchase.latestOrderId ?? "",
+      orderId: playOrderId,
     },
   };
 };
@@ -437,6 +459,21 @@ export async function subscriptionClaimHandler(req: Request, res: Response) {
     return;
   }
 
+  // Provider scope: the product is Apple-only today, so Google claims and
+  // restorations ship disabled behind their own flag. Rejected before any
+  // provider call, with contract not-claimable semantics. Verify/RTDN ingest
+  // and the Google money accounting stay fully on — only the claim surface
+  // is gated.
+  if (parsed.data.platform === "googlePlay" && !isGoogleClaimEnabled()) {
+    req.log.warn({}, "subscription.claim.google_provider_disabled");
+    res.status(409).json({
+      error: "Subscription cannot be claimed",
+      code: "subscription_claim_rejected",
+      reason: "transfer_frozen",
+    });
+    return;
+  }
+
   try {
     const proof =
       parsed.data.platform === "apple"
@@ -455,6 +492,7 @@ export async function subscriptionClaimHandler(req: Request, res: Response) {
       callerAccountId: accountId,
       lineageId: proof.lineageId,
       currentPeriodStart: proof.currentPeriodStart,
+      providerPeriodKey: proof.providerPeriodKey,
       subscriptionSeed: proof.seed,
       providerProof: proof.proofMetadata,
     });

@@ -1,5 +1,6 @@
 import type { BillingProvider } from "@prisma/client";
 import {
+  isGoogleClaimEnabled,
   isLiveTransferEnabled,
   SUBSCRIPTION_CLAIM_COOLDOWN_DAYS,
 } from "@/subscriptions/claim-flags";
@@ -22,6 +23,10 @@ export const evaluateClaimable = async (args: {
   /** Candidate provider keys (current + rotation predecessor when known). */
   keys: Array<string | null | undefined>;
 }): Promise<boolean> => {
+  // Provider scope: Google claims ship disabled (Apple-only product today).
+  if (args.provider === "googlePlay" && !isGoogleClaimEnabled()) {
+    return false;
+  }
   const lineageId = await resolveLineageId(prisma, args.provider, args.keys);
   if (!lineageId) return false;
   const lineage = await prisma.subscriptionLineage.findUnique({

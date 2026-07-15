@@ -106,6 +106,10 @@ export const executeClaim = async (args: {
   lineageId: string;
   /** Provider-verified current period window (authoritative lookup). */
   currentPeriodStart: Date;
+  /** Exact funding-event key of the provider-verified current period
+   *  (apple_txn_<latest transactionId> / play_order_<latestOrderId>).
+   *  Restoration releases only this event's escrow. */
+  providerPeriodKey: string;
   /** Fresh Subscription row fields for the restoration path. */
   subscriptionSeed: ClaimSubscriptionSeed;
   providerProof: Prisma.InputJsonValue;
@@ -330,6 +334,8 @@ const restoreTombstonedLineage = async (
   args: {
     callerAccountId: string;
     currentPeriodStart: Date;
+    /** Exact funding-event key of the provider-verified current period. */
+    providerPeriodKey: string;
     subscriptionSeed: ClaimSubscriptionSeed;
     providerProof: Prisma.InputJsonValue;
   },
@@ -361,17 +367,32 @@ const restoreTombstonedLineage = async (
   });
 
   // Restoration = escrow release, not a grant: the period's funding-registry
-  // row already exists. Release only the custody row covering the provider-
-  // verified current period; stale escrow rows release nothing.
+  // row already exists. Release ONLY the escrow row for the provider-verified
+  // current funding event, selected by its exact provider period key
+  // (apple_txn_<latest tx> / play_order_<latestOrderId>) — never by window
+  // arithmetic: Google reports the lifetime startTime as the period start,
+  // so an old period's escrow can "cover" that timestamp while the current
+  // period's escrow does not. The window fallback applies only to custody
+  // bootstrapped from pre-lineage periods (legacy_ keys, which no provider
+  // event can name). Stale escrow rows release nothing and past ones are
+  // exhausted.
   const escrows = await tx.lineagePeriodCustody.findMany({
     where: { lineageId: ctx.lineageId, state: CUSTODY_STATE_ESCROW },
   });
+  const releaseTarget =
+    escrows.find(
+      (custody) => custody.providerPeriodKey === args.providerPeriodKey,
+    ) ??
+    escrows.find(
+      (custody) =>
+        custody.providerPeriodKey.startsWith("legacy_") &&
+        custody.periodStart.getTime() <= args.currentPeriodStart.getTime() &&
+        custody.periodEnd.getTime() > args.currentPeriodStart.getTime(),
+    ) ??
+    null;
   let released = 0n;
   for (const custody of escrows) {
-    const coversCurrent =
-      custody.periodStart.getTime() <= args.currentPeriodStart.getTime() &&
-      custody.periodEnd.getTime() > args.currentPeriodStart.getTime();
-    if (coversCurrent) {
+    if (releaseTarget && custody.id === releaseTarget.id) {
       released += await releaseCustody(tx, ctx, {
         custody,
         toAccountId: args.callerAccountId,

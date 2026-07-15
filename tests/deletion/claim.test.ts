@@ -165,7 +165,10 @@ const appleInput = (
 /** Verify + delete the owner, leaving a tombstoned lineage with escrow. */
 const tombstoneViaDeletion = async (otx: string) => {
   const owner = await newAccount();
-  await upsertFromVerify(appleInput(owner, otx));
+  // The funding transaction is the same one the claim later presents as
+  // Apple's latest (no renewal in between), so restoration's exact
+  // provider-period-key match applies.
+  await upsertFromVerify(appleInput(owner, otx, { transactionId: otx }));
   const { deleteAccount } = await import("@/accounts/deletion/service");
   const outcome = await deleteAccount({
     accountId: owner,

@@ -19,6 +19,18 @@ export const isTombstoneClaimEnabled = (): boolean =>
 export const isLiveTransferEnabled = (): boolean =>
   flag("SUBSCRIPTION_CLAIM_LIVE_TRANSFER_ENABLED", false);
 
+/**
+ * Provider scope for the claim surface. The product is Apple-only today
+ * (no Android app), so Google claims/restorations ship DISABLED behind
+ * their own flag: the endpoint rejects googlePlay bodies with contract
+ * not-claimable semantics before any provider call, and verify's
+ * `claimable` signal stays false for Google lineages. Verify/RTDN ingest
+ * and the Google money accounting (grants, custody, escrow, voids) remain
+ * fully on so the books stay correct whichever day the flag flips.
+ */
+export const isGoogleClaimEnabled = (): boolean =>
+  flag("SUBSCRIPTION_CLAIM_GOOGLE_ENABLED", false);
+
 export const claimContestWindowHours = (): number => {
   const raw = process.env.CLAIM_CONTEST_WINDOW_HOURS?.trim();
   if (!raw) return 72;

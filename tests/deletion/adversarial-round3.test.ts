@@ -206,7 +206,10 @@ const appleInput = (
   period: SubscriptionPeriod.monthly,
   status: SubscriptionStatus.active,
   originalTransactionId: otx,
-  transactionId: `tx-${otx}`,
+  // Same id the claim JWS presents as Apple's latest transaction: the
+  // funding event and the claim proof name the same charge, as in
+  // production when no renewal happened in between.
+  transactionId: otx,
   startedAt: PERIOD_START,
   currentPeriodStart: PERIOD_START,
   currentPeriodEnd: PERIOD_END,
