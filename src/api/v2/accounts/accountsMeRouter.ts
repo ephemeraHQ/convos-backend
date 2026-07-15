@@ -3,9 +3,16 @@ import { requireAccount } from "@/middleware/auth";
 import {
   accountDeletionAccountLimiter,
   accountDeletionIpLimiter,
+  subscriptionClaimAccountLimiter,
+  subscriptionClaimGlobalLimiter,
+  subscriptionClaimIpLimiter,
 } from "@/middleware/rateLimit";
 import { accountDeleteHandler } from "./handlers/account-delete";
 import { creditsGetHandler } from "./handlers/credits-get";
+import {
+  claimAppCheckMiddleware,
+  subscriptionClaimHandler,
+} from "./handlers/subscription-claim";
 import { subscriptionGetHandler } from "./handlers/subscription-get";
 import { subscriptionVerifyHandler } from "./handlers/subscription-verify";
 
@@ -23,6 +30,18 @@ accountsMeRouter.post(
   "/subscription/verify",
   requireAccount,
   subscriptionVerifyHandler,
+);
+// Explicit one-time subscription ownership claim. Fail-closed requireAccount
+// (claims into the caller's live account only) plus a mandatory, consumed
+// App Check attestation before any provider call.
+accountsMeRouter.post(
+  "/subscription/claim",
+  subscriptionClaimIpLimiter,
+  subscriptionClaimAccountLimiter,
+  subscriptionClaimGlobalLimiter,
+  requireAccount,
+  claimAppCheckMiddleware,
+  subscriptionClaimHandler,
 );
 // Account deletion. Deliberately not behind requireAccount: the handler owns
 // an endpoint-specific auth carve-out so an unexpired pre-deletion token can

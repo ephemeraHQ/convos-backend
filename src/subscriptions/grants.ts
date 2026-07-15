@@ -1,5 +1,7 @@
 import { LedgerReason, type Prisma, type Subscription } from "@prisma/client";
 import { applyDeltaWithTx, lockUserCreditsBalance } from "@/payments/ledger";
+import { createHeldCustody } from "@/subscriptions/custody";
+import type { LineageLockContext } from "@/subscriptions/lineage";
 import { tierGrant } from "@/subscriptions/tier-config";
 import { requireSubscriptionTier } from "@/subscriptions/tiers";
 
@@ -64,7 +66,7 @@ const findLedgerRow = (
  * each consume with its funding bucket — over-engineering for n=1 and tracked as
  * a follow-up if subscription volume grows.
  */
-const sumConsumesSince = async (
+export const sumConsumesSince = async (
   tx: TxClient,
   accountId: string,
   since: Date,
@@ -99,20 +101,43 @@ export type GrantSubscriptionPeriodResult =
   | { kind: "skipped_nonpositive" };
 
 /**
+ * Lineage context for the global once-per-period funding registry. When
+ * provided (verify/notification paths that hold the lineage lock), the grant
+ * additionally writes the LineagePeriodGrant registry row and the held
+ * custody row, and enforces the new-period gate: a funding event whose
+ * period window does not advance past the last funded period (e.g. a
+ * mid-period upgrade minting a new transactionId) records nothing and grants
+ * nothing.
+ */
+export type GrantLineageContext = {
+  ctx: LineageLockContext;
+  /** Provider funding-event key: apple_txn_<id> / play_order_<id>. */
+  providerPeriodKey: string;
+  periodEnd: Date;
+};
+
+/**
  * Write the per-period subscription allotment as a real `grant` ledger row,
- * idempotent on `sub_grant:{subscription.id}:{periodStartEpoch}`. Safe to call
- * from the verify path and the renewal-notification path; a webhook retry, an
- * Apple S2S DID_RENEW racing the iOS /verify for the same period, or a
- * re-verify all resolve to the same key and no-op.
+ * idempotent on `sub_grant:{subscription.id}:{periodStartEpoch}` per account
+ * and — when lineage context is provided — once per provider funding event
+ * globally (LineagePeriodGrant). Safe to call from the verify path and the
+ * renewal-notification path; a webhook retry, an Apple S2S DID_RENEW racing
+ * the iOS /verify for the same period, or a re-verify all resolve to the
+ * same keys and no-op.
  *
- * Runs inside the caller's transaction. The key is derived from the internal
- * stable `subscription.id` (NOT a provider token — Play rotates purchaseToken).
+ * Runs inside the caller's transaction. The account key is derived from the
+ * internal stable `subscription.id` (NOT a provider token — Play rotates
+ * purchaseToken).
  */
 export const grantSubscriptionPeriod = async (
   tx: TxClient,
-  args: { subscription: Subscription; periodStart: Date },
+  args: {
+    subscription: Subscription;
+    periodStart: Date;
+    lineage?: GrantLineageContext;
+  },
 ): Promise<GrantSubscriptionPeriodResult> => {
-  const { subscription, periodStart } = args;
+  const { subscription, periodStart, lineage } = args;
   const credits = tierGrant(
     requireSubscriptionTier(subscription.tier),
     subscription.period,
@@ -122,6 +147,36 @@ export const grantSubscriptionPeriod = async (
   }
 
   const idempotencyKey = subGrantKey(subscription.id, periodStart);
+
+  if (lineage) {
+    // Global funding-registry dedupe: this provider event (or any event that
+    // already funded this or a later period) means no new allotment,
+    // whichever account carried it at the time.
+    const registryHit = await tx.lineagePeriodGrant.findUnique({
+      where: {
+        lineageId_providerPeriodKey: {
+          lineageId: lineage.ctx.lineageId,
+          providerPeriodKey: lineage.providerPeriodKey,
+        },
+      },
+    });
+    if (registryHit) {
+      return { kind: "replayed" };
+    }
+    // New-period gate: grant only when the window advances beyond every
+    // funded period (upgrade/proration: new event id, same window -> no
+    // grant, no custody change; tier applies from the next funded period).
+    const newerFunded = await tx.lineagePeriodCustody.findFirst({
+      where: {
+        lineageId: lineage.ctx.lineageId,
+        periodStart: { gte: periodStart },
+      },
+      select: { id: true },
+    });
+    if (newerFunded) {
+      return { kind: "replayed" };
+    }
+  }
 
   // Serialize same-account ledger writers BEFORE the pre-check (mirrors the lock
   // the forfeit path takes). Without it, two concurrent same-(sub, period)
@@ -148,6 +203,24 @@ export const grantSubscriptionPeriod = async (
     grantKindId: "sub_grant",
     note: `subscription ${subscription.id} period ${periodStart.toISOString()}`,
   });
+
+  if (lineage) {
+    await tx.lineagePeriodGrant.create({
+      data: {
+        lineageId: lineage.ctx.lineageId,
+        providerPeriodKey: lineage.providerPeriodKey,
+        accountId: subscription.accountId,
+        ledgerKey: idempotencyKey,
+      },
+    });
+    await createHeldCustody(tx, lineage.ctx, {
+      providerPeriodKey: lineage.providerPeriodKey,
+      ownerAccountId: subscription.accountId,
+      credits: BigInt(credits),
+      periodStart,
+      periodEnd: lineage.periodEnd,
+    });
+  }
 
   return { kind: "granted", credits, subscription };
 };

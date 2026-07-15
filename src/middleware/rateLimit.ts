@@ -116,6 +116,45 @@ export const accountDeletionAccountLimiter = rateLimit({
     "unknown",
 });
 
+// Subscription claim (POST /v2/accounts/me/subscription/claim): ownership-
+// moving, so tight per-account and per-IP caps plus a global claims-per-hour
+// ceiling (limited-use App Check tokens carry no stable instance id, so the
+// global ceiling substitutes for per-instance limits; hitting it is an ops
+// alert via the 429 logs).
+const subscriptionClaimLimiterConfig = {
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  limit: 10,
+  legacyHeaders: false,
+  standardHeaders: "draft-8" as const,
+  message: {
+    error: "Too many subscription claim requests, please try again later",
+  },
+};
+
+export const subscriptionClaimIpLimiter = rateLimit({
+  ...subscriptionClaimLimiterConfig,
+  keyGenerator: (req) => req.ip || "unknown",
+});
+
+export const subscriptionClaimAccountLimiter = rateLimit({
+  ...subscriptionClaimLimiterConfig,
+  keyGenerator: (req, res) =>
+    (res as { locals?: { accountId?: string } }).locals?.accountId ||
+    req.ip ||
+    "unknown",
+});
+
+export const subscriptionClaimGlobalLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000, // 1 hour
+  limit: 200,
+  keyGenerator: () => "subscription-claim-global",
+  legacyHeaders: false,
+  standardHeaders: "draft-8",
+  message: {
+    error: "Too many subscription claim requests, please try again later",
+  },
+});
+
 // Rate limiting for invite code redemption (5 attempts per 15 minutes per IP)
 export const inviteCodeRedeemLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes

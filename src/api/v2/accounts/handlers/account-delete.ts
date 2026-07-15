@@ -6,6 +6,7 @@ import {
   type DeletionOutcome,
 } from "@/accounts/deletion/service";
 import { accountIdSchema } from "@/utils/account-id";
+import { getRuntimeConfig } from "@/utils/runtimeConfig";
 
 const bodySchema = z.object({
   operationId: z.string().uuid(),
@@ -34,6 +35,19 @@ const serializeOutcome = (outcome: DeletionOutcome) => ({
  * mismatch).
  */
 export async function accountDeleteHandler(req: Request, res: Response) {
+  // Ops kill switch (RuntimeConfig, no redeploy needed): covers the rolling-
+  // deploy window where some replicas may not yet run the tombstone-aware
+  // verify/webhook code, and any emergency rollback.
+  const deletionEnabled =
+    (await getRuntimeConfig("account_deletion_enabled", "true")) === "true";
+  if (!deletionEnabled) {
+    req.log.warn({}, "account.delete.disabled");
+    res
+      .status(503)
+      .json({ error: "Account deletion is temporarily unavailable" });
+    return;
+  }
+
   const accountIdParse = accountIdSchema.safeParse(res.locals.accountId);
   if (!accountIdParse.success) {
     req.log.warn(

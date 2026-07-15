@@ -186,7 +186,11 @@ const wipe = async () => {
   await prisma.deletionTask.deleteMany();
   await prisma.deletionRecord.deleteMany();
   await prisma.deletedIdentity.deleteMany();
-  await prisma.subscriptionTombstone.deleteMany();
+  await prisma.subscriptionTransfer.deleteMany();
+  await prisma.lineagePeriodCustody.deleteMany();
+  await prisma.lineagePeriodGrant.deleteMany();
+  await prisma.lineageTokenAlias.deleteMany();
+  await prisma.subscriptionLineage.deleteMany();
   await prisma.adminAudit.deleteMany();
   await prisma.clientIdentifier.deleteMany();
   await prisma.deviceRegistration.deleteMany();
@@ -272,18 +276,25 @@ describe("DELETE /v2/accounts/me", () => {
       1,
     );
 
-    // Barrier + tombstone + record + outbox.
+    // Barrier + tombstoned lineage (with escrowed custody) + record + outbox.
     expect(await isIdentityBarred("SIWE", address)).toBe(true);
-    const tombstone = await prisma.subscriptionTombstone.findUnique({
+    const lineage = await prisma.subscriptionLineage.findUnique({
       where: {
-        provider_providerKey: {
+        provider_lineageKey: {
           provider: BillingProvider.apple,
-          providerKey: `otx-${accountId}`,
+          lineageKey: `otx-${accountId}`,
         },
       },
     });
-    expect(tombstone).not.toBeNull();
-    expect(tombstone?.accountRef).toBe(hashAccountRef(accountId));
+    expect(lineage?.state).toBe("tombstoned");
+    expect(lineage?.deletedAccountRef).toBe(hashAccountRef(accountId));
+    const escrow = await prisma.lineagePeriodCustody.findFirst({
+      where: { lineageId: lineage?.id ?? "", state: "escrow" },
+    });
+    expect(escrow).not.toBeNull();
+    expect(escrow?.ownerAccountId).toBeNull();
+    // The full untouched allotment (2500 test credits) went to escrow.
+    expect(escrow?.remainderCap).toBe(2500n);
 
     const record = await prisma.deletionRecord.findUnique({
       where: { operationId },

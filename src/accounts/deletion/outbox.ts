@@ -1,5 +1,6 @@
 import { getDeletionExecutor } from "@/accounts/deletion/executors";
 import { PURGE_WINDOW_HOURS } from "@/accounts/deletion/service";
+import { settlePendingTransfers } from "@/subscriptions/claim";
 import logger from "@/utils/logger";
 import { prisma } from "@/utils/prisma";
 
@@ -204,6 +205,12 @@ export const runDeletionOutboxSweep = async (): Promise<void> => {
     await expireDeletionRecords();
   } catch (err) {
     logger.error({ err }, "deletion.outbox.expiry_pass_failed");
+  }
+  try {
+    // Live-tier claim contest windows settle on the same tick.
+    await settlePendingTransfers();
+  } catch (err) {
+    logger.error({ err }, "deletion.outbox.pending_transfer_pass_failed");
   }
 };
 

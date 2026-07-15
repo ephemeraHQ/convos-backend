@@ -4,7 +4,8 @@ import { afterEach, describe, expect, test } from "vitest";
 import { prisma } from "@/utils/prisma";
 
 async function reset() {
-  await prisma.subscriptionTombstone.deleteMany();
+  await prisma.lineageTokenAlias.deleteMany();
+  await prisma.subscriptionLineage.deleteMany();
   await prisma.deletionTask.deleteMany();
   await prisma.deletionRecord.deleteMany();
   await prisma.deletedIdentity.deleteMany();
@@ -20,31 +21,19 @@ describe("account-deletion schema", () => {
     ).rejects.toMatchObject({ code: "P2002" });
   });
 
-  test("SubscriptionTombstone is unique per (provider, providerKey)", async () => {
-    await prisma.subscriptionTombstone.create({
-      data: {
-        provider: BillingProvider.apple,
-        providerKey: "otx-1",
-        accountRef: "ref-a",
-      },
+  test("SubscriptionLineage is unique per (provider, lineageKey)", async () => {
+    await prisma.subscriptionLineage.create({
+      data: { provider: BillingProvider.apple, lineageKey: "otx-1" },
     });
     await expect(
-      prisma.subscriptionTombstone.create({
-        data: {
-          provider: BillingProvider.apple,
-          providerKey: "otx-1",
-          accountRef: "ref-b",
-        },
+      prisma.subscriptionLineage.create({
+        data: { provider: BillingProvider.apple, lineageKey: "otx-1" },
       }),
     ).rejects.toMatchObject({ code: "P2002" });
-    // The same key under the other provider is a distinct tombstone.
+    // The same key under the other provider is a distinct lineage.
     await expect(
-      prisma.subscriptionTombstone.create({
-        data: {
-          provider: BillingProvider.googlePlay,
-          providerKey: "otx-1",
-          accountRef: "ref-a",
-        },
+      prisma.subscriptionLineage.create({
+        data: { provider: BillingProvider.googlePlay, lineageKey: "otx-1" },
       }),
     ).resolves.toMatchObject({ provider: BillingProvider.googlePlay });
   });

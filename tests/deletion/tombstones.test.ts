@@ -47,7 +47,11 @@ const newAccount = async () => {
 };
 
 const wipe = async () => {
-  await prisma.subscriptionTombstone.deleteMany();
+  await prisma.subscriptionTransfer.deleteMany();
+  await prisma.lineagePeriodCustody.deleteMany();
+  await prisma.lineagePeriodGrant.deleteMany();
+  await prisma.lineageTokenAlias.deleteMany();
+  await prisma.subscriptionLineage.deleteMany();
   if (createdAccountIds.length === 0) return;
   await prisma.billingReceipt.deleteMany({
     where: { subscription: { accountId: { in: createdAccountIds } } },
@@ -114,8 +118,14 @@ const playInput = (
 });
 
 const tombstone = (provider: BillingProvider, providerKey: string) =>
-  prisma.subscriptionTombstone.create({
-    data: { provider, providerKey, accountRef: "ref-test" },
+  prisma.subscriptionLineage.create({
+    data: {
+      provider,
+      lineageKey: providerKey,
+      state: "tombstoned",
+      tombstonedAt: new Date(),
+      deletedAccountRef: "ref-test",
+    },
   });
 
 afterEach(wipe);
@@ -137,7 +147,11 @@ describe("verify against deletion tombstones", () => {
   test("a live row for the key wins over a tombstone (post-claim state)", async () => {
     const accountId = await newAccount();
     await upsertFromVerify(appleInput(accountId, "otx-claimed"));
-    await tombstone(BillingProvider.apple, "otx-claimed");
+    // Flip the verify-created lineage to tombstoned while the row lives.
+    await prisma.subscriptionLineage.updateMany({
+      where: { provider: BillingProvider.apple, lineageKey: "otx-claimed" },
+      data: { state: "tombstoned", tombstonedAt: new Date() },
+    });
 
     const result = await upsertFromVerify(appleInput(accountId, "otx-claimed"));
     expect(result.subscription.accountId).toBe(accountId);
@@ -155,17 +169,15 @@ describe("verify against deletion tombstones", () => {
       ),
     ).rejects.toBeInstanceOf(SubscriptionTombstonedError);
 
-    // The rotated token now has its own tombstone row.
-    const absorbed = await prisma.subscriptionTombstone.findUnique({
-      where: {
-        provider_providerKey: {
-          provider: BillingProvider.googlePlay,
-          providerKey: "token-new",
-        },
-      },
+    // The rotated token now resolves to the tombstoned lineage via alias.
+    const absorbed = await prisma.lineageTokenAlias.findUnique({
+      where: { token: "token-new" },
     });
     expect(absorbed).not.toBeNull();
-    expect(absorbed?.accountRef).toBe("ref-test");
+    const lineage = await prisma.subscriptionLineage.findUnique({
+      where: { id: absorbed?.lineageId ?? "" },
+    });
+    expect(lineage?.state).toBe("tombstoned");
   });
 });
 
@@ -198,13 +210,8 @@ describe("webhooks against deletion tombstones", () => {
       update: { status: SubscriptionStatus.active },
     });
     expect(result).toEqual({ kind: "tombstoned" });
-    const absorbed = await prisma.subscriptionTombstone.findUnique({
-      where: {
-        provider_providerKey: {
-          provider: BillingProvider.googlePlay,
-          providerKey: "token-new",
-        },
-      },
+    const absorbed = await prisma.lineageTokenAlias.findUnique({
+      where: { token: "token-new" },
     });
     expect(absorbed).not.toBeNull();
   });

@@ -1,9 +1,21 @@
+import { randomUUID } from "node:crypto";
 import { BillingProvider, type Prisma } from "@prisma/client";
 import { barIdentityWithTx } from "@/accounts/deletion/barrier";
 import { hashAccountRef } from "@/accounts/deletion/identity-hash";
 import { deleteWalletForAccountWithTx } from "@/payments/ledger";
-import { forfeitSubscriptionPeriod } from "@/subscriptions/grants";
-import { isEntitledSubscriptionStatus } from "@/subscriptions/status";
+import {
+  bootstrapLegacyCustody,
+  CUSTODY_STATE_HELD,
+  escrowCustody,
+  findCustodyCovering,
+} from "@/subscriptions/custody";
+import {
+  LINEAGE_STATE_TOMBSTONED,
+  lockLineage,
+  resolveLineageId,
+  resolveOrCreateLineageForKeys,
+} from "@/subscriptions/lineage";
+import logger from "@/utils/logger";
 import { prisma } from "@/utils/prisma";
 
 /**
@@ -71,19 +83,91 @@ const attachmentKeysFromInputs = (inputs: Prisma.JsonValue): string[] => {
  * Account row does not exist (already deleted): the caller then resolves the
  * stored DeletionRecord instead.
  */
+/**
+ * Resolve (creating when needed) the lineage ids for every subscription the
+ * account currently holds. Runs unlocked, outside the teardown transaction —
+ * the transaction re-reads under lock and restarts if the set changed.
+ */
+const resolveAccountLineageIds = async (
+  accountId: string,
+): Promise<string[]> => {
+  const subscriptions = await prisma.subscription.findMany({
+    where: { accountId },
+  });
+  const ids = new Set<string>();
+  for (const subscription of subscriptions) {
+    if (subscription.lineageId) {
+      ids.add(subscription.lineageId);
+      continue;
+    }
+    const key =
+      subscription.provider === BillingProvider.apple
+        ? subscription.originalTransactionId
+        : subscription.purchaseToken;
+    if (!key) continue;
+    ids.add(
+      await resolveOrCreateLineageForKeys({
+        provider: subscription.provider,
+        key,
+        linkedPurchaseToken: subscription.linkedPurchaseToken,
+      }),
+    );
+  }
+  return [...ids].sort();
+};
+
+const TEARDOWN_RESTART_LIMIT = 3;
+
+class TeardownRestart extends Error {}
+
 export const deleteAccount = async (args: {
+  accountId: string;
+  operationId: string;
+}): Promise<DeletionOutcome | null> => {
+  const { operationId } = args;
+
+  // Restart discipline: a restart is a full rollback plus a fresh
+  // transaction — never a new lower-sorted lock acquired mid-flight.
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      return await runDeleteAccountTransaction(args);
+    } catch (err) {
+      if (err instanceof TeardownRestart && attempt < TEARDOWN_RESTART_LIMIT) {
+        logger.warn(
+          { operationId, attempt },
+          "account.delete.teardown_restarted",
+        );
+        continue;
+      }
+      throw err;
+    }
+  }
+};
+
+const runDeleteAccountTransaction = async (args: {
   accountId: string;
   operationId: string;
 }): Promise<DeletionOutcome | null> => {
   const { accountId, operationId } = args;
   const accountRef = hashAccountRef(accountId);
 
+  // Lineages first (lock-order rule 1), resolved before the transaction.
+  const lineageIds = await resolveAccountLineageIds(accountId);
+
   return prisma.$transaction(
     async (tx) => {
-      // Parent-row lock: the serialization point for every concurrent
-      // account-linked writer. Must be the first statement — the sweep
-      // below relies on each subsequent statement taking a fresh snapshot
-      // after this lock is held.
+      // Lock order: every lineage the account's subscriptions belong to
+      // (sorted), then the Account row FOR UPDATE — the serialization point
+      // for every concurrent account-linked writer. The sweep below relies
+      // on each subsequent statement taking a fresh snapshot after these
+      // locks are held.
+      const lineageCtxs = new Map<
+        string,
+        Awaited<ReturnType<typeof lockLineage>>
+      >();
+      for (const lineageId of lineageIds) {
+        lineageCtxs.set(lineageId, await lockLineage(tx, lineageId));
+      }
       const locked = await tx.$queryRaw<Array<{ id: string }>>`
         SELECT id FROM "Account" WHERE id = ${accountId}::uuid FOR UPDATE
       `;
@@ -110,44 +194,71 @@ export const deleteAccount = async (args: {
         select: { inputs: true },
       });
 
-      // Money bookkeeping before the wallet goes: forfeit the unused portion
-      // of any entitled period (idempotent, bounded, never touches
-      // non-subscription credits), then remove the ledger + wallet through
-      // the payments module so the single-writer law holds.
+      // Money bookkeeping before the wallet goes: escrow the conservative
+      // remainder of each held custody period (the tombstone snapshot,
+      // released to a future claimant), journal the move, and flip the
+      // lineage to tombstoned. Periods funded before the lineage tables get
+      // a lazy custody bootstrap; never-funded subscriptions escrow nothing.
+      // A subscription whose lineage is not in our locked set (attached
+      // between the unlocked resolve and the locks) restarts the teardown
+      // with the fresh set.
       for (const subscription of subscriptions) {
-        if (isEntitledSubscriptionStatus(subscription.status)) {
-          await forfeitSubscriptionPeriod(tx, { subscription });
+        const subscriptionLineageId =
+          subscription.lineageId ??
+          (await resolveLineageId(
+            tx,
+            subscription.provider,
+            subscription.provider === BillingProvider.apple
+              ? [subscription.originalTransactionId]
+              : [subscription.purchaseToken, subscription.linkedPurchaseToken],
+          ));
+        if (!subscriptionLineageId) continue;
+        const ctx = lineageCtxs.get(subscriptionLineageId);
+        if (!ctx) {
+          throw new TeardownRestart();
         }
+        const custody =
+          (await findCustodyCovering(tx, ctx, new Date(), [
+            CUSTODY_STATE_HELD,
+          ])) ??
+          (await bootstrapLegacyCustody(tx, ctx, {
+            subscriptionId: subscription.id,
+            ownerAccountId: accountId,
+            periodStart: subscription.currentPeriodStart,
+            periodEnd: subscription.currentPeriodEnd,
+          }));
+        if (custody && custody.state === CUSTODY_STATE_HELD) {
+          const journalId = randomUUID();
+          const escrowed = await escrowCustody(tx, ctx, {
+            custody,
+            journalId,
+          });
+          await tx.subscriptionTransfer.create({
+            data: {
+              id: journalId,
+              lineageId: ctx.lineageId,
+              kind: "escrow",
+              status: "committed",
+              fromAccountId: accountId,
+              conservedCredits: escrowed,
+            },
+          });
+        }
+        await tx.subscriptionLineage.update({
+          where: { id: ctx.lineageId },
+          data: {
+            state: LINEAGE_STATE_TOMBSTONED,
+            tombstonedAt: new Date(),
+            deletedAccountRef: accountRef,
+          },
+        });
       }
 
-      // Billing: receipts go, subscription rows become provider-key
-      // tombstones (unique per (provider, key); skipDuplicates makes a
-      // replayed teardown converge).
+      // Billing: receipts and subscription rows go; the tombstoned lineage
+      // (plus escrow custody) is what survives.
       await tx.billingReceipt.deleteMany({
         where: { subscription: { accountId } },
       });
-      const tombstoneRows: Prisma.SubscriptionTombstoneCreateManyInput[] = [];
-      for (const subscription of subscriptions) {
-        const keys =
-          subscription.provider === BillingProvider.apple
-            ? [subscription.originalTransactionId]
-            : [subscription.purchaseToken, subscription.linkedPurchaseToken];
-        for (const key of keys) {
-          if (key) {
-            tombstoneRows.push({
-              provider: subscription.provider,
-              providerKey: key,
-              accountRef,
-            });
-          }
-        }
-      }
-      if (tombstoneRows.length > 0) {
-        await tx.subscriptionTombstone.createMany({
-          data: tombstoneRows,
-          skipDuplicates: true,
-        });
-      }
       await tx.subscription.deleteMany({ where: { accountId } });
 
       await deleteWalletForAccountWithTx(tx, accountId);

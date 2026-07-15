@@ -27,6 +27,33 @@ beforeAll(async () => {
   await validateJWTKeys();
 });
 
+describe("POST /v2/accounts/me/subscription/claim rate limiting", () => {
+  test("11th request within the window is 429 with the contract envelope", async () => {
+    const app = makeApp();
+    const token = await createJwtToken({
+      deviceId: "dev-claim-rl",
+      accountId: randomUUID(),
+    });
+    // Ten requests consume the per-IP budget (401s from fail-closed
+    // requireAccount still count — the limiters sit in front).
+    for (let i = 0; i < 10; i += 1) {
+      const res = await request(app)
+        .post("/v2/accounts/me/subscription/claim")
+        .set("X-Convos-AuthToken", token)
+        .send({});
+      expect(res.status).toBe(401);
+    }
+    const eleventh = await request(app)
+      .post("/v2/accounts/me/subscription/claim")
+      .set("X-Convos-AuthToken", token)
+      .send({});
+    expect(eleventh.status).toBe(429);
+    expect(eleventh.body).toEqual({
+      error: "Too many subscription claim requests, please try again later",
+    });
+  });
+});
+
 describe("DELETE /v2/accounts/me rate limiting", () => {
   test("6th request within the window is 429 with the contract envelope", async () => {
     const app = makeApp();

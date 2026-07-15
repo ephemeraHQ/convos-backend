@@ -9,7 +9,11 @@ import {
   PubsubAuthError,
   verifyPubsubPushAuth,
 } from "@/subscriptions/google-play/verifier";
-import { applyNotification, BillingProvider } from "@/subscriptions/repository";
+import {
+  applyNotification,
+  BillingProvider,
+  compensateVoidedPurchase,
+} from "@/subscriptions/repository";
 
 const messageSchema = z.object({
   messageId: z.string().min(1),
@@ -122,18 +126,33 @@ export async function googlePlayRtdnHandler(req: Request, res: Response) {
     return;
   }
 
-  // Voided purchase / one-time product: out of scope today, ack so Pub/Sub
-  // stops retrying.
+  // Voided purchase: compensate the CURRENT custody holder (works whether
+  // the value sits with the original owner, a claim transferee, or in
+  // deletion escrow), then ack.
   if (notification.voidedPurchaseNotification) {
-    req.log.info(
-      {
-        messageId: message.messageId,
-        purchaseToken:
-          notification.voidedPurchaseNotification.purchaseToken.slice(0, 12),
-      },
-      "play.rtdn.voided_purchase — not implemented, acking",
-    );
-    res.status(200).json({ ok: true, kind: "voided_purchase_skipped" });
+    const voidedToken = notification.voidedPurchaseNotification.purchaseToken;
+    try {
+      const compensated = await compensateVoidedPurchase(voidedToken);
+      req.log.info(
+        {
+          messageId: message.messageId,
+          purchaseToken: voidedToken.slice(0, 12),
+          compensated: compensated?.toString() ?? null,
+        },
+        "play.rtdn.voided_purchase_compensated",
+      );
+    } catch (err) {
+      req.log.error(
+        {
+          messageId: message.messageId,
+          errMessage: err instanceof Error ? err.message : String(err),
+        },
+        "play.rtdn.voided_purchase_compensation_failed",
+      );
+      res.status(500).json({ error: "Failed to apply voided purchase" });
+      return;
+    }
+    res.status(200).json({ ok: true, kind: "voided_purchase" });
     return;
   }
   if (notification.oneTimeProductNotification) {
