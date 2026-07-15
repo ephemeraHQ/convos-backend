@@ -57,8 +57,8 @@ export const clientScript = (): string => `
     var tb=document.querySelector("#activity-table tbody");
     var html=rows.map(function(r){
       return '<tr class="row-clickable" data-account="'+esc(r.accountId)+'">'
-        +"<td>"+fmtDate(r.createdAt)+"</td><td>"+esc(r.actorEmail)+"</td><td>"+esc(shortId(r.accountId))
-        +"</td><td>"+esc(r.action)+"</td><td>"+esc(r.deltaCredits)+"</td><td>"+esc(r.reason)+"</td></tr>";
+        +'<td class="nowrap">'+fmtDate(r.createdAt)+"</td><td>"+esc(r.actorEmail)+'</td><td class="mono">'+esc(shortId(r.accountId))
+        +"</td><td>"+esc(r.action)+'</td><td class="num">'+esc(r.deltaCredits)+"</td><td>"+esc(r.reason)+"</td></tr>";
     }).join("");
     if(append){ tb.insertAdjacentHTML("beforeend", html); } else { tb.innerHTML=html; }
     Array.prototype.forEach.call(document.querySelectorAll("#activity-table tbody tr.row-clickable"), function(tr){
@@ -122,11 +122,13 @@ export const clientScript = (): string => `
     return qs;
   }
   var accountsPageNo=0;
-  var userListCols=[["Account",function(r){return shortId(r.accountId);}],["Balance",function(r){return fmtCredits(r.balanceCredits);}],["Last consume",function(r){return fmtDate(r.lastConsumeAt);}]];
+  var colAccount=["Account",function(r){return shortId(r.accountId);},"mono"];
+  var colBalance=["Balance",function(r){return fmtCredits(r.balanceCredits);},"num"];
+  var userListCols=[colAccount,colBalance,["Last consume",function(r){return fmtDate(r.lastConsumeAt);},"nowrap"]];
   var accountCols={
-    balance:[["Account",function(r){return shortId(r.accountId);}],["Balance",function(r){return fmtCredits(r.balanceCredits);}]],
-    broken:[["Account",function(r){return shortId(r.accountId);}],["Balance",function(r){return fmtCredits(r.balanceCredits);}],["Tier",function(r){return r.tier||"—";}],["Status",function(r){return r.effectiveStatus||"—";}]],
-    grantKind:[["Account",function(r){return shortId(r.accountId);}],["Balance",function(r){return fmtCredits(r.balanceCredits);}],["Latest grant",function(r){return fmtDate(r.latestGrantAt);}]],
+    balance:[colAccount,colBalance],
+    broken:[colAccount,colBalance,["Tier",function(r){return r.tier||"—";}],["Status",function(r){return r.effectiveStatus||"—";}]],
+    grantKind:[colAccount,colBalance,["Latest grant",function(r){return fmtDate(r.latestGrantAt);},"nowrap"]],
     active:userListCols,
     dormant:userListCols
   };
@@ -140,11 +142,12 @@ export const clientScript = (): string => `
   };
   function renderAccountRows(rows, view, append){
     var cols=accountCols[view];
-    el("accounts-head").innerHTML=cols.map(function(c){ return "<th>"+esc(c[0])+"</th>"; }).join("");
+    function colCls(c){ return c[2]?' class="'+c[2]+'"':""; }
+    el("accounts-head").innerHTML=cols.map(function(c){ return "<th"+colCls(c)+">"+esc(c[0])+"</th>"; }).join("");
     var tb=document.querySelector("#accounts-table tbody");
     var html=(rows||[]).map(function(r){
       return '<tr class="row-clickable" data-account="'+esc(r.accountId)+'">'
-        +cols.map(function(c){ return "<td>"+esc(c[1](r))+"</td>"; }).join("")+"</tr>";
+        +cols.map(function(c){ return "<td"+colCls(c)+">"+esc(c[1](r))+"</td>"; }).join("")+"</tr>";
     }).join("");
     if(append){ tb.insertAdjacentHTML("beforeend", html); } else { tb.innerHTML=html; }
     Array.prototype.forEach.call(document.querySelectorAll("#accounts-table tbody tr.row-clickable"), function(tr){
@@ -186,13 +189,16 @@ export const clientScript = (): string => `
     return '<span class="badge '+cls+'">'+esc(state)+"</span>";
   }
   function renderSpark(usage){
-    if(!usage||!usage.length) return '<span style="color:var(--muted)">No usage in the last 30 days.</span>';
+    if(!usage||!usage.length) return '<span class="muted-note">No usage in the last 30 days.</span>';
     var max=usage.reduce(function(m,u){ var c=Number(u.consumed); return c>m?c:m; },0);
     return usage.map(function(u){ var c=Number(u.consumed); var h=max>0?Math.max(2,Math.round(c/max*100)):2;
       return '<div class="bar" style="height:'+h+'%" title="'+esc(u.bucketStart+" · "+fmtCredits(u.consumed)+" credits")+'"></div>'; }).join("");
   }
   function rowsHtml(rows, cols){
-    return (rows||[]).map(function(r){ return "<tr>"+cols.map(function(c){ return "<td>"+c(r)+"</td>"; }).join("")+"</tr>"; }).join("");
+    return (rows||[]).map(function(r){ return "<tr>"+cols.map(function(c){
+      var fn = typeof c==="function" ? c : c[0], cls = typeof c==="function" ? "" : c[1];
+      return "<td"+(cls?' class="'+cls+'"':"")+">"+fn(r)+"</td>";
+    }).join("")+"</tr>"; }).join("");
   }
   function renderDetail(j){
     var sub=j.subscription;
@@ -206,12 +212,12 @@ export const clientScript = (): string => `
         +"<tr><th>Allotment (per period)</th><td>"+fmtCredits(sub.perPeriodCredits)+" credits</td></tr>"
         +"<tr><th>Period consumes</th><td>"+fmtCredits(j.periodConsumesCredits)+" credits</td></tr>"
         +"</tbody></table>"
-      : '<div style="color:var(--muted)">No subscription on record.</div>';
+      : '<div class="muted-note">No subscription on record.</div>';
     el("detail-body").innerHTML =
-      '<h2 style="font-size:16px">Account '+esc(shortId(j.accountId))+'</h2>'
-      +'<div class="card"><div class="k">Balance</div><div style="font-size:22px;font-weight:700">'+fmtCredits(j.balanceCredits)+'</div>'
+      '<h2 class="detail-title">Account <span class="mono">'+esc(shortId(j.accountId))+'</span></h2>'
+      +'<div class="card"><div class="k">Balance</div><div class="balance-value">'+fmtCredits(j.balanceCredits)+'</div>'
       +'<div class="k">'+usdHint(j.balanceCredits)+'</div>'
-      +'<div style="margin-top:6px">Subscription: '+subChip(j)+'</div></div>'
+      +'<div class="sub-line">Subscription: '+subChip(j)+'</div></div>'
       +'<div class="card">'+subBlock+'</div>'
       +'<div class="card"><h3>Grant</h3><input id="d-grant-credits" type="number" min="1" placeholder="credits"><input id="d-grant-reason" placeholder="reason"><button id="d-grant-btn" class="btn btn-primary">Grant</button></div>'
       +'<div class="card"><h3>Adjust</h3><input id="d-adjust-delta" type="number" placeholder="±credits"><input id="d-adjust-reason" placeholder="reason"><button id="d-adjust-btn" class="btn btn-danger">Adjust</button></div>'
@@ -221,20 +227,20 @@ export const clientScript = (): string => `
       +'<div class="card"><h3>Admin audit</h3><div class="tablewrap"><table><tbody id="d-audit"></tbody></table></div></div>';
     el("usage-spark").innerHTML = renderSpark(j.usageDaily);
     el("d-refills").innerHTML = (j.dailyRefills&&j.dailyRefills.length)
-      ? rowsHtml(j.dailyRefills,[function(r){return fmtDate(r.createdAt);},function(r){return esc(r.delta);},function(r){return esc(r.note||"");}])
-      : '<tr><td style="color:var(--muted)">No daily refills.</td></tr>';
-    el("d-ledger").innerHTML = rowsHtml(j.ledger,[function(r){return fmtDate(r.createdAt);},function(r){return esc(r.delta);},function(r){return esc(r.reason);},function(r){return esc(r.grantKindId||"—");},function(r){return esc(r.note||"");}]);
+      ? rowsHtml(j.dailyRefills,[[function(r){return fmtDate(r.createdAt);},"nowrap"],[function(r){return esc(r.delta);},"num"],function(r){return esc(r.note||"");}])
+      : '<tr><td class="muted-note">No daily refills.</td></tr>';
+    el("d-ledger").innerHTML = rowsHtml(j.ledger,[[function(r){return fmtDate(r.createdAt);},"nowrap"],[function(r){return esc(r.delta);},"num"],function(r){return esc(r.reason);},[function(r){return esc(r.grantKindId||"—");},"mono"],function(r){return esc(r.note||"");}]);
     el("d-grant-btn").addEventListener("click", function(){ mutate("grant"); });
     el("d-adjust-btn").addEventListener("click", function(){ mutate("adjust"); });
   }
   function loadAudit(accountId){
     guardFetch("/audit?accountId="+encodeURIComponent(accountId)).then(function(r){ return r.json(); }).then(function(j){
-      el("d-audit").innerHTML = rowsHtml(j.audit,[function(r){return fmtDate(r.createdAt);},function(r){return esc(r.actorEmail);},function(r){return esc(r.action);},function(r){return esc(r.deltaCredits);},function(r){return esc(r.reason);}]);
+      el("d-audit").innerHTML = rowsHtml(j.audit,[[function(r){return fmtDate(r.createdAt);},"nowrap"],function(r){return esc(r.actorEmail);},function(r){return esc(r.action);},[function(r){return esc(r.deltaCredits);},"num"],function(r){return esc(r.reason);}]);
     }).catch(function(){});
   }
   function openDetail(accountId){
     currentAccountId=accountId;
-    el("detail-body").innerHTML='<div style="color:var(--muted)">Loading…</div>';
+    el("detail-body").innerHTML='<div class="muted-note">Loading…</div>';
     el("detail").classList.add("open"); el("detail").setAttribute("aria-hidden","false"); el("detail-scrim").classList.remove("hidden");
     guardFetch("/accounts/"+encodeURIComponent(accountId)).then(function(r){ if(r.status===404){ throw new Error("not_found"); } return r.json(); })
       .then(function(j){ renderDetail(j); loadAudit(accountId); })
