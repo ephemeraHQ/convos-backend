@@ -13,6 +13,11 @@ export const auditQuerySchema = z.object({
   accountId: accountIdSchema,
 });
 
+export const auditRecentQuerySchema = z.object({
+  cursor: z.string().trim().min(1).max(512).optional(),
+  action: z.enum(["all", "grant", "adjust"]).default("all"),
+});
+
 export const grantBodySchema = z.object({
   credits: z.number().int().positive().max(MAX_ADMIN_GRANT_CREDITS),
   reason: z.string().trim().min(1).max(256),
