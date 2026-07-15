@@ -35,3 +35,45 @@ export const adjustBodySchema = z.object({
   reason: z.string().trim().min(1).max(256),
   idempotencyKey: idempotencyKeySchema,
 });
+
+export const MAX_ACCOUNTS_PAGE = 10_000;
+
+const balanceFilterCredits = z.coerce
+  .number()
+  .int()
+  .min(-MAX_ADMIN_GRANT_CREDITS)
+  .max(MAX_ADMIN_GRANT_CREDITS);
+
+const accountsPageLimit = {
+  page: z.coerce.number().int().min(0).max(MAX_ACCOUNTS_PAGE).default(0),
+  limit: z.coerce.number().int().min(1).max(100).default(50),
+};
+
+export const accountsListQuerySchema = z.discriminatedUnion("mode", [
+  z.object({
+    mode: z.literal("balance"),
+    min: balanceFilterCredits.optional(),
+    max: balanceFilterCredits.optional(),
+    sort: z.enum(["asc", "desc"]).default("desc"),
+    ...accountsPageLimit,
+  }),
+  z.object({
+    mode: z.literal("broken"),
+    maxBalance: balanceFilterCredits.default(0),
+    ...accountsPageLimit,
+  }),
+  z.object({
+    mode: z.literal("grantKind"),
+    kind: z
+      .string()
+      .trim()
+      .regex(/^[A-Za-z0-9_-]{1,64}$/),
+    ...accountsPageLimit,
+  }),
+  z.object({
+    mode: z.literal("activity"),
+    state: z.enum(["active", "dormant"]),
+    days: z.coerce.number().int().min(1).max(365).default(30),
+    ...accountsPageLimit,
+  }),
+]);

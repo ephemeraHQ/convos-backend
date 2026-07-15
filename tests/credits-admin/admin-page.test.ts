@@ -61,4 +61,25 @@ describe("credits-admin page (console shell)", () => {
     expect(res.text).toContain("usage-spark");
     expect(res.text).toContain("perPeriodCredits");
   });
+
+  it("wires the accounts view selector + modes + /accounts endpoint", async () => {
+    const res = await adminRequest(app, false).get("/api/v2/credits-admin/");
+    expect(res.text).toContain('id="view-mode"');
+    // the URL is built by concatenation ("/accounts" + "?mode=" + ...); assert the
+    // rendered literals, not the runtime-concatenated whole.
+    expect(res.text).toContain('guardFetch("/accounts"');
+    expect(res.text).toContain('"?mode="');
+    expect(res.text).toContain('value="balance"');
+    expect(res.text).toContain('value="broken"');
+    expect(res.text).toContain('value="grantKind"');
+    expect(res.text).toContain('id="accounts-table"');
+    expect(res.text).toContain("loadAccounts");
+    // setView() hides the activity feed by this id. It used to walk
+    // #activity-table.parentNode, which silently broke if the markup grew a
+    // wrapper. Pin the id so a restyle can't reintroduce that coupling.
+    expect(res.text).toContain('id="activity-wrap"');
+    // setView() retitles this per view; pins the element's existence only —
+    // the label swap itself is runtime behaviour a string assertion can't reach.
+    expect(res.text).toContain('id="center-title"');
+  });
 });

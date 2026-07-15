@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { meGuard } from "@/api/v2/accounts/middleware/meGuard";
 import { accountViewGetHandler } from "./handlers/account-view-get";
+import { accountsListGetHandler } from "./handlers/accounts-list-get";
 import { adjustPostHandler } from "./handlers/adjust-post";
 import { adminPageHandler } from "./handlers/admin-page";
 import { auditGetHandler } from "./handlers/audit-get";
@@ -29,6 +30,11 @@ creditsAdminRouter.get(
   "/audit/recent",
   creditsAdminTokenAuth,
   auditRecentGetHandler,
+);
+creditsAdminRouter.get(
+  "/accounts",
+  creditsAdminTokenAuth,
+  accountsListGetHandler,
 );
 creditsAdminRouter.get(
   "/accounts/:accountId",

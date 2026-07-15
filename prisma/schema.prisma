@@ -328,6 +328,8 @@ model UserCredits {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
   account   Account  @relation(fields: [accountId], references: [id])
+
+  @@index([balance])
 }
 
 model GrantKind {
@@ -362,7 +364,8 @@ model CreditLedger {
   @@unique([accountId, idempotencyKey])
   @@index([accountId, createdAt])
   @@index([requestId])
-  @@index([grantKindId])
+  @@index([grantKindId, createdAt])
+  @@index([reason, accountId, createdAt])
 }
 
 enum SubscriptionPeriod {

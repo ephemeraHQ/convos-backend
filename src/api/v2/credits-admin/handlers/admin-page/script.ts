@@ -57,8 +57,8 @@ export const clientScript = (): string => `
     var tb=document.querySelector("#activity-table tbody");
     var html=rows.map(function(r){
       return '<tr class="row-clickable" data-account="'+esc(r.accountId)+'">'
-        +"<td>"+fmtDate(r.createdAt)+"</td><td>"+esc(r.actorEmail)+"</td><td>"+esc(shortId(r.accountId))
-        +"</td><td>"+esc(r.action)+"</td><td>"+esc(r.deltaCredits)+"</td><td>"+esc(r.reason)+"</td></tr>";
+        +'<td class="nowrap">'+fmtDate(r.createdAt)+"</td><td>"+esc(r.actorEmail)+'</td><td class="mono">'+esc(shortId(r.accountId))
+        +"</td><td>"+esc(r.action)+'</td><td class="num">'+esc(r.deltaCredits)+"</td><td>"+esc(r.reason)+"</td></tr>";
     }).join("");
     if(append){ tb.insertAdjacentHTML("beforeend", html); } else { tb.innerHTML=html; }
     Array.prototype.forEach.call(document.querySelectorAll("#activity-table tbody tr.row-clickable"), function(tr){
@@ -71,14 +71,16 @@ export const clientScript = (): string => `
     var qs="?action="+encodeURIComponent(activityAction)+(activityCursor?("&cursor="+encodeURIComponent(activityCursor)):"");
     guardFetch("/audit/recent"+qs).then(function(r){ if(!r.ok){ throw new Error("load_failed"); } return r.json(); }).then(function(j){
       if(gen!==activityGen) return;
+      if(currentView!=="activity") return;
       renderActivityRows(j.rows||[], !reset);
       activityCursor=j.nextCursor;
       el("load-more").classList.toggle("hidden", !j.nextCursor);
       var empty = reset && (!j.rows || j.rows.length===0);
+      el("activity-empty").textContent = "No matching activity.";
       el("activity-empty").classList.toggle("hidden", !empty);
     }).catch(function(e){ if(e.message!=="reauth") toast("Failed to load activity","error"); });
   }
-  el("load-more").addEventListener("click", function(){ loadActivity(false); });
+  el("load-more").addEventListener("click", function(){ if(currentView==="activity"){ loadActivity(false); } else { loadAccounts(false); } });
   Array.prototype.forEach.call(document.querySelectorAll(".facet"), function(f){
     f.addEventListener("click", function(){
       Array.prototype.forEach.call(document.querySelectorAll(".facet"), function(x){ x.classList.remove("active"); });
@@ -97,6 +99,90 @@ export const clientScript = (): string => `
   }
   el("search-btn").addEventListener("click", doSearch);
   el("search-value").addEventListener("keydown", function(e){ if(e.key==="Enter") doSearch(); });
+  var currentView="activity";
+  var accountsGen=0;
+  var accountsMode={balance:"balance",broken:"broken",grantKind:"grantKind",active:"activity",dormant:"activity"};
+  function accountsPage(){ return el("accounts-wrap"); }
+  function showModeControls(view){
+    Array.prototype.forEach.call(document.querySelectorAll(".mode-ctl"), function(c){ c.classList.add("hidden"); });
+    el("facet-group").classList.toggle("hidden", view!=="activity");
+    if(view==="balance") el("ctl-balance").classList.remove("hidden");
+    else if(view==="broken") el("ctl-broken").classList.remove("hidden");
+    else if(view==="grantKind") el("ctl-grantKind").classList.remove("hidden");
+    else if(view==="active"||view==="dormant") el("ctl-activity").classList.remove("hidden");
+  }
+  function accountsQuery(view, pageNo){
+    var qs="?mode="+encodeURIComponent(accountsMode[view])+"&page="+pageNo;
+    if(view==="balance"){ var mn=el("bal-min").value, mx=el("bal-max").value;
+      if(mn!=="") qs+="&min="+encodeURIComponent(mn); if(mx!=="") qs+="&max="+encodeURIComponent(mx);
+      qs+="&sort="+encodeURIComponent(el("bal-sort").value); }
+    else if(view==="broken"){ qs+="&maxBalance="+encodeURIComponent(el("broken-max").value||"0"); }
+    else if(view==="grantKind"){ qs+="&kind="+encodeURIComponent(el("gk-kind").value); }
+    else if(view==="active"||view==="dormant"){ qs+="&state="+(view==="active"?"active":"dormant")+"&days="+encodeURIComponent(el("act-days").value||"30"); }
+    return qs;
+  }
+  var accountsPageNo=0;
+  var colAccount=["Account",function(r){return shortId(r.accountId);},"mono"];
+  var colBalance=["Balance",function(r){return fmtCredits(r.balanceCredits);},"num"];
+  var userListCols=[colAccount,colBalance,["Last consume",function(r){return fmtDate(r.lastConsumeAt);},"nowrap"]];
+  var accountCols={
+    balance:[colAccount,colBalance],
+    broken:[colAccount,colBalance,["Tier",function(r){return r.tier||"—";}],["Status",function(r){return r.effectiveStatus||"—";}]],
+    grantKind:[colAccount,colBalance,["Latest grant",function(r){return fmtDate(r.latestGrantAt);},"nowrap"]],
+    active:userListCols,
+    dormant:userListCols
+  };
+  var viewTitles={
+    activity:"Recent admin activity",
+    balance:"Accounts by balance",
+    broken:"Broken subscribers",
+    grantKind:"Accounts by grant kind",
+    active:"Active users",
+    dormant:"Dormant users"
+  };
+  function renderAccountRows(rows, view, append){
+    var cols=accountCols[view];
+    function colCls(c){ return c[2]?' class="'+c[2]+'"':""; }
+    el("accounts-head").innerHTML=cols.map(function(c){ return "<th"+colCls(c)+">"+esc(c[0])+"</th>"; }).join("");
+    var tb=document.querySelector("#accounts-table tbody");
+    var html=(rows||[]).map(function(r){
+      return '<tr class="row-clickable" data-account="'+esc(r.accountId)+'">'
+        +cols.map(function(c){ return "<td"+colCls(c)+">"+esc(c[1](r))+"</td>"; }).join("")+"</tr>";
+    }).join("");
+    if(append){ tb.insertAdjacentHTML("beforeend", html); } else { tb.innerHTML=html; }
+    Array.prototype.forEach.call(document.querySelectorAll("#accounts-table tbody tr.row-clickable"), function(tr){
+      tr.onclick=function(){ openDetail(tr.getAttribute("data-account")); };
+    });
+  }
+  function loadAccounts(reset){
+    if(reset){ accountsPageNo=0; }
+    var view=currentView, gen=++accountsGen, pageNo=reset?0:accountsPageNo+1;
+    guardFetch("/accounts"+accountsQuery(view, pageNo)).then(function(r){ if(!r.ok){ throw new Error("load_failed"); } return r.json(); }).then(function(j){
+      if(gen!==accountsGen) return;
+      if(view!==currentView) return;
+      accountsPageNo=pageNo;
+      renderAccountRows(j.rows||[], view, !reset);
+      el("load-more").classList.toggle("hidden", !j.hasMore);
+      var empty = reset && (!j.rows || j.rows.length===0);
+      el("activity-empty").textContent = "No matching accounts.";
+      el("activity-empty").classList.toggle("hidden", !empty);
+    }).catch(function(e){ if(e.message!=="reauth") toast("Failed to load accounts","error"); });
+  }
+  function setView(view){
+    currentView=view;
+    showModeControls(view);
+    el("center-title").textContent=viewTitles[view];
+    var isActivity = view==="activity";
+    el("activity-wrap").classList.toggle("hidden", !isActivity);
+    accountsPage().classList.toggle("hidden", isActivity);
+    el("activity-empty").classList.add("hidden");
+    el("load-more").classList.add("hidden");
+    if(isActivity){ loadActivity(true); } else { loadAccounts(true); }
+  }
+  el("view-mode").addEventListener("change", function(){ setView(el("view-mode").value); });
+  Array.prototype.forEach.call(document.querySelectorAll(".mode-ctl input, .mode-ctl select"), function(c){
+    c.addEventListener("change", function(){ if(currentView!=="activity") loadAccounts(true); });
+  });
   var currentAccountId=null;
   function subChip(j){
     var state=j.subscription?j.subscription.effectiveStatus:"none";
@@ -104,13 +190,16 @@ export const clientScript = (): string => `
     return '<span class="badge '+cls+'">'+esc(state)+"</span>";
   }
   function renderSpark(usage){
-    if(!usage||!usage.length) return '<span style="color:var(--muted)">No usage in the last 30 days.</span>';
+    if(!usage||!usage.length) return '<span class="muted-note">No usage in the last 30 days.</span>';
     var max=usage.reduce(function(m,u){ var c=Number(u.consumed); return c>m?c:m; },0);
     return usage.map(function(u){ var c=Number(u.consumed); var h=max>0?Math.max(2,Math.round(c/max*100)):2;
       return '<div class="bar" style="height:'+h+'%" title="'+esc(u.bucketStart+" · "+fmtCredits(u.consumed)+" credits")+'"></div>'; }).join("");
   }
   function rowsHtml(rows, cols){
-    return (rows||[]).map(function(r){ return "<tr>"+cols.map(function(c){ return "<td>"+c(r)+"</td>"; }).join("")+"</tr>"; }).join("");
+    return (rows||[]).map(function(r){ return "<tr>"+cols.map(function(c){
+      var fn = typeof c==="function" ? c : c[0], cls = typeof c==="function" ? "" : c[1];
+      return "<td"+(cls?' class="'+cls+'"':"")+">"+fn(r)+"</td>";
+    }).join("")+"</tr>"; }).join("");
   }
   function renderDetail(j){
     var sub=j.subscription;
@@ -124,13 +213,13 @@ export const clientScript = (): string => `
         +"<tr><th>Allotment (per period)</th><td>"+fmtCredits(sub.perPeriodCredits)+" credits</td></tr>"
         +"<tr><th>Period consumes</th><td>"+fmtCredits(j.periodConsumesCredits)+" credits</td></tr>"
         +"</tbody></table>"
-      : '<div style="color:var(--muted)">No subscription on record.</div>';
+      : '<div class="muted-note">No subscription on record.</div>';
     el("detail-body").innerHTML =
-      '<h2 style="font-size:16px">Account '+esc(shortId(j.accountId))+'</h2>'
-      +'<div class="card"><div class="k">Balance</div><div style="font-size:22px;font-weight:700">'+fmtCredits(j.balanceCredits)+'</div>'
-      +'<div class="k">'+usdHint(j.balanceCredits)+'</div>'
-      +'<div style="margin-top:6px">Subscription: '+subChip(j)+'</div></div>'
-      +'<div class="card">'+subBlock+'</div>'
+      '<h2 class="detail-title">Account <span class="mono">'+esc(shortId(j.accountId))+'</span></h2>'
+      +'<div class="card"><h3 class="tight">Balance</h3><div class="balance-value">'+fmtCredits(j.balanceCredits)+'</div>'
+      +'<div class="balance-hint">'+usdHint(j.balanceCredits)+'</div>'
+      +'<div class="sub-line">Subscription: '+subChip(j)+'</div></div>'
+      +'<div class="card"><h3>Subscription</h3>'+subBlock+'</div>'
       +'<div class="card"><h3>Grant</h3><input id="d-grant-credits" type="number" min="1" placeholder="credits"><input id="d-grant-reason" placeholder="reason"><button id="d-grant-btn" class="btn btn-primary">Grant</button></div>'
       +'<div class="card"><h3>Adjust</h3><input id="d-adjust-delta" type="number" placeholder="±credits"><input id="d-adjust-reason" placeholder="reason"><button id="d-adjust-btn" class="btn btn-danger">Adjust</button></div>'
       +'<div class="card"><h3>Usage (30d)</h3><div id="usage-spark" class="spark"></div></div>'
@@ -139,20 +228,20 @@ export const clientScript = (): string => `
       +'<div class="card"><h3>Admin audit</h3><div class="tablewrap"><table><tbody id="d-audit"></tbody></table></div></div>';
     el("usage-spark").innerHTML = renderSpark(j.usageDaily);
     el("d-refills").innerHTML = (j.dailyRefills&&j.dailyRefills.length)
-      ? rowsHtml(j.dailyRefills,[function(r){return fmtDate(r.createdAt);},function(r){return esc(r.delta);},function(r){return esc(r.note||"");}])
-      : '<tr><td style="color:var(--muted)">No daily refills.</td></tr>';
-    el("d-ledger").innerHTML = rowsHtml(j.ledger,[function(r){return fmtDate(r.createdAt);},function(r){return esc(r.delta);},function(r){return esc(r.reason);},function(r){return esc(r.grantKindId||"—");},function(r){return esc(r.note||"");}]);
+      ? rowsHtml(j.dailyRefills,[[function(r){return fmtDate(r.createdAt);},"nowrap"],[function(r){return esc(r.delta);},"num"],function(r){return esc(r.note||"");}])
+      : '<tr><td class="muted-note">No daily refills.</td></tr>';
+    el("d-ledger").innerHTML = rowsHtml(j.ledger,[[function(r){return fmtDate(r.createdAt);},"nowrap"],[function(r){return esc(r.delta);},"num"],function(r){return esc(r.reason);},[function(r){return esc(r.grantKindId||"—");},"mono"],function(r){return esc(r.note||"");}]);
     el("d-grant-btn").addEventListener("click", function(){ mutate("grant"); });
     el("d-adjust-btn").addEventListener("click", function(){ mutate("adjust"); });
   }
   function loadAudit(accountId){
     guardFetch("/audit?accountId="+encodeURIComponent(accountId)).then(function(r){ return r.json(); }).then(function(j){
-      el("d-audit").innerHTML = rowsHtml(j.audit,[function(r){return fmtDate(r.createdAt);},function(r){return esc(r.actorEmail);},function(r){return esc(r.action);},function(r){return esc(r.deltaCredits);},function(r){return esc(r.reason);}]);
+      el("d-audit").innerHTML = rowsHtml(j.audit,[[function(r){return fmtDate(r.createdAt);},"nowrap"],function(r){return esc(r.actorEmail);},function(r){return esc(r.action);},[function(r){return esc(r.deltaCredits);},"num"],function(r){return esc(r.reason);}]);
     }).catch(function(){});
   }
   function openDetail(accountId){
     currentAccountId=accountId;
-    el("detail-body").innerHTML='<div style="color:var(--muted)">Loading…</div>';
+    el("detail-body").innerHTML='<div class="muted-note">Loading…</div>';
     el("detail").classList.add("open"); el("detail").setAttribute("aria-hidden","false"); el("detail-scrim").classList.remove("hidden");
     guardFetch("/accounts/"+encodeURIComponent(accountId)).then(function(r){ if(r.status===404){ throw new Error("not_found"); } return r.json(); })
       .then(function(j){ renderDetail(j); loadAudit(accountId); })
