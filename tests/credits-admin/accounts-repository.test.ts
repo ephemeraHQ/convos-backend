@@ -1,3 +1,8 @@
+import {
+  BillingProvider,
+  SubscriptionPeriod,
+  SubscriptionStatus,
+} from "@prisma/client";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   listBrokenSubscribers,
@@ -11,6 +16,41 @@ import {
   seedAccount,
   seedPlusMonthlySubscription,
 } from "./helpers";
+
+const DAY_MS = 86400000;
+
+/**
+ * Hand-seeds a Subscription in a specific entitlement state. The shared
+ * seedPlusMonthlySubscription only ever writes `active`, so the grace /
+ * billingRetry / expired branches of the listBrokenSubscribers LATERAL are
+ * unreachable through it. Writes the row directly (no BillingReceipt) rather
+ * than widening the shared helper, which ~64 other credits-admin tests use.
+ *
+ * Dates are anchored relative to now() — handlers judge entitlement against
+ * wall-clock now(), so absolute dates time-bomb CI.
+ */
+const seedSubscriptionInState = async (
+  accountId: string,
+  status: SubscriptionStatus,
+  opts: { currentPeriodEnd: Date; gracePeriodEnd?: Date },
+) => {
+  const start = new Date(Date.now() - 35 * DAY_MS);
+  await prisma.subscription.create({
+    data: {
+      accountId,
+      provider: BillingProvider.apple,
+      productId: "app.convos.subs.monthly",
+      tier: "plus",
+      period: SubscriptionPeriod.monthly,
+      status,
+      originalTransactionId: `otid-state-${accountId}`,
+      startedAt: start,
+      currentPeriodStart: start,
+      currentPeriodEnd: opts.currentPeriodEnd,
+      gracePeriodEnd: opts.gracePeriodEnd ?? null,
+    },
+  });
+};
 
 const setBalance = async (accountId: string, balance: bigint) => {
   await prisma.userCredits.upsert({
@@ -99,11 +139,53 @@ describe("accounts-repository", () => {
     await seedPlusMonthlySubscription(healthy);
     await setBalance(broken, 0n);
     await setBalance(healthy, 100000n);
-    const res = await listBrokenSubscribers({ maxBalance: 0, limit: 10 });
+    // limit: 1000 — this is a GLOBAL query on a shared DB; a small limit would
+    // let concurrent fixtures push the seeded row off page 1 and flake.
+    const res = await listBrokenSubscribers({ maxBalance: 0, limit: 1000 });
     const ids = res.rows.map((r) => r.accountId);
     expect(ids).toContain(broken); // balance == 0 must appear
     expect(ids).not.toContain(healthy);
     expect(res.rows.find((r) => r.accountId === broken)?.tier).toBeTruthy();
+  });
+
+  it("listBrokenSubscribers includes a grace sub whose gracePeriodEnd is future", async () => {
+    const graced = await seedAccount();
+    tracker.push(graced);
+    // Period already ended; the grace window is what still entitles them —
+    // so this also pins the COALESCE(gracePeriodEnd, currentPeriodEnd) arm.
+    await seedSubscriptionInState(graced, SubscriptionStatus.grace, {
+      currentPeriodEnd: new Date(Date.now() - 2 * DAY_MS),
+      gracePeriodEnd: new Date(Date.now() + 14 * DAY_MS),
+    });
+    await setBalance(graced, 0n);
+    const res = await listBrokenSubscribers({ maxBalance: 0, limit: 1000 });
+    expect(res.rows.map((r) => r.accountId)).toContain(graced);
+  });
+
+  it("listBrokenSubscribers includes a billingRetry sub regardless of period end", async () => {
+    const retrying = await seedAccount();
+    tracker.push(retrying);
+    // billingRetry has no TTL check in the LATERAL — a past currentPeriodEnd
+    // must NOT disqualify it.
+    await seedSubscriptionInState(retrying, SubscriptionStatus.billingRetry, {
+      currentPeriodEnd: new Date(Date.now() - 10 * DAY_MS),
+    });
+    await setBalance(retrying, 0n);
+    const res = await listBrokenSubscribers({ maxBalance: 0, limit: 1000 });
+    expect(res.rows.map((r) => r.accountId)).toContain(retrying);
+  });
+
+  it("listBrokenSubscribers excludes a lapsed sub (active status, period ended)", async () => {
+    const lapsed = await seedAccount();
+    tracker.push(lapsed);
+    // Stale `active` row whose period has run out — the active/trial arm's
+    // `currentPeriodEnd > now()` guard must exclude it despite balance 0.
+    await seedSubscriptionInState(lapsed, SubscriptionStatus.active, {
+      currentPeriodEnd: new Date(Date.now() - 1 * DAY_MS),
+    });
+    await setBalance(lapsed, 0n);
+    const res = await listBrokenSubscribers({ maxBalance: 0, limit: 1000 });
+    expect(res.rows.map((r) => r.accountId)).not.toContain(lapsed);
   });
 
   it("listByGrantKind lists accounts with that kind, latest-first", async () => {

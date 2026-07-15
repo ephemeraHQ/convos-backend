@@ -3,19 +3,35 @@ import { prisma } from "@/utils/prisma";
 
 export const ACCOUNTS_LIST_LIMIT = 50;
 
-export type AccountRow = {
+export type BalanceRow = {
   accountId: string;
   balance: bigint;
-  tier?: string;
-  effectiveStatus?: string;
-  currentPeriodEnd?: Date | null;
-  latestGrantAt?: Date | null;
-  lastConsumeAt?: Date | null;
 };
 
-type Page = { rows: AccountRow[]; hasMore: boolean };
+export type BrokenRow = {
+  accountId: string;
+  balance: bigint;
+  tier: string;
+  effectiveStatus: string;
+  currentPeriodEnd: Date;
+};
 
-const page = (rows: AccountRow[], limit: number): Page => ({
+export type GrantKindRow = {
+  accountId: string;
+  balance: bigint;
+  latestGrantAt: Date;
+};
+
+/** `lastConsumeAt` is null for accounts that have never consumed. */
+export type ActivityRow = {
+  accountId: string;
+  balance: bigint;
+  lastConsumeAt: Date | null;
+};
+
+export type Page<T> = { rows: T[]; hasMore: boolean };
+
+const page = <T>(rows: T[], limit: number): Page<T> => ({
   rows: rows.slice(0, limit),
   hasMore: rows.length > limit,
 });
@@ -26,7 +42,7 @@ export const listByBalance = async (args: {
   sort?: "asc" | "desc";
   page?: number;
   limit?: number;
-}): Promise<Page> => {
+}): Promise<Page<BalanceRow>> => {
   const limit = args.limit ?? ACCOUNTS_LIST_LIMIT;
   const skip = (args.page ?? 0) * limit;
   const balance: Prisma.BigIntFilter = {};
@@ -49,19 +65,11 @@ export const listBrokenSubscribers = async (args: {
   maxBalance?: number;
   page?: number;
   limit?: number;
-}): Promise<Page> => {
+}): Promise<Page<BrokenRow>> => {
   const limit = args.limit ?? ACCOUNTS_LIST_LIMIT;
   const skip = (args.page ?? 0) * limit;
   const maxBalance = BigInt(args.maxBalance ?? 0);
-  const rows = await prisma.$queryRaw<
-    {
-      accountId: string;
-      balance: bigint;
-      tier: string;
-      effectiveStatus: string;
-      currentPeriodEnd: Date;
-    }[]
-  >`
+  const rows = await prisma.$queryRaw<BrokenRow[]>`
     SELECT uc."accountId", uc.balance,
            sub.tier, sub.status AS "effectiveStatus", sub."currentPeriodEnd"
     FROM "UserCredits" uc
@@ -97,12 +105,10 @@ export const listByGrantKind = async (args: {
   kind: string;
   page?: number;
   limit?: number;
-}): Promise<Page> => {
+}): Promise<Page<GrantKindRow>> => {
   const limit = args.limit ?? ACCOUNTS_LIST_LIMIT;
   const skip = (args.page ?? 0) * limit;
-  const rows = await prisma.$queryRaw<
-    { accountId: string; balance: bigint; latestGrantAt: Date }[]
-  >`
+  const rows = await prisma.$queryRaw<GrantKindRow[]>`
     SELECT cl."accountId", uc.balance, MAX(cl."createdAt") AS "latestGrantAt"
     FROM "CreditLedger" cl
     JOIN "UserCredits" uc ON uc."accountId" = cl."accountId"
@@ -126,7 +132,7 @@ export const listByActivity = async (args: {
   days?: number;
   page?: number;
   limit?: number;
-}): Promise<Page> => {
+}): Promise<Page<ActivityRow>> => {
   const limit = args.limit ?? ACCOUNTS_LIST_LIMIT;
   const skip = (args.page ?? 0) * limit;
   const days = args.days ?? 30;
@@ -144,9 +150,7 @@ export const listByActivity = async (args: {
           ORDER BY "lastConsumeAt" DESC, cl."accountId"
           LIMIT ${limit + 1} OFFSET ${skip}
         `
-      : await prisma.$queryRaw<
-          { accountId: string; balance: bigint; lastConsumeAt: Date | null }[]
-        >`
+      : await prisma.$queryRaw<ActivityRow[]>`
           SELECT uc."accountId", uc.balance,
             (SELECT MAX(cl2."createdAt") FROM "CreditLedger" cl2
              WHERE cl2."accountId" = uc."accountId" AND cl2.reason = 'consume') AS "lastConsumeAt"
