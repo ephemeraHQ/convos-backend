@@ -67,7 +67,7 @@ export const clientScript = (): string => `
     if(reset){ activityCursor=null; }
     var gen=++activityGen;
     var qs="?action="+encodeURIComponent(activityAction)+(activityCursor?("&cursor="+encodeURIComponent(activityCursor)):"");
-    guardFetch("/audit/recent"+qs).then(function(r){ return r.json(); }).then(function(j){
+    guardFetch("/audit/recent"+qs).then(function(r){ if(!r.ok){ throw new Error("load_failed"); } return r.json(); }).then(function(j){
       if(gen!==activityGen) return;
       renderActivityRows(j.rows||[], !reset);
       activityCursor=j.nextCursor;
