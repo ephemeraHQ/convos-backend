@@ -56,6 +56,7 @@ describe("deletion schema guards", () => {
       "LineagePeriodGrant", // pseudonymized retained financial data
       "LineagePeriodCustody",
       "SubscriptionTransfer",
+      "SubscriptionDriftSchedule", // lineage-only; cascades with retained lineage
       "LineageQuarantine",
       // Superseded by lineage state; kept additively for rollback safety.
       // No code path writes it, so it never accumulates new account data
