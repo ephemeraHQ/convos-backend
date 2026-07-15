@@ -677,11 +677,17 @@ model SubscriptionTransfer {
   undoneByTransferId String?   @db.Uuid
   undoDeadlineAt     DateTime?
   contestEndsAt      DateTime?
+  /// When the journal reached `committed` (settlement time for contested
+  /// transfers, creation time for instant moves and restores). The drift
+  /// sweep cursors on this: a 72h-contested transfer's createdAt is 72h old
+  /// by the time it settles, so createdAt can never drive drift selection.
+  committedAt        DateTime?
   createdAt          DateTime  @default(now())
   updatedAt          DateTime  @updatedAt
 
   @@index([lineageId, createdAt])
   @@index([status, contestEndsAt])
+  @@index([status, committedAt])
 }
 
 /// Durable record of a Google token chain the resolver refused to auto-merge
@@ -689,15 +695,25 @@ model SubscriptionTransfer {
 /// Picked up by the reconciliation sweep / operators; the triggering events
 /// are acked but preserved here.
 model LineageQuarantine {
-  id         String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  provider   BillingProvider
-  token      String
-  reason     String
-  payload    Json?
-  createdAt  DateTime        @default(now())
-  resolvedAt DateTime?
+  id              String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  provider        BillingProvider
+  token           String
+  reason          String
+  payload         Json?
+  /// Per-row retry progress: the sweep re-drives a row at most once per
+  /// backoff window (nextAttemptAt) and gives up to an operator after
+  /// enough attempts, so persistent rows can never starve newer ones.
+  attempts        Int             @default(0)
+  nextAttemptAt   DateTime        @default(now())
+  /// Escalated out of the retry pool: an operator owns this row. Set when
+  /// retries are exhausted or fresh provider state cannot resolve the
+  /// condition (e.g. a keyless void while the subscription is entitled).
+  needsOperatorAt DateTime?
+  createdAt       DateTime        @default(now())
+  resolvedAt      DateTime?
 
   @@index([resolvedAt, createdAt])
+  @@index([resolvedAt, needsOperatorAt, nextAttemptAt])
 }
 
 model TelemetryBatch {

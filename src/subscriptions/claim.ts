@@ -295,6 +295,9 @@ const executeOwnershipMove = async (
     lineageId: ctx.lineageId,
     kind: args.kind,
     status: "committed",
+    // Settlement time for a contested transfer, creation time for instant
+    // moves - the drift sweep's cursor, never the pending row's createdAt.
+    committedAt: new Date(),
     fromAccountId: args.row.accountId,
     toAccountId: args.toAccountId,
     providerProof: args.providerProof,
@@ -409,6 +412,7 @@ const restoreTombstonedLineage = async (
       lineageId: ctx.lineageId,
       kind: "restore",
       status: "committed",
+      committedAt: new Date(),
       toAccountId: args.callerAccountId,
       conservedCredits: released,
       providerProof: args.providerProof,

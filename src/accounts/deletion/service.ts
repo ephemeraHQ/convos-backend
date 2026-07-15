@@ -259,6 +259,7 @@ const runDeleteAccountTransaction = async (args: {
               lineageId: ctx.lineageId,
               kind: "escrow",
               status: "committed",
+              committedAt: new Date(),
               fromAccountId: accountId,
               conservedCredits: escrowed,
             },
