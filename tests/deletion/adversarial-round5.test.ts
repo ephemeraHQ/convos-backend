@@ -1,4 +1,5 @@
 import { generateKeyPairSync, randomUUID } from "node:crypto";
+import { readFileSync } from "node:fs";
 import {
   Environment,
   SignedDataVerifier,
@@ -71,6 +72,7 @@ const PERIOD_CREDITS = 2500n;
 const PRODUCT_ID = "app.convos.subs.monthly";
 const OTX = "6000000000000001";
 const DRIFT_BATCH = 50;
+const DRIFT_MAX_PER_SWEEP = 3 * DRIFT_BATCH;
 
 const claimApp = () => {
   const app = express();
@@ -472,14 +474,12 @@ describe("drift reconciliation sweeps 72h-contested settlements", () => {
 });
 
 describe("durable drift scheduling and rolling safety", () => {
-  test(">50 equal-millisecond journals are each swept once across fair schedule batches", async () => {
+  test(">50 equal-millisecond schedules are each swept once in one tick", async () => {
     const owner = await newAccount();
-    const timestamp = new Date(Date.now() - HOUR_MS);
-    const journalIds: string[] = [];
     const providerCalls = new Map<string, number>();
 
     for (let i = 0; i < 51; i += 1) {
-      const originalTransactionId = `r6-cursor-${i}`;
+      const originalTransactionId = `drift-cursor-${i}`;
       const lineageId = await createDriftFixture(owner, originalTransactionId);
       const journal = await prisma.subscriptionTransfer.create({
         data: {
@@ -490,14 +490,14 @@ describe("durable drift scheduling and rolling safety", () => {
           toAccountId: owner,
         },
       });
-      journalIds.push(journal.id);
+      expect(journal.committedAt).toBeInstanceOf(Date);
     }
-    // Force the exact collision boundary after inserts. The DB trigger owns
-    // initial/transition stamps but intentionally permits maintenance of an
-    // already-committed row's non-null value.
-    await prisma.subscriptionTransfer.updateMany({
-      where: { id: { in: journalIds } },
-      data: { committedAt: timestamp },
+    const dueAt = new Date(Date.now() - HOUR_MS);
+    await prisma.subscriptionDriftSchedule.updateMany({
+      data: {
+        nextDriftCheckAt: dueAt,
+        monitorUntil: new Date(dueAt.getTime() + DAY_MS),
+      },
     });
     setAppleApiClientForTests({
       getAllSubscriptionStatuses: (originalTransactionId: string) => {
@@ -516,25 +516,8 @@ describe("durable drift scheduling and rolling safety", () => {
     } as never);
 
     const first = await runReclaimReconciliationSweep();
-    expect(first.driftChecked).toBe(50);
-    const [{ now: afterFirst }] = await prisma.$queryRaw<Array<{ now: Date }>>`
-      SELECT clock_timestamp() AS now
-    `;
-    // Fifty schedules advanced to their next periodic check; exactly one
-    // equal-millisecond lineage remains due for the next bounded batch.
-    expect(
-      await prisma.subscriptionDriftSchedule.count({
-        where: {
-          resolvedAt: null,
-          needsOperatorAt: null,
-          nextDriftCheckAt: { lte: afterFirst },
-          monitorUntil: { gt: afterFirst },
-        },
-      }),
-    ).toBe(1);
-
-    const second = await runReclaimReconciliationSweep();
-    expect(second.driftChecked).toBe(1);
+    expect(first.driftChecked).toBe(51);
+    expect(first.driftBacklogRemaining).toBe(0);
     expect(providerCalls.size).toBe(51);
     expect([...providerCalls.values()]).toEqual(Array(51).fill(1));
   });
@@ -575,6 +558,118 @@ describe("durable drift scheduling and rolling safety", () => {
       originalTransactionId,
     });
     expect((await runReclaimReconciliationSweep()).driftChecked).toBe(1);
+  });
+
+  test("the committed-row backfill normalizes a pre-trigger non-null stamp", async () => {
+    const owner = await newAccount();
+    const originalTransactionId = "pre-trigger-non-null";
+    const lineageId = await createDriftFixture(owner, originalTransactionId);
+    const journalId = randomUUID();
+    const migrationSql = readFileSync(
+      new URL(
+        "../../prisma/migrations/20260715170000_harden_reconciliation_drift_cursor/migration.sql",
+        import.meta.url,
+      ),
+      "utf8",
+    );
+    const committedBackfill = migrationSql.match(
+      /UPDATE "SubscriptionTransfer"\s+SET "committedAt" = clock_timestamp\(\)\s+WHERE status = 'committed'[^;]*;/,
+    )?.[0];
+    if (!committedBackfill) {
+      throw new Error("committedAt backfill statement not found");
+    }
+
+    await prisma.$transaction(async (tx) => {
+      // Recreate the migration boundary: a legacy writer lands after the
+      // default but before either trigger is installed. Transactional DDL
+      // guarantees a failed assertion rolls both trigger changes back.
+      await tx.$executeRawUnsafe(`
+        ALTER TABLE "SubscriptionTransfer"
+        DISABLE TRIGGER "SubscriptionTransfer_stamp_committed_at"
+      `);
+      await tx.$executeRawUnsafe(`
+        ALTER TABLE "SubscriptionTransfer"
+        DISABLE TRIGGER "SubscriptionTransfer_schedule_drift"
+      `);
+      const [{ now: beforeInsert }] = await tx.$queryRaw<
+        Array<{ now: Date }>
+      >`SELECT clock_timestamp() AS now`;
+      const applicationClock = new Date(beforeInsert.getTime() + HOUR_MS);
+      await tx.$executeRaw`
+        INSERT INTO "SubscriptionTransfer"
+          (id, "lineageId", kind, status, "committedAt", "updatedAt")
+        VALUES
+          (${journalId}::uuid, ${lineageId}::uuid, 'transfer', 'committed', ${applicationClock}, CURRENT_TIMESTAMP)
+      `;
+      const beforeBackfill = await tx.subscriptionTransfer.findUniqueOrThrow({
+        where: { id: journalId },
+      });
+      expect(beforeBackfill.committedAt.getTime()).toBe(
+        applicationClock.getTime(),
+      );
+
+      await tx.$executeRawUnsafe(`
+        ALTER TABLE "SubscriptionTransfer"
+        ENABLE TRIGGER "SubscriptionTransfer_stamp_committed_at"
+      `);
+      const [{ now: normalizationStartedAt }] = await tx.$queryRaw<
+        Array<{ now: Date }>
+      >`SELECT clock_timestamp() AS now`;
+      await tx.$executeRawUnsafe(committedBackfill);
+      const normalized = await tx.subscriptionTransfer.findUniqueOrThrow({
+        where: { id: journalId },
+      });
+      expect(normalized.committedAt.getTime()).toBeLessThan(
+        applicationClock.getTime(),
+      );
+      expect(normalized.committedAt.getTime()).toBeGreaterThanOrEqual(
+        normalizationStartedAt.getTime() - 1,
+      );
+
+      await tx.$executeRawUnsafe(`
+        ALTER TABLE "SubscriptionTransfer"
+        ENABLE TRIGGER "SubscriptionTransfer_schedule_drift"
+      `);
+    });
+  });
+
+  test("an already-committed journal cannot be restamped to the future", async () => {
+    const owner = await newAccount();
+    const originalTransactionId = "immutable-commit-time";
+    const lineageId = await createDriftFixture(owner, originalTransactionId);
+    const journal = await prisma.subscriptionTransfer.create({
+      data: {
+        lineageId,
+        kind: "transfer",
+        status: "committed",
+        fromAccountId: owner,
+        toAccountId: owner,
+      },
+    });
+    const [{ now: beforeUpdate }] = await prisma.$queryRaw<
+      Array<{ now: Date }>
+    >`SELECT clock_timestamp() AS now`;
+    const callerFuture = new Date(beforeUpdate.getTime() + HOUR_MS);
+    const updated = await prisma.subscriptionTransfer.update({
+      where: { id: journal.id },
+      data: { committedAt: callerFuture },
+    });
+    const [{ now: afterUpdate }] = await prisma.$queryRaw<
+      Array<{ now: Date }>
+    >`SELECT clock_timestamp() AS now`;
+    expect(updated.committedAt.getTime()).toBeGreaterThanOrEqual(
+      beforeUpdate.getTime() - 1,
+    );
+    expect(updated.committedAt.getTime()).toBeLessThanOrEqual(
+      afterUpdate.getTime(),
+    );
+    expect(updated.committedAt.getTime()).toBeLessThan(callerFuture.getTime());
+    const schedule = await prisma.subscriptionDriftSchedule.findUniqueOrThrow({
+      where: { lineageId },
+    });
+    expect(schedule.monitorUntil.getTime()).toBeLessThan(
+      callerFuture.getTime() + DAY_MS,
+    );
   });
 
   test("an old-replica committed insert with NULL is DB-stamped and swept", async () => {
@@ -630,6 +725,162 @@ describe("durable drift scheduling and rolling safety", () => {
     expect(later.driftChecked).toBe(1);
     expect(later.driftCompensated).toBe(1);
     expect(await getBalance(claimer)).toBe(0n);
+  });
+
+  test("a revoke after the last periodic check is clawed at the deadline", async () => {
+    const { claimer } = await createCommittedTransfer();
+    const lineage = await prisma.subscriptionLineage.findFirstOrThrow({
+      where: { lineageKey: OTX },
+    });
+    let providerStatus = 1;
+    let providerCalls = 0;
+    setAppleApiClientForTests({
+      getAllSubscriptionStatuses: () => {
+        providerCalls += 1;
+        return Promise.resolve(
+          appleStatuses({
+            status: providerStatus,
+            signedLatest: "deadline-status",
+          }),
+        );
+      },
+    } as never);
+    const [{ now: beforePeriodic }] = await prisma.$queryRaw<
+      Array<{ now: Date }>
+    >`SELECT clock_timestamp() AS now`;
+    const monitorUntil = new Date(beforePeriodic.getTime() + 5 * 60 * 1000);
+    await prisma.subscriptionDriftSchedule.update({
+      where: { lineageId: lineage.id },
+      data: {
+        nextDriftCheckAt: new Date(beforePeriodic.getTime() - 1),
+        monitorUntil,
+      },
+    });
+
+    const periodic = await runReclaimReconciliationSweep();
+    expect(periodic.driftChecked).toBe(1);
+    expect(periodic.driftCompensated).toBe(0);
+    const lastPeriodic =
+      await prisma.subscriptionDriftSchedule.findUniqueOrThrow({
+        where: { lineageId: lineage.id },
+      });
+    expect(lastPeriodic.nextDriftCheckAt.getTime()).toBe(
+      monitorUntil.getTime() - 1,
+    );
+
+    // The webhook is lost after that last entitled answer. Advance only the
+    // durable deadline, then prove the terminal pass re-fetches provider
+    // truth and invalidates the transferred custody.
+    providerStatus = 2;
+    const [{ now: afterPeriodic }] = await prisma.$queryRaw<
+      Array<{ now: Date }>
+    >`SELECT clock_timestamp() AS now`;
+    await prisma.subscriptionDriftSchedule.update({
+      where: { lineageId: lineage.id },
+      data: {
+        nextDriftCheckAt: new Date(afterPeriodic.getTime() + HOUR_MS),
+        monitorUntil: new Date(afterPeriodic.getTime() - 1),
+      },
+    });
+    const deadline = await runReclaimReconciliationSweep();
+    expect(deadline.driftDeadlineChecks).toBe(1);
+    expect(deadline.driftChecked).toBe(1);
+    expect(deadline.driftCompensated).toBe(1);
+    expect(providerCalls).toBe(2);
+    expect(await getBalance(claimer)).toBe(0n);
+    const custody = await prisma.lineagePeriodCustody.findFirstOrThrow({});
+    expect(custody.state).toBe("invalidated");
+  });
+
+  test("the deadline resolves only after exactly one final provider check", async () => {
+    const owner = await newAccount();
+    const originalTransactionId = "deadline-final-check";
+    const lineageId = await createDriftFixture(owner, originalTransactionId);
+    await prisma.subscriptionTransfer.create({
+      data: {
+        lineageId,
+        kind: "transfer",
+        status: "committed",
+        fromAccountId: owner,
+        toAccountId: owner,
+      },
+    });
+    const [{ now }] = await prisma.$queryRaw<Array<{ now: Date }>>`
+      SELECT clock_timestamp() AS now
+    `;
+    await prisma.subscriptionDriftSchedule.update({
+      where: { lineageId },
+      data: {
+        nextDriftCheckAt: new Date(now.getTime() + HOUR_MS),
+        monitorUntil: new Date(now.getTime() - 1),
+      },
+    });
+    let providerCalls = 0;
+    setAppleApiClientForTests({
+      getAllSubscriptionStatuses: () => {
+        providerCalls += 1;
+        return Promise.resolve(
+          appleStatuses({
+            status: 1,
+            signedLatest: "still-entitled",
+            originalTransactionId,
+          }),
+        );
+      },
+    } as never);
+
+    const counts = await runReclaimReconciliationSweep();
+    expect(counts.driftDeadlineChecks).toBe(1);
+    expect(counts.driftChecked).toBe(1);
+    expect(providerCalls).toBe(1);
+    const resolved = await prisma.subscriptionDriftSchedule.findUniqueOrThrow({
+      where: { lineageId },
+    });
+    expect(resolved.resolvedAt).not.toBeNull();
+    expect(resolved.needsOperatorAt).toBeNull();
+  });
+
+  test("an unknown provider answer at the deadline escalates immediately", async () => {
+    const owner = await newAccount();
+    const originalTransactionId = "deadline-unknown";
+    const lineageId = await createDriftFixture(owner, originalTransactionId);
+    await prisma.subscriptionTransfer.create({
+      data: {
+        lineageId,
+        kind: "transfer",
+        status: "committed",
+        fromAccountId: owner,
+        toAccountId: owner,
+      },
+    });
+    const [{ now }] = await prisma.$queryRaw<Array<{ now: Date }>>`
+      SELECT clock_timestamp() AS now
+    `;
+    await prisma.subscriptionDriftSchedule.update({
+      where: { lineageId },
+      data: {
+        nextDriftCheckAt: new Date(now.getTime() + HOUR_MS),
+        monitorUntil: new Date(now.getTime() - 1),
+      },
+    });
+    let providerCalls = 0;
+    setAppleApiClientForTests({
+      getAllSubscriptionStatuses: () => {
+        providerCalls += 1;
+        return Promise.reject(new Error("provider unavailable at deadline"));
+      },
+    } as never);
+
+    const counts = await runReclaimReconciliationSweep();
+    expect(counts.driftDeadlineChecks).toBe(1);
+    expect(counts.driftDeferred).toBe(1);
+    expect(providerCalls).toBe(1);
+    const escalated = await prisma.subscriptionDriftSchedule.findUniqueOrThrow({
+      where: { lineageId },
+    });
+    expect(escalated.attempts).toBe(1);
+    expect(escalated.needsOperatorAt).not.toBeNull();
+    expect(escalated.resolvedAt).toBeNull();
   });
 
   test("a permanently deferred lineage cannot block a healthy compensation", async () => {
@@ -693,12 +944,12 @@ describe("durable drift scheduling and rolling safety", () => {
     expect(escalated.needsOperatorAt).not.toBeNull();
   });
 
-  test("150 due lineages are all checked across exactly three sweep calls", async () => {
+  test("one tick drains three pages and reports the capacity overflow", async () => {
     const owner = await newAccount();
-    const fixtureCount = 3 * DRIFT_BATCH;
+    const fixtureCount = DRIFT_MAX_PER_SWEEP + 1;
     const fixtures = Array.from({ length: fixtureCount }, (_, i) => ({
       lineageId: randomUUID(),
-      originalTransactionId: `r7-backlog-${i}`,
+      originalTransactionId: `drift-backlog-${i}`,
     }));
     await prisma.subscriptionLineage.createMany({
       data: fixtures.map(({ lineageId, originalTransactionId }) => ({
@@ -748,13 +999,29 @@ describe("durable drift scheduling and rolling safety", () => {
       },
     } as never);
 
-    // Bound: at 50 lineages per tick, 150 continuously due lineages require
-    // exactly three ticks. Rescheduled rows move behind the remaining due
-    // backlog, so new/repeated work cannot make any of the 150 disappear.
-    for (let tick = 0; tick < 3; tick += 1) {
-      const counts = await runReclaimReconciliationSweep();
-      expect(counts.driftChecked).toBe(DRIFT_BATCH);
-    }
+    // One production tick drains three 50-row pages. The bounded overflow is
+    // observable and remains unresolved/due inside its monitoring window.
+    const first = await runReclaimReconciliationSweep();
+    expect(first.driftChecked).toBe(DRIFT_MAX_PER_SWEEP);
+    expect(first.driftBacklogRemaining).toBe(1);
+    expect(providerCalls.size).toBe(DRIFT_MAX_PER_SWEEP);
+    const [{ now: afterFirst }] = await prisma.$queryRaw<Array<{ now: Date }>>`
+      SELECT clock_timestamp() AS now
+    `;
+    expect(
+      await prisma.subscriptionDriftSchedule.count({
+        where: {
+          resolvedAt: null,
+          needsOperatorAt: null,
+          nextDriftCheckAt: { lte: afterFirst },
+          monitorUntil: { gt: afterFirst },
+        },
+      }),
+    ).toBe(1);
+
+    const second = await runReclaimReconciliationSweep();
+    expect(second.driftChecked).toBe(1);
+    expect(second.driftBacklogRemaining).toBe(0);
     expect(providerCalls.size).toBe(fixtureCount);
     expect([...providerCalls.values()]).toEqual(Array(fixtureCount).fill(1));
   });

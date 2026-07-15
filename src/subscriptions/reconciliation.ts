@@ -74,6 +74,8 @@ const QUARANTINE_BACKOFF_BASE_MS = 60 * 60 * 1000;
 const QUARANTINE_BACKOFF_MAX_MS = 7 * 24 * 60 * 60 * 1000;
 
 const DRIFT_BATCH = 50;
+/** Provider-check work stays bounded while each tick drains multiple pages. */
+const DRIFT_MAX_PER_SWEEP = 3 * DRIFT_BATCH;
 /** Every committed lineage remains in periodic drift review for this window. */
 const DRIFT_MONITOR_WINDOW_MS = 24 * 60 * 60 * 1000;
 const DRIFT_CHECK_INTERVAL_MS = 60 * 60 * 1000;
@@ -111,6 +113,8 @@ export type ReconciliationCounts = {
   driftChecked: number;
   driftCompensated: number;
   driftDeferred: number;
+  driftDeadlineChecks: number;
+  driftBacklogRemaining: number;
 };
 
 const ENTITLED_APPLE_STATUSES = new Set([1, 4]);
@@ -580,7 +584,8 @@ const deferDriftSchedule = async (
   now: Date,
 ): Promise<void> => {
   const attempts = schedule.attempts + 1;
-  if (attempts >= DRIFT_MAX_ATTEMPTS) {
+  const deadlineReached = schedule.monitorUntil.getTime() <= now.getTime();
+  if (deadlineReached || attempts >= DRIFT_MAX_ATTEMPTS) {
     const result = await prisma.subscriptionDriftSchedule.updateMany({
       where: {
         lineageId: schedule.lineageId,
@@ -592,7 +597,7 @@ const deferDriftSchedule = async (
     });
     if (result.count > 0) {
       logger.error(
-        { lineageId: schedule.lineageId, attempts },
+        { lineageId: schedule.lineageId, attempts, deadlineReached },
         "subscription.reconcile.drift_escalated",
       );
     }
@@ -615,55 +620,135 @@ const deferDriftSchedule = async (
   });
 };
 
+/** Apply one provider result without duplicating deadline dispositions. */
+const processDriftSchedule = async (
+  schedule: DriftScheduleRow,
+  counts: ReconciliationCounts,
+  now: Date,
+  atDeadline: boolean,
+): Promise<void> => {
+  if (atDeadline) counts.driftDeadlineChecks += 1;
+  let outcome: DriftCheckOutcome;
+  try {
+    outcome = await checkLineageDrift(schedule.lineageId, counts);
+  } catch (err) {
+    outcome = "deferred";
+    logger.warn(
+      { err, lineageId: schedule.lineageId },
+      "subscription.reconcile.drift_check_failed",
+    );
+  }
+  if (outcome === "entitled") {
+    // A successful final provider answer closes the completed monitoring
+    // window; periodic answers remain scheduled until that final check.
+    if (atDeadline) {
+      await resolveDriftSchedule(schedule, now);
+    } else {
+      await rescheduleEntitledDrift(schedule, now);
+    }
+  } else if (outcome === "settled") {
+    await resolveDriftSchedule(schedule, now);
+  } else {
+    counts.driftDeferred += 1;
+    // At the deadline there is no valid retry slot. The deadline-aware
+    // defer helper escalates immediately instead of silently resolving.
+    await deferDriftSchedule(schedule, now);
+  }
+};
+
+const drainDriftSchedules = async (
+  counts: ReconciliationCounts,
+  now: Date,
+  atDeadline: boolean,
+  limit: number,
+): Promise<number> => {
+  let processed = 0;
+  while (processed < limit) {
+    const take = Math.min(DRIFT_BATCH, limit - processed);
+    const schedules = atDeadline
+      ? await prisma.subscriptionDriftSchedule.findMany({
+          where: {
+            resolvedAt: null,
+            needsOperatorAt: null,
+            monitorUntil: { lte: now },
+          },
+          orderBy: [{ monitorUntil: "asc" }, { lineageId: "asc" }],
+          take,
+          select: {
+            lineageId: true,
+            nextDriftCheckAt: true,
+            monitorUntil: true,
+            attempts: true,
+          },
+        })
+      : await prisma.subscriptionDriftSchedule.findMany({
+          where: {
+            resolvedAt: null,
+            needsOperatorAt: null,
+            nextDriftCheckAt: { lte: now },
+            monitorUntil: { gt: now },
+          },
+          orderBy: [{ nextDriftCheckAt: "asc" }, { lineageId: "asc" }],
+          take,
+          select: {
+            lineageId: true,
+            nextDriftCheckAt: true,
+            monitorUntil: true,
+            attempts: true,
+          },
+        });
+    for (const schedule of schedules) {
+      await processDriftSchedule(schedule, counts, now, atDeadline);
+    }
+    processed += schedules.length;
+    if (schedules.length < take) break;
+  }
+  return processed;
+};
+
 const sweepTransferDrift = async (
   counts: ReconciliationCounts,
 ): Promise<void> => {
   // Every window/due calculation in this tick shares the database clock that
   // stamped committedAt; a fast application replica cannot age work out.
   const now = await getDatabaseNow();
-  await prisma.subscriptionDriftSchedule.updateMany({
+  const deadlineProcessed = await drainDriftSchedules(
+    counts,
+    now,
+    true,
+    DRIFT_MAX_PER_SWEEP,
+  );
+  const remainingCapacity = DRIFT_MAX_PER_SWEEP - deadlineProcessed;
+  if (remainingCapacity > 0) {
+    await drainDriftSchedules(counts, now, false, remainingCapacity);
+  }
+  counts.driftBacklogRemaining = await prisma.subscriptionDriftSchedule.count({
     where: {
       resolvedAt: null,
       needsOperatorAt: null,
-      monitorUntil: { lte: now },
-    },
-    data: { resolvedAt: now },
-  });
-  const schedules = await prisma.subscriptionDriftSchedule.findMany({
-    where: {
-      resolvedAt: null,
-      needsOperatorAt: null,
-      nextDriftCheckAt: { lte: now },
-      monitorUntil: { gt: now },
-    },
-    orderBy: [{ nextDriftCheckAt: "asc" }, { lineageId: "asc" }],
-    take: DRIFT_BATCH,
-    select: {
-      lineageId: true,
-      nextDriftCheckAt: true,
-      monitorUntil: true,
-      attempts: true,
+      OR: [
+        { monitorUntil: { lte: now } },
+        {
+          nextDriftCheckAt: { lte: now },
+          monitorUntil: { gt: now },
+        },
+      ],
     },
   });
-  for (const schedule of schedules) {
-    let outcome: DriftCheckOutcome;
-    try {
-      outcome = await checkLineageDrift(schedule.lineageId, counts);
-    } catch (err) {
-      outcome = "deferred";
-      logger.warn(
-        { err, lineageId: schedule.lineageId },
-        "subscription.reconcile.drift_check_failed",
-      );
-    }
-    if (outcome === "entitled") {
-      await rescheduleEntitledDrift(schedule, now);
-    } else if (outcome === "settled") {
-      await resolveDriftSchedule(schedule, now);
-    } else {
-      counts.driftDeferred += 1;
-      await deferDriftSchedule(schedule, now);
-    }
+  if (counts.driftDeadlineChecks > 0) {
+    logger.warn(
+      { deadlineChecks: counts.driftDeadlineChecks },
+      "subscription.reconcile.drift_deadline_checked",
+    );
+  }
+  if (counts.driftBacklogRemaining > 0) {
+    logger.warn(
+      {
+        remaining: counts.driftBacklogRemaining,
+        workCap: DRIFT_MAX_PER_SWEEP,
+      },
+      "subscription.reconcile.drift_backlog_remaining",
+    );
   }
 };
 
@@ -677,6 +762,8 @@ export const runReclaimReconciliationSweep =
       driftChecked: 0,
       driftCompensated: 0,
       driftDeferred: 0,
+      driftDeadlineChecks: 0,
+      driftBacklogRemaining: 0,
     };
     // Single-runner lease: the transaction exists only to hold the advisory
     // lock while the sweep works on ordinary pooled connections. Replicas
@@ -706,7 +793,9 @@ export const runReclaimReconciliationSweep =
       counts.quarantineRecovered +
       counts.quarantineDeferred +
       counts.quarantineNeedsOperator +
-      counts.driftChecked;
+      counts.driftChecked +
+      counts.driftDeadlineChecks +
+      counts.driftBacklogRemaining;
     if (total > 0) {
       logger.info(counts, "subscription.reconcile.sweep_completed");
     }
