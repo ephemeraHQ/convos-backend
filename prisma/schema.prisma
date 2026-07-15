@@ -603,6 +603,8 @@ model SubscriptionLineage {
   createdAt             DateTime        @default(now())
   updatedAt             DateTime        @updatedAt
 
+  driftSchedule SubscriptionDriftSchedule?
+
   @@unique([provider, lineageKey])
 }
 
@@ -680,9 +682,9 @@ model SubscriptionTransfer {
   /// Database-owned time when the journal reached `committed` (settlement
   /// time for contested transfers, creation time for instant moves and
   /// restores). Pending rows carry the column default, but a DB trigger
-  /// replaces it on the pending -> committed transition. The drift sweep
-  /// cursors on this: a 72h-contested transfer's createdAt is 72h old by the
-  /// time it settles, so createdAt can never drive drift selection.
+  /// replaces it on the pending -> committed transition. The drift-schedule
+  /// trigger derives its 24h deadline from this: a 72h-contested transfer's
+  /// createdAt is already 72h old when it settles and cannot drive monitoring.
   committedAt        DateTime  @default(now())
   createdAt          DateTime  @default(now())
   updatedAt          DateTime  @updatedAt
@@ -691,6 +693,26 @@ model SubscriptionTransfer {
   @@index([status, contestEndsAt])
   @@index([status, committedAt])
   @@index([status, committedAt, id])
+}
+
+/// Durable, per-lineage post-transfer drift schedule. A database trigger on
+/// SubscriptionTransfer creates or extends this row whenever a transfer,
+/// restore, or undo commits. Per-row retry progress prevents one unavailable
+/// provider lineage from blocking every other lineage in the sweep.
+model SubscriptionDriftSchedule {
+  lineageId        String    @id @db.Uuid
+  nextDriftCheckAt DateTime  @default(now())
+  monitorUntil     DateTime
+  attempts         Int       @default(0)
+  needsOperatorAt  DateTime?
+  resolvedAt       DateTime?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  lineage SubscriptionLineage @relation(fields: [lineageId], references: [id], onDelete: Cascade)
+
+  @@index([resolvedAt, needsOperatorAt, nextDriftCheckAt, lineageId], map: "SubscriptionDriftSchedule_due_idx")
+  @@index([resolvedAt, monitorUntil], map: "SubscriptionDriftSchedule_monitor_idx")
 }
 
 /// Durable record of a Google token chain the resolver refused to auto-merge

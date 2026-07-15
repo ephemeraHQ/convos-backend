@@ -7,23 +7,8 @@
 -- can remain invisible to the composite drift cursor during a mixed-version
 -- rollout.
 
--- Give every committed NULL journal a fresh database timestamp so even a row
--- written by an old replica long after the prior migration is guaranteed a
--- complete 24-hour visibility window. Rechecking an older transfer is safe
--- because compensation is idempotent.
-UPDATE "SubscriptionTransfer"
-SET "committedAt" = clock_timestamp()
-WHERE status = 'committed' AND "committedAt" IS NULL;
-
--- Pending rows only need a non-null placeholder for the rolling-safe
--- constraint; the trigger replaces it when status first becomes committed.
-UPDATE "SubscriptionTransfer"
-SET "committedAt" = COALESCE("updatedAt", CURRENT_TIMESTAMP)
-WHERE "committedAt" IS NULL;
-
 ALTER TABLE "SubscriptionTransfer"
-    ALTER COLUMN "committedAt" SET DEFAULT CURRENT_TIMESTAMP,
-    ALTER COLUMN "committedAt" SET NOT NULL;
+    ALTER COLUMN "committedAt" SET DEFAULT CURRENT_TIMESTAMP;
 
 CREATE OR REPLACE FUNCTION "stamp_subscription_transfer_committed_at"()
 RETURNS TRIGGER AS $$
@@ -49,6 +34,22 @@ BEFORE INSERT OR UPDATE OF status, "committedAt"
 ON "SubscriptionTransfer"
 FOR EACH ROW
 EXECUTE FUNCTION "stamp_subscription_transfer_committed_at"();
+
+-- Protection is live before either backfill. A concurrent old replica's
+-- committed insert/transition is stamped by the trigger, while an omitted
+-- value on a pending insert receives the default.
+UPDATE "SubscriptionTransfer"
+SET "committedAt" = clock_timestamp()
+WHERE status = 'committed' AND "committedAt" IS NULL;
+
+-- Pending rows only need a non-null placeholder for the rolling-safe
+-- constraint; the trigger replaces it when status first becomes committed.
+UPDATE "SubscriptionTransfer"
+SET "committedAt" = COALESCE("updatedAt", CURRENT_TIMESTAMP)
+WHERE "committedAt" IS NULL;
+
+ALTER TABLE "SubscriptionTransfer"
+    ALTER COLUMN "committedAt" SET NOT NULL;
 
 -- Supports the exact deterministic keyset order used by the sweep. Keep the
 -- prior two-column index for additive rollout; it can be retired separately.

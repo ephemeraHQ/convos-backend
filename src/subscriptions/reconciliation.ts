@@ -54,17 +54,17 @@ import { prisma } from "@/utils/prisma";
  *
  * Pass 2 — post-transfer drift. Lineages with a committed transfer /
  * restore / undo are re-checked against authoritative provider state for the
- * full 24 hours after commit. A composite (committedAt, id) watermark is
- * persisted in RuntimeConfig, capped below a commit-visibility margin, and
- * cycles back to the moving 24-hour floor after reaching the window's end:
- * an entitled first answer never retires a lineage from later checks. A
- * non-entitled answer invalidates the affected held custody (current-window
- * or, when the period just ended, the latest held row) and writes the
- * provider-derived terminal state onto the Subscription row — but only after
- * re-reading the row under the lineage lock and fencing on its version: a
- * renewal that landed between the provider fetch and the lock must never be
- * clawed with the stale answer. Deferred rows stop the batch and hold the
- * watermark, so a provider outage postpones — never loses — a journal.
+ * full 24 hours after commit. A database trigger creates or extends one
+ * durable schedule per lineage; each entitled answer schedules another
+ * periodic check, while provider failures back off only that lineage and
+ * eventually escalate it to an operator. Due rows are served most-overdue
+ * first, so sustained new volume and one unavailable provider lineage cannot
+ * starve the rest of the monitoring window. A non-entitled answer invalidates
+ * the affected held custody (current-window or, when the period just ended,
+ * the latest held row) and writes the provider-derived terminal state onto
+ * the Subscription row — but only after re-reading the row under the lineage
+ * lock and fencing on its version: a renewal that landed between the provider
+ * fetch and the lock must never be clawed with the stale answer.
  */
 
 const QUARANTINE_BATCH = 25;
@@ -76,11 +76,14 @@ const QUARANTINE_BACKOFF_MAX_MS = 7 * 24 * 60 * 60 * 1000;
 const DRIFT_BATCH = 50;
 /** Every committed lineage remains in periodic drift review for this window. */
 const DRIFT_MONITOR_WINDOW_MS = 24 * 60 * 60 * 1000;
-const DRIFT_WATERMARK_KEY = "subscription_reclaim_drift_watermark";
-const DRIFT_MIN_CURSOR_ID = "00000000-0000-0000-0000-000000000000";
+const DRIFT_CHECK_INTERVAL_MS = 60 * 60 * 1000;
+/** Same retry budget/formula as quarantine, tuned to fit the 24h window. */
+const DRIFT_MAX_ATTEMPTS = 10;
+const DRIFT_BACKOFF_BASE_MS = 5 * 60 * 1000;
+const DRIFT_BACKOFF_MAX_MS = 60 * 60 * 1000;
 /**
- * DB-stamped rows become visible only at commit, so cursor advancement stays
- * behind this margin; selection still checks newer rows idempotently.
+ * DB-stamped rows become visible only at commit. A fresh row may be checked
+ * idempotently, but its next periodic check is not advanced past this margin.
  */
 const DRIFT_COMMIT_VISIBILITY_MS = 2 * 60 * 1000;
 
@@ -344,6 +347,8 @@ type DriftCheck =
   | { verdict: "unknown" }
   | { verdict: "not_entitled"; terminalStatus: SubscriptionStatus };
 
+type DriftCheckOutcome = "entitled" | "settled" | "deferred";
+
 /** Provider-authoritative entitlement for one live subscription row. */
 const checkEntitlement = async (row: {
   provider: BillingProvider;
@@ -410,31 +415,28 @@ const driftFenceHolds = (
   current.currentPeriodEnd.getTime() === snapshot.currentPeriodEnd.getTime();
 
 /**
- * Re-check one lineage against provider truth. Returns true when this pass
- * settled (entitled, compensated, or no longer applicable) and the cursor
- * may advance past its journal; false defers it to the next sweep (provider
- * unreachable, or the fence tripped). An entitled result advances only this
- * scan cycle: the cursor cycles back through every journal until commit+24h.
+ * Re-check one lineage against provider truth. Scheduling is deliberately
+ * outside this function: the cleared compensation transaction returns only
+ * the disposition the lineage's durable schedule needs.
  */
 const checkLineageDrift = async (
   lineageId: string,
   counts: ReconciliationCounts,
-): Promise<boolean> => {
+): Promise<DriftCheckOutcome> => {
   const snapshot = await prisma.subscription.findFirst({
     where: { lineageId },
   });
   if (!snapshot) {
     // No live row: the lineage tombstoned (escrow/teardown paths own it) or
     // the row was torn down — nothing to drift-check.
-    return true;
+    return "settled";
   }
   counts.driftChecked += 1;
   const check = await checkEntitlement(snapshot);
   if (check.verdict === "unknown") {
-    counts.driftDeferred += 1;
-    return false;
+    return "deferred";
   }
-  if (check.verdict === "entitled") return true;
+  if (check.verdict === "entitled") return "entitled";
   const { terminalStatus } = check;
   // Provider says the recently transferred/restored subscription is no
   // longer entitled: claw the conservative remainder from the current
@@ -493,8 +495,7 @@ const checkLineageDrift = async (
     { label: "reconcile_drift_compensation" },
   );
   if (outcome.kind === "fenced") {
-    counts.driftDeferred += 1;
-    return false;
+    return "deferred";
   }
   if (outcome.compensated !== null) {
     counts.driftCompensated += 1;
@@ -507,131 +508,163 @@ const checkLineageDrift = async (
       "subscription.reconcile.drift_compensated",
     );
   }
-  return true;
+  return "settled";
 };
 
-type DriftCursor = { committedAt: Date; id: string };
+type DriftScheduleRow = {
+  lineageId: string;
+  nextDriftCheckAt: Date;
+  monitorUntil: Date;
+  attempts: number;
+};
 
-const windowStartCursor = (now: number): DriftCursor => ({
-  committedAt: new Date(now - DRIFT_MONITOR_WINDOW_MS),
-  id: DRIFT_MIN_CURSOR_ID,
-});
+const driftBackoffMs = (attempts: number): number => {
+  const exp = DRIFT_BACKOFF_BASE_MS * 2 ** Math.max(0, attempts - 1);
+  return Math.min(exp, DRIFT_BACKOFF_MAX_MS);
+};
 
-const readDriftWatermark = async (now: number): Promise<DriftCursor> => {
-  const stored = await prisma.runtimeConfig.findUnique({
-    where: { key: DRIFT_WATERMARK_KEY },
+const getDatabaseNow = async (): Promise<Date> => {
+  const rows = await prisma.$queryRaw<{ now: Date }[]>`
+    SELECT clock_timestamp() AS now
+  `;
+  return rows[0].now;
+};
+
+/** Mark a terminal/no-longer-applicable lineage complete for this window. */
+const resolveDriftSchedule = async (
+  schedule: DriftScheduleRow,
+  now: Date,
+): Promise<void> => {
+  await prisma.subscriptionDriftSchedule.updateMany({
+    where: {
+      lineageId: schedule.lineageId,
+      monitorUntil: schedule.monitorUntil,
+      resolvedAt: null,
+      needsOperatorAt: null,
+    },
+    data: { attempts: 0, resolvedAt: now },
   });
-  if (stored) {
-    try {
-      const value = JSON.parse(stored.value) as {
-        committedAt?: unknown;
-        id?: unknown;
-      };
-      const committedAt = new Date(String(value.committedAt));
-      if (
-        !Number.isNaN(committedAt.getTime()) &&
-        typeof value.id === "string"
-      ) {
-        return { committedAt, id: value.id };
-      }
-    } catch {
-      // Rolling upgrade from the timestamp-only watermark. Start at the
-      // lowest UUID for that millisecond so equal-time rows skipped by the
-      // old cursor are recovered (already-checked rows replay idempotently).
-      const committedAt = new Date(stored.value);
-      if (!Number.isNaN(committedAt.getTime())) {
-        return { committedAt, id: DRIFT_MIN_CURSOR_ID };
-      }
+};
+
+/** An entitled answer remains scheduled until the lineage's union deadline. */
+const rescheduleEntitledDrift = async (
+  schedule: DriftScheduleRow,
+  now: Date,
+): Promise<void> => {
+  const nowMs = now.getTime();
+  const visibilityReadyAt =
+    schedule.monitorUntil.getTime() -
+    DRIFT_MONITOR_WINDOW_MS +
+    DRIFT_COMMIT_VISIBILITY_MS;
+  const periodicAt = Math.max(
+    nowMs + DRIFT_CHECK_INTERVAL_MS,
+    visibilityReadyAt > nowMs ? visibilityReadyAt : 0,
+  );
+  const nextDriftCheckAt = new Date(
+    Math.min(periodicAt, schedule.monitorUntil.getTime() - 1),
+  );
+  await prisma.subscriptionDriftSchedule.updateMany({
+    where: {
+      lineageId: schedule.lineageId,
+      monitorUntil: schedule.monitorUntil,
+      resolvedAt: null,
+      needsOperatorAt: null,
+    },
+    data: { attempts: 0, nextDriftCheckAt },
+  });
+};
+
+/** Back off only this lineage; after ten failures an operator owns it. */
+const deferDriftSchedule = async (
+  schedule: DriftScheduleRow,
+  now: Date,
+): Promise<void> => {
+  const attempts = schedule.attempts + 1;
+  if (attempts >= DRIFT_MAX_ATTEMPTS) {
+    const result = await prisma.subscriptionDriftSchedule.updateMany({
+      where: {
+        lineageId: schedule.lineageId,
+        monitorUntil: schedule.monitorUntil,
+        resolvedAt: null,
+        needsOperatorAt: null,
+      },
+      data: { attempts, needsOperatorAt: now },
+    });
+    if (result.count > 0) {
+      logger.error(
+        { lineageId: schedule.lineageId, attempts },
+        "subscription.reconcile.drift_escalated",
+      );
     }
+    return;
   }
-  return windowStartCursor(now);
-};
-
-const writeDriftWatermark = async (cursor: DriftCursor): Promise<void> => {
-  const value = JSON.stringify({
-    committedAt: cursor.committedAt.toISOString(),
-    id: cursor.id,
-  });
-  await prisma.runtimeConfig.upsert({
-    where: { key: DRIFT_WATERMARK_KEY },
-    create: { key: DRIFT_WATERMARK_KEY, value },
-    update: { value },
+  const nextDriftCheckAt = new Date(
+    Math.min(
+      now.getTime() + driftBackoffMs(attempts),
+      schedule.monitorUntil.getTime() - 1,
+    ),
+  );
+  await prisma.subscriptionDriftSchedule.updateMany({
+    where: {
+      lineageId: schedule.lineageId,
+      monitorUntil: schedule.monitorUntil,
+      resolvedAt: null,
+      needsOperatorAt: null,
+    },
+    data: { attempts, nextDriftCheckAt },
   });
 };
 
 const sweepTransferDrift = async (
   counts: ReconciliationCounts,
 ): Promise<void> => {
-  const now = Date.now();
-  const windowStart = windowStartCursor(now);
-  const storedCursor = await readDriftWatermark(now);
-  const cursor =
-    storedCursor.committedAt.getTime() < windowStart.committedAt.getTime()
-      ? windowStart
-      : storedCursor;
-  const journals = await prisma.subscriptionTransfer.findMany({
+  // Every window/due calculation in this tick shares the database clock that
+  // stamped committedAt; a fast application replica cannot age work out.
+  const now = await getDatabaseNow();
+  await prisma.subscriptionDriftSchedule.updateMany({
     where: {
-      status: "committed",
-      kind: { in: ["transfer", "restore", "undo"] },
-      committedAt: { gte: windowStart.committedAt },
-      OR: [
-        { committedAt: { gt: cursor.committedAt } },
-        { committedAt: cursor.committedAt, id: { gt: cursor.id } },
-      ],
+      resolvedAt: null,
+      needsOperatorAt: null,
+      monitorUntil: { lte: now },
     },
-    orderBy: [{ committedAt: "asc" }, { id: "asc" }],
-    take: DRIFT_BATCH,
-    select: { id: true, lineageId: true, committedAt: true },
+    data: { resolvedAt: now },
   });
-  if (journals.length === 0) {
-    // A completed cycle starts again at the current 24-hour floor. This is
-    // what keeps an earlier entitled answer from retiring the lineage. It
-    // also makes an in-flight DB-stamped commit that appeared behind this
-    // cycle's cursor visible on the next cycle: no committed journal can be
-    // permanently unswept.
-    await writeDriftWatermark(windowStart);
-    return;
-  }
-
-  const lineageSettled = new Map<string, boolean>();
-  const settledPrefix: (typeof journals)[number][] = [];
-  for (const journal of journals) {
-    let settled = lineageSettled.get(journal.lineageId);
-    if (settled === undefined) {
-      try {
-        settled = await checkLineageDrift(journal.lineageId, counts);
-      } catch (err) {
-        settled = false;
-        counts.driftDeferred += 1;
-        logger.warn(
-          { err, lineageId: journal.lineageId },
-          "subscription.reconcile.drift_check_failed",
-        );
-      }
-      lineageSettled.set(journal.lineageId, settled);
+  const schedules = await prisma.subscriptionDriftSchedule.findMany({
+    where: {
+      resolvedAt: null,
+      needsOperatorAt: null,
+      nextDriftCheckAt: { lte: now },
+      monitorUntil: { gt: now },
+    },
+    orderBy: [{ nextDriftCheckAt: "asc" }, { lineageId: "asc" }],
+    take: DRIFT_BATCH,
+    select: {
+      lineageId: true,
+      nextDriftCheckAt: true,
+      monitorUntil: true,
+      attempts: true,
+    },
+  });
+  for (const schedule of schedules) {
+    let outcome: DriftCheckOutcome;
+    try {
+      outcome = await checkLineageDrift(schedule.lineageId, counts);
+    } catch (err) {
+      outcome = "deferred";
+      logger.warn(
+        { err, lineageId: schedule.lineageId },
+        "subscription.reconcile.drift_check_failed",
+      );
     }
-    // Do not process rows after a deferred journal: advancing only the
-    // settled prefix then retrying cannot double-process later rows.
-    if (!settled) break;
-    settledPrefix.push(journal);
+    if (outcome === "entitled") {
+      await rescheduleEntitledDrift(schedule, now);
+    } else if (outcome === "settled") {
+      await resolveDriftSchedule(schedule, now);
+    } else {
+      counts.driftDeferred += 1;
+      await deferDriftSchedule(schedule, now);
+    }
   }
-
-  const visibilityCap = now - DRIFT_COMMIT_VISIBILITY_MS;
-  let advanceTo: DriftCursor | null = null;
-  for (const journal of settledPrefix) {
-    if (journal.committedAt.getTime() > visibilityCap) break;
-    advanceTo = { committedAt: journal.committedAt, id: journal.id };
-  }
-
-  if (!advanceTo) return;
-  // A short final page completed the cycle, so reset immediately; the next
-  // sweep rechecks the still-in-window lineages rather than spending an
-  // interval merely discovering the end of the page set.
-  await writeDriftWatermark(
-    advanceTo.id === journals.at(-1)?.id && journals.length < DRIFT_BATCH
-      ? windowStart
-      : advanceTo,
-  );
 };
 
 export const runReclaimReconciliationSweep =
