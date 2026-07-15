@@ -6,6 +6,6 @@ export const loginView = (): string => `
     <label for="token-input">Admin token</label>
     <input id="token-input" type="password" placeholder="paste CREDITS_ADMIN_API_TOKEN" autocomplete="off">
     <div id="login-error"></div>
-    <button id="unlock" class="btn btn-primary btn-block" style="margin-top:14px">Unlock</button>
+    <button id="unlock" class="btn btn-primary btn-block">Unlock</button>
   </div>
 </div>`;

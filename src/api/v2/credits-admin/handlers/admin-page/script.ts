@@ -215,10 +215,10 @@ export const clientScript = (): string => `
       : '<div class="muted-note">No subscription on record.</div>';
     el("detail-body").innerHTML =
       '<h2 class="detail-title">Account <span class="mono">'+esc(shortId(j.accountId))+'</span></h2>'
-      +'<div class="card"><div class="k">Balance</div><div class="balance-value">'+fmtCredits(j.balanceCredits)+'</div>'
-      +'<div class="k">'+usdHint(j.balanceCredits)+'</div>'
+      +'<div class="card"><h3 class="tight">Balance</h3><div class="balance-value">'+fmtCredits(j.balanceCredits)+'</div>'
+      +'<div class="balance-hint">'+usdHint(j.balanceCredits)+'</div>'
       +'<div class="sub-line">Subscription: '+subChip(j)+'</div></div>'
-      +'<div class="card">'+subBlock+'</div>'
+      +'<div class="card"><h3>Subscription</h3>'+subBlock+'</div>'
       +'<div class="card"><h3>Grant</h3><input id="d-grant-credits" type="number" min="1" placeholder="credits"><input id="d-grant-reason" placeholder="reason"><button id="d-grant-btn" class="btn btn-primary">Grant</button></div>'
       +'<div class="card"><h3>Adjust</h3><input id="d-adjust-delta" type="number" placeholder="±credits"><input id="d-adjust-reason" placeholder="reason"><button id="d-adjust-btn" class="btn btn-danger">Adjust</button></div>'
       +'<div class="card"><h3>Usage (30d)</h3><div id="usage-spark" class="spark"></div></div>'
