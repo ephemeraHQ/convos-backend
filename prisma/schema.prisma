@@ -677,17 +677,20 @@ model SubscriptionTransfer {
   undoneByTransferId String?   @db.Uuid
   undoDeadlineAt     DateTime?
   contestEndsAt      DateTime?
-  /// When the journal reached `committed` (settlement time for contested
-  /// transfers, creation time for instant moves and restores). The drift
-  /// sweep cursors on this: a 72h-contested transfer's createdAt is 72h old
-  /// by the time it settles, so createdAt can never drive drift selection.
-  committedAt        DateTime?
+  /// Database-owned time when the journal reached `committed` (settlement
+  /// time for contested transfers, creation time for instant moves and
+  /// restores). Pending rows carry the column default, but a DB trigger
+  /// replaces it on the pending -> committed transition. The drift sweep
+  /// cursors on this: a 72h-contested transfer's createdAt is 72h old by the
+  /// time it settles, so createdAt can never drive drift selection.
+  committedAt        DateTime  @default(now())
   createdAt          DateTime  @default(now())
   updatedAt          DateTime  @updatedAt
 
   @@index([lineageId, createdAt])
   @@index([status, contestEndsAt])
   @@index([status, committedAt])
+  @@index([status, committedAt, id])
 }
 
 /// Durable record of a Google token chain the resolver refused to auto-merge

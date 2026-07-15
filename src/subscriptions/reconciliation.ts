@@ -53,16 +53,17 @@ import { prisma } from "@/utils/prisma";
  * operator and are only counted.
  *
  * Pass 2 — post-transfer drift. Lineages with a committed transfer /
- * restore / undo are re-checked against authoritative provider state,
- * cursored by the journal's committedAt (a watermark persisted in
- * RuntimeConfig — settlement of a default 72h-contested transfer happens
- * long after the pending row's createdAt, so creation time can never drive
- * selection). A non-entitled answer invalidates the affected held custody
- * (current-window or, when the period just ended, the latest held row) and
- * writes the provider-derived terminal state onto the Subscription row — but
- * only after re-reading the row under the lineage lock and fencing on its
- * version: a renewal that landed between the provider fetch and the lock
- * must never be clawed with the stale answer. Deferred rows hold the
+ * restore / undo are re-checked against authoritative provider state for the
+ * full 24 hours after commit. A composite (committedAt, id) watermark is
+ * persisted in RuntimeConfig, capped below a commit-visibility margin, and
+ * cycles back to the moving 24-hour floor after reaching the window's end:
+ * an entitled first answer never retires a lineage from later checks. A
+ * non-entitled answer invalidates the affected held custody (current-window
+ * or, when the period just ended, the latest held row) and writes the
+ * provider-derived terminal state onto the Subscription row — but only after
+ * re-reading the row under the lineage lock and fencing on its version: a
+ * renewal that landed between the provider fetch and the lock must never be
+ * clawed with the stale answer. Deferred rows stop the batch and hold the
  * watermark, so a provider outage postpones — never loses — a journal.
  */
 
@@ -73,19 +74,23 @@ const QUARANTINE_BACKOFF_BASE_MS = 60 * 60 * 1000;
 const QUARANTINE_BACKOFF_MAX_MS = 7 * 24 * 60 * 60 * 1000;
 
 const DRIFT_BATCH = 50;
-/** Initial watermark lookback when none is stored yet. */
-const DRIFT_DEFAULT_LOOKBACK_MS = 24 * 60 * 60 * 1000;
+/** Every committed lineage remains in periodic drift review for this window. */
+const DRIFT_MONITOR_WINDOW_MS = 24 * 60 * 60 * 1000;
 const DRIFT_WATERMARK_KEY = "subscription_reclaim_drift_watermark";
+const DRIFT_MIN_CURSOR_ID = "00000000-0000-0000-0000-000000000000";
 /**
- * committedAt is stamped inside the committing transaction, so a journal can
- * become visible up to a transaction-lifetime after its stamp. The watermark
- * never advances into this margin; rows inside it are (idempotently)
- * re-checked next sweep.
+ * DB-stamped rows become visible only at commit, so cursor advancement stays
+ * behind this margin; selection still checks newer rows idempotently.
  */
 const DRIFT_COMMIT_VISIBILITY_MS = 2 * 60 * 1000;
 
-/** Single-runner lease for the whole sweep (distinct from other app locks). */
-const SWEEP_ADVISORY_LOCK_KEY = 728_193_642;
+/**
+ * Single-runner lease in Postgres's two-int advisory-lock namespace. That
+ * namespace is structurally disjoint from the identity barrier's one-bigint
+ * hash locks; class id 7_281 is reserved for subsystem leases.
+ */
+const SWEEP_ADVISORY_LOCK_CLASS_ID = 7_281;
+const SWEEP_ADVISORY_LOCK_OBJECT_ID = 93_642;
 const SWEEP_LEASE_TIMEOUT_MS = 10 * 60 * 1000;
 
 /** Reasons the sweep may retry against fresh provider state. */
@@ -405,10 +410,11 @@ const driftFenceHolds = (
   current.currentPeriodEnd.getTime() === snapshot.currentPeriodEnd.getTime();
 
 /**
- * Re-check one lineage against provider truth. Returns true when the
- * journal that selected this lineage is settled (entitled, compensated, or
- * no longer applicable) and the watermark may advance past it; false defers
- * it to the next sweep (provider unreachable, or the fence tripped).
+ * Re-check one lineage against provider truth. Returns true when this pass
+ * settled (entitled, compensated, or no longer applicable) and the cursor
+ * may advance past its journal; false defers it to the next sweep (provider
+ * unreachable, or the fence tripped). An entitled result advances only this
+ * scan cycle: the cursor cycles back through every journal until commit+24h.
  */
 const checkLineageDrift = async (
   lineageId: string,
@@ -504,72 +510,128 @@ const checkLineageDrift = async (
   return true;
 };
 
-const readDriftWatermark = async (now: number): Promise<Date> => {
+type DriftCursor = { committedAt: Date; id: string };
+
+const windowStartCursor = (now: number): DriftCursor => ({
+  committedAt: new Date(now - DRIFT_MONITOR_WINDOW_MS),
+  id: DRIFT_MIN_CURSOR_ID,
+});
+
+const readDriftWatermark = async (now: number): Promise<DriftCursor> => {
   const stored = await prisma.runtimeConfig.findUnique({
     where: { key: DRIFT_WATERMARK_KEY },
   });
   if (stored) {
-    const parsed = new Date(stored.value);
-    if (!Number.isNaN(parsed.getTime())) return parsed;
+    try {
+      const value = JSON.parse(stored.value) as {
+        committedAt?: unknown;
+        id?: unknown;
+      };
+      const committedAt = new Date(String(value.committedAt));
+      if (
+        !Number.isNaN(committedAt.getTime()) &&
+        typeof value.id === "string"
+      ) {
+        return { committedAt, id: value.id };
+      }
+    } catch {
+      // Rolling upgrade from the timestamp-only watermark. Start at the
+      // lowest UUID for that millisecond so equal-time rows skipped by the
+      // old cursor are recovered (already-checked rows replay idempotently).
+      const committedAt = new Date(stored.value);
+      if (!Number.isNaN(committedAt.getTime())) {
+        return { committedAt, id: DRIFT_MIN_CURSOR_ID };
+      }
+    }
   }
-  return new Date(now - DRIFT_DEFAULT_LOOKBACK_MS);
+  return windowStartCursor(now);
+};
+
+const writeDriftWatermark = async (cursor: DriftCursor): Promise<void> => {
+  const value = JSON.stringify({
+    committedAt: cursor.committedAt.toISOString(),
+    id: cursor.id,
+  });
+  await prisma.runtimeConfig.upsert({
+    where: { key: DRIFT_WATERMARK_KEY },
+    create: { key: DRIFT_WATERMARK_KEY, value },
+    update: { value },
+  });
 };
 
 const sweepTransferDrift = async (
   counts: ReconciliationCounts,
 ): Promise<void> => {
   const now = Date.now();
-  const watermark = await readDriftWatermark(now);
+  const windowStart = windowStartCursor(now);
+  const storedCursor = await readDriftWatermark(now);
+  const cursor =
+    storedCursor.committedAt.getTime() < windowStart.committedAt.getTime()
+      ? windowStart
+      : storedCursor;
   const journals = await prisma.subscriptionTransfer.findMany({
     where: {
       status: "committed",
       kind: { in: ["transfer", "restore", "undo"] },
-      committedAt: { gt: watermark },
+      committedAt: { gte: windowStart.committedAt },
+      OR: [
+        { committedAt: { gt: cursor.committedAt } },
+        { committedAt: cursor.committedAt, id: { gt: cursor.id } },
+      ],
     },
-    orderBy: { committedAt: "asc" },
+    orderBy: [{ committedAt: "asc" }, { id: "asc" }],
     take: DRIFT_BATCH,
-    select: { lineageId: true, committedAt: true },
+    select: { id: true, lineageId: true, committedAt: true },
   });
-  if (journals.length === 0) return;
+  if (journals.length === 0) {
+    // A completed cycle starts again at the current 24-hour floor. This is
+    // what keeps an earlier entitled answer from retiring the lineage. It
+    // also makes an in-flight DB-stamped commit that appeared behind this
+    // cycle's cursor visible on the next cycle: no committed journal can be
+    // permanently unswept.
+    await writeDriftWatermark(windowStart);
+    return;
+  }
 
   const lineageSettled = new Map<string, boolean>();
+  const settledPrefix: (typeof journals)[number][] = [];
   for (const journal of journals) {
-    if (lineageSettled.has(journal.lineageId)) continue;
-    let settled = false;
-    try {
-      settled = await checkLineageDrift(journal.lineageId, counts);
-    } catch (err) {
-      counts.driftDeferred += 1;
-      logger.warn(
-        { err, lineageId: journal.lineageId },
-        "subscription.reconcile.drift_check_failed",
-      );
+    let settled = lineageSettled.get(journal.lineageId);
+    if (settled === undefined) {
+      try {
+        settled = await checkLineageDrift(journal.lineageId, counts);
+      } catch (err) {
+        settled = false;
+        counts.driftDeferred += 1;
+        logger.warn(
+          { err, lineageId: journal.lineageId },
+          "subscription.reconcile.drift_check_failed",
+        );
+      }
+      lineageSettled.set(journal.lineageId, settled);
     }
-    lineageSettled.set(journal.lineageId, settled);
+    // Do not process rows after a deferred journal: advancing only the
+    // settled prefix then retrying cannot double-process later rows.
+    if (!settled) break;
+    settledPrefix.push(journal);
   }
 
-  // Advance the watermark across the longest fully-settled prefix. A
-  // deferred lineage holds it, so a provider outage postpones — never
-  // loses — a journal, no matter how long the outage lasts. The advance is
-  // capped below now minus the visibility margin so an in-flight commit
-  // whose committedAt predates our query can never be skipped; rows inside
-  // the margin are simply re-checked (idempotently) next sweep.
-  let advanceTo: Date | null = null;
-  for (const journal of journals) {
-    if (!journal.committedAt) continue;
-    if (!lineageSettled.get(journal.lineageId)) break;
-    advanceTo = journal.committedAt;
+  const visibilityCap = now - DRIFT_COMMIT_VISIBILITY_MS;
+  let advanceTo: DriftCursor | null = null;
+  for (const journal of settledPrefix) {
+    if (journal.committedAt.getTime() > visibilityCap) break;
+    advanceTo = { committedAt: journal.committedAt, id: journal.id };
   }
+
   if (!advanceTo) return;
-  const visibilityCap = new Date(now - DRIFT_COMMIT_VISIBILITY_MS);
-  const next =
-    advanceTo.getTime() > visibilityCap.getTime() ? visibilityCap : advanceTo;
-  if (next.getTime() <= watermark.getTime()) return;
-  await prisma.runtimeConfig.upsert({
-    where: { key: DRIFT_WATERMARK_KEY },
-    create: { key: DRIFT_WATERMARK_KEY, value: next.toISOString() },
-    update: { value: next.toISOString() },
-  });
+  // A short final page completed the cycle, so reset immediately; the next
+  // sweep rechecks the still-in-window lineages rather than spending an
+  // interval merely discovering the end of the page set.
+  await writeDriftWatermark(
+    advanceTo.id === journals.at(-1)?.id && journals.length < DRIFT_BATCH
+      ? windowStart
+      : advanceTo,
+  );
 };
 
 export const runReclaimReconciliationSweep =
@@ -592,7 +654,10 @@ export const runReclaimReconciliationSweep =
     await prisma.$transaction(
       async (tx) => {
         const lockRows = await tx.$queryRaw<{ locked: boolean }[]>`
-          SELECT pg_try_advisory_xact_lock(${SWEEP_ADVISORY_LOCK_KEY}) AS locked
+          SELECT pg_try_advisory_xact_lock(
+            ${SWEEP_ADVISORY_LOCK_CLASS_ID}::int,
+            ${SWEEP_ADVISORY_LOCK_OBJECT_ID}::int
+          ) AS locked
         `;
         if (!lockRows[0]?.locked) {
           logger.info("subscription.reconcile.lease_held_elsewhere");
