@@ -61,4 +61,18 @@ describe("credits-admin page (console shell)", () => {
     expect(res.text).toContain("usage-spark");
     expect(res.text).toContain("perPeriodCredits");
   });
+
+  it("wires the accounts view selector + modes + /accounts endpoint", async () => {
+    const res = await adminRequest(app, false).get("/api/v2/credits-admin/");
+    expect(res.text).toContain('id="view-mode"');
+    // the URL is built by concatenation ("/accounts" + "?mode=" + ...); assert the
+    // rendered literals, not the runtime-concatenated whole.
+    expect(res.text).toContain('guardFetch("/accounts"');
+    expect(res.text).toContain('"?mode="');
+    expect(res.text).toContain('value="balance"');
+    expect(res.text).toContain('value="broken"');
+    expect(res.text).toContain('value="grantKind"');
+    expect(res.text).toContain('id="accounts-table"');
+    expect(res.text).toContain("loadAccounts");
+  });
 });

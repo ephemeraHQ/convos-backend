@@ -28,6 +28,8 @@ export const STYLES = `
   .center { overflow:auto; padding:16px; }
   .facet { display:inline-block; padding:6px 12px; border-radius:999px; border:1px solid var(--edge); cursor:pointer; font-size:13px; background:var(--surface); }
   .facet.active { background:var(--brand); color:#fff; border-color:var(--brand); }
+  .mode-ctl { display:flex; flex-direction:column; gap:8px; }
+  .mode-ctl input, .mode-ctl select, #view-mode, #search-key { width:100%; padding:8px; border:1px solid #d2d2d7; border-radius:8px; font-size:14px; }
 
   /* Buttons / badges / tables / toast / spark — reuse from prior page */
   .btn { padding:10px 16px; border:none; border-radius:8px; font-size:14px; font-weight:600; cursor:pointer; }

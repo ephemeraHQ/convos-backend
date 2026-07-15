@@ -75,10 +75,11 @@ export const clientScript = (): string => `
       activityCursor=j.nextCursor;
       el("load-more").classList.toggle("hidden", !j.nextCursor);
       var empty = reset && (!j.rows || j.rows.length===0);
+      el("activity-empty").textContent = "No matching activity.";
       el("activity-empty").classList.toggle("hidden", !empty);
     }).catch(function(e){ if(e.message!=="reauth") toast("Failed to load activity","error"); });
   }
-  el("load-more").addEventListener("click", function(){ loadActivity(false); });
+  el("load-more").addEventListener("click", function(){ if(currentView==="activity"){ loadActivity(false); } else { loadAccounts(false); } });
   Array.prototype.forEach.call(document.querySelectorAll(".facet"), function(f){
     f.addEventListener("click", function(){
       Array.prototype.forEach.call(document.querySelectorAll(".facet"), function(x){ x.classList.remove("active"); });
@@ -97,6 +98,75 @@ export const clientScript = (): string => `
   }
   el("search-btn").addEventListener("click", doSearch);
   el("search-value").addEventListener("keydown", function(e){ if(e.key==="Enter") doSearch(); });
+  var currentView="activity";
+  var accountsGen=0;
+  var accountsMode={balance:"balance",broken:"broken",grantKind:"grantKind",active:"activity",dormant:"activity"};
+  function accountsPage(){ return el("accounts-wrap"); }
+  function showModeControls(view){
+    Array.prototype.forEach.call(document.querySelectorAll(".mode-ctl"), function(c){ c.classList.add("hidden"); });
+    el("facet-group").classList.toggle("hidden", view!=="activity");
+    if(view==="balance") el("ctl-balance").classList.remove("hidden");
+    else if(view==="broken") el("ctl-broken").classList.remove("hidden");
+    else if(view==="grantKind") el("ctl-grantKind").classList.remove("hidden");
+    else if(view==="active"||view==="dormant") el("ctl-activity").classList.remove("hidden");
+  }
+  function accountsQuery(view, pageNo){
+    var qs="?mode="+encodeURIComponent(accountsMode[view])+"&page="+pageNo;
+    if(view==="balance"){ var mn=el("bal-min").value, mx=el("bal-max").value;
+      if(mn!=="") qs+="&min="+encodeURIComponent(mn); if(mx!=="") qs+="&max="+encodeURIComponent(mx);
+      qs+="&sort="+encodeURIComponent(el("bal-sort").value); }
+    else if(view==="broken"){ qs+="&maxBalance="+encodeURIComponent(el("broken-max").value||"0"); }
+    else if(view==="grantKind"){ qs+="&kind="+encodeURIComponent(el("gk-kind").value); }
+    else if(view==="active"||view==="dormant"){ qs+="&state="+(view==="active"?"active":"dormant")+"&days="+encodeURIComponent(el("act-days").value||"30"); }
+    return qs;
+  }
+  var accountsPageNo=0;
+  var accountCols={
+    balance:[["Account",function(r){return shortId(r.accountId);}],["Balance",function(r){return fmtCredits(r.balanceCredits);}]],
+    broken:[["Account",function(r){return shortId(r.accountId);}],["Balance",function(r){return fmtCredits(r.balanceCredits);}],["Tier",function(r){return r.tier||"—";}],["Status",function(r){return r.effectiveStatus||"—";}]],
+    grantKind:[["Account",function(r){return shortId(r.accountId);}],["Balance",function(r){return fmtCredits(r.balanceCredits);}],["Latest grant",function(r){return fmtDate(r.latestGrantAt);}]],
+    active:[["Account",function(r){return shortId(r.accountId);}],["Balance",function(r){return fmtCredits(r.balanceCredits);}],["Last consume",function(r){return fmtDate(r.lastConsumeAt);}]],
+    dormant:[["Account",function(r){return shortId(r.accountId);}],["Balance",function(r){return fmtCredits(r.balanceCredits);}],["Last consume",function(r){return fmtDate(r.lastConsumeAt);}]]
+  };
+  function renderAccountRows(rows, view, append){
+    var cols=accountCols[view];
+    el("accounts-head").innerHTML=cols.map(function(c){ return "<th>"+esc(c[0])+"</th>"; }).join("");
+    var tb=document.querySelector("#accounts-table tbody");
+    var html=(rows||[]).map(function(r){
+      return '<tr class="row-clickable" data-account="'+esc(r.accountId)+'">'
+        +cols.map(function(c){ return "<td>"+esc(c[1](r))+"</td>"; }).join("")+"</tr>";
+    }).join("");
+    if(append){ tb.insertAdjacentHTML("beforeend", html); } else { tb.innerHTML=html; }
+    Array.prototype.forEach.call(document.querySelectorAll("#accounts-table tbody tr.row-clickable"), function(tr){
+      tr.onclick=function(){ openDetail(tr.getAttribute("data-account")); };
+    });
+  }
+  function loadAccounts(reset){
+    if(reset){ accountsPageNo=0; } else { accountsPageNo++; }
+    var view=currentView, gen=++accountsGen;
+    guardFetch("/accounts"+accountsQuery(view, accountsPageNo)).then(function(r){ if(!r.ok){ throw new Error("load_failed"); } return r.json(); }).then(function(j){
+      if(gen!==accountsGen) return;
+      renderAccountRows(j.rows||[], view, !reset);
+      el("load-more").classList.toggle("hidden", !j.hasMore);
+      var empty = reset && (!j.rows || j.rows.length===0);
+      el("activity-empty").textContent = empty ? "No matching accounts." : "No matching activity.";
+      el("activity-empty").classList.toggle("hidden", !empty);
+    }).catch(function(e){ if(e.message!=="reauth") toast("Failed to load accounts","error"); });
+  }
+  function setView(view){
+    currentView=view;
+    showModeControls(view);
+    var isActivity = view==="activity";
+    el("activity-table").parentNode.classList.toggle("hidden", !isActivity);
+    accountsPage().classList.toggle("hidden", isActivity);
+    el("activity-empty").classList.add("hidden");
+    el("load-more").classList.add("hidden");
+    if(isActivity){ loadActivity(true); } else { loadAccounts(true); }
+  }
+  el("view-mode").addEventListener("change", function(){ setView(el("view-mode").value); });
+  Array.prototype.forEach.call(document.querySelectorAll(".mode-ctl input, .mode-ctl select"), function(c){
+    c.addEventListener("change", function(){ if(currentView!=="activity") loadAccounts(true); });
+  });
   var currentAccountId=null;
   function subChip(j){
     var state=j.subscription?j.subscription.effectiveStatus:"none";
