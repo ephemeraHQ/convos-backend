@@ -93,7 +93,7 @@ body{margin:0;font-family:var(--sans);color:var(--fg);background:var(--surface-m
 /* Tables */
 .tablewrap{overflow:auto;border:1px solid var(--edge);border-radius:var(--radius-lg);background:var(--surface);}
 table{border-collapse:collapse;width:100%;table-layout:auto;}
-thead th{position:sticky;top:0;background:var(--surface-hover);font-size:10px;font-weight:600;letter-spacing:0.5px;text-transform:uppercase;color:var(--fg-2);text-align:left;padding:10px 14px;white-space:nowrap;border-bottom:1px solid var(--edge);position:relative;}
+thead th{background:var(--surface-hover);font-size:10px;font-weight:600;letter-spacing:0.5px;text-transform:uppercase;color:var(--fg-2);text-align:left;padding:10px 14px;white-space:nowrap;border-bottom:1px solid var(--edge);position:relative;}
 thead th.num{text-align:right;}
 thead th.sortable{cursor:pointer;user-select:none;}
 thead th.sortable:hover{color:var(--fg);}
