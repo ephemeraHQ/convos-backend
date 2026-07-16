@@ -124,9 +124,13 @@ describe("admin page — single search box", () => {
     expect(res.text).toContain('id="search-value"');
     expect(res.text).toContain('placeholder="Account ID or wallet address"');
   });
-  it("wraps view-mode select in a chevron wrapper", async () => {
+  it("renders view-mode as a custom brand dropdown over a hidden native select", async () => {
     const res = await adminRequest(app).get("/api/v2/credits-admin/");
-    expect(res.text).toContain("select-wrap");
+    expect(res.text).not.toContain("select-wrap");
+    expect(res.text).toContain('class="dd" data-dd="view-mode"');
+    expect(res.text).toContain("dd-btn");
+    expect(res.text).toContain('class="dd-native"');
+    expect(res.text).toContain('role="listbox"');
     expect(res.text).toContain('class="chev"');
   });
 });
