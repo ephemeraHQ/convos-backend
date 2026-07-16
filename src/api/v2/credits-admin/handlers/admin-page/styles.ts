@@ -96,6 +96,7 @@ body{margin:0;font-family:var(--sans);color:var(--fg);background:var(--surface-m
 .btn-danger{background:var(--surface);color:var(--bad);border-color:var(--edge);font-size:12px;padding:8px 14px;}
 .btn-danger:hover{background:var(--bad-bg);border-color:var(--bad);}
 .btn-block{display:block;width:100%;}
+.btn-more{width:100%;margin-top:10px;}
 
 /* Status pills */
 .pill{display:inline-flex;align-items:center;font-size:11px;font-weight:600;border-radius:var(--radius-sm);padding:2px 8px;}

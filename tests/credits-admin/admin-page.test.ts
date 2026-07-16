@@ -187,6 +187,31 @@ describe("admin page — centered detail modal", () => {
   });
 });
 
+describe("admin page — full history load-more", () => {
+  let app: Express;
+  beforeAll(() => {
+    app = buildCreditsAdminApp();
+  });
+
+  it("wires a paginated ledger endpoint fetch and seeds from ledgerNextCursor", async () => {
+    const res = await adminRequest(app).get("/api/v2/credits-admin/");
+    expect(res.text).toContain("/ledger");
+    expect(res.text).toContain("ledgerNextCursor");
+  });
+
+  it("renders Load more controls and an empty-history note", async () => {
+    const res = await adminRequest(app).get("/api/v2/credits-admin/");
+    expect(res.text).toContain("Load more");
+    expect(res.text).toContain("Nothing here yet");
+  });
+
+  it("defines the ledger + audit load-more functions", async () => {
+    const res = await adminRequest(app).get("/api/v2/credits-admin/");
+    expect(res.text).toContain("loadLedgerMore");
+    expect(res.text).toContain("loadAuditMore");
+  });
+});
+
 describe("admin client script — syntax", () => {
   it("clientScript() is syntactically valid JS", () => {
     // new Function parses the body without executing it — catches syntax errors
