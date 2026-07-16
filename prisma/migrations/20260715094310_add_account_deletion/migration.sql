@@ -75,7 +75,6 @@ CREATE INDEX "SubscriptionTombstone_accountRef_idx" ON "SubscriptionTombstone"("
 CREATE UNIQUE INDEX "SubscriptionTombstone_provider_providerKey_key" ON "SubscriptionTombstone"("provider", "providerKey");
 
 -- Backfill: existing accounts start their activity clock at migration time.
--- A null lastAuthAt must never read as "inactive/no veto" (reclaim design v2
--- finding 5); after this backfill, null only ever means a brand-new account
--- that has not minted yet.
+-- A null lastAuthAt must never read as "inactive/no veto"; after this
+-- backfill, null only ever means a brand-new account that has not minted yet.
 UPDATE "Account" SET "lastAuthAt" = CURRENT_TIMESTAMP WHERE "lastAuthAt" IS NULL;

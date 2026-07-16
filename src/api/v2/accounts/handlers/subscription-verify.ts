@@ -148,10 +148,10 @@ const buildAppleInput = (
 
 /**
  * Thrown when a Google purchase carries no `latestOrderId`. The order id is
- * the funding-event identity (reclaim v3 item 2): without it there is no
- * period key, and synthesizing one from the purchase token would let token
- * rotation masquerade as a new funding event. Fail closed: the event is
- * parked in LineageQuarantine for reconciliation and no grant is issued.
+ * the funding-event identity: without it there is no period key, and
+ * synthesizing one from the purchase token would let token rotation
+ * masquerade as a new funding event. Fail closed: the event is parked in
+ * LineageQuarantine for reconciliation and no grant is issued.
  */
 export class MissingPlayOrderIdError extends Error {
   constructor(public readonly purchaseToken: string) {
@@ -513,18 +513,27 @@ export async function subscriptionVerifyHandler(req: Request, res: Response) {
     if (error instanceof SubscriptionTombstonedError) {
       // Tombstoned provider key (deleted account's subscription): same 409
       // envelope as an ownership mismatch (append-only law - no new code),
-      // claimable by definition. No entitlement, no row created.
+      // with the same authoritative claim eligibility signal. No entitlement
+      // or subscription row is created.
+      const claimable = await evaluateClaimable({
+        provider: input.provider,
+        keys:
+          input.provider === BillingProvider.apple
+            ? [input.originalTransactionId]
+            : [input.purchaseToken, input.linkedPurchaseToken],
+      });
       req.log.warn(
         {
           accountId,
           providerKey: error.matchedKey,
+          claimable,
         },
         "subscription.verify.tombstoned",
       );
       res.status(409).json({
         error: "Subscription belongs to a different account. Contact support.",
         code: "subscription_account_mismatch",
-        claimable: true,
+        claimable,
       });
       return;
     }

@@ -31,7 +31,21 @@ const subscribeRequestSchema = z.object({
 
 export type ISubscribeRequestBody = z.infer<typeof subscribeRequestSchema>;
 
-const notificationClient = createNotificationClient();
+type SubscribeNotificationClient = Pick<
+  ReturnType<typeof createNotificationClient>,
+  "deleteInstallation" | "registerInstallation" | "subscribeWithMetadata"
+>;
+
+let notificationClient: SubscribeNotificationClient =
+  createNotificationClient();
+const NOTIFICATION_RPC_TIMEOUT_MS = 10_000;
+const SUBSCRIBE_TRANSACTION_TIMEOUT_MS = 45_000;
+
+export const __setSubscribeNotificationClientForTests = (
+  client: SubscribeNotificationClient | null,
+): void => {
+  notificationClient = client ?? createNotificationClient();
+};
 
 export async function subscribe(
   req: Request<unknown, unknown, ISubscribeRequestBody>,
@@ -96,99 +110,144 @@ export async function subscribe(
       })),
     }));
 
-    // Register installation with notification server (only if pushToken exists)
-    if (!device.pushToken) {
-      req.log.info(
-        {
-          accountId: res.locals.accountId,
-          deviceId: body.deviceId,
-          clientId: body.clientId,
-        },
-        "Device has no push token yet - subscription will be activated once token is registered",
-      );
-    } else {
-      try {
-        await notificationClient.registerInstallation({
-          installationId: body.clientId,
-          deliveryMechanism: {
-            deliveryMechanismType: {
-              case:
-                device.pushTokenType === "apns"
-                  ? "apnsDeviceToken"
-                  : "firebaseDeviceToken",
-              value: device.pushToken,
-            },
-          },
-        });
-
-        // Subscribe to topics
-        await notificationClient.subscribeWithMetadata({
-          installationId: body.clientId,
-          subscriptions,
-        });
-      } catch (remoteErr) {
-        // Compensate: best-effort delete installation to avoid orphaned state
-        try {
-          await notificationClient.deleteInstallation({
-            installationId: body.clientId,
-          });
-        } catch (cleanupErr) {
-          req.log.warn(
-            { error: cleanupErr, installationId: body.clientId },
-            "Failed to cleanup installation after subscription failure",
-          );
-        }
-        throw remoteErr;
-      }
-    }
-
-    // Create or update client identifier record. accountId is sourced
-    // from the JWT and is what the webhook delivery guard compares
-    // against the joined DeviceRegistration.accountId before sending a
-    // push. Older iOS builds that authenticate without SIWE produce a
-    // JWT with no accountId; leave the field untouched in that case so
-    // the migration backfill value (or a prior accountId from a SIWE
-    // authentication on the same row) is not clobbered.
+    // Persist the installation identity before making it visible remotely,
+    // while holding the owning Account row lock through both remote calls.
+    // Account deletion takes the conflicting lock, so it either runs first
+    // and fences this request or runs afterwards and snapshots this row for
+    // its purge outbox.
     const accountId = res.locals.accountId;
+    const remote = { stateMayExist: false };
+    let transactionResult:
+      | { kind: "complete" }
+      | { error: Error; kind: "remote_failure_preserved" };
     try {
-      // ClientIdentifier.accountId is a plain scalar (no FK to Account), so
-      // this upsert must fence itself against a concurrent account deletion:
-      // requireLiveAccount takes FOR KEY SHARE on the Account row inside the
-      // same transaction, serializing against the deletion's FOR UPDATE. A
-      // deleted account aborts here instead of attaching a stale row the
-      // teardown sweep already passed.
-      await prisma.$transaction(async (tx) => {
-        if (accountId !== undefined) {
-          await requireLiveAccount(tx, accountId);
-        }
-        await tx.clientIdentifier.upsert({
-          where: { id: body.clientId },
-          create: {
-            id: body.clientId,
-            deviceId: body.deviceId,
-            accountId,
-          },
-          update: {
-            deviceId: body.deviceId,
-            ...(accountId !== undefined ? { accountId } : {}),
-          },
-        });
-      });
-    } catch (dbErr) {
-      // Compensate: delete installation to maintain consistency (only if we created one)
-      if (device.pushToken) {
-        try {
-          await notificationClient.deleteInstallation({
-            installationId: body.clientId,
+      transactionResult = await prisma.$transaction(
+        async (tx) => {
+          const prior = await tx.clientIdentifier.findUnique({
+            where: { id: body.clientId },
+            select: { accountId: true },
           });
+          const fencedAccountId =
+            accountId ?? device.accountId ?? prior?.accountId ?? undefined;
+          if (fencedAccountId !== undefined) {
+            await requireLiveAccount(tx, fencedAccountId);
+          }
+          await tx.clientIdentifier.upsert({
+            where: { id: body.clientId },
+            create: {
+              id: body.clientId,
+              deviceId: body.deviceId,
+              accountId: fencedAccountId,
+            },
+            update: {
+              deviceId: body.deviceId,
+              ...(fencedAccountId !== undefined
+                ? { accountId: fencedAccountId }
+                : {}),
+            },
+          });
+
+          if (!device.pushToken) {
+            req.log.info(
+              {
+                accountId: fencedAccountId,
+                deviceId: body.deviceId,
+                clientId: body.clientId,
+              },
+              "Device has no push token yet - subscription will be activated once token is registered",
+            );
+            return { kind: "complete" as const };
+          }
+
+          try {
+            // The server may accept registration even if the client loses the
+            // response, so cleanup must assume remote state exists once the
+            // call starts.
+            remote.stateMayExist = true;
+            await notificationClient.registerInstallation(
+              {
+                installationId: body.clientId,
+                deliveryMechanism: {
+                  deliveryMechanismType: {
+                    case:
+                      device.pushTokenType === "apns"
+                        ? "apnsDeviceToken"
+                        : "firebaseDeviceToken",
+                    value: device.pushToken,
+                  },
+                },
+              },
+              { timeoutMs: NOTIFICATION_RPC_TIMEOUT_MS },
+            );
+            await notificationClient.subscribeWithMetadata(
+              {
+                installationId: body.clientId,
+                subscriptions,
+              },
+              { timeoutMs: NOTIFICATION_RPC_TIMEOUT_MS },
+            );
+            return { kind: "complete" as const };
+          } catch (remoteErr) {
+            const remoteError =
+              remoteErr instanceof Error
+                ? remoteErr
+                : new Error(String(remoteErr));
+            try {
+              await notificationClient.deleteInstallation(
+                {
+                  installationId: body.clientId,
+                },
+                { timeoutMs: NOTIFICATION_RPC_TIMEOUT_MS },
+              );
+              remote.stateMayExist = false;
+            } catch (cleanupErr) {
+              // Commit the ClientIdentifier so a later account deletion still
+              // has a durable purge target. The event is an explicit operator
+              // alert for the partially registered installation.
+              req.log.error(
+                {
+                  error: cleanupErr,
+                  installationId: body.clientId,
+                  requiresOperatorCleanup: true,
+                },
+                "notifications.subscribe.remote_cleanup_failed",
+              );
+              return {
+                error: remoteError,
+                kind: "remote_failure_preserved" as const,
+              };
+            }
+            throw remoteError;
+          }
+        },
+        { maxWait: 5_000, timeout: SUBSCRIBE_TRANSACTION_TIMEOUT_MS },
+      );
+    } catch (dbErr) {
+      // A commit failure can happen after successful remote registration.
+      // Remove that remote state before surfacing the database failure.
+      if (remote.stateMayExist) {
+        try {
+          await notificationClient.deleteInstallation(
+            {
+              installationId: body.clientId,
+            },
+            { timeoutMs: NOTIFICATION_RPC_TIMEOUT_MS },
+          );
         } catch (cleanupErr) {
-          req.log.warn(
-            { error: cleanupErr, installationId: body.clientId },
-            "Failed to cleanup installation after DB failure",
+          req.log.error(
+            {
+              error: cleanupErr,
+              installationId: body.clientId,
+              requiresOperatorCleanup: true,
+            },
+            "notifications.subscribe.remote_cleanup_failed",
           );
         }
       }
       throw dbErr;
+    }
+    if (transactionResult.kind === "remote_failure_preserved") {
+      throw transactionResult.error;
     }
 
     req.log.info(
@@ -216,8 +275,8 @@ export async function subscribe(
     }
     if (error instanceof AccountNotLiveError) {
       // Account deleted between requireAccount and the fenced write. Generic
-      // 401 like every other fail-closed route (the compensation above
-      // already removed the just-registered installation).
+      // 401 like every other fail-closed route. The fence runs before remote
+      // registration, so this path cannot create an installation.
       req.log.warn(
         { deviceId: res.locals.deviceId },
         "notifications.subscribe.account_not_live",

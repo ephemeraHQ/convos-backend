@@ -256,9 +256,6 @@ export const wipeReclaimState = async () => {
   resetPlayApiClientForTests();
   setPlayApiFixtureForTests(null);
   setPubsubVerifierForTests(null);
-  delete process.env.SUBSCRIPTION_CLAIM_LIVE_TRANSFER_ENABLED;
-  delete process.env.SUBSCRIPTION_CLAIM_GOOGLE_ENABLED;
-  delete process.env.CLAIM_CONTEST_WINDOW_HOURS;
   await setRuntimeConfig("app_attest_enabled", "true");
   await prisma.rateLimitCounter.deleteMany();
   await prisma.deletionTask.deleteMany();

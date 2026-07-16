@@ -75,6 +75,26 @@ describe("deletion executors", () => {
     ).resolves.toBeUndefined();
   });
 
+  test("legacy unscoped avatar URLs are successful no-ops", async () => {
+    process.env.CDN_BASE_URL = "https://assets.test";
+    vi.resetModules();
+    const { getDeletionExecutor, publicAvatarObjectKey } =
+      await import("@/accounts/deletion/executors");
+    expect(
+      publicAvatarObjectKey({
+        url: `https://assets.test/a/${OBJECT_ID}`,
+        accountId: ACCOUNT_ID,
+      }),
+    ).toBeNull();
+    await expect(
+      getDeletionExecutor("s3_object")?.({
+        target: "public",
+        accountId: ACCOUNT_ID,
+        url: `https://assets.test/a/${OBJECT_ID}`,
+      }),
+    ).resolves.toBeUndefined();
+  });
+
   test("owned canonical avatar URLs derive only the account-scoped key", async () => {
     process.env.CDN_BASE_URL = "https://assets.test/cdn";
     vi.resetModules();

@@ -93,7 +93,13 @@ const executeS3Object: DeletionExecutor = async (payload) => {
       url: parsed.url,
       accountId: parsed.accountId,
     });
-    if (!ownedKey) return;
+    if (!ownedKey) {
+      logger.info(
+        { accountId: parsed.accountId },
+        "deletion.s3_public.unowned_or_legacy_url_skipped",
+      );
+      return;
+    }
     bucket = process.env.PUBLIC_ASSETS_BUCKET ?? "";
     key = ownedKey;
   } else {

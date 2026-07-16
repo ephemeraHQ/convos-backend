@@ -29,8 +29,8 @@ vi.mock("firebase-admin/messaging");
  *    of its own.
  * 2. Behavioral audit — the real production v2 router (not a synthetic
  *    mount) rejects a deleted account's unexpired JWT with the generic 401
- *    on every JWT surface the adversarial review called out, and honors the
- *    single DELETE /v2/accounts/me carve-out.
+ *    on every JWT surface and honors the single DELETE /v2/accounts/me
+ *    carve-out.
  */
 
 const makeRealApp = () => {
@@ -92,9 +92,9 @@ describe("deletion fence: real router behavior", () => {
     await prisma.deletionRecord.deleteMany();
   });
 
-  // Every JWT-authenticated surface the adversarial review named as
-  // unfenced, plus one representative per mounted subtree that carries
-  // authMiddleware. All must return the generic 401.
+  // Cover every JWT-authenticated surface previously found unfenced, plus one
+  // representative per mounted subtree that carries authMiddleware. All must
+  // return the generic 401.
   const jwtSurfaces: Array<{ method: "get" | "post" | "delete"; url: string }> =
     [
       { method: "get", url: "/api/v2/auth-check" },

@@ -43,7 +43,7 @@ const newTask = (
 describe("deletion outbox drain", () => {
   test("concurrent drains execute a due task once", async () => {
     const operationId = await newRecord();
-    await newTask(operationId);
+    const task = await newTask(operationId);
     let releaseExecutor!: () => void;
     const executorGate = new Promise<void>((resolve) => {
       releaseExecutor = resolve;
@@ -62,11 +62,44 @@ describe("deletion outbox drain", () => {
 
     const first = drainDeletionTasks();
     await entered;
+    const claimed = await prisma.deletionTask.findUnique({
+      where: { id: task.id },
+    });
+    expect(claimed?.status).toBe("processing");
     const second = await drainDeletionTasks();
     expect(second).toEqual({ done: 0, retried: 0, failed: 0 });
     releaseExecutor();
     await expect(first).resolves.toEqual({ done: 1, retried: 0, failed: 0 });
     expect(executor).toHaveBeenCalledTimes(1);
+  });
+
+  test("reclaims a stale processing task but leaves a fresh claim alone", async () => {
+    const operationId = await newRecord();
+    const stale = await newTask(operationId, "notification_installation", {
+      status: "processing",
+      updatedAt: new Date(Date.now() - 60 * 60 * 1000),
+    });
+    const fresh = await newTask(operationId, "notification_installation", {
+      status: "processing",
+      updatedAt: new Date(),
+    });
+    const executor = vi.fn(() => Promise.resolve());
+    __setDeletionExecutorsForTests({
+      notification_installation: executor,
+    });
+
+    await expect(drainDeletionTasks()).resolves.toEqual({
+      done: 1,
+      retried: 0,
+      failed: 0,
+    });
+    expect(executor).toHaveBeenCalledTimes(1);
+    expect(
+      await prisma.deletionTask.findUnique({ where: { id: stale.id } }),
+    ).toMatchObject({ status: "done", attempts: 1 });
+    expect(
+      await prisma.deletionTask.findUnique({ where: { id: fresh.id } }),
+    ).toMatchObject({ status: "processing", attempts: 0 });
   });
 
   test("failure schedules a retry with backoff and records the error", async () => {

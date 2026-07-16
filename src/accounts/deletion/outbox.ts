@@ -29,6 +29,7 @@ const BACKOFF_CAP_MS = 60 * 60 * 1000; // 1 hour
 const OUTBOX_ADVISORY_LOCK_CLASS_ID = 7_281;
 const OUTBOX_ADVISORY_LOCK_OBJECT_ID = 93_643;
 const OUTBOX_LEASE_TIMEOUT_MS = 10 * 60 * 1000;
+const OUTBOX_STALE_CLAIM_MS = 30 * 60 * 1000;
 /** How long a completed DeletionRecord (and its task rows) is kept. */
 const RECORD_AUDIT_WINDOW_DAYS = 30;
 
@@ -50,6 +51,27 @@ type DrainCounts = {
 
 const drainDeletionTasksUnderLease = async (): Promise<DrainCounts> => {
   const now = new Date();
+  const reclaimed = await prisma.deletionTask.updateMany({
+    where: {
+      status: "processing",
+      updatedAt: {
+        lte: new Date(now.getTime() - OUTBOX_STALE_CLAIM_MS),
+      },
+    },
+    data: {
+      status: "pending",
+      attempts: { increment: 1 },
+      lastError: "Processing claim expired before completion",
+      nextAttemptAt: now,
+    },
+  });
+  if (reclaimed.count > 0) {
+    logger.warn(
+      { count: reclaimed.count },
+      "deletion.outbox.stale_claims_reclaimed",
+    );
+  }
+
   const due = await prisma.deletionTask.findMany({
     where: { status: "pending", nextAttemptAt: { lte: now } },
     orderBy: { nextAttemptAt: "asc" },
@@ -61,6 +83,19 @@ const drainDeletionTasksUnderLease = async (): Promise<DrainCounts> => {
   let failed = 0;
 
   for (const task of due) {
+    // `updatedAt` is the claim timestamp. The conditional transition makes
+    // this task single-runner even if the outer advisory lease expires or a
+    // replica starts a concurrent drain.
+    const claimed = await prisma.deletionTask.updateMany({
+      where: {
+        id: task.id,
+        status: "pending",
+        nextAttemptAt: { lte: now },
+      },
+      data: { status: "processing", updatedAt: new Date() },
+    });
+    if (claimed.count === 0) continue;
+
     const executor = getDeletionExecutor(task.kind);
     try {
       if (!executor) {
@@ -68,7 +103,7 @@ const drainDeletionTasksUnderLease = async (): Promise<DrainCounts> => {
       }
       await executor(task.payload);
       const completed = await prisma.deletionTask.updateMany({
-        where: { id: task.id, status: "pending" },
+        where: { id: task.id, status: "processing" },
         data: { status: "done", completedAt: new Date() },
       });
       done += completed.count;
@@ -77,7 +112,7 @@ const drainDeletionTasksUnderLease = async (): Promise<DrainCounts> => {
       const lastError = err instanceof Error ? err.message : String(err);
       if (attempts >= MAX_ATTEMPTS) {
         const transitioned = await prisma.deletionTask.updateMany({
-          where: { id: task.id, status: "pending" },
+          where: { id: task.id, status: "processing" },
           data: { status: "failed", attempts, lastError },
         });
         if (transitioned.count === 0) continue;
@@ -96,8 +131,9 @@ const drainDeletionTasksUnderLease = async (): Promise<DrainCounts> => {
         );
       } else {
         const transitioned = await prisma.deletionTask.updateMany({
-          where: { id: task.id, status: "pending" },
+          where: { id: task.id, status: "processing" },
           data: {
+            status: "pending",
             attempts,
             lastError,
             nextAttemptAt: new Date(Date.now() + retryDelayMs(attempts)),
@@ -125,9 +161,9 @@ const drainDeletionTasksUnderLease = async (): Promise<DrainCounts> => {
 /**
  * Drain one batch under a cross-replica lease. The transaction exists only
  * to hold the advisory lock; task reads and writes use ordinary pooled
- * connections. A process loss releases the lease and leaves pending work for
- * the next runner. If the lease itself times out, executors remain safe to
- * retry because every external purge operation is required to be idempotent.
+ * connections. The per-task pending-to-processing claim remains authoritative
+ * if this lease times out. A lost worker's stale claim is reclaimed later;
+ * external purge operations must therefore remain idempotent.
  */
 export const drainDeletionTasks = async (): Promise<DrainCounts> => {
   let counts: DrainCounts = { done: 0, retried: 0, failed: 0 };

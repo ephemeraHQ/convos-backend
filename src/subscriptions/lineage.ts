@@ -339,8 +339,8 @@ export const resolveOrCreateGoogleLineage = async (args: {
 
 /**
  * Ensure a lineage exists for a verify/notification input and return its id.
- * Google inputs resolve their full token chain (item 5 of the reclaim v3
- * addendum applies to every creation path, not only claim).
+ * Google inputs resolve their full token chain on every creation path, not
+ * only restoration claims.
  */
 export const resolveOrCreateLineageForKeys = async (args: {
   provider: BillingProvider;

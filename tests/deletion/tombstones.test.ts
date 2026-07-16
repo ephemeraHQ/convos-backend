@@ -47,6 +47,7 @@ const newAccount = async () => {
 };
 
 const wipe = async () => {
+  delete process.env.SUBSCRIPTION_CLAIM_TOMBSTONE_ENABLED;
   await prisma.subscriptionTransfer.deleteMany();
   await prisma.lineagePeriodCustody.deleteMany();
   await prisma.lineagePeriodGrant.deleteMany();
@@ -157,7 +158,7 @@ describe("verify against deletion tombstones", () => {
     expect(result.subscription.accountId).toBe(accountId);
   });
 
-  test("Play rotation onto a tombstoned predecessor is absorbed", async () => {
+  test("Play verify ingest resolves a rotated token through recursive aliases", async () => {
     const accountId = await newAccount();
     await tombstone(BillingProvider.googlePlay, "token-old");
 
@@ -169,7 +170,7 @@ describe("verify against deletion tombstones", () => {
       ),
     ).rejects.toBeInstanceOf(SubscriptionTombstonedError);
 
-    // The rotated token now resolves to the tombstoned lineage via alias.
+    // Recursive ingest aliases the new token to the predecessor's lineage.
     const absorbed = await prisma.lineageTokenAlias.findUnique({
       where: { token: "token-new" },
     });
@@ -325,6 +326,28 @@ describe("verify handler 409 shapes", () => {
       claimable: true,
     });
     expect(await prisma.subscription.count()).toBe(0);
+  });
+
+  test("tombstoned key does not advertise a disabled claim path", async () => {
+    process.env.SUBSCRIPTION_CLAIM_TOMBSTONE_ENABLED = "false";
+    installLocalTestingVerifier();
+    const accountId = await newAccount();
+    await tombstone(BillingProvider.apple, "3000000000000001");
+
+    const res = await request(makeApp())
+      .post("/v2/accounts/me/subscription/verify")
+      .set("X-Convos-AuthToken", await tokenFor(accountId))
+      .send({
+        platform: "apple",
+        jwsRepresentation: await signTransaction({}),
+      });
+
+    expect(res.status).toBe(409);
+    expect(res.body).toEqual({
+      error: "Subscription belongs to a different account. Contact support.",
+      code: "subscription_account_mismatch",
+      claimable: false,
+    });
   });
 
   test("owner mismatch on a live row: 409 with claimable false", async () => {

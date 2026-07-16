@@ -462,8 +462,11 @@ cannot mint tokens".
 ### Phase 2: billing tombstones
 
 - [ ] Provider-key tombstone model; no-op handling in Apple and Google
-      webhook processing and in subscription verification; token-rotation
-      absorption; deletion-vs-webhook concurrency semantics.
+      webhook processing and in subscription verification; recursive alias
+      resolution for live ingest; deletion-vs-webhook concurrency semantics.
+- [ ] Tombstoned-lineage token-rotation absorption bookkeeping is deferred
+      with Google claim restoration. Rotation events on tombstoned lineages
+      remain counted no-ops until that follow-up ships.
 
 ### Phase 3: external purges and retention enforcement
 
@@ -578,13 +581,18 @@ open-question resolutions this implementation shipped with:
   expire 30 days after the drain completes.
 - **Untracked S3 attachments**: retain-and-disclose (immutable message
   content); bucket lifecycle policy is an ops follow-up.
+- **Legacy avatar objects**: unscoped `a/<uuid>` keys have no provable owner
+  and are not purged by account teardown. New uploads use
+  `a/<accountId>/<uuid>`; bucket lifecycle policy remains the ops follow-up
+  for legacy unscoped objects.
 - **PostHog**: person deletion via the private API (new optional
   `POSTHOG_PERSONAL_API_KEY` / `POSTHOG_PROJECT_ID`); when analytics is on
   and the credentials are missing, purge tasks retry and page ops.
 - **Purge SLA**: 24 hours, returned as `purgeWindowHours` and alerted on
   breach (`deletion.purge.sla_breach`).
 - **Ops kill switch**: RuntimeConfig `account_deletion_enabled` (default
-  "true") gates the endpoint without a redeploy.
+  "false") gates the endpoint without a redeploy. Ops enables it only after
+  the full rollout; the same switch remains the emergency kill switch.
 
 ## References
 

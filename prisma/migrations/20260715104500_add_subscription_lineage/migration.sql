@@ -1,6 +1,6 @@
--- Subscription lineage model (reclaim v3): lineage rows as the canonical
--- lockable object, token aliases, the global once-per-period funding
--- registry, custody/escrow state, the transfer journal, and quarantine.
+-- Subscription lineage rows are the canonical lockable object, with token
+-- aliases, a global once-per-period funding registry, custody/escrow state,
+-- the transfer journal, and quarantine.
 -- Supersedes SubscriptionTombstone (tombstone becomes a lineage state); the
 -- old table is retained additively so a rollback never references a dropped
 -- relation.
