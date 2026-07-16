@@ -83,3 +83,28 @@ export const listRecentAdminAudit = async (args: {
   const nextCursor = hasMore && last ? encodeAuditCursor(last) : null;
   return { rows: page, nextCursor };
 };
+
+export const listAdminAuditPageByAccount = async (args: {
+  accountId: string;
+  cursor?: RecentAuditCursor | null;
+  limit?: number;
+}): Promise<{ rows: AdminAudit[]; nextCursor: string | null }> => {
+  const limit = args.limit ?? AUDIT_LIST_LIMIT;
+  const where: Prisma.AdminAuditWhereInput = { accountId: args.accountId };
+  if (args.cursor) {
+    where.OR = [
+      { createdAt: { lt: args.cursor.createdAt } },
+      { createdAt: args.cursor.createdAt, id: { lt: args.cursor.id } },
+    ];
+  }
+  const rows = await prisma.adminAudit.findMany({
+    where,
+    orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+    take: limit + 1,
+  });
+  const hasMore = rows.length > limit;
+  const page = hasMore ? rows.slice(0, limit) : rows;
+  const last = page.at(-1);
+  const nextCursor = hasMore && last ? encodeAuditCursor(last) : null;
+  return { rows: page, nextCursor };
+};

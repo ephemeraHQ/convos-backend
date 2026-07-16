@@ -11,6 +11,7 @@ export const searchQuerySchema = z.object({
 
 export const auditQuerySchema = z.object({
   accountId: accountIdSchema,
+  cursor: z.string().trim().min(1).max(512).optional(),
 });
 
 export const auditRecentQuerySchema = z.object({
