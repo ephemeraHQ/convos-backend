@@ -60,7 +60,6 @@ const drainDeletionTasksUnderLease = async (): Promise<DrainCounts> => {
     },
     data: {
       status: "pending",
-      attempts: { increment: 1 },
       lastError: "Processing claim expired before completion",
       nextAttemptAt: now,
     },
@@ -86,13 +85,19 @@ const drainDeletionTasksUnderLease = async (): Promise<DrainCounts> => {
     // `updatedAt` is the claim timestamp. The conditional transition makes
     // this task single-runner even if the outer advisory lease expires or a
     // replica starts a concurrent drain.
+    const claimedAttempts = task.attempts + 1;
     const claimed = await prisma.deletionTask.updateMany({
       where: {
         id: task.id,
         status: "pending",
+        attempts: task.attempts,
         nextAttemptAt: { lte: now },
       },
-      data: { status: "processing", updatedAt: new Date() },
+      data: {
+        status: "processing",
+        attempts: claimedAttempts,
+        updatedAt: new Date(),
+      },
     });
     if (claimed.count === 0) continue;
 
@@ -103,17 +108,24 @@ const drainDeletionTasksUnderLease = async (): Promise<DrainCounts> => {
       }
       await executor(task.payload);
       const completed = await prisma.deletionTask.updateMany({
-        where: { id: task.id, status: "processing" },
-        data: { status: "done", completedAt: new Date() },
+        where: {
+          id: task.id,
+          status: "processing",
+          attempts: claimedAttempts,
+        },
+        data: { status: "done", completedAt: new Date(), lastError: null },
       });
       done += completed.count;
     } catch (err) {
-      const attempts = task.attempts + 1;
       const lastError = err instanceof Error ? err.message : String(err);
-      if (attempts >= MAX_ATTEMPTS) {
+      if (claimedAttempts >= MAX_ATTEMPTS) {
         const transitioned = await prisma.deletionTask.updateMany({
-          where: { id: task.id, status: "processing" },
-          data: { status: "failed", attempts, lastError },
+          where: {
+            id: task.id,
+            status: "processing",
+            attempts: claimedAttempts,
+          },
+          data: { status: "failed", lastError },
         });
         if (transitioned.count === 0) continue;
         failed += transitioned.count;
@@ -124,19 +136,22 @@ const drainDeletionTasksUnderLease = async (): Promise<DrainCounts> => {
             taskId: task.id,
             operationId: task.operationId,
             kind: task.kind,
-            attempts,
+            attempts: claimedAttempts,
             lastError,
           },
           "deletion.task.terminal_failure",
         );
       } else {
         const transitioned = await prisma.deletionTask.updateMany({
-          where: { id: task.id, status: "processing" },
+          where: {
+            id: task.id,
+            status: "processing",
+            attempts: claimedAttempts,
+          },
           data: {
             status: "pending",
-            attempts,
             lastError,
-            nextAttemptAt: new Date(Date.now() + retryDelayMs(attempts)),
+            nextAttemptAt: new Date(Date.now() + retryDelayMs(claimedAttempts)),
           },
         });
         if (transitioned.count === 0) continue;
@@ -146,7 +161,7 @@ const drainDeletionTasksUnderLease = async (): Promise<DrainCounts> => {
             taskId: task.id,
             operationId: task.operationId,
             kind: task.kind,
-            attempts,
+            attempts: claimedAttempts,
             lastError,
           },
           "deletion.task.retry_scheduled",
@@ -157,6 +172,10 @@ const drainDeletionTasksUnderLease = async (): Promise<DrainCounts> => {
 
   return { done, retried, failed };
 };
+
+/** Test seam for exercising claim-generation races without the outer lease. */
+export const __drainDeletionTasksWithoutLeaseForTests =
+  drainDeletionTasksUnderLease;
 
 /**
  * Drain one batch under a cross-replica lease. The transaction exists only

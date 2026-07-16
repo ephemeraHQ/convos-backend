@@ -201,8 +201,21 @@ const runDeleteAccountTransaction = async (args: {
       const subscriptions = await tx.subscription.findMany({
         where: { accountId },
       });
-      const clientIdentifiers = await tx.clientIdentifier.findMany({
+      const ownedDevices = await tx.deviceRegistration.findMany({
         where: { accountId },
+        select: { deviceId: true },
+      });
+      const clientIdentifiers = await tx.clientIdentifier.findMany({
+        where: {
+          OR: [
+            { accountId },
+            {
+              deviceId: {
+                in: ownedDevices.map((device) => device.deviceId),
+              },
+            },
+          ],
+        },
         select: { id: true },
       });
       const templates = await tx.agentTemplate.findMany({
@@ -293,10 +306,10 @@ const runDeleteAccountTransaction = async (args: {
         where: { ownerAccountId: accountId },
       });
 
-      // Devices hold push tokens: delete outright (cascades their
-      // ClientIdentifiers), then sweep ClientIdentifier by accountId
-      // directly — stale rows whose device re-registered under another
-      // account are unreachable through the device cascade.
+      // Devices hold push tokens: delete outright (cascades every attached
+      // ClientIdentifier, all snapshotted above), then sweep identifiers by
+      // accountId directly. Device ownership is authoritative for cascade
+      // cleanup even when an identifier carries a different stale owner.
       await tx.deviceRegistration.deleteMany({ where: { accountId } });
       await tx.clientIdentifier.deleteMany({ where: { accountId } });
 

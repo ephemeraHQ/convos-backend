@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { __setDeletionExecutorsForTests } from "@/accounts/deletion/executors";
 import {
+  __drainDeletionTasksWithoutLeaseForTests,
   completeDeletionRecords,
   drainDeletionTasks,
   expireDeletionRecords,
@@ -77,10 +78,12 @@ describe("deletion outbox drain", () => {
     const operationId = await newRecord();
     const stale = await newTask(operationId, "notification_installation", {
       status: "processing",
+      attempts: 1,
       updatedAt: new Date(Date.now() - 60 * 60 * 1000),
     });
     const fresh = await newTask(operationId, "notification_installation", {
       status: "processing",
+      attempts: 1,
       updatedAt: new Date(),
     });
     const executor = vi.fn(() => Promise.resolve());
@@ -96,10 +99,73 @@ describe("deletion outbox drain", () => {
     expect(executor).toHaveBeenCalledTimes(1);
     expect(
       await prisma.deletionTask.findUnique({ where: { id: stale.id } }),
-    ).toMatchObject({ status: "done", attempts: 1 });
+    ).toMatchObject({ status: "done", attempts: 2 });
     expect(
       await prisma.deletionTask.findUnique({ where: { id: fresh.id } }),
-    ).toMatchObject({ status: "processing", attempts: 0 });
+    ).toMatchObject({ status: "processing", attempts: 1 });
+  });
+
+  test("a stale worker cannot finalize over a newer processing generation", async () => {
+    const operationId = await newRecord();
+    const task = await newTask(operationId);
+    let releaseFirst!: () => void;
+    const firstGate = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    let markFirstEntered!: () => void;
+    const firstEntered = new Promise<void>((resolve) => {
+      markFirstEntered = resolve;
+    });
+    let releaseSecond!: () => void;
+    const secondGate = new Promise<void>((resolve) => {
+      releaseSecond = resolve;
+    });
+    let markSecondEntered!: () => void;
+    const secondEntered = new Promise<void>((resolve) => {
+      markSecondEntered = resolve;
+    });
+    let executions = 0;
+    __setDeletionExecutorsForTests({
+      notification_installation: async () => {
+        executions += 1;
+        if (executions === 1) {
+          markFirstEntered();
+          await firstGate;
+          throw new Error("late worker failure");
+        }
+        markSecondEntered();
+        await secondGate;
+      },
+    });
+
+    const first = __drainDeletionTasksWithoutLeaseForTests();
+    await firstEntered;
+    await prisma.deletionTask.update({
+      where: { id: task.id },
+      data: { updatedAt: new Date(Date.now() - 60 * 60 * 1000) },
+    });
+    const second = __drainDeletionTasksWithoutLeaseForTests();
+    await secondEntered;
+
+    releaseFirst();
+    await expect(first).resolves.toEqual({
+      done: 0,
+      retried: 0,
+      failed: 0,
+    });
+    expect(
+      await prisma.deletionTask.findUnique({ where: { id: task.id } }),
+    ).toMatchObject({ status: "processing", attempts: 2 });
+
+    releaseSecond();
+    await expect(second).resolves.toEqual({
+      done: 1,
+      retried: 0,
+      failed: 0,
+    });
+    expect(
+      await prisma.deletionTask.findUnique({ where: { id: task.id } }),
+    ).toMatchObject({ status: "done", attempts: 2, lastError: null });
   });
 
   test("failure schedules a retry with backoff and records the error", async () => {

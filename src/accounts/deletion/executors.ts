@@ -10,6 +10,7 @@ import {
 import { createNotificationClient } from "@/notifications/client";
 import { AppError } from "@/utils/errors";
 import logger from "@/utils/logger";
+import { prisma } from "@/utils/prisma";
 
 /**
  * External-purge executors for the deletion outbox. One executor per
@@ -121,12 +122,37 @@ const executeS3Object: DeletionExecutor = async (payload) => {
   );
 };
 
-const notificationClient = createNotificationClient();
+type DeletionNotificationClient = Pick<
+  ReturnType<typeof createNotificationClient>,
+  "deleteInstallation"
+>;
+let notificationClient: DeletionNotificationClient = createNotificationClient();
+
+export const __setDeletionNotificationClientForTests = (
+  client: DeletionNotificationClient | null,
+): void => {
+  notificationClient = client ?? createNotificationClient();
+};
 const POSTHOG_FETCH_TIMEOUT_MS = 10_000;
 
 /** Remove one notification-server installation (per ClientIdentifier). */
 const executeNotificationInstallation: DeletionExecutor = async (payload) => {
   const parsed = installationPayloadSchema.parse(payload);
+  // Teardown deletes every snapshotted local row before this task can run.
+  // Any current row with the same id was registered afterwards and owns the
+  // live installation; the subscribe path also blocks reassignment while a
+  // purge task is unfinished, closing the check-then-delete race.
+  const current = await prisma.clientIdentifier.findUnique({
+    where: { id: parsed.installationId },
+    select: { id: true },
+  });
+  if (current) {
+    logger.info(
+      { installationId: parsed.installationId },
+      "deletion.notification_installation.reassigned_skip",
+    );
+    return;
+  }
   await notificationClient.deleteInstallation({
     installationId: parsed.installationId,
   });

@@ -74,6 +74,7 @@ const tokenFor = (accountId: string, deviceId = "dev-delete") =>
 type PopulatedAccount = {
   accountId: string;
   address: string;
+  cascadedForeignClientId: string;
   otherAccountId: string;
   forkTemplateId: string;
 };
@@ -134,12 +135,16 @@ const populateAccount = async (): Promise<PopulatedAccount> => {
     },
   });
 
+  const cascadedForeignClientId = randomUUID();
   await prisma.deviceRegistration.create({
     data: {
       deviceId: `dev-${account.id.slice(0, 8)}`,
       accountId: account.id,
       clientIdentifiers: {
-        create: { id: randomUUID(), accountId: account.id },
+        create: [
+          { id: randomUUID(), accountId: account.id },
+          { id: cascadedForeignClientId, accountId: other.id },
+        ],
       },
     },
   });
@@ -178,6 +183,7 @@ const populateAccount = async (): Promise<PopulatedAccount> => {
   return {
     accountId: account.id,
     address,
+    cascadedForeignClientId,
     otherAccountId: other.id,
     forkTemplateId: fork.id,
   };
@@ -218,8 +224,13 @@ afterEach(wipe);
 
 describe("DELETE /v2/accounts/me", () => {
   test("full teardown of a fully-populated account", async () => {
-    const { accountId, address, otherAccountId, forkTemplateId } =
-      await populateAccount();
+    const {
+      accountId,
+      address,
+      cascadedForeignClientId,
+      otherAccountId,
+      forkTemplateId,
+    } = await populateAccount();
     const operationId = randomUUID();
     const token = await tokenFor(accountId);
 
@@ -309,11 +320,13 @@ describe("DELETE /v2/accounts/me", () => {
       where: { operationId },
     });
     const kinds = tasks.map((t) => t.kind).sort();
-    // Two client identifiers (current + stale), one avatar, one attachment,
-    // one composio user, one posthog person.
+    // Three client identifiers (owned, stale-owner, and foreign-owned on the
+    // deleted device), one avatar, one attachment, one composio user, and one
+    // posthog person.
     expect(kinds).toEqual(
       [
         "composio_user",
+        "notification_installation",
         "notification_installation",
         "notification_installation",
         "posthog_person",
@@ -321,6 +334,18 @@ describe("DELETE /v2/accounts/me", () => {
         "s3_object",
       ].sort(),
     );
+    expect(
+      tasks.some((task) => {
+        const payload = task.payload;
+        return (
+          task.kind === "notification_installation" &&
+          typeof payload === "object" &&
+          payload !== null &&
+          !Array.isArray(payload) &&
+          payload.installationId === cascadedForeignClientId
+        );
+      }),
+    ).toBe(true);
     const publicAvatarTask = tasks.find((task) => {
       const payload = task.payload;
       return (
