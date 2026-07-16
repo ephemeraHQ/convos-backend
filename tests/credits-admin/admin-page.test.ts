@@ -158,6 +158,35 @@ describe("admin page — tables", () => {
   });
 });
 
+describe("admin page — centered detail modal", () => {
+  let app: Express;
+  beforeAll(() => {
+    app = buildCreditsAdminApp();
+  });
+
+  it("nests the detail dialog inside the scrim with dialog ARIA", async () => {
+    const res = await adminRequest(app).get("/api/v2/credits-admin/");
+    const scrimIdx = res.text.indexOf('id="detail-scrim"');
+    const detailIdx = res.text.indexOf('id="detail"');
+    expect(scrimIdx).toBeGreaterThan(-1);
+    expect(detailIdx).toBeGreaterThan(scrimIdx);
+    expect(res.text).toContain('role="dialog"');
+    expect(res.text).toContain('aria-modal="true"');
+  });
+
+  it("wires Esc-to-close and a scrim-target close guard", async () => {
+    const res = await adminRequest(app).get("/api/v2/credits-admin/");
+    expect(res.text).toContain('e.key==="Escape"');
+    expect(res.text).toContain("e.target===");
+  });
+
+  it("uses a centered modal, not a right slide-over transform", async () => {
+    const res = await adminRequest(app).get("/api/v2/credits-admin/");
+    expect(res.text).toContain("@keyframes pop");
+    expect(res.text).not.toContain("translateX(102%)");
+  });
+});
+
 describe("admin client script — syntax", () => {
   it("clientScript() is syntactically valid JS", () => {
     // new Function parses the body without executing it — catches syntax errors

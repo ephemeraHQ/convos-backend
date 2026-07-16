@@ -46,7 +46,8 @@ export const clientScript = (): string => `
   el("lock").addEventListener("click", lock);
   el("brand").addEventListener("click", function(){ closeDetail(); });
   el("detail-close").addEventListener("click", closeDetail);
-  el("detail-scrim").addEventListener("click", closeDetail);
+  el("detail-scrim").addEventListener("click", function(e){ if(e.target===el("detail-scrim")) closeDetail(); });
+  document.addEventListener("keydown", function(e){ if(e.key==="Escape" && el("detail-scrim") && !el("detail-scrim").classList.contains("hidden")) closeDetail(); });
 
   // --- stubs completed in later tasks ---
   var activityAction="all";
@@ -283,7 +284,7 @@ export const clientScript = (): string => `
   function openDetail(accountId){
     currentAccountId=accountId;
     el("detail-body").innerHTML='<div class="muted-note">Loading…</div>';
-    el("detail").classList.add("open"); el("detail").setAttribute("aria-hidden","false"); el("detail-scrim").classList.remove("hidden");
+    el("detail").setAttribute("aria-hidden","false"); el("detail-scrim").classList.remove("hidden");
     guardFetch("/accounts/"+encodeURIComponent(accountId)).then(function(r){ if(r.status===404){ throw new Error("not_found"); } return r.json(); })
       .then(function(j){ if(accountId!==currentAccountId) return; renderDetail(j); loadAudit(accountId); })
       .catch(function(e){ if(accountId!==currentAccountId) return; if(e.message==="not_found"){ el("detail-body").innerHTML='<div class="pill pill-bad">Account not found</div>'; } else if(e.message!=="reauth"){ toast("Failed to load account","error"); } });
@@ -304,7 +305,7 @@ export const clientScript = (): string => `
         toast(res.j.replayed?"Already applied":(kind==="grant"?"Granted":"Adjusted"),"success"); openDetail(currentAccountId); loadActivity(true); })
       .catch(function(e){ if(btn) btn.disabled=false; if(e.message!=="reauth") toast("Failed","error"); });
   }
-  function closeDetail(){ var d=el("detail"); if(d){ d.classList.remove("open"); d.setAttribute("aria-hidden","true"); } var s=el("detail-scrim"); if(s) s.classList.add("hidden"); }
+  function closeDetail(){ var d=el("detail"); if(d){ d.setAttribute("aria-hidden","true"); } var s=el("detail-scrim"); if(s) s.classList.add("hidden"); }
 
   // Custom dropdown: brand popover over a hidden native <select> that stays the
   // value source, so existing change-listeners keep working via dispatchEvent.

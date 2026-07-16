@@ -69,9 +69,10 @@ export const consoleView = (): string => `
       <button id="load-more" class="btn btn-secondary hidden">Load more</button>
     </section>
   </div>
-  <div id="detail-scrim" class="detail-scrim hidden"></div>
-  <aside id="detail" class="detail" aria-hidden="true">
-    <button id="detail-close" class="btn btn-secondary detail-close">Close</button>
-    <div id="detail-body"></div>
-  </aside>
+  <div id="detail-scrim" class="detail-scrim hidden">
+    <aside id="detail" class="detail" role="dialog" aria-modal="true" aria-hidden="true">
+      <button id="detail-close" class="btn btn-secondary detail-close">Close</button>
+      <div id="detail-body"></div>
+    </aside>
+  </div>
 </div>`;
