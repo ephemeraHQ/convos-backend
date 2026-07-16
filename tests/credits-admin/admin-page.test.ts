@@ -1,5 +1,6 @@
 import type { Express } from "express";
 import { beforeAll, describe, expect, it } from "vitest";
+import { clientScript } from "@/api/v2/credits-admin/handlers/admin-page/script";
 import { adminRequest, buildCreditsAdminApp } from "./helpers";
 
 describe("credits-admin page (console shell)", () => {
@@ -57,7 +58,7 @@ describe("credits-admin page (console shell)", () => {
     const res = await adminRequest(app, false).get("/api/v2/credits-admin/");
     expect(res.text).toContain("/grant");
     expect(res.text).toContain("/adjust");
-    expect(res.text).toContain("badge-none"); // sub-state chip (none/entitled/lapsed)
+    expect(res.text).toContain("pill-none"); // sub-state chip (none/entitled/lapsed)
     expect(res.text).toContain("usage-spark");
     expect(res.text).toContain("perPeriodCredits");
   });
@@ -81,5 +82,83 @@ describe("credits-admin page (console shell)", () => {
     // setView() retitles this per view; pins the element's existence only —
     // the label swap itself is runtime behaviour a string assertion can't reach.
     expect(res.text).toContain('id="center-title"');
+  });
+});
+
+describe("admin page — brand", () => {
+  let app: Express;
+  beforeAll(() => {
+    app = buildCreditsAdminApp();
+  });
+
+  it("uses the Lava brand token and drops the old navy token", async () => {
+    const res = await adminRequest(app).get("/api/v2/credits-admin/");
+    expect(res.status).toBe(200);
+    expect(res.text).toContain("--color-brand:#FC4F37");
+    expect(res.text).not.toContain("#283a75");
+    expect(res.text).not.toContain("💳");
+  });
+
+  it("renders the chat-bubble SVG mark and wordmark", async () => {
+    const res = await adminRequest(app).get("/api/v2/credits-admin/");
+    expect(res.text).toContain("M27.7736 13.8868");
+    expect(res.text).toContain("Convos Credits");
+  });
+
+  it("uses .pill status classes, not legacy .badge", async () => {
+    const res = await adminRequest(app).get("/api/v2/credits-admin/");
+    expect(res.text).toContain("pill-none");
+    expect(res.text).not.toContain('class="badge');
+  });
+});
+
+describe("admin page — single search box", () => {
+  let app: Express;
+  beforeAll(() => {
+    app = buildCreditsAdminApp();
+  });
+
+  it("removes the search-key select and keeps a single search input", async () => {
+    const res = await adminRequest(app).get("/api/v2/credits-admin/");
+    expect(res.text).not.toContain('id="search-key"');
+    expect(res.text).toContain('id="search-value"');
+    expect(res.text).toContain('placeholder="Account ID or wallet address"');
+  });
+  it("wraps view-mode select in a chevron wrapper", async () => {
+    const res = await adminRequest(app).get("/api/v2/credits-admin/");
+    expect(res.text).toContain("select-wrap");
+    expect(res.text).toContain('class="chev"');
+  });
+});
+
+describe("admin page — tables", () => {
+  let app: Express;
+  beforeAll(() => {
+    app = buildCreditsAdminApp();
+  });
+
+  it("no longer truncates account ids with shortId", async () => {
+    const res = await adminRequest(app).get("/api/v2/credits-admin/");
+    expect(res.text).not.toContain("function shortId");
+    expect(res.text).not.toContain("slice(0,8)");
+  });
+  it("wires server-side sort params and a resize handle", async () => {
+    const res = await adminRequest(app).get("/api/v2/credits-admin/");
+    expect(res.text).toContain("sortBy=");
+    expect(res.text).toContain("sortDir=");
+    expect(res.text).toContain('"rz"');
+  });
+  it("broken view defines a Period end column", async () => {
+    const res = await adminRequest(app).get("/api/v2/credits-admin/");
+    expect(res.text).toContain("Period end");
+  });
+});
+
+describe("admin client script — syntax", () => {
+  it("clientScript() is syntactically valid JS", () => {
+    // new Function parses the body without executing it — catches syntax errors
+    // in the template-string JS that string assertions miss.
+    // eslint-disable-next-line @typescript-eslint/no-implied-eval
+    expect(() => new Function(clientScript())).not.toThrow();
   });
 });

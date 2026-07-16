@@ -5,7 +5,7 @@ import { accountIdSchema } from "@/utils/account-id";
 export const MAX_ADMIN_GRANT_CREDITS = 100_000_000;
 
 export const searchQuerySchema = z.object({
-  key: z.enum(["accountId", "wallet"]),
+  key: z.enum(["accountId", "wallet"]).optional(),
   value: z.string().trim().min(1).max(256),
 });
 
@@ -49,17 +49,23 @@ const accountsPageLimit = {
   limit: z.coerce.number().int().min(1).max(100).default(50),
 };
 
+const sortDir = z.enum(["asc", "desc"]);
+
 export const accountsListQuerySchema = z.discriminatedUnion("mode", [
   z.object({
     mode: z.literal("balance"),
     min: balanceFilterCredits.optional(),
     max: balanceFilterCredits.optional(),
     sort: z.enum(["asc", "desc"]).default("desc"),
+    sortBy: z.enum(["balance"]).default("balance"),
+    sortDir: sortDir.optional(),
     ...accountsPageLimit,
   }),
   z.object({
     mode: z.literal("broken"),
     maxBalance: balanceFilterCredits.default(0),
+    sortBy: z.enum(["balance", "currentPeriodEnd", "tier"]).default("balance"),
+    sortDir: sortDir.default("asc"),
     ...accountsPageLimit,
   }),
   z.object({
@@ -68,12 +74,16 @@ export const accountsListQuerySchema = z.discriminatedUnion("mode", [
       .string()
       .trim()
       .regex(/^[A-Za-z0-9_-]{1,64}$/),
+    sortBy: z.enum(["latestGrantAt", "balance"]).default("latestGrantAt"),
+    sortDir: sortDir.default("desc"),
     ...accountsPageLimit,
   }),
   z.object({
     mode: z.literal("activity"),
     state: z.enum(["active", "dormant"]),
     days: z.coerce.number().int().min(1).max(365).default(30),
+    sortBy: z.enum(["lastConsumeAt", "balance"]).default("lastConsumeAt"),
+    sortDir: sortDir.default("desc"),
     ...accountsPageLimit,
   }),
 ]);

@@ -174,6 +174,33 @@ describe("GET /api/v2/credits-admin/accounts", () => {
     expect(staleRow?.lastConsumeAt).toBe(staleAt.toISOString());
   });
 
+  it("balance view honors sortBy=balance&sortDir=asc", async () => {
+    const a = await seedAccount();
+    tracker.push(a);
+    await setBalance(a, 8675311n);
+    const b = await seedAccount();
+    tracker.push(b);
+    await setBalance(b, 8675313n);
+    const ids = new Set([a, b]);
+    const res = await adminRequest(app).get(
+      "/api/v2/credits-admin/accounts?mode=balance&sortBy=balance&sortDir=asc&min=8675310&max=8675314&limit=100",
+    );
+    expect(res.status).toBe(200);
+    const body = res.body as Body;
+    const ours = body.rows
+      .filter((r) => ids.has(r.accountId))
+      .map((r) => r.balanceCredits);
+    expect(ours).toEqual(["8675311", "8675313"]);
+  });
+
+  it("400 on a foreign sortBy for the mode", async () => {
+    const res = await adminRequest(app).get(
+      "/api/v2/credits-admin/accounts?mode=balance&sortBy=tier",
+    );
+    expect(res.status).toBe(400);
+    expect(res.body).toMatchObject({ code: "invalid_request" });
+  });
+
   it("400 on invalid mode", async () => {
     const res = await adminRequest(app).get(
       "/api/v2/credits-admin/accounts?mode=nonsense",

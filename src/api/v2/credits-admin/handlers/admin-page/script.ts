@@ -8,7 +8,6 @@ export const clientScript = (): string => `
   function fmtDate(iso){ if(!iso) return "—"; var d=new Date(iso); return d.toLocaleDateString()+" "+d.toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"}); }
   function usdHint(c){ c=Number(c); if(!CREDITS_PER_USD||!isFinite(c)||!c) return ""; return "≈ $"+(c/CREDITS_PER_USD).toLocaleString(undefined,{maximumFractionDigits:2}); }
   function newKey(p){ return p+"_"+crypto.randomUUID(); }
-  function shortId(id){ return id ? String(id).slice(0,8)+"…" : "—"; }
   var toastTimer=null;
   function toast(msg,type){ var t=el("toast"); if(!t){ t=document.createElement("div"); t.id="toast"; document.body.appendChild(t);} t.textContent=msg; t.className="toast toast-"+(type||"success")+" show"; if(toastTimer)clearTimeout(toastTimer); toastTimer=setTimeout(function(){t.className="toast";},3200); }
 
@@ -57,7 +56,7 @@ export const clientScript = (): string => `
     var tb=document.querySelector("#activity-table tbody");
     var html=rows.map(function(r){
       return '<tr class="row-clickable" data-account="'+esc(r.accountId)+'">'
-        +'<td class="nowrap">'+fmtDate(r.createdAt)+"</td><td>"+esc(r.actorEmail)+'</td><td class="mono">'+esc(shortId(r.accountId))
+        +'<td class="nowrap">'+fmtDate(r.createdAt)+"</td><td>"+esc(r.actorEmail)+'</td><td class="mono">'+esc(r.accountId)
         +"</td><td>"+esc(r.action)+'</td><td class="num">'+esc(r.deltaCredits)+"</td><td>"+esc(r.reason)+"</td></tr>";
     }).join("");
     if(append){ tb.insertAdjacentHTML("beforeend", html); } else { tb.innerHTML=html; }
@@ -90,9 +89,9 @@ export const clientScript = (): string => `
     });
   });
   function doSearch(){
-    var key=el("search-key").value, value=el("search-value").value.trim();
+    var value=el("search-value").value.trim();
     if(!value) return;
-    guardFetch("/search?key="+encodeURIComponent(key)+"&value="+encodeURIComponent(value))
+    guardFetch("/search?value="+encodeURIComponent(value))
       .then(function(r){ return r.json(); })
       .then(function(j){ if(!j.accountId){ toast("No account found","error"); return; } openDetail(j.accountId); })
       .catch(function(e){ if(e.message!=="reauth") toast("Search failed","error"); });
@@ -113,22 +112,24 @@ export const clientScript = (): string => `
   }
   function accountsQuery(view, pageNo){
     var qs="?mode="+encodeURIComponent(accountsMode[view])+"&page="+pageNo;
+    var st=accountsSort[view];
+    if(st){ qs+="&sortBy="+encodeURIComponent(st.by)+"&sortDir="+encodeURIComponent(st.dir); }
     if(view==="balance"){ var mn=el("bal-min").value, mx=el("bal-max").value;
-      if(mn!=="") qs+="&min="+encodeURIComponent(mn); if(mx!=="") qs+="&max="+encodeURIComponent(mx);
-      qs+="&sort="+encodeURIComponent(el("bal-sort").value); }
+      if(mn!=="") qs+="&min="+encodeURIComponent(mn); if(mx!=="") qs+="&max="+encodeURIComponent(mx); }
     else if(view==="broken"){ qs+="&maxBalance="+encodeURIComponent(el("broken-max").value||"0"); }
     else if(view==="grantKind"){ qs+="&kind="+encodeURIComponent(el("gk-kind").value); }
     else if(view==="active"||view==="dormant"){ qs+="&state="+(view==="active"?"active":"dormant")+"&days="+encodeURIComponent(el("act-days").value||"30"); }
     return qs;
   }
   var accountsPageNo=0;
-  var colAccount=["Account",function(r){return shortId(r.accountId);},"mono"];
-  var colBalance=["Balance",function(r){return fmtCredits(r.balanceCredits);},"num"];
-  var userListCols=[colAccount,colBalance,["Last consume",function(r){return fmtDate(r.lastConsumeAt);},"nowrap"]];
+  var accountsSort={ balance:{by:"balance",dir:"desc"}, broken:{by:"balance",dir:"asc"}, grantKind:{by:"latestGrantAt",dir:"desc"}, active:{by:"lastConsumeAt",dir:"desc"}, dormant:{by:"lastConsumeAt",dir:"desc"} };
+  var colAccount=["Account",function(r){return r.accountId;},"mono"];
+  var colBalance=["Balance",function(r){return fmtCredits(r.balanceCredits);},"num","balance"];
+  var userListCols=[colAccount,colBalance,["Last consume",function(r){return fmtDate(r.lastConsumeAt);},"nowrap","lastConsumeAt"]];
   var accountCols={
     balance:[colAccount,colBalance],
-    broken:[colAccount,colBalance,["Tier",function(r){return r.tier||"—";}],["Status",function(r){return r.effectiveStatus||"—";}]],
-    grantKind:[colAccount,colBalance,["Latest grant",function(r){return fmtDate(r.latestGrantAt);},"nowrap"]],
+    broken:[colAccount,colBalance,["Tier",function(r){return r.tier||"—";},null,"tier"],["Status",function(r){return r.effectiveStatus||"—";}],["Period end",function(r){return fmtDate(r.currentPeriodEnd);},"nowrap","currentPeriodEnd"]],
+    grantKind:[colAccount,colBalance,["Latest grant",function(r){return fmtDate(r.latestGrantAt);},"nowrap","latestGrantAt"]],
     active:userListCols,
     dormant:userListCols
   };
@@ -142,8 +143,21 @@ export const clientScript = (): string => `
   };
   function renderAccountRows(rows, view, append){
     var cols=accountCols[view];
+    var st=accountsSort[view]||{};
     function colCls(c){ return c[2]?' class="'+c[2]+'"':""; }
-    el("accounts-head").innerHTML=cols.map(function(c){ return "<th"+colCls(c)+">"+esc(c[0])+"</th>"; }).join("");
+    if(!append){
+      el("accounts-head").innerHTML=cols.map(function(c){
+        var key=c[3];
+        var sortable = !!key;
+        var isSorted = sortable && st.by===key;
+        var arrow = isSorted ? '<span class="arrow">'+(st.dir==="asc"?"▲":"▼")+"</span>" : "";
+        var cls = (c[2]?c[2]+" ":"") + (sortable?"sortable ":"") + (isSorted?"sorted":"");
+        cls = cls.trim();
+        return "<th"+(cls?' class="'+cls+'"':"")+(sortable?' data-sort="'+esc(key)+'"':"")+">"+esc(c[0])+arrow+'<span class="rz" data-rz="1"></span></th>';
+      }).join("");
+      wireHeaderSort(view);
+      wireColumnResize();
+    }
     var tb=document.querySelector("#accounts-table tbody");
     var html=(rows||[]).map(function(r){
       return '<tr class="row-clickable" data-account="'+esc(r.accountId)+'">'
@@ -152,6 +166,27 @@ export const clientScript = (): string => `
     if(append){ tb.insertAdjacentHTML("beforeend", html); } else { tb.innerHTML=html; }
     Array.prototype.forEach.call(document.querySelectorAll("#accounts-table tbody tr.row-clickable"), function(tr){
       tr.onclick=function(){ openDetail(tr.getAttribute("data-account")); };
+    });
+  }
+  function wireHeaderSort(view){
+    Array.prototype.forEach.call(document.querySelectorAll("#accounts-head th.sortable"), function(th){
+      th.addEventListener("click", function(e){
+        if(e.target && e.target.getAttribute && e.target.getAttribute("data-rz")) return;
+        var key=th.getAttribute("data-sort"), st=accountsSort[view];
+        if(st.by===key){ st.dir = st.dir==="asc"?"desc":"asc"; } else { st.by=key; st.dir="desc"; }
+        loadAccounts(true);
+      });
+    });
+  }
+  function wireColumnResize(){
+    Array.prototype.forEach.call(document.querySelectorAll("#accounts-head .rz"), function(h){
+      h.addEventListener("mousedown", function(e){
+        e.preventDefault(); e.stopPropagation();
+        var th=h.parentNode, startX=e.pageX, startW=th.offsetWidth;
+        function move(ev){ var w=Math.max(48,startW+(ev.pageX-startX)); th.style.width=w+"px"; th.style.minWidth=w+"px"; }
+        function up(){ document.removeEventListener("mousemove",move); document.removeEventListener("mouseup",up); }
+        document.addEventListener("mousemove",move); document.addEventListener("mouseup",up);
+      });
     });
   }
   function loadAccounts(reset){
@@ -186,8 +221,8 @@ export const clientScript = (): string => `
   var currentAccountId=null;
   function subChip(j){
     var state=j.subscription?j.subscription.effectiveStatus:"none";
-    var cls=!j.subscription?"badge-none":(j.isEntitled?"badge-yes":"badge-no");
-    return '<span class="badge '+cls+'">'+esc(state)+"</span>";
+    var cls=!j.subscription?"pill-none":(j.isEntitled?"pill-ok":"pill-bad");
+    return '<span class="pill '+cls+'">'+esc(state)+"</span>";
   }
   function renderSpark(usage){
     if(!usage||!usage.length) return '<span class="muted-note">No usage in the last 30 days.</span>';
@@ -215,13 +250,13 @@ export const clientScript = (): string => `
         +"</tbody></table>"
       : '<div class="muted-note">No subscription on record.</div>';
     el("detail-body").innerHTML =
-      '<h2 class="detail-title">Account <span class="mono">'+esc(shortId(j.accountId))+'</span></h2>'
+      '<h2 class="detail-title">Account <span class="mono">'+esc(j.accountId)+'</span></h2>'
       +'<div class="card"><h3 class="tight">Balance</h3><div class="balance-value">'+fmtCredits(j.balanceCredits)+'</div>'
       +'<div class="balance-hint">'+usdHint(j.balanceCredits)+'</div>'
       +'<div class="sub-line">Subscription: '+subChip(j)+'</div></div>'
       +'<div class="card"><h3>Subscription</h3>'+subBlock+'</div>'
-      +'<div class="card"><h3>Grant</h3><input id="d-grant-credits" type="number" min="1" placeholder="credits"><input id="d-grant-reason" placeholder="reason"><button id="d-grant-btn" class="btn btn-primary">Grant</button></div>'
-      +'<div class="card"><h3>Adjust</h3><input id="d-adjust-delta" type="number" placeholder="±credits"><input id="d-adjust-reason" placeholder="reason"><button id="d-adjust-btn" class="btn btn-danger">Adjust</button></div>'
+      +'<div class="card"><h3>Grant</h3><input id="d-grant-credits" type="number" min="1" placeholder="Credits"><input id="d-grant-reason" placeholder="Reason"><button id="d-grant-btn" class="btn btn-primary">Grant</button></div>'
+      +'<div class="card"><h3>Adjust</h3><input id="d-adjust-delta" type="number" placeholder="±credits"><input id="d-adjust-reason" placeholder="Reason"><button id="d-adjust-btn" class="btn btn-danger">Adjust</button></div>'
       +'<div class="card"><h3>Usage (30d)</h3><div id="usage-spark" class="spark"></div></div>'
       +'<div class="card"><h3>Daily refills</h3><div class="tablewrap"><table><tbody id="d-refills"></tbody></table></div></div>'
       +'<div class="card"><h3>Recent ledger</h3><div class="tablewrap"><table><tbody id="d-ledger"></tbody></table></div></div>'
@@ -245,7 +280,7 @@ export const clientScript = (): string => `
     el("detail").classList.add("open"); el("detail").setAttribute("aria-hidden","false"); el("detail-scrim").classList.remove("hidden");
     guardFetch("/accounts/"+encodeURIComponent(accountId)).then(function(r){ if(r.status===404){ throw new Error("not_found"); } return r.json(); })
       .then(function(j){ if(accountId!==currentAccountId) return; renderDetail(j); loadAudit(accountId); })
-      .catch(function(e){ if(accountId!==currentAccountId) return; if(e.message==="not_found"){ el("detail-body").innerHTML='<div class="badge badge-no">Account not found</div>'; } else if(e.message!=="reauth"){ toast("Failed to load account","error"); } });
+      .catch(function(e){ if(accountId!==currentAccountId) return; if(e.message==="not_found"){ el("detail-body").innerHTML='<div class="pill pill-bad">Account not found</div>'; } else if(e.message!=="reauth"){ toast("Failed to load account","error"); } });
   }
   function mutate(kind){
     if(!currentAccountId) return;
