@@ -1,6 +1,11 @@
 import type { Request, Response } from "express";
 import { z } from "zod";
 import { createNotificationClient } from "@/notifications/client";
+import {
+  notificationMutationCallOptions,
+  withInstallationMutationFence,
+  type InstallationGeneration,
+} from "@/notifications/installation-mutation-fence";
 import { verifyDeviceOwnership } from "@/utils/auth-guards";
 import { prisma } from "@/utils/prisma";
 
@@ -10,7 +15,24 @@ const unregisterParamsSchema = z.object({
 
 export type IUnregisterParams = z.infer<typeof unregisterParamsSchema>;
 
-const notificationClient = createNotificationClient();
+type UnregisterNotificationClient = Pick<
+  ReturnType<typeof createNotificationClient>,
+  "deleteInstallation"
+>;
+let notificationClient: UnregisterNotificationClient =
+  createNotificationClient();
+
+export const __setUnregisterNotificationClientForTests = (
+  client: UnregisterNotificationClient | null,
+): void => {
+  notificationClient = client ?? createNotificationClient();
+};
+let beforeMutationFenceForTests: (() => Promise<void>) | null = null;
+export const __setUnregisterBeforeMutationFenceForTests = (
+  hook: (() => Promise<void>) | null,
+): void => {
+  beforeMutationFenceForTests = hook;
+};
 
 export async function unregister(
   req: Request<IUnregisterParams>,
@@ -24,6 +46,7 @@ export async function unregister(
     // Look up client
     const client = await prisma.clientIdentifier.findUnique({
       where: { id: params.clientId },
+      include: { device: { select: { accountId: true } } },
     });
 
     if (!client) {
@@ -46,15 +69,39 @@ export async function unregister(
     ) {
       return;
     }
+    await beforeMutationFenceForTests?.();
 
     try {
-      await notificationClient.deleteInstallation({
+      const generation: InstallationGeneration = {
+        accountId: client.accountId,
+        deviceAccountId: client.device.accountId,
+        deviceId: client.deviceId,
+        updatedAt: client.updatedAt,
+      };
+      const result = await withInstallationMutationFence({
         installationId: params.clientId,
+        expectation: { state: "present", generation },
+        mutate: async (tx) => {
+          await notificationClient.deleteInstallation(
+            { installationId: params.clientId },
+            notificationMutationCallOptions(),
+          );
+          await tx.clientIdentifier.deleteMany({
+            where: {
+              id: params.clientId,
+              accountId: generation.accountId,
+              deviceId: generation.deviceId,
+              updatedAt: generation.updatedAt,
+            },
+          });
+        },
       });
-
-      await prisma.clientIdentifier.delete({
-        where: { id: params.clientId },
-      });
+      if (!result.applied) {
+        req.log.info(
+          { clientId: params.clientId },
+          "notifications.unregister.superseded",
+        );
+      }
 
       req.log.info(
         { clientId: params.clientId },

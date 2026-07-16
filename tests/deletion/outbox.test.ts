@@ -213,6 +213,27 @@ describe("deletion outbox drain", () => {
     expect(updated?.status).toBe("failed");
     expect(updated?.attempts).toBe(10);
   });
+
+  test("a task already at the attempts cap is failed without execution", async () => {
+    const operationId = await newRecord();
+    const executor = vi.fn(() => Promise.resolve());
+    __setDeletionExecutorsForTests({
+      notification_installation: executor,
+    });
+    const task = await newTask(operationId, "notification_installation", {
+      attempts: 10,
+    });
+
+    await expect(drainDeletionTasks()).resolves.toEqual({
+      done: 0,
+      retried: 0,
+      failed: 1,
+    });
+    expect(executor).not.toHaveBeenCalled();
+    expect(
+      await prisma.deletionTask.findUnique({ where: { id: task.id } }),
+    ).toMatchObject({ status: "failed", attempts: 10 });
+  });
 });
 
 describe("deletion record completion and expiry", () => {

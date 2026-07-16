@@ -82,6 +82,32 @@ const drainDeletionTasksUnderLease = async (): Promise<DrainCounts> => {
   let failed = 0;
 
   for (const task of due) {
+    if (task.attempts >= MAX_ATTEMPTS) {
+      const transitioned = await prisma.deletionTask.updateMany({
+        where: {
+          id: task.id,
+          status: "pending",
+          attempts: task.attempts,
+        },
+        data: {
+          status: "failed",
+          lastError: "Maximum deletion attempts exhausted before claim",
+        },
+      });
+      if (transitioned.count > 0) {
+        failed += transitioned.count;
+        logger.error(
+          {
+            taskId: task.id,
+            operationId: task.operationId,
+            kind: task.kind,
+            attempts: task.attempts,
+          },
+          "deletion.task.terminal_failure",
+        );
+      }
+      continue;
+    }
     // `updatedAt` is the claim timestamp. The conditional transition makes
     // this task single-runner even if the outer advisory lease expires or a
     // replica starts a concurrent drain.
@@ -91,6 +117,7 @@ const drainDeletionTasksUnderLease = async (): Promise<DrainCounts> => {
         id: task.id,
         status: "pending",
         attempts: task.attempts,
+        AND: { attempts: { lt: MAX_ATTEMPTS } },
         nextAttemptAt: { lte: now },
       },
       data: {

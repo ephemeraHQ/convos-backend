@@ -8,9 +8,12 @@ import {
   POSTHOG_PROJECT_TOKEN,
 } from "@/config";
 import { createNotificationClient } from "@/notifications/client";
+import {
+  notificationMutationCallOptions,
+  withInstallationMutationFence,
+} from "@/notifications/installation-mutation-fence";
 import { AppError } from "@/utils/errors";
 import logger from "@/utils/logger";
-import { prisma } from "@/utils/prisma";
 
 /**
  * External-purge executors for the deletion outbox. One executor per
@@ -138,24 +141,24 @@ const POSTHOG_FETCH_TIMEOUT_MS = 10_000;
 /** Remove one notification-server installation (per ClientIdentifier). */
 const executeNotificationInstallation: DeletionExecutor = async (payload) => {
   const parsed = installationPayloadSchema.parse(payload);
-  // Teardown deletes every snapshotted local row before this task can run.
-  // Any current row with the same id was registered afterwards and owns the
-  // live installation; the subscribe path also blocks reassignment while a
-  // purge task is unfinished, closing the check-then-delete race.
-  const current = await prisma.clientIdentifier.findUnique({
-    where: { id: parsed.installationId },
-    select: { id: true },
+  // The 10-second RPC deadline must remain well below the 30-minute stale
+  // claim threshold. An in-flight delete therefore ends before its claim can
+  // be reclaimed, and the installation lock prevents concurrent reuse.
+  const result = await withInstallationMutationFence({
+    installationId: parsed.installationId,
+    expectation: { state: "absent" },
+    mutate: () =>
+      notificationClient.deleteInstallation(
+        { installationId: parsed.installationId },
+        notificationMutationCallOptions(),
+      ),
   });
-  if (current) {
+  if (!result.applied) {
     logger.info(
       { installationId: parsed.installationId },
       "deletion.notification_installation.reassigned_skip",
     );
-    return;
   }
-  await notificationClient.deleteInstallation({
-    installationId: parsed.installationId,
-  });
 };
 
 /**

@@ -6,6 +6,13 @@ import {
   requireLiveAccount,
 } from "@/accounts/require-live-account";
 import { createNotificationClient } from "@/notifications/client";
+import {
+  lockNotificationInstallation,
+  notificationMutationCallOptions,
+  withInstallationMutationFence,
+  type InstallationExpectation,
+  type InstallationGeneration,
+} from "@/notifications/installation-mutation-fence";
 import { verifyDeviceOwnership } from "@/utils/auth-guards";
 import { deviceIdSchema } from "@/utils/device-id";
 import { prisma } from "@/utils/prisma";
@@ -39,10 +46,8 @@ type SubscribeNotificationClient = Pick<
 
 let notificationClient: SubscribeNotificationClient =
   createNotificationClient();
-const NOTIFICATION_RPC_TIMEOUT_MS = 10_000;
 const SUBSCRIBE_TRANSACTION_TIMEOUT_MS = 10_000;
 const SUBSCRIBE_FENCE_RETRIES = 3;
-const SUBSCRIBE_ADVISORY_LOCK_CLASS_ID = 7_282;
 
 class SubscribeDeviceNotFoundError extends Error {}
 class SubscribeDeviceDisabledError extends Error {}
@@ -142,34 +147,76 @@ export async function subscribe(req: SubscribeRequest, res: Response) {
       return;
     }
 
+    const pushToken = persisted.pushToken;
+    const persistedGeneration: InstallationGeneration = {
+      accountId: persisted.accountId,
+      deviceAccountId: persisted.deviceAccountId,
+      deviceId: persisted.deviceId,
+      updatedAt: persisted.updatedAt,
+    };
     try {
-      await notificationClient.registerInstallation(
-        {
-          installationId: body.clientId,
-          deliveryMechanism: {
-            deliveryMechanismType: {
-              case:
-                persisted.pushTokenType === "apns"
-                  ? "apnsDeviceToken"
-                  : "firebaseDeviceToken",
-              value: persisted.pushToken,
+      const registration = await withInstallationMutationFence({
+        installationId: body.clientId,
+        expectation: { state: "present", generation: persistedGeneration },
+        mutate: () =>
+          notificationClient.registerInstallation(
+            {
+              installationId: body.clientId,
+              deliveryMechanism: {
+                deliveryMechanismType: {
+                  case:
+                    persisted.pushTokenType === "apns"
+                      ? "apnsDeviceToken"
+                      : "firebaseDeviceToken",
+                  value: pushToken,
+                },
+              },
             },
-          },
-        },
-        { timeoutMs: NOTIFICATION_RPC_TIMEOUT_MS },
-      );
-      await notificationClient.subscribeWithMetadata(
-        {
-          installationId: body.clientId,
-          subscriptions,
-        },
-        { timeoutMs: NOTIFICATION_RPC_TIMEOUT_MS },
-      );
+            notificationMutationCallOptions(),
+          ),
+      });
+      if (!registration.applied) {
+        if (registration.current === null) {
+          throw new SubscribeInvalidatedError();
+        }
+        req.log.info(
+          { clientId: body.clientId },
+          "notifications.subscribe.superseded",
+        );
+        res.status(200).send();
+        return;
+      }
+      const subscription = await withInstallationMutationFence({
+        installationId: body.clientId,
+        expectation: { state: "present", generation: persistedGeneration },
+        mutate: () =>
+          notificationClient.subscribeWithMetadata(
+            { installationId: body.clientId, subscriptions },
+            notificationMutationCallOptions(),
+          ),
+      });
+      if (!subscription.applied) {
+        if (subscription.current === null) {
+          await compensateRemoteInstallation(req, {
+            expectation: { state: "absent" },
+            installationId: body.clientId,
+          });
+          throw new SubscribeInvalidatedError();
+        }
+        req.log.info(
+          { clientId: body.clientId },
+          "notifications.subscribe.superseded",
+        );
+        res.status(200).send();
+        return;
+      }
     } catch (remoteError) {
-      await compensateRemoteInstallation(req, body.clientId);
-      await deletePersistedIdentifier(req, {
-        clientId: body.clientId,
-        updatedAt: persisted.updatedAt,
+      if (remoteError instanceof SubscribeInvalidatedError) {
+        throw remoteError;
+      }
+      await compensateRemoteInstallation(req, {
+        expectation: { state: "present", generation: persistedGeneration },
+        installationId: body.clientId,
       });
       throw remoteError;
     }
@@ -179,7 +226,10 @@ export async function subscribe(req: SubscribeRequest, res: Response) {
       include: { device: { select: { accountId: true } } },
     });
     if (!current) {
-      await compensateRemoteInstallation(req, body.clientId);
+      await compensateRemoteInstallation(req, {
+        expectation: { state: "absent" },
+        installationId: body.clientId,
+      });
       throw new SubscribeInvalidatedError();
     }
 
@@ -188,7 +238,8 @@ export async function subscribe(req: SubscribeRequest, res: Response) {
     if (
       current.updatedAt.getTime() !== persisted.updatedAt.getTime() ||
       current.accountId !== persisted.accountId ||
-      current.deviceId !== persisted.deviceId
+      current.deviceId !== persisted.deviceId ||
+      current.device.accountId !== persisted.deviceAccountId
     ) {
       req.log.info(
         { clientId: body.clientId },
@@ -207,13 +258,10 @@ export async function subscribe(req: SubscribeRequest, res: Response) {
         where: { id: { in: currentOwnerIds } },
       });
       if (liveOwners !== currentOwnerIds.length) {
-        const cleaned = await compensateRemoteInstallation(req, body.clientId);
-        if (cleaned) {
-          await deletePersistedIdentifier(req, {
-            clientId: body.clientId,
-            updatedAt: persisted.updatedAt,
-          });
-        }
+        await compensateRemoteInstallation(req, {
+          expectation: { state: "present", generation: persistedGeneration },
+          installationId: body.clientId,
+        });
         throw new SubscribeInvalidatedError();
       }
     }
@@ -287,15 +335,6 @@ const persistClientIdentifier = async (args: {
 }) =>
   prisma.$transaction(
     async (tx) => {
-      // Serialize writers of one installation id without retaining the
-      // connection beyond this short database-only transaction.
-      await tx.$queryRaw<Array<{ locked: number }>>`
-        SELECT 1 AS locked FROM pg_advisory_xact_lock(
-          ${SUBSCRIBE_ADVISORY_LOCK_CLASS_ID}::int,
-          hashtext(${`notification-subscribe:${args.clientId}`})::int
-        )
-      `;
-
       const initialDevice = await tx.deviceRegistration.findUnique({
         where: { deviceId: args.deviceId },
       });
@@ -312,6 +351,7 @@ const persistClientIdentifier = async (args: {
       for (const accountId of initialOwnerIds) {
         await requireLiveAccount(tx, accountId);
       }
+      await lockNotificationInstallation(tx, args.clientId);
 
       // Account rows are locked first. The mutable rows are then locked and
       // re-read so an ownership change that committed while account locks
@@ -381,6 +421,7 @@ const persistClientIdentifier = async (args: {
       });
       return {
         ...identifier,
+        deviceAccountId: device.accountId,
         pushToken: device.pushToken,
         pushTokenType: device.pushTokenType,
       };
@@ -390,39 +431,50 @@ const persistClientIdentifier = async (args: {
 
 const compensateRemoteInstallation = async (
   req: SubscribeRequest,
-  clientId: string,
-): Promise<boolean> => {
+  args: {
+    expectation: InstallationExpectation;
+    installationId: string;
+  },
+): Promise<"cleaned" | "failed" | "superseded"> => {
   try {
-    await notificationClient.deleteInstallation(
-      { installationId: clientId },
-      { timeoutMs: NOTIFICATION_RPC_TIMEOUT_MS },
-    );
-    return true;
+    const result = await withInstallationMutationFence({
+      installationId: args.installationId,
+      expectation: args.expectation,
+      mutate: async (tx) => {
+        await notificationClient.deleteInstallation(
+          { installationId: args.installationId },
+          notificationMutationCallOptions(),
+        );
+        if (args.expectation.state === "present") {
+          const generation = args.expectation.generation;
+          await tx.clientIdentifier.deleteMany({
+            where: {
+              id: args.installationId,
+              accountId: generation.accountId,
+              deviceId: generation.deviceId,
+              updatedAt: generation.updatedAt,
+            },
+          });
+        }
+      },
+    });
+    if (!result.applied) {
+      req.log.info(
+        { installationId: args.installationId },
+        "notifications.subscribe.compensation_superseded",
+      );
+      return "superseded";
+    }
+    return "cleaned";
   } catch (cleanupError) {
     req.log.error(
       {
         error: cleanupError,
-        installationId: clientId,
+        installationId: args.installationId,
         requiresOperatorCleanup: true,
       },
       "notifications.subscribe.remote_cleanup_failed",
     );
-    return false;
-  }
-};
-
-const deletePersistedIdentifier = async (
-  req: SubscribeRequest,
-  args: { clientId: string; updatedAt: Date },
-): Promise<void> => {
-  try {
-    await prisma.clientIdentifier.deleteMany({
-      where: { id: args.clientId, updatedAt: args.updatedAt },
-    });
-  } catch (error) {
-    req.log.warn(
-      { error, clientId: args.clientId },
-      "notifications.subscribe.local_cleanup_failed",
-    );
+    return "failed";
   }
 };

@@ -14,6 +14,11 @@ import {
   webhookNotificationBodySchema,
   type WebhookNotificationBody,
 } from "@/notifications/client";
+import {
+  notificationMutationCallOptions,
+  withInstallationMutationFence,
+  type InstallationGeneration,
+} from "@/notifications/installation-mutation-fence";
 import { createJwtToken } from "@/utils/jwt";
 import { prisma } from "@/utils/prisma";
 import {
@@ -23,7 +28,17 @@ import {
   PUSH_PAYLOAD_STRIP_MARGIN_BYTES,
 } from "../constants";
 
-const notificationClient = createNotificationClient();
+type WebhookNotificationClient = Pick<
+  ReturnType<typeof createNotificationClient>,
+  "deleteInstallation"
+>;
+let notificationClient: WebhookNotificationClient = createNotificationClient();
+
+export const __setWebhookNotificationClientForTests = (
+  client: WebhookNotificationClient | null,
+): void => {
+  notificationClient = client ?? createNotificationClient();
+};
 
 /**
  * Detect if a message is a welcome message (XMTP MLS protocol message for group joins)
@@ -499,21 +514,44 @@ export async function handleV2Notification(args: {
         `${tag} Cleaning up v2 notification client due to unrecoverable error`,
       );
       try {
-        // Delete from local DB first to ensure we don't retry on failure
-        await prisma.clientIdentifier.delete({
-          where: { id: client.id },
+        const generation: InstallationGeneration = {
+          accountId: client.accountId,
+          deviceAccountId: client.device.accountId,
+          deviceId: client.deviceId,
+          updatedAt: client.updatedAt,
+        };
+        const cleanup = await withInstallationMutationFence({
+          installationId: client.id,
+          expectation: { state: "present", generation },
+          mutate: async (tx) => {
+            // Preserve local-first cleanup semantics. The surrounding
+            // transaction retains the installation fence until the bounded
+            // remote attempt completes.
+            await tx.clientIdentifier.deleteMany({
+              where: {
+                id: client.id,
+                accountId: generation.accountId,
+                deviceId: generation.deviceId,
+                updatedAt: generation.updatedAt,
+              },
+            });
+            try {
+              await notificationClient.deleteInstallation(
+                { installationId: client.id },
+                notificationMutationCallOptions(),
+              );
+            } catch (xmtpError) {
+              req.log.warn(
+                { error: xmtpError, clientId: client.id },
+                `${tag} Failed to delete XMTP installation, but local DB is clean`,
+              );
+            }
+          },
         });
-
-        // Then attempt notification server cleanup
-        try {
-          await notificationClient.deleteInstallation({
-            installationId: client.id,
-          });
-        } catch (xmtpError) {
-          // Log but don't fail - DB is authoritative, orphaned XMTP installation is harmless
-          req.log.warn(
-            { error: xmtpError, clientId: client.id },
-            `${tag} Failed to delete XMTP installation, but local DB is clean`,
+        if (!cleanup.applied) {
+          req.log.info(
+            { clientId: client.id },
+            `${tag} Skipping superseded notification cleanup`,
           );
         }
 
