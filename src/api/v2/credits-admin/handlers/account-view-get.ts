@@ -1,4 +1,3 @@
-import type { CreditLedger } from "@prisma/client";
 import type { Request, Response } from "express";
 import { getBalance, getBucketedConsumption } from "@/payments";
 import { sumPeriodConsumes } from "@/payments/spendable";
@@ -10,22 +9,12 @@ import {
 import { tierGrant } from "@/subscriptions/tier-config";
 import { requireSubscriptionTier } from "@/subscriptions/tiers";
 import { prisma } from "@/utils/prisma";
+import { serializeLedger } from "../ledger-repository";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const LEDGER_LIMIT = 50;
 const REFILL_LIMIT = 20;
 const USAGE_WINDOW_DAYS = 30;
-
-const serializeLedger = (r: CreditLedger) => ({
-  id: r.id,
-  delta: r.delta.toString(),
-  reason: r.reason,
-  grantKindId: r.grantKindId,
-  note: r.note,
-  idempotencyKey: r.idempotencyKey,
-  balanceAfter: r.balanceAfter?.toString() ?? null,
-  createdAt: r.createdAt.toISOString(),
-});
 
 export const accountViewGetHandler = async (
   req: Request<{ accountId: string }>,
