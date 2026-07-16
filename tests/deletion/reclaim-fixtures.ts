@@ -118,9 +118,28 @@ export const installLocalTestingVerifier = () => {
   );
 };
 
+/** Signed JWSRenewalInfo, e.g. for billing-grace status items. */
+export const signRenewalInfo = async (
+  overrides: Record<string, unknown> = {},
+) => {
+  const payload = {
+    autoRenewProductId: PRODUCT_ID,
+    autoRenewStatus: 1,
+    productId: PRODUCT_ID,
+    signedDate: Date.now(),
+    environment: "LocalTesting",
+    ...overrides,
+  };
+  const privateKey = await importPKCS8(signingPrivateKey, "ES256");
+  return new SignJWT(payload)
+    .setProtectedHeader({ alg: "ES256" })
+    .sign(privateKey);
+};
+
 export type AppleStatus = {
   status: number;
   signedLatest: string;
+  signedRenewal?: string;
 };
 
 export const appleStatuses = (args: AppleStatus & { otx: string }) => ({
@@ -131,6 +150,9 @@ export const appleStatuses = (args: AppleStatus & { otx: string }) => ({
           originalTransactionId: args.otx,
           status: args.status,
           signedTransactionInfo: args.signedLatest,
+          ...(args.signedRenewal
+            ? { signedRenewalInfo: args.signedRenewal }
+            : {}),
         },
       ],
     },

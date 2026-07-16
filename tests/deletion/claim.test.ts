@@ -11,6 +11,7 @@ import {
   appleClaimRequest,
   appleInput,
   claimApp,
+  DAY_MS,
   installAppleStatuses,
   installLocalTestingVerifier,
   installReclaimHooks,
@@ -18,6 +19,7 @@ import {
   passAppCheck,
   PERIOD_CREDITS,
   signTransaction as signReclaimTransaction,
+  signRenewalInfo,
   tokenFor,
 } from "./reclaim-fixtures";
 
@@ -139,6 +141,96 @@ describe("tombstone restoration tier", () => {
 
     const result = await upsertFromVerify(appleInput(claimer, otx));
     expect(result.subscription.accountId).toBe(claimer);
+  });
+
+  test("billing-grace claim seeds grace and the renewal-info deadline, not expired", async () => {
+    const otx = "9000000000000001";
+    installLocalTestingVerifier();
+    await tombstoneViaDeletion(otx);
+    const claimer = await newAccount();
+    passAppCheck();
+
+    // The period lapsed and Apple is retrying billing: the latest
+    // transaction is the lapsed one (expiresDate in the past), the grace
+    // deadline lives only in the status item's renewal info. Seeding from
+    // the transaction alone would restore an expired/free-tier row.
+    const lapsedExpiry = Date.now() - 2 * DAY_MS;
+    const graceDeadline = Date.now() + 14 * DAY_MS;
+    const jws = await signTransaction({
+      transactionId: otx,
+      originalTransactionId: otx,
+      expiresDate: lapsedExpiry,
+    });
+    const signedRenewal = await signRenewalInfo({
+      originalTransactionId: otx,
+      gracePeriodExpiresDate: graceDeadline,
+    });
+    installAppleStatuses({ otx, status: 4, signedLatest: jws, signedRenewal });
+
+    const res = await claimRequest(claimer, jws);
+    expect(res.status).toBe(200);
+    expect(body(res).subscription).toMatchObject({
+      provider: "apple",
+      tier: "plus",
+      status: "grace",
+    });
+    const row = await prisma.subscription.findFirstOrThrow({
+      where: { originalTransactionId: otx },
+    });
+    expect(row.status).toBe("grace");
+    expect(row.gracePeriodEnd?.getTime()).toBe(graceDeadline);
+    expect(row.currentPeriodEnd.getTime()).toBe(lapsedExpiry);
+    // The escrowed remainder still released exactly once.
+    expect(await getBalance(claimer)).toBe(PERIOD_CREDITS);
+  });
+
+  test("billing-grace claim without decodable renewal info: 400 fail closed", async () => {
+    const otx = "9000000000000001";
+    installLocalTestingVerifier();
+    await tombstoneViaDeletion(otx);
+    const claimer = await newAccount();
+    passAppCheck();
+    const jws = await signTransaction({
+      transactionId: otx,
+      originalTransactionId: otx,
+      expiresDate: Date.now() - 2 * DAY_MS,
+    });
+    installAppleStatuses({ otx, status: 4, signedLatest: jws });
+
+    const res = await claimRequest(claimer, jws);
+    expect(res.status).toBe(400);
+    expect(body(res).code).toBe("invalid_claim_proof");
+    expect(await getBalance(claimer)).toBe(0n);
+    const lineage = await prisma.subscriptionLineage.findFirstOrThrow({
+      where: { lineageKey: otx },
+    });
+    expect(lineage.state).toBe("tombstoned");
+  });
+
+  test("billing-grace deadline already past: 409 not_entitled", async () => {
+    const otx = "9000000000000001";
+    installLocalTestingVerifier();
+    await tombstoneViaDeletion(otx);
+    const claimer = await newAccount();
+    passAppCheck();
+    const jws = await signTransaction({
+      transactionId: otx,
+      originalTransactionId: otx,
+      expiresDate: Date.now() - 2 * DAY_MS,
+    });
+    const signedRenewal = await signRenewalInfo({
+      originalTransactionId: otx,
+      gracePeriodExpiresDate: Date.now() - DAY_MS,
+    });
+    installAppleStatuses({ otx, status: 4, signedLatest: jws, signedRenewal });
+
+    const res = await claimRequest(claimer, jws);
+    expect(res.status).toBe(409);
+    expect(res.body).toMatchObject({
+      code: "subscription_claim_rejected",
+      reason: "not_entitled",
+    });
+    expect(await getBalance(claimer)).toBe(0n);
   });
 
   test("not entitled now: 409 not_entitled, nothing restored", async () => {

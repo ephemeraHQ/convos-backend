@@ -1,4 +1,7 @@
-import type { JWSTransactionDecodedPayload } from "@apple/app-store-server-library";
+import type {
+  JWSRenewalInfoDecodedPayload,
+  JWSTransactionDecodedPayload,
+} from "@apple/app-store-server-library";
 import { BillingProvider, SubscriptionStatus } from "@prisma/client";
 import type { NextFunction, Request, Response } from "express";
 import { z } from "zod";
@@ -9,7 +12,10 @@ import {
   executeClaim,
   type ClaimSubscriptionSeed,
 } from "@/subscriptions/claim";
-import { verifyAndDecodeTransaction } from "@/subscriptions/jws-verifier";
+import {
+  verifyAndDecodeRenewalInfo,
+  verifyAndDecodeTransaction,
+} from "@/subscriptions/jws-verifier";
 import {
   LineageUnresolvedError,
   resolveOrCreateAppleLineage,
@@ -124,7 +130,8 @@ export const claimAppCheckMiddleware = async (
 // ---------------------------------------------------------------------------
 
 /** Apple statuses that count as entitled-now: 1 = active, 4 = grace. */
-const ENTITLED_APPLE_STATUSES = new Set([1, 4]);
+const APPLE_STATUS_BILLING_GRACE = 4;
+const ENTITLED_APPLE_STATUSES = new Set([1, APPLE_STATUS_BILLING_GRACE]);
 
 type VerifiedProof = {
   lineageId: string;
@@ -183,6 +190,8 @@ const verifyAppleProof = async (
   // against Apple's own answer (matched by OTX + environment, never
   // lastTransactions[0]).
   let latest: JWSTransactionDecodedPayload | null = null;
+  let latestStatus: number | undefined;
+  let latestSignedRenewalInfo: string | undefined;
   let entitledNow = false;
   try {
     const statuses = await getSubscriptionStatuses(otx);
@@ -196,6 +205,8 @@ const verifyAppleProof = async (
         );
         if (candidate.environment !== decoded.environment) continue;
         latest = candidate;
+        latestStatus = item.status;
+        latestSignedRenewalInfo = item.signedRenewalInfo;
         entitledNow =
           item.status !== undefined && ENTITLED_APPLE_STATUSES.has(item.status);
       }
@@ -211,6 +222,29 @@ const verifyAppleProof = async (
     return { status: 400 };
   }
 
+  // Billing grace: the latest transaction is the lapsed one, so deriving
+  // the seed status from it would restore the row as expired / free tier
+  // and only a successful renewal would heal it. The grace state and its
+  // authoritative future deadline live in the status item's renewal info;
+  // the transaction is used only for period and funding identity.
+  let gracePeriodEnd: Date | null = null;
+  if (latestStatus === APPLE_STATUS_BILLING_GRACE) {
+    if (!latestSignedRenewalInfo) return { status: 400 };
+    let renewalInfo: JWSRenewalInfoDecodedPayload;
+    try {
+      renewalInfo = await verifyAndDecodeRenewalInfo(latestSignedRenewalInfo);
+    } catch (error) {
+      req.log.warn({ error }, "subscription.claim.invalid_renewal_info");
+      return { status: 400 };
+    }
+    const graceDeadlineMs = renewalInfo.gracePeriodExpiresDate;
+    if (!graceDeadlineMs) return { status: 400 };
+    if (graceDeadlineMs <= Date.now()) {
+      return { status: 409, reason: "not_entitled" };
+    }
+    gracePeriodEnd = new Date(graceDeadlineMs);
+  }
+
   let mapping: ReturnType<typeof productMapping>;
   try {
     mapping = productMapping(productId);
@@ -222,7 +256,9 @@ const verifyAppleProof = async (
     return { status: 400 };
   }
   const { tier, period } = mapping;
-  const status = deriveSubscriptionStatusFromTransaction(decoded);
+  const status = gracePeriodEnd
+    ? SubscriptionStatus.grace
+    : deriveSubscriptionStatusFromTransaction(decoded);
   const currentPeriodStart = new Date(decoded.purchaseDate ?? Date.now());
   let lineageId: string;
   try {
@@ -250,6 +286,7 @@ const verifyAppleProof = async (
       startedAt: new Date(decoded.originalPurchaseDate ?? Date.now()),
       currentPeriodStart,
       currentPeriodEnd: new Date(decoded.expiresDate),
+      gracePeriodEnd,
       willRenew: true,
       isInTrial: status === SubscriptionStatus.trial,
       environment:
