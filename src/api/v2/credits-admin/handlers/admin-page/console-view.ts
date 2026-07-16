@@ -19,14 +19,14 @@ export const consoleView = (): string => `
       </div>
       <div class="rail-sec">
         <label for="view-mode">View</label>
-        <div class="select-wrap"><select id="view-mode">
+        <div class="dd" data-dd="view-mode"><select id="view-mode" class="dd-native">
           <option value="activity">Activity feed</option>
           <option value="balance">Balance</option>
           <option value="broken">Broken subs</option>
           <option value="grantKind">Grant kind</option>
           <option value="active">Active users</option>
           <option value="dormant">Dormant users</option>
-        </select>${CHEV}</div>
+        </select><button type="button" class="dd-btn" aria-haspopup="listbox" aria-expanded="false"><span class="dd-label"></span>${CHEV}</button><div class="dd-menu" role="listbox"></div></div>
       </div>
       <div id="facet-group">
         <div class="rail-label">Filter activity</div>
@@ -42,13 +42,13 @@ export const consoleView = (): string => `
         <input id="broken-max" type="number" value="0" placeholder="Max balance (≤)">
       </div>
       <div id="ctl-grantKind" class="mode-ctl hidden">
-        <div class="select-wrap"><select id="gk-kind">
+        <div class="dd" data-dd="gk-kind"><select id="gk-kind" class="dd-native">
           <option value="signup_bonus">signup_bonus</option>
           <option value="daily_refill">daily_refill</option>
           <option value="manual">manual</option>
           <option value="sub_grant">sub_grant</option>
           <option value="sub_forfeit">sub_forfeit</option>
-        </select>${CHEV}</div>
+        </select><button type="button" class="dd-btn" aria-haspopup="listbox" aria-expanded="false"><span class="dd-label"></span>${CHEV}</button><div class="dd-menu" role="listbox"></div></div>
       </div>
       <div id="ctl-activity" class="mode-ctl hidden">
         <input id="act-days" type="number" value="30" placeholder="Days">

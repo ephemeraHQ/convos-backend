@@ -224,11 +224,17 @@ export const clientScript = (): string => `
     var cls=!j.subscription?"pill-none":(j.isEntitled?"pill-ok":"pill-bad");
     return '<span class="pill '+cls+'">'+esc(state)+"</span>";
   }
-  function renderSpark(usage){
+  function renderUsage(usage){
     if(!usage||!usage.length) return '<span class="muted-note">No usage in the last 30 days.</span>';
     var max=usage.reduce(function(m,u){ var c=Number(u.consumed); return c>m?c:m; },0);
-    return usage.map(function(u){ var c=Number(u.consumed); var h=max>0?Math.max(2,Math.round(c/max*100)):2;
-      return '<div class="bar" style="height:'+h+'%" title="'+esc(u.bucketStart+" · "+fmtCredits(u.consumed)+" credits")+'"></div>'; }).join("");
+    var total=usage.reduce(function(s,u){ return s+Number(u.consumed); },0);
+    var bars=usage.map(function(u){ var c=Number(u.consumed); var h=max>0?Math.max(2,Math.round(c/max*100)):2;
+      return '<div class="bar'+(max>0&&c===max?" peak":"")+'" style="height:'+h+'%" data-val="'+esc(fmtCredits(c))+'" title="'+esc(u.bucketStart+" · "+fmtCredits(c)+" credits")+'"></div>'; }).join("");
+    var firstDate=fmtDate(usage[0].bucketStart).split(" ")[0];
+    var lastDate=fmtDate(usage[usage.length-1].bucketStart).split(" ")[0];
+    return '<div class="usage-head"><span>Peak <b>'+esc(fmtCredits(max))+'</b>/day</span><span>Total <b>'+esc(fmtCredits(total))+'</b> · 30d</span></div>'
+      +'<div class="usage-chart"><div class="usage-ymax">'+esc(fmtCredits(max))+'</div><div class="usage-grid"></div><div class="usage-bars">'+bars+'</div></div>'
+      +'<div class="usage-axis"><span>'+esc(firstDate)+'</span><span>'+esc(lastDate)+'</span></div>';
   }
   function rowsHtml(rows, cols){
     return (rows||[]).map(function(r){ return "<tr>"+cols.map(function(c){
@@ -257,11 +263,11 @@ export const clientScript = (): string => `
       +'<div class="card"><h3>Subscription</h3>'+subBlock+'</div>'
       +'<div class="card"><h3>Grant</h3><input id="d-grant-credits" type="number" min="1" placeholder="Credits"><input id="d-grant-reason" placeholder="Reason"><button id="d-grant-btn" class="btn btn-primary">Grant</button></div>'
       +'<div class="card"><h3>Adjust</h3><input id="d-adjust-delta" type="number" placeholder="±credits"><input id="d-adjust-reason" placeholder="Reason"><button id="d-adjust-btn" class="btn btn-danger">Adjust</button></div>'
-      +'<div class="card"><h3>Usage (30d)</h3><div id="usage-spark" class="spark"></div></div>'
+      +'<div class="card"><h3>Usage (30d)</h3><div id="usage-spark"></div></div>'
       +'<div class="card"><h3>Daily refills</h3><div class="tablewrap"><table><tbody id="d-refills"></tbody></table></div></div>'
       +'<div class="card"><h3>Recent ledger</h3><div class="tablewrap"><table><tbody id="d-ledger"></tbody></table></div></div>'
       +'<div class="card"><h3>Admin audit</h3><div class="tablewrap"><table><tbody id="d-audit"></tbody></table></div></div>';
-    el("usage-spark").innerHTML = renderSpark(j.usageDaily);
+    el("usage-spark").innerHTML = renderUsage(j.usageDaily);
     el("d-refills").innerHTML = (j.dailyRefills&&j.dailyRefills.length)
       ? rowsHtml(j.dailyRefills,[[function(r){return fmtDate(r.createdAt);},"nowrap"],[function(r){return esc(r.delta);},"num"],function(r){return esc(r.note||"");}])
       : '<tr><td class="muted-note">No daily refills.</td></tr>';
@@ -299,6 +305,33 @@ export const clientScript = (): string => `
       .catch(function(e){ if(btn) btn.disabled=false; if(e.message!=="reauth") toast("Failed","error"); });
   }
   function closeDetail(){ var d=el("detail"); if(d){ d.classList.remove("open"); d.setAttribute("aria-hidden","true"); } var s=el("detail-scrim"); if(s) s.classList.add("hidden"); }
+
+  // Custom dropdown: brand popover over a hidden native <select> that stays the
+  // value source, so existing change-listeners keep working via dispatchEvent.
+  function initDropdown(dd){
+    var sel=dd.querySelector(".dd-native"), btn=dd.querySelector(".dd-btn"), menu=dd.querySelector(".dd-menu"), label=dd.querySelector(".dd-label"), hl=-1;
+    function syncLabel(){ label.textContent=sel.options[sel.selectedIndex].text; }
+    function buildMenu(){ menu.innerHTML=Array.prototype.map.call(sel.options,function(o,i){
+      return '<div class="dd-opt'+(i===sel.selectedIndex?" active":"")+'" role="option" data-i="'+i+'"><span class="dd-check">✓</span>'+esc(o.text)+"</div>"; }).join(""); }
+    function opts(){ return menu.querySelectorAll(".dd-opt"); }
+    function highlight(i){ var os=opts(); if(!os.length) return; hl=(i+os.length)%os.length; Array.prototype.forEach.call(os,function(x,j){ x.classList.toggle("hl", j===hl); }); os[hl].scrollIntoView({block:"nearest"}); }
+    function open(){ buildMenu(); dd.classList.add("open"); btn.setAttribute("aria-expanded","true"); highlight(sel.selectedIndex); }
+    function close(){ dd.classList.remove("open"); btn.setAttribute("aria-expanded","false"); }
+    function choose(i){ if(sel.selectedIndex!==i){ sel.selectedIndex=i; sel.dispatchEvent(new Event("change")); } syncLabel(); close(); btn.focus(); }
+    btn.addEventListener("click", function(){ dd.classList.contains("open")?close():open(); });
+    menu.addEventListener("click", function(e){ var o=e.target.closest?e.target.closest(".dd-opt"):null; if(o) choose(Number(o.getAttribute("data-i"))); });
+    dd.addEventListener("keydown", function(e){
+      var isOpen=dd.classList.contains("open");
+      if(e.key==="Escape"){ if(isOpen){ e.preventDefault(); close(); btn.focus(); } return; }
+      if(!isOpen){ if(e.key==="ArrowDown"||e.key==="Enter"||e.key===" "){ e.preventDefault(); open(); } return; }
+      if(e.key==="ArrowDown"){ e.preventDefault(); highlight(hl+1); }
+      else if(e.key==="ArrowUp"){ e.preventDefault(); highlight(hl-1); }
+      else if(e.key==="Enter"||e.key===" "){ e.preventDefault(); if(hl>=0) choose(hl); }
+    });
+    document.addEventListener("click", function(e){ if(!dd.contains(e.target)) close(); });
+    syncLabel();
+  }
+  Array.prototype.forEach.call(document.querySelectorAll(".dd"), initDropdown);
 
   // --- boot: silent re-auth if a token is already stored ---
   (function boot(){ var t=getToken(); if(t){ attemptLogin(t); } else { showLogin(); } })();
