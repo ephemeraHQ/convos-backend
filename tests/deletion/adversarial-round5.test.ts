@@ -826,15 +826,18 @@ describe("keyless void reconciliation end-to-end", () => {
     return parked;
   };
 
-  test("void of the current order: terminal state applied, exact period clawed, row resolved", async () => {
+  test("terminal current state never resolves a keyless void: escalated, nothing clawed", async () => {
     const owner = await newAccount();
     const token = "r5-void-current";
     await upsertFromVerify(playInput(owner, token));
     await postKeylessVoid(token);
 
-    // Fresh provider state: the subscription is voided (expired, order
-    // identity present) - the sweep applies terminal state and compensates
-    // through the hardened notification path.
+    // Fresh provider state says the subscription is expired with an order
+    // identity present. Current state still cannot say WHICH order the void
+    // hit - the same shape arises from a natural expiry after a historical
+    // void - so the sweep must hand the row to an operator instead of
+    // guessing a clawback target. Independently proven expiry belongs to
+    // the drift/terminal paths, never to this row.
     setPlayApiFixtureForTests(() =>
       playPurchase({
         latestOrderId: `GPA.${token}..0`,
@@ -843,20 +846,23 @@ describe("keyless void reconciliation end-to-end", () => {
       }),
     );
     const counts = await runReclaimReconciliationSweep();
-    expect(counts.quarantineRecovered).toBe(1);
-    expect(await getBalance(owner)).toBe(0n);
+    expect(counts.quarantineRecovered).toBe(0);
+    expect(counts.quarantineNeedsOperator).toBe(1);
+    const parked = await prisma.lineageQuarantine.findFirstOrThrow({
+      where: { token },
+    });
+    expect(parked.resolvedAt).toBeNull();
+    expect(parked.needsOperatorAt).not.toBeNull();
+    // No state or money was applied from the ambiguous void row.
+    expect(await getBalance(owner)).toBe(PERIOD_CREDITS);
     const custody = await prisma.lineagePeriodCustody.findFirstOrThrow({
       where: { providerPeriodKey: `play_order_GPA.${token}..0` },
     });
-    expect(custody.state).toBe("invalidated");
+    expect(custody.state).toBe("held");
     const row = await prisma.subscription.findFirstOrThrow({
       where: { purchaseToken: token },
     });
-    expect(row.status).toBe(SubscriptionStatus.expired);
-    const resolved = await prisma.lineageQuarantine.findFirstOrThrow({
-      where: { token },
-    });
-    expect(resolved.resolvedAt).not.toBeNull();
+    expect(row.status).toBe(SubscriptionStatus.active);
   });
 
   test("void of an unidentifiable historical order: escalated, never mislabeled recovered", async () => {
@@ -866,9 +872,9 @@ describe("keyless void reconciliation end-to-end", () => {
     await postKeylessVoid(token);
 
     // Fresh provider state is still entitled: the void hit some historical
-    // order that current state cannot identify. The old sweep applied the
-    // active state and marked the row recovered - silently dropping the
-    // void. It must escalate to an operator instead.
+    // order that current state cannot identify. Resolving (or even
+    // deferring) would silently drop the void - it must escalate to an
+    // operator.
     setPlayApiFixtureForTests(() =>
       playPurchase({ latestOrderId: `GPA.${token}..3` }),
     );

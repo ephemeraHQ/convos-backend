@@ -48,9 +48,11 @@ import { prisma } from "@/utils/prisma";
  * re-running the sweep never double-applies anything. Every row carries its
  * own retry state (attempts + nextAttemptAt backoff): a persistent row backs
  * off and eventually escalates to an operator instead of occupying the batch
- * forever, so newer recoverable rows are never starved. Conflict-class
- * reasons are never auto-resolved (never auto-merge) — they stay for an
- * operator and are only counted.
+ * forever, so newer recoverable rows are never starved. Keyless voids are
+ * never re-driven — fresh provider state cannot name the voided order, so
+ * they escalate straight to an operator. Conflict-class reasons are never
+ * auto-resolved (never auto-merge) — they stay for an operator and are only
+ * counted.
  *
  * Pass 2 — post-transfer drift. Lineages with a committed transfer /
  * restore / undo are re-checked against authoritative provider state for the
@@ -98,7 +100,12 @@ const SWEEP_ADVISORY_LOCK_CLASS_ID = 7_281;
 const SWEEP_ADVISORY_LOCK_OBJECT_ID = 93_642;
 const SWEEP_LEASE_TIMEOUT_MS = 10 * 60 * 1000;
 
-/** Reasons the sweep may retry against fresh provider state. */
+/**
+ * Reasons the sweep picks out of the queue. Most are re-driven against
+ * fresh provider state; voided_purchase_keyless is picked up only to be
+ * escalated (needsOperatorAt stamp + ops alert) — provider state can never
+ * name the voided order, so the row is operator-owned from the start.
+ */
 const RETRYABLE_REASONS = [
   "missing_latest_order_id",
   "voided_purchase_keyless",
@@ -141,6 +148,18 @@ type QuarantineRow = {
 const reconcileGoogleToken = async (
   row: QuarantineRow,
 ): Promise<"recovered" | "deferred" | "needs_operator"> => {
+  // Keyless voids: the void notification named no order, and a purchase
+  // fetch can only describe the subscription NOW — it can never say which
+  // historical order the void hit. A terminal current state (natural expiry
+  // included) proves nothing about the void, so resolving on it would
+  // silently abandon the void's clawback. The row stays operator-owned
+  // until the void's order identity is recovered out of band; an
+  // independently proven expiry is applied by the ordinary drift/terminal
+  // paths without touching this row.
+  if (row.reason === "voided_purchase_keyless") {
+    return "needs_operator";
+  }
+
   const purchase = await fetchSubscriptionPurchaseV2(row.token);
   if (!purchase.latestOrderId) {
     // Still keyless: nothing new to act on.
@@ -148,16 +167,6 @@ const reconcileGoogleToken = async (
   }
   const status = deriveStatusFromPurchase(purchase);
   const entitled = ENTITLED_STATUSES.has(status);
-
-  // Keyless voids: the void notification named no order. Fresh state
-  // resolves it only when the subscription itself is no longer entitled —
-  // the void hit the current order and the generic terminal path below
-  // applies state + compensation. While the subscription stays entitled the
-  // voided order is historical and current state cannot identify it: that
-  // is an operator's call, never a silent "recovered".
-  if (row.reason === "voided_purchase_keyless" && entitled) {
-    return "needs_operator";
-  }
 
   // Unmatched-order voids: resolvable once the exact custody row exists
   // (e.g. after a legacy bootstrap); re-check by key and compensate through
