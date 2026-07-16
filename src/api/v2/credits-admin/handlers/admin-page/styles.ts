@@ -51,14 +51,26 @@ body{margin:0;font-family:var(--sans);color:var(--fg);background:var(--surface-m
 .rail input,.rail select,.mode-ctl input,.mode-ctl select{width:100%;min-height:var(--control-h);background:var(--surface);border:1px solid var(--edge);border-radius:var(--radius);padding:9px 12px;font-family:var(--sans);font-size:13px;color:var(--fg);transition:border-color .16s var(--ease),box-shadow .16s var(--ease);}
 .rail input::placeholder,.mode-ctl input::placeholder{color:var(--fg-3);}
 .rail input:focus,.rail select:focus,.mode-ctl input:focus,.mode-ctl select:focus{outline:none;border-color:var(--fg-3);}
-.rail input+input,.rail .select-wrap,.rail button{margin-top:9px;}
+.rail input+input,.rail .dd,.rail button{margin-top:9px;}
 #search-value:focus{border-color:var(--color-brand);box-shadow:0 0 0 3px var(--brand-ring);}
 .rail .hint{font-size:11px;color:var(--fg-3);margin-top:7px;line-height:1.45;}
 
-/* Select chevron — CSP-safe: inline SVG in a wrapper, NOT a data-URI background */
-.select-wrap{position:relative;}
-.select-wrap select{appearance:none;-webkit-appearance:none;padding-right:34px;cursor:pointer;}
-.select-wrap .chev{position:absolute;right:11px;top:50%;transform:translateY(-50%);pointer-events:none;color:var(--fg-2);display:flex;}
+/* Custom dropdown — brand popover; native <select> kept hidden as state + wiring source */
+.dd{position:relative;}
+.dd-native{display:none;}
+.dd-btn{width:100%;min-height:var(--control-h);display:flex;align-items:center;justify-content:space-between;gap:8px;background:var(--surface);border:1px solid var(--edge);border-radius:var(--radius);padding:9px 12px;font-family:var(--sans);font-size:13px;color:var(--fg);cursor:pointer;text-align:left;transition:border-color .16s var(--ease),box-shadow .16s var(--ease);}
+.dd-btn:hover{border-color:var(--fg-3);}
+.dd-btn:focus-visible{outline:none;border-color:var(--color-brand);box-shadow:0 0 0 3px var(--brand-ring);}
+.dd-label{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.dd-btn .chev{flex:none;color:var(--fg-2);transition:transform .16s var(--ease);}
+.dd.open .dd-btn .chev{transform:rotate(180deg);}
+.dd-menu{position:absolute;top:calc(100% + 4px);left:0;right:0;background:var(--surface);border:1px solid var(--edge);border-radius:var(--radius-lg);box-shadow:var(--shadow-pop);padding:5px;z-index:30;opacity:0;transform:scale(0.97);transform-origin:top center;pointer-events:none;transition:opacity .14s var(--ease),transform .14s var(--ease);max-height:288px;overflow-y:auto;}
+.dd.open .dd-menu{opacity:1;transform:scale(1);pointer-events:auto;}
+.dd-opt{display:flex;align-items:center;gap:8px;padding:7px 9px;border-radius:var(--radius-sm);font-size:13px;color:var(--fg);cursor:pointer;}
+.dd-opt:hover,.dd-opt.hl{background:var(--surface-hover);}
+.dd-opt .dd-check{width:13px;flex:none;color:var(--color-brand);font-size:11px;visibility:hidden;}
+.dd-opt.active{font-weight:600;}
+.dd-opt.active .dd-check{visibility:visible;}
 
 /* Activity facet chips */
 #facet-group{margin-bottom:22px;}
@@ -108,9 +120,17 @@ tbody tr.row-clickable{cursor:pointer;transition:background .1s var(--ease);}
 tbody tr.row-clickable:hover{background:var(--surface-hover);}
 tbody tr.row-clickable:hover td.mono{color:var(--fg);}
 
-/* Sparkline */
-.spark{display:flex;align-items:flex-end;gap:3px;height:56px;}
-.spark .bar{flex:1;min-height:2px;background:var(--color-brand);border-radius:2px 2px 0 0;opacity:.85;}
+/* Usage chart — single-series magnitude over time */
+.usage-head{display:flex;gap:16px;font-size:12px;color:var(--fg-2);margin-bottom:12px;}
+.usage-head b{color:var(--fg);font-weight:600;}
+.usage-chart{position:relative;padding-top:16px;}
+.usage-ymax{position:absolute;top:0;left:0;font-size:10px;color:var(--fg-3);letter-spacing:0.3px;}
+.usage-grid{position:absolute;top:15px;left:0;right:0;height:0;border-top:1px dashed var(--edge);}
+.usage-bars{position:relative;display:flex;align-items:flex-end;gap:2px;height:76px;}
+.usage-bars .bar{flex:1;min-width:3px;min-height:2px;background:var(--color-brand);border-radius:3px 3px 0 0;position:relative;transition:opacity .1s var(--ease);}
+.usage-bars .bar:hover{opacity:.7;}
+.usage-bars .bar.peak::after{content:attr(data-val);position:absolute;top:-13px;left:50%;transform:translateX(-50%);font-size:9px;font-weight:600;color:var(--color-brand-strong);white-space:nowrap;}
+.usage-axis{display:flex;justify-content:space-between;margin-top:7px;font-size:10px;color:var(--fg-3);}
 
 /* Cards */
 .card{background:var(--surface);border:1px solid var(--edge);border-radius:var(--radius-lg);padding:16px 18px;margin-bottom:16px;}
