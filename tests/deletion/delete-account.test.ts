@@ -372,8 +372,8 @@ describe("DELETE /v2/accounts/me", () => {
   });
 
   // The two replay tests carry the response body and durable DB state in
-  // their assertion messages: a rare flake was once observed here and the
-  // bare status assertion discarded the actual failure (see the build log).
+  // their assertion messages: a rare flake was once observed here and a
+  // bare status assertion would discard the actual failure body.
   const replayDiagnostics = async (
     label: string,
     res: request.Response,
