@@ -1,6 +1,5 @@
 import { getDeletionExecutor } from "@/accounts/deletion/executors";
 import { PURGE_WINDOW_HOURS } from "@/accounts/deletion/service";
-import { settlePendingTransfers } from "@/subscriptions/claim";
 import { runReclaimReconciliationSweep } from "@/subscriptions/reconciliation";
 import logger from "@/utils/logger";
 import { prisma } from "@/utils/prisma";
@@ -208,13 +207,7 @@ export const runDeletionOutboxSweep = async (): Promise<void> => {
     logger.error({ err }, "deletion.outbox.expiry_pass_failed");
   }
   try {
-    // Live-tier claim contest windows settle on the same tick.
-    await settlePendingTransfers();
-  } catch (err) {
-    logger.error({ err }, "deletion.outbox.pending_transfer_pass_failed");
-  }
-  try {
-    // Reclaim reconciliation (quarantine drain + post-transfer drift)
+    // Reclaim reconciliation (quarantine drain + lineage drift)
     // rides the same tick, self-throttled: it makes provider calls, so it
     // runs at most once per interval rather than every minute.
     if (

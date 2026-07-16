@@ -1,6 +1,5 @@
 import type { Request, Response } from "express";
 import { z } from "zod";
-import { stampAuthActivity } from "@/accounts/auth-activity";
 import { isIdentityBarred } from "@/accounts/deletion/barrier";
 import {
   IdentityBarredError,
@@ -172,22 +171,6 @@ export async function generateToken(
     }
     accountId = upserted.accountId;
 
-    // Activity stamp: lastAuthAt records the most recent authenticated mint
-    // for this account (consumed by activity-recency checks such as the
-    // subscription-claim dead-or-silent gate, and by the contest-window
-    // veto). Fail closed: a mint that cannot durably stamp fails with a 5xx
-    // so the client retries - proceeding unstamped could silently cost the
-    // owner their veto on a pending transfer. The raw UPDATE no-ops (zero
-    // rows) when the row vanished (deletion racing this mint) - that is not
-    // a failure, there is no veto left to preserve.
-    try {
-      await stampAuthActivity(accountId, null);
-    } catch (err) {
-      req.log.error({ err, accountId }, "auth.account.last_auth_stamp_failed");
-      res.status(500).json({ error: "Failed to generate token" });
-      return;
-    }
-
     // Best-effort backfill of DeviceRegistration.accountId.
     //
     // Runs in its own small transaction, SEPARATE from the upsert
@@ -206,41 +189,48 @@ export async function generateToken(
     // wallet-switch case. Truly simultaneous arrivals resolve to lock
     // acquisition order (non-deterministic, but final state is still a
     // valid one of the two — no torn writes).
-    try {
-      const count = await prisma.$transaction(async (tx) => {
-        // Account lock first (lock-order law: Account before the device
-        // row) — fences the backfill against a concurrent deletion of this
-        // account. AccountNotLiveError lands in the fail-soft catch below.
-        await requireLiveAccount(tx, upserted.accountId);
-        // Acquire row-level lock; no-op if device row doesn't exist
-        // (returns 0 rows, no lock taken, subsequent updateMany also 0).
-        await tx.$queryRaw`
-          SELECT 1 FROM "DeviceRegistration"
-          WHERE "deviceId" = ${body.deviceId}
-          FOR UPDATE
-        `;
-        const result = await tx.deviceRegistration.updateMany({
-          where: { deviceId: body.deviceId },
-          data: { accountId },
+    if (device?.accountId === accountId) {
+      req.log.info(
+        { deviceId: body.deviceId, accountId },
+        "auth.device.account_backfill_noop",
+      );
+    } else {
+      try {
+        const count = await prisma.$transaction(async (tx) => {
+          // Account lock first (lock-order law: Account before the device
+          // row) — fences the backfill against a concurrent deletion of this
+          // account. AccountNotLiveError lands in the fail-soft catch below.
+          await requireLiveAccount(tx, upserted.accountId);
+          // Acquire row-level lock; no-op if device row doesn't exist
+          // (returns 0 rows, no lock taken, subsequent updateMany also 0).
+          await tx.$queryRaw`
+            SELECT 1 FROM "DeviceRegistration"
+            WHERE "deviceId" = ${body.deviceId}
+            FOR UPDATE
+          `;
+          const result = await tx.deviceRegistration.updateMany({
+            where: { deviceId: body.deviceId },
+            data: { accountId },
+          });
+          return result.count;
         });
-        return result.count;
-      });
-      if (count > 0) {
-        req.log.info(
-          { deviceId: body.deviceId, accountId },
-          "auth.device.account_backfill",
-        );
-      } else {
-        req.log.info(
-          { deviceId: body.deviceId, accountId },
-          "auth.device.account_backfill_noop",
+        if (count > 0) {
+          req.log.info(
+            { deviceId: body.deviceId, accountId },
+            "auth.device.account_backfill",
+          );
+        } else {
+          req.log.info(
+            { deviceId: body.deviceId, accountId },
+            "auth.device.account_backfill_noop",
+          );
+        }
+      } catch (err) {
+        req.log.warn(
+          { err, deviceId: body.deviceId, accountId },
+          "auth.device.account_backfill_failed",
         );
       }
-    } catch (err) {
-      req.log.warn(
-        { err, deviceId: body.deviceId, accountId },
-        "auth.device.account_backfill_failed",
-      );
     }
   }
 

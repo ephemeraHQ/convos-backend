@@ -19,9 +19,9 @@ type TxClient = Prisma.TransactionClient;
  *   D = min(lockedOwnerBalance, max(0, cap - ownerConsumesSince(custodyStartedAt)))
  *
  * then sets cap := D. Because D <= cap and cap starts at the period
- * allotment, no chain of transfer/undo/escrow/refund can ever move more
+ * allotment, no chain of escrow/restoration/refund can ever move more
  * value than the period funded, and commingled promo/admin/signup credits
- * never transfer (they are outside cap). After funding, custody — not
+ * never move (they are outside cap). After funding, custody — not
  * account-scoped sub_grant rows — is the source of truth for the remainder.
  */
 
@@ -194,64 +194,6 @@ const computeMoveAmount = async (
 };
 
 /**
- * Live transfer: debit the current holder by D, credit the new owner by D
- * (invariant: the two deltas sum to zero), move custody.
- */
-export const transferCustody = async (
-  tx: TxClient,
-  ctx: LineageLockContext,
-  args: {
-    custody: LineagePeriodCustody;
-    toAccountId: string;
-    journalId: string;
-  },
-): Promise<bigint> => {
-  const { custody } = args;
-  const fromAccountId = custody.ownerAccountId;
-  if (!fromAccountId) return 0n;
-  // Lock-order rule 4: prelock BOTH wallets in sorted account order before
-  // any read or debit. Without this, an A->B transfer on one lineage and a
-  // B->A transfer on another lock the two wallets in opposite orders and
-  // deadlock (40P01).
-  const walletLockOrder = [fromAccountId, args.toAccountId].sort();
-  for (const accountId of walletLockOrder) {
-    await lockUserCreditsBalance(tx, accountId);
-  }
-  const amount = await computeMoveAmount(tx, custody);
-  if (amount > 0n) {
-    await applyDeltaWithTx(tx, {
-      accountId: fromAccountId,
-      delta: -amount,
-      reason: LedgerReason.adjust,
-      idempotencyKey: `sub_transfer_out_${args.journalId}`,
-      scope: "sub_transfer",
-      grantKindId: "sub_forfeit",
-      note: `lineage ${ctx.lineageId} transfer out (journal ${args.journalId})`,
-      floorCheck: { minBalance: 0n },
-    });
-    await applyDeltaWithTx(tx, {
-      accountId: args.toAccountId,
-      delta: amount,
-      reason: LedgerReason.grant,
-      idempotencyKey: `sub_transfer_in_${args.journalId}`,
-      scope: "sub_transfer",
-      grantKindId: "sub_grant",
-      note: `lineage ${ctx.lineageId} transfer in (journal ${args.journalId})`,
-    });
-  }
-  await tx.lineagePeriodCustody.update({
-    where: { id: custody.id },
-    data: {
-      ownerAccountId: args.toAccountId,
-      remainderCap: amount,
-      custodyStartedAt: new Date(),
-      state: CUSTODY_STATE_HELD,
-    },
-  });
-  return amount;
-};
-
-/**
  * Deletion escrow: debit the holder by D into escrow (the tombstone
  * snapshot, first-class). The wallet is removed later in the same teardown.
  */
@@ -328,9 +270,8 @@ export const releaseCustody = async (
 
 /**
  * Refund/revoke compensation: claw the conservative remainder back from the
- * current holder (works whether they hold sub_grant or sub_transfer_in
- * value); escrowed custody is invalidated without any wallet move (the value
- * already left at deletion time).
+ * current holder; escrowed custody is invalidated without any wallet move
+ * because the value already left at deletion time.
  */
 export const invalidateCustody = async (
   tx: TxClient,

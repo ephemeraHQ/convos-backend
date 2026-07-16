@@ -3,51 +3,30 @@ import { BillingProvider, SubscriptionStatus } from "@prisma/client";
 import type { NextFunction, Request, Response } from "express";
 import { z } from "zod";
 import { AccountNotLiveError } from "@/accounts/require-live-account";
-import { createApnsService } from "@/api/v2/notifications/apns-push.service";
-import { createFcmService } from "@/api/v2/notifications/fcm-push.service";
-import type { SubscriptionClaimPendingPayload } from "@/api/v2/notifications/types";
 import { APPCHECK_HEADER } from "@/middleware/auth";
 import { getSubscriptionStatuses } from "@/subscriptions/apple-server-api";
 import {
   executeClaim,
   type ClaimSubscriptionSeed,
 } from "@/subscriptions/claim";
-import { isGoogleClaimEnabled } from "@/subscriptions/claim-flags";
-import {
-  fetchSubscriptionPurchaseV2,
-  type SubscriptionPurchaseV2,
-} from "@/subscriptions/google-play/play-api";
-import {
-  deriveStatusFromPurchase,
-  extractObfuscatedAccountId,
-  extractPeriodWindow,
-  extractProductId,
-} from "@/subscriptions/google-play/status";
 import { verifyAndDecodeTransaction } from "@/subscriptions/jws-verifier";
 import {
   LineageUnresolvedError,
-  quarantineLineageToken,
   resolveOrCreateAppleLineage,
-  resolveOrCreateGoogleLineage,
 } from "@/subscriptions/lineage";
 import { productMapping } from "@/subscriptions/product-mapping";
 import { serializeUserSubscription } from "@/subscriptions/repository";
 import { deriveSubscriptionStatusFromTransaction } from "@/subscriptions/status";
 import { getFirebaseApp } from "@/utils/firebase";
-import logger from "@/utils/logger";
-import { prisma } from "@/utils/prisma";
 import { getRuntimeConfig } from "@/utils/runtimeConfig";
 
 /**
  * POST /v2/accounts/me/subscription/claim.
  *
- * Explicit one-time ownership claim: tombstone restoration (deleted owner)
- * or live bearer-transfer (flagged; contest window). Proof requirements are
- * authoritative: the presented artifact must verify, the provider must say
- * the subscription is entitled NOW, and the artifact must be the
- * subscription's latest transaction. App Check attestation (limited-use
- * token, consumed on verification) is mandatory and fails closed — there is
- * no app_attest_enabled bypass on this route.
+ * Explicit Apple tombstone restoration. The presented artifact must verify,
+ * Apple must report the subscription entitled now, and the artifact must be
+ * the latest transaction. App Check attestation is mandatory, consumed, and
+ * fail closed.
  */
 
 // Strict discriminated union — no legacy platform-defaulting preprocess on
@@ -65,6 +44,8 @@ const playClaimSchema = z
     productId: z.string().min(1),
   })
   .strict();
+// Keep the shipped request shape accepted. Google claims fail closed below
+// before any provider call.
 const claimBodySchema = z.discriminatedUnion("platform", [
   appleClaimSchema,
   playClaimSchema,
@@ -268,178 +249,6 @@ const verifyAppleProof = async (
   };
 };
 
-const verifyPlayProof = async (
-  req: Request,
-  body: z.infer<typeof playClaimSchema>,
-): Promise<VerifiedProof | ProofRejection> => {
-  let purchase: SubscriptionPurchaseV2;
-  try {
-    purchase = await fetchSubscriptionPurchaseV2(body.purchaseToken);
-  } catch (error) {
-    // Unknown/dead token.
-    req.log.warn({ error }, "subscription.claim.play_fetch_failed");
-    return { status: 400 };
-  }
-  const fetchedProductId = extractProductId(purchase);
-  if (fetchedProductId !== body.productId) return { status: 400 };
-  const status = deriveStatusFromPurchase(purchase);
-  const entitled =
-    status === SubscriptionStatus.active ||
-    status === SubscriptionStatus.grace ||
-    status === SubscriptionStatus.trial;
-  if (!entitled) return { status: 409, reason: "not_entitled" };
-  if (!purchase.latestOrderId) {
-    // No funding-event identity: fail closed, same rule as verify/RTDN —
-    // park for reconciliation and reject retryably. A keyless claim would
-    // otherwise reach restoration with no exact escrow key.
-    await quarantineLineageToken(
-      BillingProvider.googlePlay,
-      body.purchaseToken,
-      "missing_latest_order_id",
-      { source: "claim" },
-    );
-    req.log.error({}, "subscription.claim.play_missing_order_id_parked");
-    return { status: 409, reason: "lineage_unresolved" };
-  }
-  const playOrderId = purchase.latestOrderId;
-
-  const { tier, period } = productMapping(fetchedProductId);
-  const window = extractPeriodWindow(purchase);
-  let lineageId: string;
-  try {
-    lineageId = await resolveOrCreateGoogleLineage({
-      token: body.purchaseToken,
-      linkedPurchaseToken: purchase.linkedPurchaseToken,
-      fetchChain: true,
-    });
-  } catch (error) {
-    if (error instanceof LineageUnresolvedError) {
-      return { status: 409, reason: "lineage_unresolved" };
-    }
-    throw error;
-  }
-  return {
-    lineageId,
-    currentPeriodStart: window.currentPeriodStart,
-    providerPeriodKey: `play_order_${playOrderId}`,
-    seed: {
-      provider: BillingProvider.googlePlay,
-      productId: fetchedProductId,
-      tier,
-      period,
-      status,
-      purchaseToken: body.purchaseToken,
-      linkedPurchaseToken: purchase.linkedPurchaseToken ?? null,
-      obfuscatedAccountId: extractObfuscatedAccountId(purchase),
-      startedAt: purchase.startTime
-        ? new Date(purchase.startTime)
-        : window.currentPeriodStart,
-      currentPeriodStart: window.currentPeriodStart,
-      currentPeriodEnd: window.currentPeriodEnd,
-      willRenew:
-        purchase.lineItems?.[0]?.autoRenewingPlan?.autoRenewEnabled !== false,
-      isInTrial: status === SubscriptionStatus.trial,
-    },
-    proofMetadata: {
-      purchaseToken: body.purchaseToken,
-      orderId: playOrderId,
-    },
-  };
-};
-
-// ---------------------------------------------------------------------------
-// Pending-transfer push notification (contest window)
-// ---------------------------------------------------------------------------
-
-type PendingTransferNotifier = (args: {
-  oldAccountId: string;
-  contestEndsAt: Date;
-  provider: "apple" | "googlePlay";
-}) => Promise<void>;
-
-/**
- * Send the contract's SubscriptionClaimPending push to every registered
- * device of the old account — the one notification channel we have, and the
- * structural bound on the bearer-theft residual: the legitimate owner learns
- * a transfer is pending while any authenticated act still vetoes it. Each
- * device send is individually caught; a push failure never fails the claim.
- */
-const defaultPendingTransferNotifier: PendingTransferNotifier = async ({
-  oldAccountId,
-  contestEndsAt,
-  provider,
-}) => {
-  const devices = await prisma.deviceRegistration.findMany({
-    where: {
-      accountId: oldAccountId,
-      disabled: false,
-      pushToken: { not: null },
-    },
-    select: {
-      deviceId: true,
-      pushToken: true,
-      pushTokenType: true,
-      apnsEnv: true,
-    },
-  });
-  logger.warn(
-    { deviceCount: devices.length, contestEndsAt: contestEndsAt.toISOString() },
-    "subscription.claim.pending_transfer_push",
-  );
-  if (devices.length === 0) return;
-
-  const apns = createApnsService();
-  const fcm = createFcmService();
-  await Promise.all(
-    devices.map(async (device) => {
-      const payload: SubscriptionClaimPendingPayload = {
-        clientId: device.deviceId,
-        notificationType: "SubscriptionClaimPending",
-        notificationData: {
-          contestEndsAt: contestEndsAt.toISOString(),
-          provider,
-        },
-      };
-      const adapted = { ...device, id: device.deviceId };
-      try {
-        const service = device.pushTokenType === "apns" ? apns : fcm;
-        if (!service) {
-          logger.warn(
-            { deviceId: device.deviceId, pushTokenType: device.pushTokenType },
-            "subscription.claim.pending_push_service_unavailable",
-          );
-          return;
-        }
-        const result = await service.sendPushNotification({
-          device: adapted,
-          notification: payload,
-          isSilent: false,
-        });
-        if (!result.success) {
-          logger.warn(
-            { deviceId: device.deviceId, error: result.error },
-            "subscription.claim.pending_push_send_failed",
-          );
-        }
-      } catch (err) {
-        logger.warn(
-          { err, deviceId: device.deviceId },
-          "subscription.claim.pending_push_send_error",
-        );
-      }
-    }),
-  );
-};
-
-let pendingTransferNotifier: PendingTransferNotifier | null = null;
-
-/** Test seam: inject a notifier; null restores the default. */
-export const __setPendingTransferNotifierForTests = (
-  notifier: PendingTransferNotifier | null,
-): void => {
-  pendingTransferNotifier = notifier;
-};
-
 // ---------------------------------------------------------------------------
 // Handler
 // ---------------------------------------------------------------------------
@@ -459,12 +268,7 @@ export async function subscriptionClaimHandler(req: Request, res: Response) {
     return;
   }
 
-  // Provider scope: the product is Apple-only today, so Google claims and
-  // restorations ship disabled behind their own flag. Rejected before any
-  // provider call, with contract not-claimable semantics. Verify/RTDN ingest
-  // and the Google money accounting stay fully on — only the claim surface
-  // is gated.
-  if (parsed.data.platform === "googlePlay" && !isGoogleClaimEnabled()) {
+  if (parsed.data.platform === "googlePlay") {
     req.log.warn({}, "subscription.claim.google_provider_disabled");
     res.status(409).json({
       error: "Subscription cannot be claimed",
@@ -475,10 +279,7 @@ export async function subscriptionClaimHandler(req: Request, res: Response) {
   }
 
   try {
-    const proof =
-      parsed.data.platform === "apple"
-        ? await verifyAppleProof(req, parsed.data.jwsRepresentation)
-        : await verifyPlayProof(req, parsed.data);
+    const proof = await verifyAppleProof(req, parsed.data.jwsRepresentation);
     if ("status" in proof) {
       req.log.warn(
         { platform: parsed.data.platform, rejection: proof },
@@ -499,7 +300,6 @@ export async function subscriptionClaimHandler(req: Request, res: Response) {
 
     switch (result.kind) {
       case "restored":
-      case "transferred":
       case "replayed": {
         req.log.info(
           { kind: result.kind, lineageId: proof.lineageId },
@@ -507,24 +307,6 @@ export async function subscriptionClaimHandler(req: Request, res: Response) {
         );
         res.status(200).json({
           subscription: serializeUserSubscription(result.subscription),
-        });
-        return;
-      }
-      case "pending": {
-        const notifier =
-          pendingTransferNotifier ?? defaultPendingTransferNotifier;
-        try {
-          await notifier({
-            oldAccountId: result.oldAccountId,
-            contestEndsAt: result.contestEndsAt,
-            provider: parsed.data.platform,
-          });
-        } catch (error) {
-          req.log.warn({ error }, "subscription.claim.pending_push_failed");
-        }
-        res.status(202).json({
-          status: "pending",
-          contestEndsAt: result.contestEndsAt.toISOString(),
         });
         return;
       }
