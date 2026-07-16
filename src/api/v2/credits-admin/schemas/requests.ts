@@ -5,7 +5,7 @@ import { accountIdSchema } from "@/utils/account-id";
 export const MAX_ADMIN_GRANT_CREDITS = 100_000_000;
 
 export const searchQuerySchema = z.object({
-  key: z.enum(["accountId", "wallet"]),
+  key: z.enum(["accountId", "wallet"]).optional(),
   value: z.string().trim().min(1).max(256),
 });
 

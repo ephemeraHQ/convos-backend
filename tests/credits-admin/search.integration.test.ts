@@ -72,4 +72,44 @@ describe("GET /api/v2/credits-admin/search", () => {
     );
     expect(res.status).toBe(401);
   });
+
+  it("auto-detects a UUID value as an accountId (no key param)", async () => {
+    const accountId = await seedAccount();
+    tracker.push(accountId);
+    const res = await adminRequest(app).get(
+      `/api/v2/credits-admin/search?value=${accountId}`,
+    );
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ accountId });
+  });
+
+  it("auto-detects a 0x wallet value as a SIWE lookup (no key param)", async () => {
+    const accountId = await seedAccount();
+    tracker.push(accountId);
+    const wallet = "0x1122334455667788990011223344556677889900";
+    await seedSiweAuthMethod(accountId, wallet);
+    const res = await adminRequest(app).get(
+      `/api/v2/credits-admin/search?value=${wallet}`,
+    );
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ accountId });
+  });
+
+  it("auto-detect: non-UUID non-matching value returns null", async () => {
+    const res = await adminRequest(app).get(
+      "/api/v2/credits-admin/search?value=0xdeadbeef00000000000000000000000000000000",
+    );
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ accountId: null });
+  });
+
+  it("still honors an explicit key=accountId (back-compat)", async () => {
+    const accountId = await seedAccount();
+    tracker.push(accountId);
+    const res = await adminRequest(app).get(
+      `/api/v2/credits-admin/search?key=accountId&value=${accountId}`,
+    );
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ accountId });
+  });
 });
