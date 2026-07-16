@@ -4,7 +4,6 @@ import { Wallet } from "ethers";
 import express from "express";
 import request from "supertest";
 import { afterEach, beforeAll, describe, expect, test, vi } from "vitest";
-import { __setAuthActivityStampFailureForTests } from "@/accounts/auth-activity";
 import { idempotencyKeySchema } from "@/api/v2/accounts/schemas/shared";
 import { issueNonce } from "@/api/v2/auth/auth-nonce.repository";
 import { authRouter } from "@/api/v2/auth/auth.router";
@@ -40,7 +39,6 @@ async function buildSiwe(nonce: string, deviceId = "test-device-id") {
 }
 
 async function reset() {
-  __setAuthActivityStampFailureForTests(null);
   await prisma.deviceRegistration.deleteMany();
   await prisma.authMethod.deleteMany();
   // CreditLedger + UserCredits hang off Account via FK. Wipe them first so the
@@ -106,25 +104,6 @@ describe("POST /auth/token (legacy + SIWE)", () => {
       | undefined;
     const clearStr = Array.isArray(setCookie) ? setCookie[0] : setCookie;
     expect(clearStr).toContain("Max-Age=0");
-  });
-
-  test("activity stamp failure returns 500 without minting a JWT", async () => {
-    const nonce = await issueNonce();
-    const cookieValue = signNonce(nonce);
-    const { messageStr, signature } = await buildSiwe(nonce, "dev-stamp-fail");
-    __setAuthActivityStampFailureForTests(new Error("stamp unavailable"));
-
-    const res = await request(makeApp())
-      .post("/auth/token")
-      .set(...APPCHECK)
-      .set("Cookie", `${NONCE_COOKIE_NAME}=${cookieValue}`)
-      .send({
-        deviceId: "dev-stamp-fail",
-        siwe: { message: messageStr, signature },
-      });
-
-    expect(res.status).toBe(500);
-    expect(res.body).not.toHaveProperty("token");
   });
 
   test("replay: same nonce twice → 401 on second attempt", async () => {

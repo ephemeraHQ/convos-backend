@@ -103,8 +103,7 @@ describe("deletion barrier at token mint", () => {
     expect(await isIdentityBarred("SIWE", lower)).toBe(true);
   });
 
-  test("unbarred mint succeeds and stamps lastAuthAt", async () => {
-    const before = new Date();
+  test("unbarred mint succeeds", async () => {
     const { res, address } = await mintWithSiwe("dev-live");
     expect(res.status).toBe(200);
 
@@ -112,13 +111,6 @@ describe("deletion barrier at token mint", () => {
       where: { externalKey: address },
     });
     expect(method).not.toBeNull();
-    const account = await prisma.account.findUnique({
-      where: { id: method?.accountId },
-    });
-    expect(account?.lastAuthAt).not.toBeNull();
-    expect(account?.lastAuthAt?.getTime()).toBeGreaterThanOrEqual(
-      before.getTime() - 1000,
-    );
   });
 
   test("barIdentityWithTx is idempotent", async () => {

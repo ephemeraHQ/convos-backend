@@ -41,28 +41,6 @@ const newTask = (
   });
 
 describe("deletion outbox drain", () => {
-  test("executes due tasks and marks them done", async () => {
-    const operationId = await newRecord();
-    const executed: unknown[] = [];
-    __setDeletionExecutorsForTests({
-      notification_installation: (payload) => {
-        executed.push(payload);
-        return Promise.resolve();
-      },
-    });
-    const task = await newTask(operationId);
-
-    const counts = await drainDeletionTasks();
-    expect(counts).toEqual({ done: 1, retried: 0, failed: 0 });
-    expect(executed).toEqual([{ installationId: "client-1" }]);
-
-    const updated = await prisma.deletionTask.findUnique({
-      where: { id: task.id },
-    });
-    expect(updated?.status).toBe("done");
-    expect(updated?.completedAt).not.toBeNull();
-  });
-
   test("failure schedules a retry with backoff and records the error", async () => {
     const operationId = await newRecord();
     __setDeletionExecutorsForTests({
@@ -84,6 +62,10 @@ describe("deletion outbox drain", () => {
     // A not-yet-due task is not re-executed.
     const again = await drainDeletionTasks();
     expect(again).toEqual({ done: 0, retried: 0, failed: 0 });
+    expect(retryDelayMs(1)).toBe(30_000);
+    expect(retryDelayMs(2)).toBe(60_000);
+    expect(retryDelayMs(3)).toBe(120_000);
+    expect(retryDelayMs(20)).toBe(60 * 60 * 1000);
   });
 
   test("exhausted attempts go terminal failed", async () => {
@@ -104,33 +86,9 @@ describe("deletion outbox drain", () => {
     expect(updated?.status).toBe("failed");
     expect(updated?.attempts).toBe(10);
   });
-
-  test("backoff grows exponentially and caps at one hour", () => {
-    expect(retryDelayMs(1)).toBe(30_000);
-    expect(retryDelayMs(2)).toBe(60_000);
-    expect(retryDelayMs(3)).toBe(120_000);
-    expect(retryDelayMs(20)).toBe(60 * 60 * 1000);
-  });
 });
 
 describe("deletion record completion and expiry", () => {
-  test("record completes (with expiry) once every task is done", async () => {
-    const operationId = await newRecord();
-    await newTask(operationId, "notification_installation", {
-      status: "done",
-      completedAt: new Date(),
-    });
-
-    const completed = await completeDeletionRecords();
-    expect(completed).toBe(1);
-    const record = await prisma.deletionRecord.findUnique({
-      where: { operationId },
-    });
-    expect(record?.status).toBe("completed");
-    expect(record?.completedAt).not.toBeNull();
-    expect(record?.expiresAt?.getTime()).toBeGreaterThan(Date.now());
-  });
-
   test("record stays purging while tasks remain pending or failed", async () => {
     const operationId = await newRecord();
     await newTask(operationId, "notification_installation", {

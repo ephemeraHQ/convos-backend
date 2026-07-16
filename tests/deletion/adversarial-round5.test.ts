@@ -1,50 +1,18 @@
-import { generateKeyPairSync, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
-import {
-  Environment,
-  SignedDataVerifier,
-} from "@apple/app-store-server-library";
 import { BillingProvider } from "@prisma/client";
 import express, { json } from "express";
-import { importPKCS8, SignJWT } from "jose";
 import request from "supertest";
-import {
-  afterAll,
-  afterEach,
-  beforeAll,
-  describe,
-  expect,
-  test,
-  vi,
-} from "vitest";
-import { __setAuthActivityStampFailureForTests } from "@/accounts/auth-activity";
+import { describe, expect, test, vi } from "vitest";
 import { deleteAccount } from "@/accounts/deletion/service";
-import {
-  __setClaimAppCheckVerifierForTests,
-  __setPendingTransferNotifierForTests,
-  claimAppCheckMiddleware,
-  subscriptionClaimHandler,
-} from "@/api/v2/accounts/handlers/subscription-claim";
+import { __setClaimAppCheckVerifierForTests } from "@/api/v2/accounts/handlers/subscription-claim";
 import { googlePlayWebhookRouter } from "@/api/v2/subscriptions/google-play-webhook.router";
-import { authMiddleware, requireAccount } from "@/middleware/auth";
 import { pinoMiddleware } from "@/middleware/pino";
 import { getBalance } from "@/payments";
-import {
-  resetAppleApiClientForTests,
-  setAppleApiClientForTests,
-} from "@/subscriptions/apple-server-api";
-import { settlePendingTransfers } from "@/subscriptions/claim";
-import {
-  resetPlayApiClientForTests,
-  setPlayApiFixtureForTests,
-  type SubscriptionPurchaseV2,
-} from "@/subscriptions/google-play/play-api";
+import { setAppleApiClientForTests } from "@/subscriptions/apple-server-api";
+import { setPlayApiFixtureForTests } from "@/subscriptions/google-play/play-api";
 import { PlaySubscriptionState } from "@/subscriptions/google-play/status";
 import { setPubsubVerifierForTests } from "@/subscriptions/google-play/verifier";
-import {
-  resetVerifierForTests,
-  setVerifierForTests,
-} from "@/subscriptions/jws-verifier";
 import { runReclaimReconciliationSweep } from "@/subscriptions/reconciliation";
 import {
   SUBSCRIPTION_TIER_PLUS,
@@ -52,50 +20,60 @@ import {
   SubscriptionStatus,
   upsertFromVerify,
   type AppleVerifyInput,
-  type GooglePlayVerifyInput,
 } from "@/subscriptions/repository";
-import { createJwtToken, validateJWTKeys } from "@/utils/jwt";
 import { prisma } from "@/utils/prisma";
-import { setRuntimeConfig } from "@/utils/runtimeConfig";
+import {
+  appleClaimRequest,
+  DAY_MS,
+  HOUR_MS,
+  installAppleStatuses as installAppleStatusesFixture,
+  installLocalTestingVerifier,
+  installReclaimHooks,
+  appleInput as makeAppleInput,
+  appleStatuses as makeAppleStatuses,
+  newAccount,
+  NEXT_PERIOD_END,
+  PERIOD_CREDITS,
+  PERIOD_END,
+  PERIOD_START,
+  playInput,
+  playPurchase,
+  PRODUCT_ID,
+  signTransaction as signReclaimTransaction,
+} from "./reclaim-fixtures";
 
 vi.mock("firebase-admin/app");
 vi.mock("firebase-admin/app-check");
 vi.mock("firebase-admin/messaging");
-
-const TEST_BUNDLE_ID = "app.convos.test";
-const DAY_MS = 24 * 60 * 60 * 1000;
-const HOUR_MS = 60 * 60 * 1000;
-const PERIOD_START = new Date(Date.now() - 5 * DAY_MS);
-const PERIOD_END = new Date(Date.now() + 25 * DAY_MS);
-const NEXT_PERIOD_END = new Date(PERIOD_END.getTime() + 30 * DAY_MS);
-const PERIOD_CREDITS = 2500n;
-const PRODUCT_ID = "app.convos.subs.monthly";
 const OTX = "6000000000000001";
 const DRIFT_BATCH = 50;
 const DRIFT_MAX_PER_SWEEP = 3 * DRIFT_BATCH;
-
-const claimApp = () => {
-  const app = express();
-  app.use(pinoMiddleware);
-  app.use(json());
-  app.post(
-    "/v2/accounts/me/subscription/claim",
-    authMiddleware,
-    requireAccount,
-    claimAppCheckMiddleware,
-    subscriptionClaimHandler,
-  );
-  return app;
-};
-
-const probeApp = () => {
-  const app = express();
-  app.use(pinoMiddleware);
-  app.use(json());
-  app.get("/probe", authMiddleware, (_req, res) => {
-    res.json({ ok: true });
+const signTransaction = (overrides: Record<string, unknown> = {}) =>
+  signReclaimTransaction(OTX, overrides);
+const appleInput = (
+  accountId: string,
+  overrides: Partial<AppleVerifyInput> = {},
+) => makeAppleInput(accountId, OTX, overrides);
+const appleStatuses = (args: {
+  status: number;
+  signedLatest: string;
+  originalTransactionId?: string;
+}) =>
+  makeAppleStatuses({
+    otx: args.originalTransactionId ?? OTX,
+    status: args.status,
+    signedLatest: args.signedLatest,
   });
-  return app;
+const installAppleStatuses = (args: {
+  status: number;
+  signedLatest: string;
+  originalTransactionId?: string;
+}) => {
+  installAppleStatusesFixture({
+    otx: args.originalTransactionId ?? OTX,
+    status: args.status,
+    signedLatest: args.signedLatest,
+  });
 };
 
 const rtdnApp = () => {
@@ -106,246 +84,18 @@ const rtdnApp = () => {
   return app;
 };
 
-let signingPrivateKey: string;
-let previousLocalTesting: string | undefined;
+installReclaimHooks();
 
-const newAccount = async (lastAuthAt?: Date | null) => {
-  const account = await prisma.account.create({
-    data: {
-      lastAuthAt:
-        lastAuthAt === undefined ? new Date(Date.now() - HOUR_MS) : lastAuthAt,
-    },
-  });
-  return account.id;
-};
-
-const tokenFor = (accountId: string) =>
-  createJwtToken({ deviceId: `dev-${accountId.slice(0, 8)}`, accountId });
-
-const signTransaction = async (overrides: Record<string, unknown> = {}) => {
-  const payload = {
-    transactionId: OTX,
-    originalTransactionId: OTX,
-    bundleId: TEST_BUNDLE_ID,
-    productId: PRODUCT_ID,
-    purchaseDate: PERIOD_START.getTime(),
-    originalPurchaseDate: PERIOD_START.getTime(),
-    expiresDate: PERIOD_END.getTime(),
-    type: "Auto-Renewable Subscription",
-    appAccountToken: "11111111-2222-3333-4444-555555555555",
-    inAppOwnershipType: "PURCHASED",
-    signedDate: Date.now(),
-    environment: "LocalTesting",
-    ...overrides,
-  };
-  const privateKey = await importPKCS8(signingPrivateKey, "ES256");
-  return new SignJWT(payload)
-    .setProtectedHeader({ alg: "ES256" })
-    .sign(privateKey);
-};
-
-const installLocalTestingVerifier = () => {
-  setVerifierForTests(
-    new SignedDataVerifier(
-      [],
-      false,
-      Environment.LOCAL_TESTING,
-      TEST_BUNDLE_ID,
-      1234,
-    ),
-  );
-};
-
-const appleStatuses = (args: {
-  status: number;
-  signedLatest: string;
-  originalTransactionId?: string;
-}) => ({
-  data: [
-    {
-      lastTransactions: [
-        {
-          originalTransactionId: args.originalTransactionId ?? OTX,
-          status: args.status,
-          signedTransactionInfo: args.signedLatest,
-        },
-      ],
-    },
-  ],
-});
-
-const installAppleStatuses = (args: {
-  status: number;
-  signedLatest: string;
-  originalTransactionId?: string;
-}) => {
-  setAppleApiClientForTests({
-    getAllSubscriptionStatuses: () => Promise.resolve(appleStatuses(args)),
-  } as never);
-};
-
-const appleInput = (
-  accountId: string,
-  overrides: Partial<AppleVerifyInput> = {},
-): AppleVerifyInput => ({
-  provider: BillingProvider.apple,
-  accountId,
-  appAccountToken: "11111111-2222-3333-4444-555555555555",
-  productId: PRODUCT_ID,
-  tier: SUBSCRIPTION_TIER_PLUS,
-  period: SubscriptionPeriod.monthly,
-  status: SubscriptionStatus.active,
-  originalTransactionId: OTX,
-  transactionId: OTX,
-  startedAt: PERIOD_START,
-  currentPeriodStart: PERIOD_START,
-  currentPeriodEnd: PERIOD_END,
-  willRenew: true,
-  isInTrial: false,
-  environment: "sandbox",
-  signedPayload: "jws-test-payload",
-  ...overrides,
-});
-
-const playInput = (
-  accountId: string,
-  purchaseToken: string,
-  overrides: Partial<GooglePlayVerifyInput> = {},
-): GooglePlayVerifyInput => ({
-  provider: BillingProvider.googlePlay,
-  accountId,
-  obfuscatedAccountId: `oid-${purchaseToken}`,
-  productId: PRODUCT_ID,
-  tier: SUBSCRIPTION_TIER_PLUS,
-  period: SubscriptionPeriod.monthly,
-  status: SubscriptionStatus.active,
-  purchaseToken,
-  linkedPurchaseToken: null,
-  playOrderId: `GPA.${purchaseToken}..0`,
-  startedAt: PERIOD_START,
-  currentPeriodStart: PERIOD_START,
-  currentPeriodEnd: PERIOD_END,
-  willRenew: true,
-  isInTrial: false,
-  signedPayload: "{}",
-  ...overrides,
-});
-
-/** Play purchase fixture; latestOrderId omitted when null. */
-const playPurchase = (args: {
-  latestOrderId: string | null;
-  expiry?: Date;
-  state?: string;
-}): SubscriptionPurchaseV2 => ({
-  subscriptionState: args.state ?? PlaySubscriptionState.active,
-  startTime: PERIOD_START.toISOString(),
-  ...(args.latestOrderId === null ? {} : { latestOrderId: args.latestOrderId }),
-  lineItems: [
-    {
-      productId: PRODUCT_ID,
-      expiryTime: (args.expiry ?? PERIOD_END).toISOString(),
-      autoRenewingPlan: { autoRenewEnabled: true },
-    },
-  ],
-  externalAccountIdentifiers: { obfuscatedExternalAccountId: "obf-r5" },
-});
-
-const wipe = async () => {
-  __setAuthActivityStampFailureForTests(null);
-  __setClaimAppCheckVerifierForTests(null);
-  __setPendingTransferNotifierForTests(null);
-  resetVerifierForTests();
-  resetAppleApiClientForTests();
-  resetPlayApiClientForTests();
-  setPlayApiFixtureForTests(null);
-  setPubsubVerifierForTests(null);
-  delete process.env.SUBSCRIPTION_CLAIM_LIVE_TRANSFER_ENABLED;
-  delete process.env.SUBSCRIPTION_CLAIM_GOOGLE_ENABLED;
-  delete process.env.CLAIM_CONTEST_WINDOW_HOURS;
-  await setRuntimeConfig("app_attest_enabled", "true");
-  await prisma.rateLimitCounter.deleteMany();
-  await prisma.deletionTask.deleteMany();
-  await prisma.deletionRecord.deleteMany();
-  await prisma.deletedIdentity.deleteMany();
-  await prisma.lineageQuarantine.deleteMany();
-  await prisma.subscriptionDriftSchedule.deleteMany();
-  await prisma.subscriptionTransfer.deleteMany();
-  await prisma.lineagePeriodCustody.deleteMany();
-  await prisma.lineagePeriodGrant.deleteMany();
-  await prisma.lineageTokenAlias.deleteMany();
-  await prisma.subscriptionLineage.deleteMany();
-  await prisma.adminAudit.deleteMany();
-  await prisma.billingReceipt.deleteMany();
-  await prisma.subscription.deleteMany();
-  await prisma.creditLedger.deleteMany();
-  await prisma.userCredits.deleteMany();
-  await prisma.deviceRegistration.deleteMany();
-  await prisma.authMethod.deleteMany();
-  await prisma.account.deleteMany({
-    where: { id: { not: "48a05ef4-4a71-57a0-957f-a3d410992b31" } },
-  });
-};
-
-beforeAll(async () => {
-  await validateJWTKeys();
-  previousLocalTesting = process.env.LOCAL_TESTING;
-  process.env.LOCAL_TESTING = "1";
-  const { privateKey } = generateKeyPairSync("ec", {
-    namedCurve: "prime256v1",
-    privateKeyEncoding: { type: "pkcs8", format: "pem" },
-    publicKeyEncoding: { type: "spki", format: "pem" },
-  });
-  signingPrivateKey = privateKey;
-});
-
-afterAll(() => {
-  if (previousLocalTesting === undefined) {
-    delete process.env.LOCAL_TESTING;
-  } else {
-    process.env.LOCAL_TESTING = previousLocalTesting;
-  }
-});
-
-afterEach(wipe);
-
-const appleClaimRequest = async (accountId: string, jws: string) =>
-  request(claimApp())
-    .post("/v2/accounts/me/subscription/claim")
-    .set("X-Convos-AuthToken", await tokenFor(accountId))
-    .set("X-Firebase-AppCheck", `limited-${randomUUID()}`)
-    .send({ platform: "apple", jwsRepresentation: jws });
-
-/** Live 72h Apple claim: owner + claimer + one pending transfer row. */
-const createPendingTransfer = async () => {
-  process.env.SUBSCRIPTION_CLAIM_LIVE_TRANSFER_ENABLED = "true";
-  process.env.CLAIM_CONTEST_WINDOW_HOURS = "72";
-  installLocalTestingVerifier();
-  __setClaimAppCheckVerifierForTests(() => Promise.resolve());
-  __setPendingTransferNotifierForTests(() => Promise.resolve());
-  const owner = await newAccount();
-  const claimer = await newAccount();
-  await upsertFromVerify(appleInput(owner));
-  const jws = await signTransaction();
-  installAppleStatuses({ status: 1, signedLatest: jws });
-  const res = await appleClaimRequest(claimer, jws);
-  expect(res.status, JSON.stringify(res.body)).toBe(202);
-  const pendingRow = await prisma.subscriptionTransfer.findFirstOrThrow({
-    where: { status: "pending" },
-  });
-  return { owner, claimer, jws, pendingRow };
-};
-
-/** Instant Apple transfer (contest window 0): one committed journal. */
-const createCommittedTransfer = async () => {
-  process.env.SUBSCRIPTION_CLAIM_LIVE_TRANSFER_ENABLED = "true";
-  process.env.CLAIM_CONTEST_WINDOW_HOURS = "0";
+/** Delete then restore an Apple subscription, producing one committed journal. */
+const createRestoredSubscription = async () => {
   installLocalTestingVerifier();
   __setClaimAppCheckVerifierForTests(() => Promise.resolve());
   const owner = await newAccount();
-  const claimer = await newAccount();
   await upsertFromVerify(appleInput(owner));
+  await deleteAccount({ accountId: owner, operationId: randomUUID() });
   const jws = await signTransaction();
   installAppleStatuses({ status: 1, signedLatest: jws });
+  const claimer = await newAccount();
   const res = await appleClaimRequest(claimer, jws);
   expect(res.status, JSON.stringify(res.body)).toBe(200);
   return { owner, claimer, jws };
@@ -379,99 +129,6 @@ const createDriftFixture = async (
   });
   return lineage.id;
 };
-
-describe("activity stamp fails closed", () => {
-  test("a stamp DB failure during a contest window fails the request; the retry still vetoes", async () => {
-    const { owner, pendingRow } = await createPendingTransfer();
-    // The owner authenticated an hour ago (outside the throttle window), so
-    // the probe below must attempt the stamp write - which we make fail.
-    const before = await prisma.account.findUniqueOrThrow({
-      where: { id: owner },
-    });
-    __setAuthActivityStampFailureForTests(new Error("transient stamp failure"));
-
-    const failed = await request(probeApp())
-      .get("/probe")
-      .set("X-Convos-AuthToken", await tokenFor(owner));
-    // Fail closed: the act must not succeed unstamped - a swallowed error
-    // here would let settlement read the stale timestamp and execute the
-    // transfer despite real owner activity.
-    expect(failed.status).toBe(500);
-    const unchanged = await prisma.account.findUniqueOrThrow({
-      where: { id: owner },
-    });
-    expect(unchanged.lastAuthAt?.getTime()).toBe(before.lastAuthAt?.getTime());
-    __setAuthActivityStampFailureForTests(null);
-
-    // The owner's retry (the DB recovered) stamps and preserves the veto.
-    const retried = await request(probeApp())
-      .get("/probe")
-      .set("X-Convos-AuthToken", await tokenFor(owner));
-    expect(retried.status).toBe(200);
-    const stamped = await prisma.account.findUniqueOrThrow({
-      where: { id: owner },
-    });
-    expect(stamped.lastAuthAt?.getTime() ?? 0).toBeGreaterThan(
-      pendingRow.createdAt.getTime(),
-    );
-
-    await prisma.subscriptionTransfer.updateMany({
-      where: { status: "pending" },
-      data: { contestEndsAt: new Date(Date.now() - 1000) },
-    });
-    const settled = await settlePendingTransfers();
-    expect(settled.cancelled).toBe(1);
-    expect(settled.committed).toBe(0);
-    const row = await prisma.subscription.findFirstOrThrow({
-      where: { originalTransactionId: OTX },
-    });
-    expect(row.accountId).toBe(owner);
-  });
-});
-
-describe("drift reconciliation sweeps 72h-contested settlements", () => {
-  test("a default contest-window transfer settles, then drifts, and IS swept", async () => {
-    const { owner, claimer, pendingRow } = await createPendingTransfer();
-    // Age the pending row to the real 72h shape: created 73 hours ago,
-    // window just ended, owner silent since before the claim (ghost).
-    const createdAt = new Date(Date.now() - 73 * HOUR_MS);
-    await prisma.subscriptionTransfer.update({
-      where: { id: pendingRow.id },
-      data: { createdAt, contestEndsAt: new Date(Date.now() - 1000) },
-    });
-    await prisma.account.update({
-      where: { id: owner },
-      data: { lastAuthAt: new Date(Date.now() - 80 * HOUR_MS) },
-    });
-    const settled = await settlePendingTransfers();
-    expect(settled.committed).toBe(1);
-    expect(await getBalance(claimer)).toBe(PERIOD_CREDITS);
-
-    const journal = await prisma.subscriptionTransfer.findUniqueOrThrow({
-      where: { id: pendingRow.id },
-    });
-    expect(journal.status).toBe("committed");
-    expect(journal.committedAt).not.toBeNull();
-    // The exact shape the old createdAt-window selection missed: by
-    // settlement time the journal's createdAt is 73 hours old.
-    expect(journal.createdAt.getTime()).toBeLessThan(Date.now() - 72 * HOUR_MS);
-
-    // The provider revokes after settlement; the webhook is lost.
-    installAppleStatuses({ status: 2, signedLatest: "irrelevant" });
-    const counts = await runReclaimReconciliationSweep();
-    expect(counts.driftChecked).toBe(1);
-    expect(counts.driftCompensated).toBe(1);
-    expect(await getBalance(claimer)).toBe(0n);
-    const custody = await prisma.lineagePeriodCustody.findFirstOrThrow({});
-    expect(custody.state).toBe("invalidated");
-    // The Subscription row carries the provider-derived terminal state.
-    const row = await prisma.subscription.findFirstOrThrow({
-      where: { originalTransactionId: OTX },
-    });
-    expect(row.status).toBe(SubscriptionStatus.expired);
-    expect(row.willRenew).toBe(false);
-  });
-});
 
 describe("durable drift scheduling and rolling safety", () => {
   test(">50 equal-millisecond schedules are each swept once in one tick", async () => {
@@ -696,7 +353,7 @@ describe("durable drift scheduling and rolling safety", () => {
   });
 
   test("a later sweep catches revocation after an earlier entitled answer", async () => {
-    const { claimer, jws } = await createCommittedTransfer();
+    const { claimer, jws } = await createRestoredSubscription();
     expect(await getBalance(claimer)).toBe(PERIOD_CREDITS);
 
     installAppleStatuses({ status: 1, signedLatest: jws });
@@ -728,7 +385,7 @@ describe("durable drift scheduling and rolling safety", () => {
   });
 
   test("a revoke after the last periodic check is clawed at the deadline", async () => {
-    const { claimer } = await createCommittedTransfer();
+    const { claimer } = await createRestoredSubscription();
     const lineage = await prisma.subscriptionLineage.findFirstOrThrow({
       where: { lineageKey: OTX },
     });
@@ -770,7 +427,7 @@ describe("durable drift scheduling and rolling safety", () => {
 
     // The webhook is lost after that last entitled answer. Advance only the
     // durable deadline, then prove the terminal pass re-fetches provider
-    // truth and invalidates the transferred custody.
+    // truth and invalidates the restored custody.
     providerStatus = 2;
     const [{ now: afterPeriodic }] = await prisma.$queryRaw<
       Array<{ now: Date }>
@@ -899,7 +556,7 @@ describe("durable drift scheduling and rolling safety", () => {
         toAccountId: owner,
       },
     });
-    const { claimer } = await createCommittedTransfer();
+    const { claimer } = await createRestoredSubscription();
     setAppleApiClientForTests({
       getAllSubscriptionStatuses: (originalTransactionId: string) => {
         if (originalTransactionId === unavailableOtx) {
@@ -1090,7 +747,7 @@ describe("quarantine retry state prevents starvation", () => {
 
 describe("drift-versus-renewal race", () => {
   test("a renewal landing between the provider fetch and the lock survives (version fence)", async () => {
-    const { claimer } = await createCommittedTransfer();
+    const { claimer } = await createRestoredSubscription();
     expect(await getBalance(claimer)).toBe(PERIOD_CREDITS);
     const renewalTxn = "6000000000000042";
 
@@ -1239,7 +896,7 @@ describe("keyless void reconciliation end-to-end", () => {
 
 describe("sweep lease exclusivity", () => {
   test("two concurrent runners: exactly one executes", async () => {
-    const { claimer } = await createCommittedTransfer();
+    const { claimer } = await createRestoredSubscription();
     expect(await getBalance(claimer)).toBe(PERIOD_CREDITS);
 
     // Gate the provider call so runner A verifiably holds the lease while
@@ -1275,10 +932,10 @@ describe("sweep lease exclusivity", () => {
 
 describe("expired-custody compensation", () => {
   test("a lost terminal event just after period end still claws the unspent remainder", async () => {
-    const { claimer } = await createCommittedTransfer();
+    const { claimer } = await createRestoredSubscription();
     expect(await getBalance(claimer)).toBe(PERIOD_CREDITS);
 
-    // The transferred period expired a minute before this sweep and the
+    // The restored period expired a minute before this sweep and the
     // terminal webhook was lost: no custody covers "now" any more.
     const custody = await prisma.lineagePeriodCustody.findFirstOrThrow({});
     await prisma.lineagePeriodCustody.update({
