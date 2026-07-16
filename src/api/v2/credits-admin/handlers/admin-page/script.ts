@@ -126,9 +126,11 @@ export const clientScript = (): string => `
   var accountsSort={ balance:{by:"balance",dir:"desc"}, broken:{by:"balance",dir:"asc"}, grantKind:{by:"latestGrantAt",dir:"desc"}, active:{by:"lastConsumeAt",dir:"desc"}, dormant:{by:"lastConsumeAt",dir:"desc"} };
   var colAccount=["Account",function(r){return r.accountId;},"mono"];
   var colBalance=["Balance",function(r){return fmtCredits(r.balanceCredits);},"num","balance"];
+  var colWallet=["Wallet",function(r){return r.wallet||"—";},"mono"];
+  var colLastActivity=["Last activity",function(r){return fmtDate(r.lastConsumeAt);},"nowrap"];
   var userListCols=[colAccount,colBalance,["Last consume",function(r){return fmtDate(r.lastConsumeAt);},"nowrap","lastConsumeAt"]];
   var accountCols={
-    balance:[colAccount,colBalance],
+    balance:[colAccount,colWallet,colLastActivity,colBalance],
     broken:[colAccount,colBalance,["Tier",function(r){return r.tier||"—";},null,"tier"],["Status",function(r){return r.effectiveStatus||"—";}],["Period end",function(r){return fmtDate(r.currentPeriodEnd);},"nowrap","currentPeriodEnd"]],
     grantKind:[colAccount,colBalance,["Latest grant",function(r){return fmtDate(r.latestGrantAt);},"nowrap","latestGrantAt"]],
     active:userListCols,

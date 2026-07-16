@@ -212,6 +212,21 @@ describe("admin page — full history load-more", () => {
   });
 });
 
+describe("admin page — balance table columns", () => {
+  let app: Express;
+  beforeAll(() => {
+    app = buildCreditsAdminApp();
+  });
+
+  it("balance view defines Wallet and Last activity columns", async () => {
+    const res = await adminRequest(app).get("/api/v2/credits-admin/");
+    expect(res.text).toContain("Wallet");
+    expect(res.text).toContain("Last activity");
+    expect(res.text).toContain("r.wallet");
+    expect(res.text).toContain("r.lastConsumeAt");
+  });
+});
+
 describe("admin client script — syntax", () => {
   it("clientScript() is syntactically valid JS", () => {
     // new Function parses the body without executing it — catches syntax errors
