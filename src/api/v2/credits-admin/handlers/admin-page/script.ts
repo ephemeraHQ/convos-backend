@@ -90,9 +90,9 @@ export const clientScript = (): string => `
     });
   });
   function doSearch(){
-    var key=el("search-key").value, value=el("search-value").value.trim();
+    var value=el("search-value").value.trim();
     if(!value) return;
-    guardFetch("/search?key="+encodeURIComponent(key)+"&value="+encodeURIComponent(value))
+    guardFetch("/search?value="+encodeURIComponent(value))
       .then(function(r){ return r.json(); })
       .then(function(j){ if(!j.accountId){ toast("No account found","error"); return; } openDetail(j.accountId); })
       .catch(function(e){ if(e.message!=="reauth") toast("Search failed","error"); });

@@ -112,6 +112,25 @@ describe("admin page — brand", () => {
   });
 });
 
+describe("admin page — single search box", () => {
+  let app: Express;
+  beforeAll(() => {
+    app = buildCreditsAdminApp();
+  });
+
+  it("removes the search-key select and keeps a single search input", async () => {
+    const res = await adminRequest(app).get("/api/v2/credits-admin/");
+    expect(res.text).not.toContain('id="search-key"');
+    expect(res.text).toContain('id="search-value"');
+    expect(res.text).toContain('placeholder="Account ID or wallet address"');
+  });
+  it("wraps view-mode select in a chevron wrapper", async () => {
+    const res = await adminRequest(app).get("/api/v2/credits-admin/");
+    expect(res.text).toContain("select-wrap");
+    expect(res.text).toContain('class="chev"');
+  });
+});
+
 describe("admin client script — syntax", () => {
   it("clientScript() is syntactically valid JS", () => {
     // new Function parses the body without executing it — catches syntax errors
