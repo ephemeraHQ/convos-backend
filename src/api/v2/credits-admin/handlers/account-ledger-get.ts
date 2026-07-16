@@ -23,6 +23,12 @@ export const accountLedgerGetHandler = async (
   const { rows, nextCursor } = await listLedgerPageByAccount({
     accountId: req.params.accountId,
     cursor,
+    filter: {
+      kind: parsed.data.kind,
+      reason: parsed.data.reason,
+      from: parsed.data.from,
+      to: parsed.data.to,
+    },
   });
   res.status(200).json({ rows: rows.map(serializeLedger), nextCursor });
 };

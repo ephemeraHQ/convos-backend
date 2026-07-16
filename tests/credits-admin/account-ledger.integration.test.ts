@@ -12,13 +12,19 @@ import {
 type LedgerRow = { id: string; delta: string; createdAt: string };
 type LedgerResponse = { rows: LedgerRow[]; nextCursor: string | null };
 
-const addLedger = async (accountId: string, delta: bigint, createdAt: Date) => {
+const addLedger = async (
+  accountId: string,
+  delta: bigint,
+  createdAt: Date,
+  reason: "consume" | "grant" | "adjust" = "grant",
+  grantKindId: string | null = null,
+) => {
   await prisma.creditLedger.create({
     data: {
       accountId,
       delta,
-      reason: "grant",
-      grantKindId: null,
+      reason,
+      grantKindId,
       idempotencyKey: `al_${accountId}_${createdAt.getTime()}_${delta}`,
       createdAt,
     },
@@ -107,5 +113,138 @@ describe("GET /api/v2/credits-admin/accounts/:accountId/ledger", () => {
     );
     expect(res.status).toBe(400);
     expect(res.body).toMatchObject({ code: "invalid_cursor" });
+  });
+});
+
+describe("GET …/ledger — filter params", () => {
+  let app2: Express;
+  const t2: string[] = [];
+  beforeAll(() => {
+    app2 = buildCreditsAdminApp();
+  });
+  afterEach(async () => {
+    await cleanupAdminAccounts(t2);
+    t2.length = 0;
+  });
+
+  it("kind=subscription returns only sub_grant + sub_forfeit", async () => {
+    const a = await seedAccount();
+    t2.push(a);
+    await addLedger(
+      a,
+      100n,
+      new Date("2026-07-10T00:00:00Z"),
+      "grant",
+      "sub_grant",
+    );
+    await addLedger(
+      a,
+      -40n,
+      new Date("2026-07-11T00:00:00Z"),
+      "adjust",
+      "sub_forfeit",
+    );
+    await addLedger(
+      a,
+      500n,
+      new Date("2026-07-12T00:00:00Z"),
+      "grant",
+      "manual",
+    );
+    const res = await adminRequest(app2).get(
+      `/api/v2/credits-admin/accounts/${a}/ledger?kind=subscription`,
+    );
+    expect(res.status).toBe(200);
+    const body = res.body as LedgerResponse;
+    expect(body.rows).toHaveLength(2);
+    expect(new Set(body.rows.map((r) => r.delta))).toEqual(
+      new Set(["100", "-40"]),
+    );
+  });
+
+  it("filters to a single kind with no off-filter leak", async () => {
+    const a = await seedAccount();
+    t2.push(a);
+    // 3 sub_grant + 3 manual, interleaved by day. (The cursor+filter page-2
+    // interaction is covered directly at limit:2 in ledger-repository.test.ts;
+    // the HTTP endpoint's limit is server-fixed at 50, so here we assert the
+    // single filtered page holds exactly the 3 sub_grants and no manual leaks.)
+    await addLedger(
+      a,
+      1n,
+      new Date("2026-07-01T00:00:00Z"),
+      "grant",
+      "sub_grant",
+    );
+    await addLedger(a, 9n, new Date("2026-07-02T00:00:00Z"), "grant", "manual");
+    await addLedger(
+      a,
+      2n,
+      new Date("2026-07-03T00:00:00Z"),
+      "grant",
+      "sub_grant",
+    );
+    await addLedger(a, 9n, new Date("2026-07-04T00:00:00Z"), "grant", "manual");
+    await addLedger(
+      a,
+      3n,
+      new Date("2026-07-05T00:00:00Z"),
+      "grant",
+      "sub_grant",
+    );
+    await addLedger(a, 9n, new Date("2026-07-06T00:00:00Z"), "grant", "manual");
+
+    const res = await adminRequest(app2).get(
+      `/api/v2/credits-admin/accounts/${a}/ledger?kind=sub_grant`,
+    );
+    const body = res.body as LedgerResponse;
+    expect(body.rows).toHaveLength(3);
+    expect(new Set(body.rows.map((r) => r.delta))).toEqual(
+      new Set(["1", "2", "3"]),
+    );
+  });
+
+  it("400 on an unknown kind", async () => {
+    const a = await seedAccount();
+    t2.push(a);
+    const res = await adminRequest(app2).get(
+      `/api/v2/credits-admin/accounts/${a}/ledger?kind=bogus`,
+    );
+    expect(res.status).toBe(400);
+    expect(res.body).toMatchObject({ code: "invalid_request" });
+  });
+
+  it("400 on an unparseable date", async () => {
+    const a = await seedAccount();
+    t2.push(a);
+    const res = await adminRequest(app2).get(
+      `/api/v2/credits-admin/accounts/${a}/ledger?to=not-a-date`,
+    );
+    expect(res.status).toBe(400);
+    expect(res.body).toMatchObject({ code: "invalid_request" });
+  });
+
+  it("back-compat: no filter params returns the full page", async () => {
+    const a = await seedAccount();
+    t2.push(a);
+    await addLedger(
+      a,
+      100n,
+      new Date("2026-07-10T00:00:00Z"),
+      "grant",
+      "sub_grant",
+    );
+    await addLedger(
+      a,
+      500n,
+      new Date("2026-07-12T00:00:00Z"),
+      "grant",
+      "manual",
+    );
+    const res = await adminRequest(app2).get(
+      `/api/v2/credits-admin/accounts/${a}/ledger`,
+    );
+    expect(res.status).toBe(200);
+    expect((res.body as LedgerResponse).rows).toHaveLength(2);
   });
 });
