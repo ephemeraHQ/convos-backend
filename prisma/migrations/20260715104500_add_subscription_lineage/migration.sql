@@ -139,40 +139,106 @@ CREATE INDEX "SubscriptionTransfer_status_contestEndsAt_idx" ON "SubscriptionTra
 CREATE INDEX "LineageQuarantine_resolvedAt_createdAt_idx" ON "LineageQuarantine"("resolvedAt", "createdAt");
 
 -- Backfill: one lineage per existing Subscription row. Apple keys on the
--- stable OTX; Google keys on the oldest chain member we know
--- (linkedPurchaseToken when present, else the current token).
+-- stable OTX. Google keys on the recursively discovered root of the
+-- linkedPurchaseToken chain: keying on the immediate predecessor alone would
+-- give a twice-rotated chain two lineage identities, and a fractured lineage
+-- bypasses the global once-per-period funding registry and custody caps.
 INSERT INTO "SubscriptionLineage" ("provider", "lineageKey", "state", "updatedAt")
 SELECT DISTINCT s."provider", s."originalTransactionId", 'live', CURRENT_TIMESTAMP
 FROM "Subscription" s
 WHERE s."provider" = 'apple' AND s."originalTransactionId" IS NOT NULL
 ON CONFLICT ("provider", "lineageKey") DO NOTHING;
 
+-- Walk every Google row's predecessor chain across the rows we hold (each
+-- row contributes one purchaseToken -> linkedPurchaseToken edge; the token
+-- column is unique, so the walk is deterministic). The terminal token is the
+-- oldest chain member we can prove; a predecessor named only by a successor
+-- still terminates the walk as the root, mirroring the runtime resolver. A
+-- walk that stops with a parent still pending hit a loop or the depth bound:
+-- that chain is ambiguous and must never guess a monetary identity.
+CREATE TEMPORARY TABLE "_google_chain_roots" ON COMMIT DROP AS
+WITH RECURSIVE chain_walk AS (
+  SELECT s."id" AS subscription_id,
+         s."purchaseToken" AS token,
+         s."linkedPurchaseToken" AS parent,
+         1 AS depth,
+         ARRAY[s."purchaseToken"] AS path
+  FROM "Subscription" s
+  WHERE s."provider" = 'googlePlay' AND s."purchaseToken" IS NOT NULL
+  UNION ALL
+  SELECT s."id" AS subscription_id,
+         s."linkedPurchaseToken" AS token,
+         (SELECT p."linkedPurchaseToken" FROM "Subscription" p
+          WHERE p."provider" = 'googlePlay'
+            AND p."purchaseToken" = s."linkedPurchaseToken") AS parent,
+         1 AS depth,
+         ARRAY[s."linkedPurchaseToken"] AS path
+  FROM "Subscription" s
+  WHERE s."provider" = 'googlePlay'
+    AND s."purchaseToken" IS NULL
+    AND s."linkedPurchaseToken" IS NOT NULL
+  UNION ALL
+  SELECT w.subscription_id,
+         w.parent AS token,
+         p."linkedPurchaseToken" AS parent,
+         w.depth + 1,
+         w.path || w.parent
+  FROM chain_walk w
+  LEFT JOIN "Subscription" p
+    ON p."provider" = 'googlePlay' AND p."purchaseToken" = w.parent
+  WHERE w.parent IS NOT NULL
+    AND NOT w.parent = ANY(w.path)
+    AND w.depth < 25
+)
+SELECT DISTINCT ON (subscription_id)
+       subscription_id,
+       token AS root_token,
+       path,
+       (parent IS NOT NULL) AS ambiguous
+FROM chain_walk
+ORDER BY subscription_id, depth DESC;
+
+-- Ambiguous chains (loop or depth overflow) mint nothing: park them for an
+-- operator and leave the rows unkeyed. They re-resolve through the runtime
+-- resolver, which fails closed on the same conditions.
+INSERT INTO "LineageQuarantine" ("provider", "token", "reason", "payload")
+SELECT 'googlePlay'::"BillingProvider",
+       COALESCE(s."purchaseToken", s."linkedPurchaseToken"),
+       'backfill_chain_unresolved',
+       jsonb_build_object('subscriptionId', r.subscription_id, 'chain', to_jsonb(r.path))
+FROM "_google_chain_roots" r
+JOIN "Subscription" s ON s."id" = r.subscription_id
+WHERE r.ambiguous;
+
 INSERT INTO "SubscriptionLineage" ("provider", "lineageKey", "state", "updatedAt")
-SELECT DISTINCT s."provider", COALESCE(s."linkedPurchaseToken", s."purchaseToken"), 'live', CURRENT_TIMESTAMP
-FROM "Subscription" s
-WHERE s."provider" = 'googlePlay' AND COALESCE(s."linkedPurchaseToken", s."purchaseToken") IS NOT NULL
+SELECT DISTINCT 'googlePlay'::"BillingProvider", r.root_token, 'live', CURRENT_TIMESTAMP
+FROM "_google_chain_roots" r
+WHERE NOT r.ambiguous
 ON CONFLICT ("provider", "lineageKey") DO NOTHING;
 
 UPDATE "Subscription" s
 SET "lineageId" = l."id"
 FROM "SubscriptionLineage" l
-WHERE l."provider" = s."provider"
-  AND l."lineageKey" = CASE
-    WHEN s."provider" = 'apple' THEN s."originalTransactionId"
-    ELSE COALESCE(s."linkedPurchaseToken", s."purchaseToken")
-  END;
+WHERE s."provider" = 'apple'
+  AND l."provider" = 'apple'
+  AND l."lineageKey" = s."originalTransactionId";
 
--- Alias seed: current and predecessor Google tokens resolve to the lineage.
-INSERT INTO "LineageTokenAlias" ("token", "lineageId")
-SELECT s."purchaseToken", s."lineageId"
-FROM "Subscription" s
-WHERE s."provider" = 'googlePlay' AND s."purchaseToken" IS NOT NULL AND s."lineageId" IS NOT NULL
-ON CONFLICT ("token") DO NOTHING;
+UPDATE "Subscription" s
+SET "lineageId" = l."id"
+FROM "_google_chain_roots" r
+JOIN "SubscriptionLineage" l
+  ON l."provider" = 'googlePlay' AND l."lineageKey" = r.root_token
+WHERE s."id" = r.subscription_id AND NOT r.ambiguous;
 
+-- Alias seed: every chain member (current token, every rotated predecessor,
+-- and the root itself) resolves to the chain's lineage.
 INSERT INTO "LineageTokenAlias" ("token", "lineageId")
-SELECT s."linkedPurchaseToken", s."lineageId"
-FROM "Subscription" s
-WHERE s."provider" = 'googlePlay' AND s."linkedPurchaseToken" IS NOT NULL AND s."lineageId" IS NOT NULL
+SELECT DISTINCT t.token, l."id"
+FROM "_google_chain_roots" r
+JOIN "SubscriptionLineage" l
+  ON l."provider" = 'googlePlay' AND l."lineageKey" = r.root_token
+CROSS JOIN LATERAL unnest(r.path) AS t(token)
+WHERE NOT r.ambiguous
 ON CONFLICT ("token") DO NOTHING;
 
 -- Migrate any SubscriptionTombstone rows into tombstoned lineages. The old
@@ -189,17 +255,64 @@ DO UPDATE SET "state" = 'tombstoned',
               "updatedAt" = CURRENT_TIMESTAMP;
 
 -- One live Subscription row per lineage, database-enforced (claim and
--- webhook lookups by lineageId must be deterministic). Defensive dedupe
--- first: keep the row with the newest entitlement window, detach the rest
--- (they re-resolve through verify).
-UPDATE "Subscription" s SET "lineageId" = NULL
-WHERE s."lineageId" IS NOT NULL
-  AND s."id" <> (
-    SELECT s2."id" FROM "Subscription" s2
-    WHERE s2."lineageId" = s."lineageId"
-    ORDER BY s2."currentPeriodEnd" DESC, s2."updatedAt" DESC
-    LIMIT 1
-  );
+-- webhook lookups by lineageId must be deterministic). Root canonicalization
+-- can map several rows of one rotated chain onto one lineage. Detaching the
+-- extras is not safe: a detached row stays addressable by its token, so a
+-- later verify resolves the same lineage and collides with the unique index
+-- below -- a P2002 outside the recognized conflict set, surfacing as an
+-- HTTP 500 (and a silently dropped update on the notification path).
+--
+-- Same-chain rows owned by different accounts are never merged silently:
+-- fail the migration with row-level diagnostics so an operator adjudicates
+-- ownership before this deploy proceeds.
+DO $$
+DECLARE
+  conflict_row RECORD;
+BEGIN
+  SELECT s."lineageId"::text AS lineage_id,
+         count(*) AS row_count,
+         array_agg(DISTINCT s."accountId"::text) AS account_ids,
+         array_agg(s."id"::text ORDER BY s."id") AS subscription_ids
+    INTO conflict_row
+    FROM "Subscription" s
+   WHERE s."lineageId" IS NOT NULL
+   GROUP BY s."lineageId"
+  HAVING count(*) > 1 AND count(DISTINCT s."accountId") > 1
+   LIMIT 1;
+  IF FOUND THEN
+    RAISE EXCEPTION 'subscription lineage % has % rows owned by different accounts % (subscription rows %): same-chain ownership must be adjudicated before this migration can run',
+      conflict_row.lineage_id, conflict_row.row_count,
+      conflict_row.account_ids, conflict_row.subscription_ids;
+  END IF;
+END $$;
+
+-- Same-account duplicates consolidate onto one survivor: keep the row with
+-- the newest entitlement window, move the losers' receipts onto it, then
+-- delete the losers so no stale row remains addressable.
+WITH survivors AS (
+  SELECT DISTINCT ON (s."lineageId") s."id", s."lineageId"
+  FROM "Subscription" s
+  WHERE s."lineageId" IS NOT NULL
+  ORDER BY s."lineageId", s."currentPeriodEnd" DESC, s."updatedAt" DESC, s."id"
+),
+losers AS (
+  SELECT s."id" AS loser_id, v."id" AS survivor_id
+  FROM "Subscription" s
+  JOIN survivors v ON v."lineageId" = s."lineageId" AND v."id" <> s."id"
+)
+UPDATE "BillingReceipt" b
+SET "subscriptionId" = losers.survivor_id
+FROM losers
+WHERE b."subscriptionId" = losers.loser_id;
+
+DELETE FROM "Subscription" s
+USING (
+  SELECT DISTINCT ON ("lineageId") "id", "lineageId"
+  FROM "Subscription"
+  WHERE "lineageId" IS NOT NULL
+  ORDER BY "lineageId", "currentPeriodEnd" DESC, "updatedAt" DESC, "id"
+) survivor
+WHERE s."lineageId" = survivor."lineageId" AND s."id" <> survivor."id";
 
 -- CreateIndex
 CREATE UNIQUE INDEX "Subscription_lineageId_key" ON "Subscription"("lineageId");
