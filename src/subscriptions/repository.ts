@@ -45,6 +45,7 @@ import {
   type SubscriptionTier,
 } from "@/subscriptions/tiers";
 import {
+  absorbTombstoneRotation,
   findTombstonedLineage,
   SubscriptionTombstonedError,
 } from "@/subscriptions/tombstones";
@@ -460,7 +461,15 @@ export const upsertFromVerify = async (
             where: { id: lineageId },
           });
           if (lineage && lineage.state === LINEAGE_STATE_TOMBSTONED) {
-            throw new SubscriptionTombstonedError(lineage.lineageKey);
+            // Thrown inside the tx; the rotation absorption happens durably
+            // in the catch below.
+            throw new SubscriptionTombstonedError(
+              input.provider,
+              lineage.lineageKey,
+              externalId,
+              lineage.deletedAccountRef ?? "",
+              lineage.id,
+            );
           }
         }
 
@@ -510,7 +519,7 @@ export const upsertFromVerify = async (
         // Idempotent per funding event per account and once per provider
         // funding event globally (lineage registry), so the initial verify, a
         // re-verify of the same period, an S2S DID_RENEW racing this verify,
-        // or a verify after restoration all resolve to one funded period.
+        // or a post-transfer replay all resolve to one funded period.
         if (
           !isStaleVerify &&
           isEntitledSubscriptionStatus(subscription.status)
@@ -556,6 +565,26 @@ export const upsertFromVerify = async (
       }),
     );
   } catch (err) {
+    if (err instanceof SubscriptionTombstonedError) {
+      // Play token rotation onto a tombstoned lineage: record the presented
+      // token as an alias so future lookups need no chain-walk. Done here,
+      // outside the rolled-back transaction, so the absorption survives the
+      // throw. Routed through the atomic conflict-detecting resolver; a
+      // conflicting alias quarantines (the 409 to the caller is unchanged —
+      // the claim path re-resolves authoritatively). Apple keys never
+      // rotate (matchedKey === presentedKey), so this is Play-only.
+      if (err.matchedKey !== err.presentedKey) {
+        await absorbTombstoneRotation({
+          token: err.presentedKey,
+          linkedPurchaseToken:
+            input.provider === BillingProvider.googlePlay
+              ? input.linkedPurchaseToken
+              : undefined,
+          lineageId: err.lineageId,
+        });
+      }
+      throw err;
+    }
     // Route the P2002 by WHICH unique index fired:
     //   - Subscription provider-unique → the documented cold-start race (two
     //     concurrent creates of the same provider sub). Benign idempotent
@@ -687,7 +716,8 @@ export type GooglePlayApplyNotificationInput = {
   /** Lookup key — the purchaseToken from the RTDN payload. */
   purchaseToken: string;
   /** Rotation predecessor from the refreshed Play purchase, when present.
-   *  Used as a candidate when resolving an existing tombstoned lineage. */
+   *  Used by the deletion-tombstone probe so a rotation onto a tombstoned
+   *  token is absorbed rather than escaping the tombstone. */
   linkedPurchaseToken?: string | null;
   /** Audit transactionId — Google's latestOrderId from the refreshed purchase. */
   playOrderId: string;
@@ -778,6 +808,32 @@ const notificationTombstoneProbe = async (
       : [input.purchaseToken, input.linkedPurchaseToken],
   );
   if (!lineage) return null;
+  const presentedKey =
+    input.provider === BillingProvider.apple
+      ? input.originalTransactionId
+      : input.purchaseToken;
+  if (lineage.lineageKey !== presentedKey) {
+    // Play rotation onto a tombstoned lineage: absorb the new token so
+    // future notifications resolve without chain-walking. Resolution runs
+    // BEFORE any funding/invalidation effect, through the atomic
+    // conflict-detecting resolver: a presented token that belongs to a
+    // different lineage is a two-lineage conflict — quarantined by the
+    // resolver — and the event must not mutate this lineage. Ack it
+    // (existing RTDN semantics: quarantined events are acked but
+    // preserved); the reconciliation sweep picks the row up.
+    const absorption = await absorbTombstoneRotation({
+      token: presentedKey,
+      linkedPurchaseToken:
+        input.provider === BillingProvider.googlePlay
+          ? input.linkedPurchaseToken
+          : undefined,
+      lineageId: lineage.id,
+    });
+    if (absorption === "conflict") {
+      return { kind: "tombstoned" };
+    }
+  }
+
   const { update } = input;
   const isTerminal =
     update.status === SubscriptionStatus.expired ||
@@ -1044,9 +1100,9 @@ const applyNotificationOnce = async (
             updated.status === SubscriptionStatus.revoked
           ) {
             // Expiry / refund / revoke → bounded clawback of the unused
-            // subscription portion from the current custody holder. Custody
-            // also works after restoration, where account-scoped sub_grant
-            // discovery finds nothing. When the holder is still the original
+            // subscription portion from the CURRENT custody holder (custody
+            // works post-transfer, where account-scoped sub_grant discovery
+            // would find nothing). When the holder is still the original
             // grantee the debit keeps the legacy sub_forfeit shape
             // (idempotent per (sub, period)); custody is invalidated either
             // way so no later move can touch the period again, and an
@@ -1083,8 +1139,9 @@ const applyNotificationOnce = async (
             } else if (custody.state === CUSTODY_STATE_HELD) {
               // Prefer the legacy per-subscription forfeit shape when it
               // applies — it only does when the holder carries the original
-              // account-scoped sub_grant row. A restored holder has no such
-              // row, so custody performs the compensation instead.
+              // account-scoped sub_grant row. A holder who received the
+              // value via transfer (no sub_grant row on their account: the
+              // forfeit skips) is compensated through custody instead.
               const forfeited = await forfeitSubscriptionPeriod(tx, {
                 subscription: updated,
               });
@@ -1202,8 +1259,8 @@ export type VoidedPurchaseCompensation =
 
 /**
  * Play voided-purchase compensation: claw the conservative remainder back
- * from whoever currently holds the VOIDED ORDER's custody, or invalidates
- * deletion escrow. The voided notification's orderId
+ * from whoever currently holds the VOIDED ORDER's custody (original owner,
+ * claim transferee, or deletion escrow). The voided notification's orderId
  * pins the exact `play_order_<orderId>` custody row, so a late void for an
  * old order claws only that period — never the current one. Fail-closed
  * rule: a void with NO orderId, or whose exact custody row is absent

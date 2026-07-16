@@ -304,27 +304,30 @@ this section, and the user-facing deletion copy must not promise erasure of
 
 Subscription state is keyed by `originalTransactionId` (Apple) and
 `purchaseToken` (Google), not by `accountId`, and `Subscription.accountId` is
-a non-null FK. A deleted subscription therefore needs durable provider-key
-state outside the live subscription row. The implementation carries that
-state on `SubscriptionLineage`: deletion removes the account-linked
-subscription and flips the locked lineage to `tombstoned`. Entitlement
-lookups treat a tombstoned key as no entitlement. Recursive Google aliases
-remain active for ordinary verify and RTDN accounting; tombstoned token
-rotation absorption is deferred.
+a non-null FK. Keeping any subscription row therefore requires a shape change:
+a dedicated provider-key tombstone (transaction id or purchase token marked as
+belonging to a deleted account) rather than an "anonymized subscription row",
+which the schema cannot express once the account is gone. Concretely, the
+transition is: inside the deletion transaction, the live `Subscription` row
+(and its `BillingReceipt` children, per the retention regime) is deleted, and
+a tombstone row keyed by provider identity — unique on
+`(provider, originalTransactionId | purchaseToken)` — is inserted atomically.
+Entitlement lookups treat a tombstoned key as no entitlement; Google token
+rotation adds the rotated token to the same tombstone rather than escaping it.
 
 The tombstone must define a small state machine covering:
 
 - Webhook ingestion: the current Apple and Google handlers update known
   subscriptions and acknowledge unknown ones; they do not recreate rows on
-  their own. Post-deletion events for tombstoned keys must be acknowledged
-  without recreating account-linked state.
+  their own. Post-deletion events for tombstoned keys must be acknowledged as
+  an explicit no-op (and counted, for observability).
 - Verification: the account-linked recreation path is authenticated
   subscription verify combined with SIWE auto-provisioning. Both the deletion
   barrier (at mint) and a tombstone check (at verify) are required so a
   deleted user's still-active store subscription cannot silently rebind.
 - Google token rotation: purchase tokens rotate and chain to linked tokens.
-  Recursive alias resolution remains required for verify and RTDN accounting.
-  Absorbing rotations into a tombstoned lineage is deferred to a follow-up.
+  The tombstone must absorb rotations of a tombstoned token without
+  recreating account state.
 - Concurrency: webhook processing currently looks up the subscription before
   its transaction. Deletion racing a webhook must converge (in either order)
   to tombstone-plus-no-op, not to a recreated or orphaned row. This needs
@@ -488,10 +491,10 @@ cannot mint tokens".
   token; tombstone no-op paths; the direct `ClientIdentifier.accountId`
   sweep, including stale rows pointing at re-registered devices.
 - Integration tests for: the full transaction against a real database;
-  webhook replay after deletion (acknowledged, no recreation);
-  partial-failure resume (kill between database commit and each external
-  purge, verify the outbox drains on retry, independent of any further
-  authenticated client request).
+  webhook replay after deletion (acknowledged, no recreation); Google token
+  rotation landing on a tombstoned token; partial-failure resume (kill
+  between database commit and each external purge, verify the outbox drains
+  on retry, independent of any further authenticated client request).
 - Race tests, not just replay tests: deletion concurrent with Apple/Google
   webhook processing; deletion concurrent with subscription verification; a
   Composio link request completing during deletion; a push registration
@@ -506,15 +509,15 @@ cannot mint tokens".
 
 ## Risks & Mitigations
 
-| Risk                                                                                                   | Impact                                  | Mitigation                                                                                                    |
-| ------------------------------------------------------------------------------------------------------ | --------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
-| SIWE auto-provisioning silently recreates a deleted account (retry, paired device, client auto-reauth) | High                                    | Deletion barrier at token mint with a terminal response; barrier checks at verify; fail-closed requireAccount |
-| Retention framed as anonymization overpromises erasure                                                 | High                                    | Pseudonymized-retention regime with per-class purpose, fields, access, and expiry; honest user-facing copy    |
-| Store webhooks or verify recreate rows for deleted accounts                                            | Medium                                  | Provider-key tombstones consulted in webhooks and verify; concurrency semantics plus race tests               |
-| Partial failure strands external data (S3, Composio, notification server)                              | Medium                                  | Transactional outbox snapshot; drain with retries; purge SLA with alerting and operator remediation           |
-| Untracked S3 attachments are unenumerable per account                                                  | High (blocks the iOS confirmation copy) | Explicit decision: retain-and-disclose or ownership index; bucket lifecycle policy either way                 |
-| Stolen JWT deletes an account                                                                          | Medium                                  | Fresh-token requirement; rate limiting; audit trail                                                           |
-| Users expect deletion to stop billing                                                                  | Medium                                  | Client-side disclosure before deletion (iOS plan); tombstones keep webhook handling sane either way           |
+| Risk                                                                                                   | Impact                                  | Mitigation                                                                                                           |
+| ------------------------------------------------------------------------------------------------------ | --------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| SIWE auto-provisioning silently recreates a deleted account (retry, paired device, client auto-reauth) | High                                    | Deletion barrier at token mint with a terminal response; barrier checks at verify; fail-closed requireAccount        |
+| Retention framed as anonymization overpromises erasure                                                 | High                                    | Pseudonymized-retention regime with per-class purpose, fields, access, and expiry; honest user-facing copy           |
+| Store webhooks or verify recreate rows for deleted accounts                                            | Medium                                  | Provider-key tombstones consulted in webhooks and verify; rotation absorption; concurrency semantics plus race tests |
+| Partial failure strands external data (S3, Composio, notification server)                              | Medium                                  | Transactional outbox snapshot; drain with retries; purge SLA with alerting and operator remediation                  |
+| Untracked S3 attachments are unenumerable per account                                                  | High (blocks the iOS confirmation copy) | Explicit decision: retain-and-disclose or ownership index; bucket lifecycle policy either way                        |
+| Stolen JWT deletes an account                                                                          | Medium                                  | Fresh-token requirement; rate limiting; audit trail                                                                  |
+| Users expect deletion to stop billing                                                                  | Medium                                  | Client-side disclosure before deletion (iOS plan); tombstones keep webhook handling sane either way                  |
 
 ## Open Questions
 
@@ -563,8 +566,7 @@ open-question resolutions this implementation shipped with:
   anywhere on this boundary - every check hits the database.
 - **Verify claimable signal**: ownership-mismatch/tombstone 409s keep code
   `subscription_account_mismatch` (append-only law) and gain the additive
-  `claimable` boolean. Live ownership mismatches report `false`; Apple
-  tombstones report `true`.
+  `claimable` boolean.
 - **Barrier**: permanent, keyed hash (HMAC keyed by the dedicated
   `DELETION_HASH_SECRET`, which must never rotate).
 - **Fresh-token requirement**: not in v1 (rate limits + audit instead).
@@ -600,30 +602,32 @@ open-question resolutions this implementation shipped with:
 - Apple App Store Review Guideline 5.1.1(v) (account deletion requirement).
 - Apple developer guidance: "Provide options to delete your app's account".
 
-## Relationship to subscription ownership restoration
+## Relationship to subscription ownership reconciliation (as built)
 
-The historical rationale in this plan considered tombstone restoration and live
-ownership transfer. This branch ships Apple tombstone restoration only. Live
-ownership transfer, its contest and undo machinery, Google claim proof, and
-Play tombstone-rotation absorption are deferred to a follow-up.
+This section originally proposed tombstone-gated transfer only. The
+implementation supersedes it with the subscription-lineage claim design
+(adversarially reviewed; see the claim section below). The July 12-13
+incident remains the motivating case: account recreation orphaned
+subscriptions, leaving the new account with a verify 409 while renewals kept
+enriching the ghost account's wallet.
 
-## Subscription claim
+## Subscription claim (as built)
 
 One `SubscriptionLineage` row per purchase line (Apple originalTransactionId;
 Google linkedPurchaseToken chain resolved to its root, rotated tokens kept as
 aliases) is the canonical first lock for verify, webhooks, claims, and the
-deletion teardown, and the tombstone carrier: deletion flips the lineage to
-`tombstoned` instead of writing a separate tombstone table.
-`LineagePeriodGrant` makes period funding global-once (keyed by the
+deletion teardown, the cooldown anchor, and the tombstone carrier: deletion
+flips the lineage to `tombstoned` instead of writing a separate tombstone
+table. `LineagePeriodGrant` makes period funding global-once (keyed by the
 provider funding event: Apple transactionId / Google latestOrderId), and
 `LineagePeriodCustody` tracks each funded period's remaining value; every
 move debits `D = min(lockedBalance, max(0, cap - consumesSince))` and sets
-`cap := D`, so no sequence of deletion, restoration, or refund events can move
-more than one period allotment and commingled promo/admin/signup credits never
-move.
+`cap := D`, so no sequence of delete/claim/undo/refund events can move more
+than one period allotment and commingled promo/admin/signup credits never
+transfer.
 
-`POST /v2/accounts/me/subscription/claim` is the explicit one-time Apple
-restoration act:
+`POST /v2/accounts/me/subscription/claim` is the
+explicit one-time claim act:
 
 - Proof requirements are authoritative: verified artifact, provider-confirmed
   entitled-now, and latest-transaction match (no signedDate freshness window
@@ -633,11 +637,19 @@ restoration act:
 - Tombstone restoration (deleted owner): the deletion transaction escrowed
   the conservative remainder into custody; the claim releases the escrow to
   the claimant (never a second grant) and flips the lineage back to live.
-  Controlled by `SUBSCRIPTION_CLAIM_TOMBSTONE_ENABLED`, which defaults on.
-- Claims against live lineages deterministically fail closed. Google claim
-  request shapes remain accepted for client compatibility but fail closed
-  before any provider call. Google verify, RTDN, recursive alias resolution,
-  grants, custody, escrow, void accounting, and reconciliation remain active.
-- Live ownership transfer, contest notifications and settlement, undo, Google
-  claim proof, and Play tombstone-rotation absorption are deferred to a
-  follow-up.
+  Enabled at launch (`SUBSCRIPTION_CLAIM_TOMBSTONE_ENABLED`).
+- Live bearer-transfer (owner still exists): behind
+  `SUBSCRIPTION_CLAIM_LIVE_TRANSFER_ENABLED` (off until security sign-off),
+  with a 72-hour contest window by default (202 pending; the old account's
+  devices are push-notified; any authenticated act by the old account before
+  settlement vetoes), a 30-day per-lineage cooldown, and a one-shot CAS undo
+  for the immediately previous owner - cooldown-exempt, executes
+  immediately, and freezes further automated transfers on the lineage
+  (operator re-home only). Recovery language is honest: the previous owner
+  can recover once, within 30 days; after the undo is spent, the deadline
+  passes, or the lineage moves on again, recovery is support-mediated.
+- Deviation from the original section: claims work without a deletion
+  tombstone (bounded bearer-transfer semantics), because the primary heal
+  class - ghost accounts whose keys are gone - can never produce an
+  old-owner approval, and the consequences are bounded by conservation,
+  attestation, cooldown, contest window, undo, journaling, and alerting.

@@ -1,7 +1,8 @@
 export type NotificationType =
   | "Protocol"
   | "InviteJoinRequest"
-  | "CreditsRefilled";
+  | "CreditsRefilled"
+  | "SubscriptionClaimPending";
 
 export type ProtocolNotificationData = {
   contentTopic: string;
@@ -40,11 +41,20 @@ export type CreditsRefilledNotificationData = {
   nextRefreshAt: string; // ISO UTC, start of next UTC day
 };
 
+// Sent to the OLD owner's devices when a live-tier subscription claim opens
+// its contest window: any authenticated act before contestEndsAt cancels the
+// pending transfer.
+export type SubscriptionClaimPendingNotificationData = {
+  contestEndsAt: string; // ISO UTC
+  provider: "apple" | "googlePlay";
+};
+
 // Mapping from NotificationType to its payload shape
 export type NotificationTypeToData = {
   Protocol: ProtocolNotificationData;
   InviteJoinRequest: InviteJoinRequestNotificationData;
   CreditsRefilled: CreditsRefilledNotificationData;
+  SubscriptionClaimPending: SubscriptionClaimPendingNotificationData;
 };
 
 // Base notification payload with XOR semantics for v1/v2 transition
@@ -86,8 +96,17 @@ export type CreditsRefilledPayload = {
   notificationData: CreditsRefilledNotificationData;
 };
 
+// Backend-originated push to the old owner's devices when a live-tier claim
+// opens its contest window. Same JWT-less shape as CreditsRefilledPayload.
+export type SubscriptionClaimPendingPayload = {
+  clientId: string; // deviceId, for v2-shaped routing
+  notificationType: "SubscriptionClaimPending";
+  notificationData: SubscriptionClaimPendingNotificationData;
+};
+
 // Union type for push services that can handle both v1 and v2
 export type AnyNotificationPayloadWithJWT =
   | NotificationPayloadWithJWTToken
   | V2NotificationPayload
-  | CreditsRefilledPayload;
+  | CreditsRefilledPayload
+  | SubscriptionClaimPendingPayload;

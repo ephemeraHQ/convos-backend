@@ -1,5 +1,6 @@
 import type { Request, Response } from "express";
 import { z } from "zod";
+import { stampAuthActivity } from "@/accounts/auth-activity";
 import { isIdentityBarred } from "@/accounts/deletion/barrier";
 import {
   IdentityBarredError,
@@ -170,6 +171,22 @@ export async function generateToken(
       return;
     }
     accountId = upserted.accountId;
+
+    // Activity stamp: lastAuthAt records the most recent authenticated mint
+    // for this account (consumed by activity-recency checks such as the
+    // subscription-claim dead-or-silent gate, and by the contest-window
+    // veto). Fail closed: a mint that cannot durably stamp fails with a 5xx
+    // so the client retries - proceeding unstamped could silently cost the
+    // owner their veto on a pending transfer. The raw UPDATE no-ops (zero
+    // rows) when the row vanished (deletion racing this mint) - that is not
+    // a failure, there is no veto left to preserve.
+    try {
+      await stampAuthActivity(accountId, null);
+    } catch (err) {
+      req.log.error({ err, accountId }, "auth.account.last_auth_stamp_failed");
+      res.status(500).json({ error: "Failed to generate token" });
+      return;
+    }
 
     // Best-effort backfill of DeviceRegistration.accountId.
     //
