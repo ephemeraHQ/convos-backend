@@ -1,5 +1,8 @@
-import type { Prisma } from "@prisma/client";
+import { Prisma } from "@prisma/client";
 import { prisma } from "@/utils/prisma";
+
+const dirSql = (dir: "asc" | "desc"): Prisma.Sql =>
+  dir === "asc" ? Prisma.sql`ASC` : Prisma.sql`DESC`;
 
 export const ACCOUNTS_LIST_LIMIT = 50;
 
@@ -40,17 +43,19 @@ export const listByBalance = async (args: {
   min?: number | null;
   max?: number | null;
   sort?: "asc" | "desc";
+  sortDir?: "asc" | "desc";
   page?: number;
   limit?: number;
 }): Promise<Page<BalanceRow>> => {
   const limit = args.limit ?? ACCOUNTS_LIST_LIMIT;
   const skip = (args.page ?? 0) * limit;
+  const dir = args.sortDir ?? args.sort ?? "desc";
   const balance: Prisma.BigIntFilter = {};
   if (args.min != null) balance.gte = BigInt(args.min);
   if (args.max != null) balance.lte = BigInt(args.max);
   const rows = await prisma.userCredits.findMany({
     where: Object.keys(balance).length ? { balance } : {},
-    orderBy: [{ balance: args.sort ?? "desc" }, { accountId: "asc" }],
+    orderBy: [{ balance: dir }, { accountId: "asc" }],
     take: limit + 1,
     skip,
     select: { accountId: true, balance: true },
@@ -63,12 +68,21 @@ export const listByBalance = async (args: {
 
 export const listBrokenSubscribers = async (args: {
   maxBalance?: number;
+  sortBy?: "balance" | "currentPeriodEnd" | "tier";
+  sortDir?: "asc" | "desc";
   page?: number;
   limit?: number;
 }): Promise<Page<BrokenRow>> => {
   const limit = args.limit ?? ACCOUNTS_LIST_LIMIT;
   const skip = (args.page ?? 0) * limit;
   const maxBalance = BigInt(args.maxBalance ?? 0);
+  const d = dirSql(args.sortDir ?? "asc");
+  const orderBy =
+    args.sortBy === "currentPeriodEnd"
+      ? Prisma.sql`ORDER BY sub."currentPeriodEnd" ${d}, uc."accountId"`
+      : args.sortBy === "tier"
+        ? Prisma.sql`ORDER BY sub.tier ${d}, uc."accountId"`
+        : Prisma.sql`ORDER BY uc.balance ${d}, uc."accountId"`;
   const rows = await prisma.$queryRaw<BrokenRow[]>`
     SELECT uc."accountId", uc.balance,
            sub.tier, sub.status AS "effectiveStatus", sub."currentPeriodEnd"
@@ -86,7 +100,7 @@ export const listBrokenSubscribers = async (args: {
       LIMIT 1
     ) sub ON true
     WHERE uc.balance <= ${maxBalance}
-    ORDER BY uc.balance ASC, uc."accountId"
+    ${orderBy}
     LIMIT ${limit + 1} OFFSET ${skip}
   `;
   return page(
@@ -103,18 +117,25 @@ export const listBrokenSubscribers = async (args: {
 
 export const listByGrantKind = async (args: {
   kind: string;
+  sortBy?: "latestGrantAt" | "balance";
+  sortDir?: "asc" | "desc";
   page?: number;
   limit?: number;
 }): Promise<Page<GrantKindRow>> => {
   const limit = args.limit ?? ACCOUNTS_LIST_LIMIT;
   const skip = (args.page ?? 0) * limit;
+  const d = dirSql(args.sortDir ?? "desc");
+  const orderBy =
+    args.sortBy === "balance"
+      ? Prisma.sql`ORDER BY uc.balance ${d}, cl."accountId"`
+      : Prisma.sql`ORDER BY "latestGrantAt" ${d}, cl."accountId"`;
   const rows = await prisma.$queryRaw<GrantKindRow[]>`
     SELECT cl."accountId", uc.balance, MAX(cl."createdAt") AS "latestGrantAt"
     FROM "CreditLedger" cl
     JOIN "UserCredits" uc ON uc."accountId" = cl."accountId"
     WHERE cl."grantKindId" = ${args.kind}
     GROUP BY cl."accountId", uc.balance
-    ORDER BY "latestGrantAt" DESC, cl."accountId"
+    ${orderBy}
     LIMIT ${limit + 1} OFFSET ${skip}
   `;
   return page(
@@ -130,12 +151,21 @@ export const listByGrantKind = async (args: {
 export const listByActivity = async (args: {
   state: "active" | "dormant";
   days?: number;
+  sortBy?: "lastConsumeAt" | "balance";
+  sortDir?: "asc" | "desc";
   page?: number;
   limit?: number;
 }): Promise<Page<ActivityRow>> => {
   const limit = args.limit ?? ACCOUNTS_LIST_LIMIT;
   const skip = (args.page ?? 0) * limit;
   const days = args.days ?? 30;
+  const d = dirSql(args.sortDir ?? "desc");
+  // Tiebreaker must be the output-column "accountId", not uc."accountId": the
+  // active branch groups by cl."accountId" and would 42803 on uc."accountId".
+  const orderBy =
+    args.sortBy === "balance"
+      ? Prisma.sql`ORDER BY uc.balance ${d}, "accountId"`
+      : Prisma.sql`ORDER BY "lastConsumeAt" ${d} NULLS LAST, "accountId"`;
   const rows =
     args.state === "active"
       ? await prisma.$queryRaw<
@@ -147,7 +177,7 @@ export const listByActivity = async (args: {
           WHERE cl.reason = 'consume'
             AND cl."createdAt" >= now() - (${days} * interval '1 day')
           GROUP BY cl."accountId", uc.balance
-          ORDER BY "lastConsumeAt" DESC, cl."accountId"
+          ${orderBy}
           LIMIT ${limit + 1} OFFSET ${skip}
         `
       : await prisma.$queryRaw<ActivityRow[]>`
@@ -160,7 +190,7 @@ export const listByActivity = async (args: {
             WHERE cl."accountId" = uc."accountId" AND cl.reason = 'consume'
               AND cl."createdAt" >= now() - (${days} * interval '1 day')
           )
-          ORDER BY "lastConsumeAt" DESC NULLS LAST, uc."accountId"
+          ${orderBy}
           LIMIT ${limit + 1} OFFSET ${skip}
         `;
   return page(

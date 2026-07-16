@@ -265,4 +265,53 @@ describe("accounts-repository", () => {
     expect(dorIds).toContain(never); // never-consumed is dormant
     expect(dorIds).not.toContain(active);
   });
+
+  describe("listByBalance — sortDir", () => {
+    it("sortDir asc returns ascending balances, desc returns descending", async () => {
+      const a = await seedAccount();
+      tracker.push(a);
+      await setBalance(a, 10n);
+      const b = await seedAccount();
+      tracker.push(b);
+      await setBalance(b, 30n);
+      const c = await seedAccount();
+      tracker.push(c);
+      await setBalance(c, 20n);
+      const ids = new Set([a, b, c]);
+
+      const asc = await listByBalance({ sortDir: "asc", limit: 1000 });
+      const ascOurs = asc.rows
+        .filter((r) => ids.has(r.accountId))
+        .map((r) => r.balance);
+      expect(ascOurs).toEqual([10n, 20n, 30n]);
+
+      const desc = await listByBalance({ sortDir: "desc", limit: 1000 });
+      const descOurs = desc.rows
+        .filter((r) => ids.has(r.accountId))
+        .map((r) => r.balance);
+      expect(descOurs).toEqual([30n, 20n, 10n]);
+    });
+  });
+
+  describe("listByActivity — sortBy=balance keeps NULLS-LAST stability", () => {
+    it("dormant sortBy=balance asc does not throw and orders by balance", async () => {
+      const a = await seedAccount();
+      tracker.push(a);
+      await setBalance(a, 5n);
+      const b = await seedAccount();
+      tracker.push(b);
+      await setBalance(b, 15n);
+      const ids = new Set([a, b]);
+      const p = await listByActivity({
+        state: "dormant",
+        sortBy: "balance",
+        sortDir: "asc",
+        limit: 1000,
+      });
+      const ours = p.rows
+        .filter((r) => ids.has(r.accountId))
+        .map((r) => r.balance);
+      expect(ours).toEqual([5n, 15n]);
+    });
+  });
 });
