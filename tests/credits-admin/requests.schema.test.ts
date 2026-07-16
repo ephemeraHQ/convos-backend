@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { accountsListQuerySchema } from "@/api/v2/credits-admin/schemas/requests";
+import {
+  accountsListQuerySchema,
+  ledgerQuerySchema,
+} from "@/api/v2/credits-admin/schemas/requests";
 
 describe("accountsListQuerySchema — sort allowlist", () => {
   it("balance accepts sortBy=balance", () => {
@@ -54,5 +57,52 @@ describe("accountsListQuerySchema — sort allowlist", () => {
       expect(p.data.sortBy).toBe("latestGrantAt");
       expect(p.data.sortDir).toBe("desc");
     }
+  });
+});
+
+describe("ledgerQuerySchema — ledger filter", () => {
+  it("accepts no params (back-compat)", () => {
+    expect(ledgerQuerySchema.safeParse({}).success).toBe(true);
+  });
+
+  it("accepts kind=subscription and every grant kind", () => {
+    for (const kind of [
+      "subscription",
+      "sub_grant",
+      "sub_forfeit",
+      "signup_bonus",
+      "daily_refill",
+      "manual",
+    ]) {
+      expect(ledgerQuerySchema.safeParse({ kind }).success).toBe(true);
+    }
+  });
+
+  it("rejects an unknown kind", () => {
+    expect(ledgerQuerySchema.safeParse({ kind: "bogus" }).success).toBe(false);
+  });
+
+  it("accepts reason consume/grant/adjust and rejects the dead refill value", () => {
+    for (const reason of ["consume", "grant", "adjust"]) {
+      expect(ledgerQuerySchema.safeParse({ reason }).success).toBe(true);
+    }
+    expect(ledgerQuerySchema.safeParse({ reason: "refill" }).success).toBe(
+      false,
+    );
+  });
+
+  it("coerces YYYY-MM-DD dates to Date and rejects garbage", () => {
+    const ok = ledgerQuerySchema.safeParse({
+      from: "2026-07-01",
+      to: "2026-07-17",
+    });
+    expect(ok.success).toBe(true);
+    if (ok.success) {
+      expect(ok.data.from).toBeInstanceOf(Date);
+      expect(ok.data.to).toBeInstanceOf(Date);
+    }
+    expect(ledgerQuerySchema.safeParse({ to: "not-a-date" }).success).toBe(
+      false,
+    );
   });
 });
