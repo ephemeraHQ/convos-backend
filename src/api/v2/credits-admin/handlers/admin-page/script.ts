@@ -186,8 +186,8 @@ export const clientScript = (): string => `
   var currentAccountId=null;
   function subChip(j){
     var state=j.subscription?j.subscription.effectiveStatus:"none";
-    var cls=!j.subscription?"badge-none":(j.isEntitled?"badge-yes":"badge-no");
-    return '<span class="badge '+cls+'">'+esc(state)+"</span>";
+    var cls=!j.subscription?"pill-none":(j.isEntitled?"pill-ok":"pill-bad");
+    return '<span class="pill '+cls+'">'+esc(state)+"</span>";
   }
   function renderSpark(usage){
     if(!usage||!usage.length) return '<span class="muted-note">No usage in the last 30 days.</span>';
@@ -245,7 +245,7 @@ export const clientScript = (): string => `
     el("detail").classList.add("open"); el("detail").setAttribute("aria-hidden","false"); el("detail-scrim").classList.remove("hidden");
     guardFetch("/accounts/"+encodeURIComponent(accountId)).then(function(r){ if(r.status===404){ throw new Error("not_found"); } return r.json(); })
       .then(function(j){ if(accountId!==currentAccountId) return; renderDetail(j); loadAudit(accountId); })
-      .catch(function(e){ if(accountId!==currentAccountId) return; if(e.message==="not_found"){ el("detail-body").innerHTML='<div class="badge badge-no">Account not found</div>'; } else if(e.message!=="reauth"){ toast("Failed to load account","error"); } });
+      .catch(function(e){ if(accountId!==currentAccountId) return; if(e.message==="not_found"){ el("detail-body").innerHTML='<div class="pill pill-bad">Account not found</div>'; } else if(e.message!=="reauth"){ toast("Failed to load account","error"); } });
   }
   function mutate(kind){
     if(!currentAccountId) return;

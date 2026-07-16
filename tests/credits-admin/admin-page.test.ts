@@ -58,7 +58,7 @@ describe("credits-admin page (console shell)", () => {
     const res = await adminRequest(app, false).get("/api/v2/credits-admin/");
     expect(res.text).toContain("/grant");
     expect(res.text).toContain("/adjust");
-    expect(res.text).toContain("badge-none"); // sub-state chip (none/entitled/lapsed)
+    expect(res.text).toContain("pill-none"); // sub-state chip (none/entitled/lapsed)
     expect(res.text).toContain("usage-spark");
     expect(res.text).toContain("perPeriodCredits");
   });
@@ -82,6 +82,33 @@ describe("credits-admin page (console shell)", () => {
     // setView() retitles this per view; pins the element's existence only —
     // the label swap itself is runtime behaviour a string assertion can't reach.
     expect(res.text).toContain('id="center-title"');
+  });
+});
+
+describe("admin page — brand", () => {
+  let app: Express;
+  beforeAll(() => {
+    app = buildCreditsAdminApp();
+  });
+
+  it("uses the Lava brand token and drops the old navy token", async () => {
+    const res = await adminRequest(app).get("/api/v2/credits-admin/");
+    expect(res.status).toBe(200);
+    expect(res.text).toContain("--color-brand:#FC4F37");
+    expect(res.text).not.toContain("#283a75");
+    expect(res.text).not.toContain("💳");
+  });
+
+  it("renders the chat-bubble SVG mark and wordmark", async () => {
+    const res = await adminRequest(app).get("/api/v2/credits-admin/");
+    expect(res.text).toContain("M27.7736 13.8868");
+    expect(res.text).toContain("Convos Credits");
+  });
+
+  it("uses .pill status classes, not legacy .badge", async () => {
+    const res = await adminRequest(app).get("/api/v2/credits-admin/");
+    expect(res.text).toContain("pill-none");
+    expect(res.text).not.toContain('class="badge');
   });
 });
 
