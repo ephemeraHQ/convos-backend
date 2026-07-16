@@ -116,4 +116,17 @@ describe("GET /api/v2/credits-admin/audit", () => {
     expect(res.status).toBe(400);
     expect(res.body).toMatchObject({ code: "invalid_cursor" });
   });
+
+  it("400 (not 500) on an audit cursor whose id is not a uuid", async () => {
+    const accountId = await seedAccount();
+    tracker.push(accountId);
+    const cursor = Buffer.from("2026-07-14T00:00:00.000Z|not-a-uuid").toString(
+      "base64url",
+    );
+    const res = await adminRequest(app).get(
+      `/api/v2/credits-admin/audit?accountId=${accountId}&cursor=${encodeURIComponent(cursor)}`,
+    );
+    expect(res.status).toBe(400);
+    expect(res.body).toMatchObject({ code: "invalid_cursor" });
+  });
 });

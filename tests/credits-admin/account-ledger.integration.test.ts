@@ -95,4 +95,17 @@ describe("GET /api/v2/credits-admin/accounts/:accountId/ledger", () => {
     expect(res.status).toBe(400);
     expect(res.body).toMatchObject({ code: "invalid_cursor" });
   });
+
+  it("400 (not 500) on a decodable cursor whose id is not a uuid", async () => {
+    const a = await seedAccount();
+    tracker.push(a);
+    const cursor = Buffer.from("2026-07-14T00:00:00.000Z|not-a-uuid").toString(
+      "base64url",
+    );
+    const res = await adminRequest(app).get(
+      `/api/v2/credits-admin/accounts/${a}/ledger?cursor=${encodeURIComponent(cursor)}`,
+    );
+    expect(res.status).toBe(400);
+    expect(res.body).toMatchObject({ code: "invalid_cursor" });
+  });
 });

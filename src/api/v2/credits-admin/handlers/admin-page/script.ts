@@ -223,6 +223,7 @@ export const clientScript = (): string => `
   });
   var currentAccountId=null;
   var ledgerCursor=null, auditCursor=null;
+  var detailGen=0;
   function subChip(j){
     var state=j.subscription?j.subscription.effectiveStatus:"none";
     var cls=!j.subscription?"pill-none":(j.isEntitled?"pill-ok":"pill-bad");
@@ -261,10 +262,10 @@ export const clientScript = (): string => `
   function loadLedgerMore(){
     if(!ledgerCursor||!currentAccountId) return;
     var btn=el("d-ledger-foot")&&el("d-ledger-foot").querySelector("button"); if(btn&&btn.disabled) return; if(btn) btn.disabled=true;
-    var acct=currentAccountId;
+    var acct=currentAccountId, gen=detailGen;
     guardFetch("/accounts/"+encodeURIComponent(acct)+"/ledger?cursor="+encodeURIComponent(ledgerCursor))
       .then(function(r){ if(!r.ok) throw new Error("more_failed"); return r.json(); })
-      .then(function(j){ if(acct!==currentAccountId) return;
+      .then(function(j){ if(acct!==currentAccountId||gen!==detailGen) return;
         el("d-ledger").insertAdjacentHTML("beforeend", rowsHtml(j.rows, ledgerCols));
         ledgerCursor=j.nextCursor||null;
         paintFoot("d-ledger-foot", true, ledgerCursor, function(){ loadLedgerMore(); });
@@ -316,10 +317,10 @@ export const clientScript = (): string => `
   function loadAuditMore(){
     if(!auditCursor||!currentAccountId) return;
     var btn=el("d-audit-foot")&&el("d-audit-foot").querySelector("button"); if(btn&&btn.disabled) return; if(btn) btn.disabled=true;
-    var acct=currentAccountId;
+    var acct=currentAccountId, gen=detailGen;
     guardFetch("/audit?accountId="+encodeURIComponent(acct)+"&cursor="+encodeURIComponent(auditCursor))
       .then(function(r){ if(!r.ok) throw new Error("more_failed"); return r.json(); })
-      .then(function(j){ if(acct!==currentAccountId) return;
+      .then(function(j){ if(acct!==currentAccountId||gen!==detailGen) return;
         el("d-audit").insertAdjacentHTML("beforeend", rowsHtml(j.audit, auditCols));
         auditCursor=j.nextCursor||null;
         paintFoot("d-audit-foot", true, auditCursor, function(){ loadAuditMore(); });
@@ -328,6 +329,7 @@ export const clientScript = (): string => `
   }
   function openDetail(accountId){
     currentAccountId=accountId;
+    detailGen++;
     el("detail-body").innerHTML='<div class="muted-note">Loading…</div>';
     el("detail").setAttribute("aria-hidden","false"); el("detail-scrim").classList.remove("hidden");
     guardFetch("/accounts/"+encodeURIComponent(accountId)).then(function(r){ if(r.status===404){ throw new Error("not_found"); } return r.json(); })

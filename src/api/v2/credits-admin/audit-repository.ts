@@ -38,6 +38,9 @@ export const listAdminAuditByAccount = async (
 
 export type RecentAuditCursor = { createdAt: Date; id: string };
 
+const CURSOR_ID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 // Delimiter-safe: neither field can contain "|" (ISO timestamp + UUID id).
 export const encodeAuditCursor = (r: { createdAt: Date; id: string }): string =>
   Buffer.from(`${r.createdAt.toISOString()}|${r.id}`).toString("base64url");
@@ -49,7 +52,10 @@ export const decodeAuditCursor = (raw: string): RecentAuditCursor | null => {
     if (idx < 0) return null;
     const createdAt = new Date(decoded.slice(0, idx));
     const id = decoded.slice(idx + 1);
-    if (Number.isNaN(createdAt.getTime()) || !id) return null;
+    // id must be a UUID: the keyset compares it against the uuid `id` column, so
+    // a non-uuid would raise a Postgres 22P02 (500) instead of a clean 400.
+    if (Number.isNaN(createdAt.getTime()) || !CURSOR_ID_RE.test(id))
+      return null;
     return { createdAt, id };
   } catch {
     return null;

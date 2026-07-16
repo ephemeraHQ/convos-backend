@@ -210,6 +210,13 @@ describe("admin page — full history load-more", () => {
     expect(res.text).toContain("loadLedgerMore");
     expect(res.text).toContain("loadAuditMore");
   });
+
+  it("guards load-more appends with a detail-generation counter", async () => {
+    const res = await adminRequest(app).get("/api/v2/credits-admin/");
+    expect(res.text).toContain("detailGen");
+    // in-flight appends bail when the detail was re-rendered (e.g. after a grant)
+    expect(res.text).toContain("gen!==detailGen");
+  });
 });
 
 describe("admin page — balance table columns", () => {
