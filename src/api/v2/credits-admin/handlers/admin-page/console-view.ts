@@ -37,7 +37,6 @@ export const consoleView = (): string => `
       <div id="ctl-balance" class="mode-ctl hidden">
         <input id="bal-min" type="number" placeholder="Min credits">
         <input id="bal-max" type="number" placeholder="Max credits">
-        <div class="select-wrap"><select id="bal-sort"><option value="desc">High → low</option><option value="asc">Low → high</option></select>${CHEV}</div>
       </div>
       <div id="ctl-broken" class="mode-ctl hidden">
         <input id="broken-max" type="number" value="0" placeholder="Max balance (≤)">

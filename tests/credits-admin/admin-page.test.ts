@@ -131,6 +131,29 @@ describe("admin page — single search box", () => {
   });
 });
 
+describe("admin page — tables", () => {
+  let app: Express;
+  beforeAll(() => {
+    app = buildCreditsAdminApp();
+  });
+
+  it("no longer truncates account ids with shortId", async () => {
+    const res = await adminRequest(app).get("/api/v2/credits-admin/");
+    expect(res.text).not.toContain("function shortId");
+    expect(res.text).not.toContain("slice(0,8)");
+  });
+  it("wires server-side sort params and a resize handle", async () => {
+    const res = await adminRequest(app).get("/api/v2/credits-admin/");
+    expect(res.text).toContain("sortBy=");
+    expect(res.text).toContain("sortDir=");
+    expect(res.text).toContain('"rz"');
+  });
+  it("broken view defines a Period end column", async () => {
+    const res = await adminRequest(app).get("/api/v2/credits-admin/");
+    expect(res.text).toContain("Period end");
+  });
+});
+
 describe("admin client script — syntax", () => {
   it("clientScript() is syntactically valid JS", () => {
     // new Function parses the body without executing it — catches syntax errors
