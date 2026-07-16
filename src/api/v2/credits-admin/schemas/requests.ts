@@ -18,6 +18,10 @@ export const auditRecentQuerySchema = z.object({
   action: z.enum(["all", "grant", "adjust"]).default("all"),
 });
 
+export const ledgerQuerySchema = z.object({
+  cursor: z.string().trim().min(1).max(512).optional(),
+});
+
 export const grantBodySchema = z.object({
   credits: z.number().int().positive().max(MAX_ADMIN_GRANT_CREDITS),
   reason: z.string().trim().min(1).max(256),
