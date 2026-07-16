@@ -11,11 +11,16 @@ export const searchQuerySchema = z.object({
 
 export const auditQuerySchema = z.object({
   accountId: accountIdSchema,
+  cursor: z.string().trim().min(1).max(512).optional(),
 });
 
 export const auditRecentQuerySchema = z.object({
   cursor: z.string().trim().min(1).max(512).optional(),
   action: z.enum(["all", "grant", "adjust"]).default("all"),
+});
+
+export const ledgerQuerySchema = z.object({
+  cursor: z.string().trim().min(1).max(512).optional(),
 });
 
 export const grantBodySchema = z.object({

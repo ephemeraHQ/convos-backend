@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { meGuard } from "@/api/v2/accounts/middleware/meGuard";
+import { accountLedgerGetHandler } from "./handlers/account-ledger-get";
 import { accountViewGetHandler } from "./handlers/account-view-get";
 import { accountsListGetHandler } from "./handlers/accounts-list-get";
 import { adjustPostHandler } from "./handlers/adjust-post";
@@ -41,6 +42,12 @@ creditsAdminRouter.get(
   creditsAdminTokenAuth,
   meGuard,
   accountViewGetHandler,
+);
+creditsAdminRouter.get(
+  "/accounts/:accountId/ledger",
+  creditsAdminTokenAuth,
+  meGuard,
+  accountLedgerGetHandler,
 );
 
 // Audited mutations — token gate, then verified CF identity, then UUID guard.

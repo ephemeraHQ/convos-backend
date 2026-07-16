@@ -167,14 +167,21 @@ describe("listRecentAdminAudit (global, keyset)", () => {
     expect(seen.size).toBe(4); // no skips
   });
 
-  it("round-trips the cursor and rejects garbage", () => {
+  it("round-trips the cursor and rejects garbage + non-uuid ids", () => {
+    const id = "11111111-1111-4111-8111-111111111111";
     const c = encodeAuditCursor({
       createdAt: new Date("2026-07-14T00:00:00.000Z"),
-      id: "abc",
+      id,
     });
     const d = decodeAuditCursor(c);
-    expect(d?.id).toBe("abc");
+    expect(d?.id).toBe(id);
     expect(d?.createdAt.toISOString()).toBe("2026-07-14T00:00:00.000Z");
     expect(decodeAuditCursor("not-a-cursor%%%")).toBeNull();
+    // A valid timestamp with a non-uuid id must be rejected — otherwise the
+    // keyset compares it against the uuid `id` column and 500s (22P02).
+    const nonUuid = Buffer.from("2026-07-14T00:00:00.000Z|not-a-uuid").toString(
+      "base64url",
+    );
+    expect(decodeAuditCursor(nonUuid)).toBeNull();
   });
 });

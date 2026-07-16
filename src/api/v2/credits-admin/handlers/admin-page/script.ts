@@ -46,7 +46,8 @@ export const clientScript = (): string => `
   el("lock").addEventListener("click", lock);
   el("brand").addEventListener("click", function(){ closeDetail(); });
   el("detail-close").addEventListener("click", closeDetail);
-  el("detail-scrim").addEventListener("click", closeDetail);
+  el("detail-scrim").addEventListener("click", function(e){ if(e.target===el("detail-scrim")) closeDetail(); });
+  document.addEventListener("keydown", function(e){ if(e.key==="Escape" && el("detail-scrim") && !el("detail-scrim").classList.contains("hidden")) closeDetail(); });
 
   // --- stubs completed in later tasks ---
   var activityAction="all";
@@ -125,9 +126,11 @@ export const clientScript = (): string => `
   var accountsSort={ balance:{by:"balance",dir:"desc"}, broken:{by:"balance",dir:"asc"}, grantKind:{by:"latestGrantAt",dir:"desc"}, active:{by:"lastConsumeAt",dir:"desc"}, dormant:{by:"lastConsumeAt",dir:"desc"} };
   var colAccount=["Account",function(r){return r.accountId;},"mono"];
   var colBalance=["Balance",function(r){return fmtCredits(r.balanceCredits);},"num","balance"];
+  var colWallet=["Wallet",function(r){return r.wallet||"—";},"mono"];
+  var colLastActivity=["Last activity",function(r){return fmtDate(r.lastConsumeAt);},"nowrap"];
   var userListCols=[colAccount,colBalance,["Last consume",function(r){return fmtDate(r.lastConsumeAt);},"nowrap","lastConsumeAt"]];
   var accountCols={
-    balance:[colAccount,colBalance],
+    balance:[colAccount,colWallet,colLastActivity,colBalance],
     broken:[colAccount,colBalance,["Tier",function(r){return r.tier||"—";},null,"tier"],["Status",function(r){return r.effectiveStatus||"—";}],["Period end",function(r){return fmtDate(r.currentPeriodEnd);},"nowrap","currentPeriodEnd"]],
     grantKind:[colAccount,colBalance,["Latest grant",function(r){return fmtDate(r.latestGrantAt);},"nowrap","latestGrantAt"]],
     active:userListCols,
@@ -219,6 +222,8 @@ export const clientScript = (): string => `
     c.addEventListener("change", function(){ if(currentView!=="activity") loadAccounts(true); });
   });
   var currentAccountId=null;
+  var ledgerCursor=null, auditCursor=null;
+  var detailGen=0;
   function subChip(j){
     var state=j.subscription?j.subscription.effectiveStatus:"none";
     var cls=!j.subscription?"pill-none":(j.isEntitled?"pill-ok":"pill-bad");
@@ -241,6 +246,31 @@ export const clientScript = (): string => `
       var fn = typeof c==="function" ? c : c[0], cls = typeof c==="function" ? "" : c[1];
       return "<td"+(cls?' class="'+cls+'"':"")+">"+fn(r)+"</td>";
     }).join("")+"</tr>"; }).join("");
+  }
+  var ledgerCols=[[function(r){return fmtDate(r.createdAt);},"nowrap"],[function(r){return esc(r.delta);},"num"],function(r){return esc(r.reason);},[function(r){return esc(r.grantKindId||"—");},"mono"],function(r){return esc(r.note||"");}];
+  function paintFoot(footId, hasRows, nextCursor, moreFn){
+    var foot=el(footId); if(!foot) return;
+    if(!hasRows){ foot.innerHTML='<div class="muted-note">Nothing here yet.</div>'; return; }
+    if(nextCursor){ foot.innerHTML='<button class="btn btn-secondary btn-more">Load more</button>'; foot.querySelector("button").onclick=moreFn; }
+    else { foot.innerHTML=""; }
+  }
+  function renderLedgerFirst(j){
+    ledgerCursor=j.ledgerNextCursor||null;
+    el("d-ledger").innerHTML = rowsHtml(j.ledger, ledgerCols);
+    paintFoot("d-ledger-foot", (j.ledger&&j.ledger.length>0), ledgerCursor, function(){ loadLedgerMore(); });
+  }
+  function loadLedgerMore(){
+    if(!ledgerCursor||!currentAccountId) return;
+    var btn=el("d-ledger-foot")&&el("d-ledger-foot").querySelector("button"); if(btn&&btn.disabled) return; if(btn) btn.disabled=true;
+    var acct=currentAccountId, gen=detailGen;
+    guardFetch("/accounts/"+encodeURIComponent(acct)+"/ledger?cursor="+encodeURIComponent(ledgerCursor))
+      .then(function(r){ if(!r.ok) throw new Error("more_failed"); return r.json(); })
+      .then(function(j){ if(acct!==currentAccountId||gen!==detailGen) return;
+        el("d-ledger").insertAdjacentHTML("beforeend", rowsHtml(j.rows, ledgerCols));
+        ledgerCursor=j.nextCursor||null;
+        paintFoot("d-ledger-foot", true, ledgerCursor, function(){ loadLedgerMore(); });
+      })
+      .catch(function(e){ paintFoot("d-ledger-foot", true, ledgerCursor, function(){ loadLedgerMore(); }); if(e.message!=="reauth") toast("Failed to load more","error"); });
   }
   function renderDetail(j){
     var sub=j.subscription;
@@ -265,25 +295,43 @@ export const clientScript = (): string => `
       +'<div class="card"><h3>Adjust</h3><input id="d-adjust-delta" type="number" placeholder="±credits"><input id="d-adjust-reason" placeholder="Reason"><button id="d-adjust-btn" class="btn btn-danger">Adjust</button></div>'
       +'<div class="card"><h3>Usage (30d)</h3><div id="usage-spark"></div></div>'
       +'<div class="card"><h3>Daily refills</h3><div class="tablewrap"><table><tbody id="d-refills"></tbody></table></div></div>'
-      +'<div class="card"><h3>Recent ledger</h3><div class="tablewrap"><table><tbody id="d-ledger"></tbody></table></div></div>'
-      +'<div class="card"><h3>Admin audit</h3><div class="tablewrap"><table><tbody id="d-audit"></tbody></table></div></div>';
+      +'<div class="card"><h3>Recent ledger</h3><div class="tablewrap"><table><tbody id="d-ledger"></tbody></table></div><div id="d-ledger-foot"></div></div>'
+      +'<div class="card"><h3>Admin audit</h3><div class="tablewrap"><table><tbody id="d-audit"></tbody></table></div><div id="d-audit-foot"></div></div>';
     el("usage-spark").innerHTML = renderUsage(j.usageDaily);
     el("d-refills").innerHTML = (j.dailyRefills&&j.dailyRefills.length)
       ? rowsHtml(j.dailyRefills,[[function(r){return fmtDate(r.createdAt);},"nowrap"],[function(r){return esc(r.delta);},"num"],function(r){return esc(r.note||"");}])
       : '<tr><td class="muted-note">No daily refills.</td></tr>';
-    el("d-ledger").innerHTML = rowsHtml(j.ledger,[[function(r){return fmtDate(r.createdAt);},"nowrap"],[function(r){return esc(r.delta);},"num"],function(r){return esc(r.reason);},[function(r){return esc(r.grantKindId||"—");},"mono"],function(r){return esc(r.note||"");}]);
+    renderLedgerFirst(j);
     el("d-grant-btn").addEventListener("click", function(){ mutate("grant"); });
     el("d-adjust-btn").addEventListener("click", function(){ mutate("adjust"); });
   }
+  var auditCols=[[function(r){return fmtDate(r.createdAt);},"nowrap"],function(r){return esc(r.actorEmail);},function(r){return esc(r.action);},[function(r){return esc(r.deltaCredits);},"num"],function(r){return esc(r.reason);}];
   function loadAudit(accountId){
     guardFetch("/audit?accountId="+encodeURIComponent(accountId)).then(function(r){ return r.json(); }).then(function(j){
-      el("d-audit").innerHTML = rowsHtml(j.audit,[[function(r){return fmtDate(r.createdAt);},"nowrap"],function(r){return esc(r.actorEmail);},function(r){return esc(r.action);},[function(r){return esc(r.deltaCredits);},"num"],function(r){return esc(r.reason);}]);
+      if(accountId!==currentAccountId) return;
+      auditCursor=j.nextCursor||null;
+      el("d-audit").innerHTML = rowsHtml(j.audit, auditCols);
+      paintFoot("d-audit-foot", (j.audit&&j.audit.length>0), auditCursor, function(){ loadAuditMore(); });
     }).catch(function(){});
+  }
+  function loadAuditMore(){
+    if(!auditCursor||!currentAccountId) return;
+    var btn=el("d-audit-foot")&&el("d-audit-foot").querySelector("button"); if(btn&&btn.disabled) return; if(btn) btn.disabled=true;
+    var acct=currentAccountId, gen=detailGen;
+    guardFetch("/audit?accountId="+encodeURIComponent(acct)+"&cursor="+encodeURIComponent(auditCursor))
+      .then(function(r){ if(!r.ok) throw new Error("more_failed"); return r.json(); })
+      .then(function(j){ if(acct!==currentAccountId||gen!==detailGen) return;
+        el("d-audit").insertAdjacentHTML("beforeend", rowsHtml(j.audit, auditCols));
+        auditCursor=j.nextCursor||null;
+        paintFoot("d-audit-foot", true, auditCursor, function(){ loadAuditMore(); });
+      })
+      .catch(function(e){ paintFoot("d-audit-foot", true, auditCursor, function(){ loadAuditMore(); }); if(e.message!=="reauth") toast("Failed to load more","error"); });
   }
   function openDetail(accountId){
     currentAccountId=accountId;
+    detailGen++;
     el("detail-body").innerHTML='<div class="muted-note">Loading…</div>';
-    el("detail").classList.add("open"); el("detail").setAttribute("aria-hidden","false"); el("detail-scrim").classList.remove("hidden");
+    el("detail").setAttribute("aria-hidden","false"); el("detail-scrim").classList.remove("hidden");
     guardFetch("/accounts/"+encodeURIComponent(accountId)).then(function(r){ if(r.status===404){ throw new Error("not_found"); } return r.json(); })
       .then(function(j){ if(accountId!==currentAccountId) return; renderDetail(j); loadAudit(accountId); })
       .catch(function(e){ if(accountId!==currentAccountId) return; if(e.message==="not_found"){ el("detail-body").innerHTML='<div class="pill pill-bad">Account not found</div>'; } else if(e.message!=="reauth"){ toast("Failed to load account","error"); } });
@@ -304,7 +352,7 @@ export const clientScript = (): string => `
         toast(res.j.replayed?"Already applied":(kind==="grant"?"Granted":"Adjusted"),"success"); openDetail(currentAccountId); loadActivity(true); })
       .catch(function(e){ if(btn) btn.disabled=false; if(e.message!=="reauth") toast("Failed","error"); });
   }
-  function closeDetail(){ var d=el("detail"); if(d){ d.classList.remove("open"); d.setAttribute("aria-hidden","true"); } var s=el("detail-scrim"); if(s) s.classList.add("hidden"); }
+  function closeDetail(){ var d=el("detail"); if(d){ d.setAttribute("aria-hidden","true"); } var s=el("detail-scrim"); if(s) s.classList.add("hidden"); }
 
   // Custom dropdown: brand popover over a hidden native <select> that stays the
   // value source, so existing change-listeners keep working via dispatchEvent.

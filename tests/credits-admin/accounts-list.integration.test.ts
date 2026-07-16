@@ -9,6 +9,7 @@ import {
   cleanupAdminAccounts,
   seedAccount,
   seedPlusMonthlySubscription,
+  seedSiweAuthMethod,
 } from "./helpers";
 
 type Row = {
@@ -237,5 +238,48 @@ describe("GET /api/v2/credits-admin/accounts", () => {
       "/api/v2/credits-admin/accounts?mode=broken&maxBalance=1e21",
     );
     expect(maxBalance.status).toBe(400);
+  });
+
+  it("balance mode returns wallet (SIWE externalKey) and lastConsumeAt", async () => {
+    const a = await seedAccount();
+    tracker.push(a);
+    const bal = 8675331n;
+    await setBalance(a, bal);
+    await seedSiweAuthMethod(a, `0xWALLET_${a.slice(0, 8)}`);
+    const consumedAt = new Date(Date.now() - 3 * DAY_MS);
+    await addLedger(a, "consume", -7n, null, consumedAt);
+
+    const v = bal.toString();
+    const res = await adminRequest(app).get(
+      `/api/v2/credits-admin/accounts?mode=balance&min=${v}&max=${v}`,
+    );
+    expect(res.status).toBe(200);
+    const row = (res.body as Body).rows.find(
+      (r) => r.accountId === a,
+    ) as Row & {
+      wallet?: string | null;
+      lastConsumeAt?: string | null;
+    };
+    expect(row.wallet).toBe(`0xWALLET_${a.slice(0, 8)}`);
+    expect(row.lastConsumeAt).toBe(consumedAt.toISOString());
+  });
+
+  it("balance mode returns null wallet + null lastConsumeAt when absent", async () => {
+    const a = await seedAccount();
+    tracker.push(a);
+    const bal = 8675333n;
+    await setBalance(a, bal);
+    const v = bal.toString();
+    const res = await adminRequest(app).get(
+      `/api/v2/credits-admin/accounts?mode=balance&min=${v}&max=${v}`,
+    );
+    const row = (res.body as Body).rows.find(
+      (r) => r.accountId === a,
+    ) as Row & {
+      wallet?: string | null;
+      lastConsumeAt?: string | null;
+    };
+    expect(row.wallet).toBeNull();
+    expect(row.lastConsumeAt).toBeNull();
   });
 });

@@ -28,7 +28,14 @@ export const accountsListGetHandler = async (
     switch (q.mode) {
       case "balance": {
         const p = await listByBalance(q);
-        return { hasMore: p.hasMore, rows: p.rows.map(base) };
+        return {
+          hasMore: p.hasMore,
+          rows: p.rows.map((r) => ({
+            ...base(r),
+            wallet: r.wallet,
+            lastConsumeAt: r.lastConsumeAt?.toISOString() ?? null,
+          })),
+        };
       }
       case "broken": {
         const p = await listBrokenSubscribers(q);

@@ -9,6 +9,8 @@ export const ACCOUNTS_LIST_LIMIT = 50;
 export type BalanceRow = {
   accountId: string;
   balance: bigint;
+  wallet: string | null;
+  lastConsumeAt: Date | null;
 };
 
 export type BrokenRow = {
@@ -49,19 +51,30 @@ export const listByBalance = async (args: {
 }): Promise<Page<BalanceRow>> => {
   const limit = args.limit ?? ACCOUNTS_LIST_LIMIT;
   const skip = (args.page ?? 0) * limit;
-  const dir = args.sortDir ?? args.sort ?? "desc";
-  const balance: Prisma.BigIntFilter = {};
-  if (args.min != null) balance.gte = BigInt(args.min);
-  if (args.max != null) balance.lte = BigInt(args.max);
-  const rows = await prisma.userCredits.findMany({
-    where: Object.keys(balance).length ? { balance } : {},
-    orderBy: [{ balance: dir }, { accountId: "asc" }],
-    take: limit + 1,
-    skip,
-    select: { accountId: true, balance: true },
-  });
+  const d = dirSql(args.sortDir ?? args.sort ?? "desc");
+  const min = args.min != null ? BigInt(args.min) : null;
+  const max = args.max != null ? BigInt(args.max) : null;
+  const rows = await prisma.$queryRaw<BalanceRow[]>`
+    SELECT uc."accountId", uc.balance,
+      (SELECT am."externalKey" FROM "AuthMethod" am
+       WHERE am."accountId" = uc."accountId" AND am.type = 'SIWE'
+       ORDER BY am."addedAt" DESC LIMIT 1) AS wallet,
+      (SELECT MAX(cl."createdAt") FROM "CreditLedger" cl
+       WHERE cl."accountId" = uc."accountId" AND cl.reason = 'consume')
+       AS "lastConsumeAt"
+    FROM "UserCredits" uc
+    WHERE (${min}::bigint IS NULL OR uc.balance >= ${min}::bigint)
+      AND (${max}::bigint IS NULL OR uc.balance <= ${max}::bigint)
+    ORDER BY uc.balance ${d}, uc."accountId" ASC
+    LIMIT ${limit + 1} OFFSET ${skip}
+  `;
   return page(
-    rows.map((r) => ({ accountId: r.accountId, balance: r.balance })),
+    rows.map((r) => ({
+      accountId: r.accountId,
+      balance: r.balance,
+      wallet: r.wallet,
+      lastConsumeAt: r.lastConsumeAt,
+    })),
     limit,
   );
 };

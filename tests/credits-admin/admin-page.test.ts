@@ -158,6 +158,82 @@ describe("admin page — tables", () => {
   });
 });
 
+describe("admin page — centered detail modal", () => {
+  let app: Express;
+  beforeAll(() => {
+    app = buildCreditsAdminApp();
+  });
+
+  it("nests the detail dialog inside the scrim with dialog ARIA", async () => {
+    const res = await adminRequest(app).get("/api/v2/credits-admin/");
+    const scrimIdx = res.text.indexOf('id="detail-scrim"');
+    const detailIdx = res.text.indexOf('id="detail"');
+    expect(scrimIdx).toBeGreaterThan(-1);
+    expect(detailIdx).toBeGreaterThan(scrimIdx);
+    expect(res.text).toContain('role="dialog"');
+    expect(res.text).toContain('aria-modal="true"');
+  });
+
+  it("wires Esc-to-close and a scrim-target close guard", async () => {
+    const res = await adminRequest(app).get("/api/v2/credits-admin/");
+    expect(res.text).toContain('e.key==="Escape"');
+    expect(res.text).toContain("e.target===");
+  });
+
+  it("uses a centered modal, not a right slide-over transform", async () => {
+    const res = await adminRequest(app).get("/api/v2/credits-admin/");
+    expect(res.text).toContain("@keyframes pop");
+    expect(res.text).not.toContain("translateX(102%)");
+  });
+});
+
+describe("admin page — full history load-more", () => {
+  let app: Express;
+  beforeAll(() => {
+    app = buildCreditsAdminApp();
+  });
+
+  it("wires a paginated ledger endpoint fetch and seeds from ledgerNextCursor", async () => {
+    const res = await adminRequest(app).get("/api/v2/credits-admin/");
+    expect(res.text).toContain("/ledger");
+    expect(res.text).toContain("ledgerNextCursor");
+  });
+
+  it("renders Load more controls and an empty-history note", async () => {
+    const res = await adminRequest(app).get("/api/v2/credits-admin/");
+    expect(res.text).toContain("Load more");
+    expect(res.text).toContain("Nothing here yet");
+  });
+
+  it("defines the ledger + audit load-more functions", async () => {
+    const res = await adminRequest(app).get("/api/v2/credits-admin/");
+    expect(res.text).toContain("loadLedgerMore");
+    expect(res.text).toContain("loadAuditMore");
+  });
+
+  it("guards load-more appends with a detail-generation counter", async () => {
+    const res = await adminRequest(app).get("/api/v2/credits-admin/");
+    expect(res.text).toContain("detailGen");
+    // in-flight appends bail when the detail was re-rendered (e.g. after a grant)
+    expect(res.text).toContain("gen!==detailGen");
+  });
+});
+
+describe("admin page — balance table columns", () => {
+  let app: Express;
+  beforeAll(() => {
+    app = buildCreditsAdminApp();
+  });
+
+  it("balance view defines Wallet and Last activity columns", async () => {
+    const res = await adminRequest(app).get("/api/v2/credits-admin/");
+    expect(res.text).toContain("Wallet");
+    expect(res.text).toContain("Last activity");
+    expect(res.text).toContain("r.wallet");
+    expect(res.text).toContain("r.lastConsumeAt");
+  });
+});
+
 describe("admin client script — syntax", () => {
   it("clientScript() is syntactically valid JS", () => {
     // new Function parses the body without executing it — catches syntax errors
