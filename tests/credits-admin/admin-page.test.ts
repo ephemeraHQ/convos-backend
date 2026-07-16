@@ -1,5 +1,6 @@
 import type { Express } from "express";
 import { beforeAll, describe, expect, it } from "vitest";
+import { clientScript } from "@/api/v2/credits-admin/handlers/admin-page/script";
 import { adminRequest, buildCreditsAdminApp } from "./helpers";
 
 describe("credits-admin page (console shell)", () => {
@@ -81,5 +82,14 @@ describe("credits-admin page (console shell)", () => {
     // setView() retitles this per view; pins the element's existence only —
     // the label swap itself is runtime behaviour a string assertion can't reach.
     expect(res.text).toContain('id="center-title"');
+  });
+});
+
+describe("admin client script — syntax", () => {
+  it("clientScript() is syntactically valid JS", () => {
+    // new Function parses the body without executing it — catches syntax errors
+    // in the template-string JS that string assertions miss.
+    // eslint-disable-next-line @typescript-eslint/no-implied-eval
+    expect(() => new Function(clientScript())).not.toThrow();
   });
 });
