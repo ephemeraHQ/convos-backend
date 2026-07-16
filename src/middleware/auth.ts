@@ -45,10 +45,17 @@ const enforceLiveAccountClaim = async (
     res.status(401).json({ error: "Unauthorized" });
     return false;
   }
-  const account = await prisma.account.findUnique({
-    where: { id: payload.accountId },
-    select: { id: true },
-  });
+  let account: { id: string } | null;
+  try {
+    account = await prisma.account.findUnique({
+      where: { id: payload.accountId },
+      select: { id: true },
+    });
+  } catch (error) {
+    req.log.error({ error }, "auth.fence.account_lookup_failed");
+    res.status(500).json({ error: "Internal server error" });
+    return false;
+  }
   if (!account) {
     req.log.warn({ deviceId: payload.deviceId }, "auth.fence.account_not_live");
     res.status(401).json({ error: "Unauthorized" });

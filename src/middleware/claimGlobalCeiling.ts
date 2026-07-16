@@ -1,5 +1,4 @@
 import type { NextFunction, Request, Response } from "express";
-import logger from "@/utils/logger";
 import { prisma } from "@/utils/prisma";
 
 /**
@@ -82,7 +81,7 @@ export const makeClaimGlobalCeiling = (opts: {
       }
       next();
     } catch (err) {
-      logger.error({ err }, "subscription.claim.global_ceiling_unavailable");
+      req.log.error({ err }, "subscription.claim.global_ceiling_unavailable");
       res.status(503).json({
         error: "Subscription claims are temporarily unavailable",
       });

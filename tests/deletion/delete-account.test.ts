@@ -105,7 +105,7 @@ const populateAccount = async (): Promise<PopulatedAccount> => {
       ownerAccountId: account.id,
       agentName: "Agent",
       prompt: "prompt",
-      avatarUrl: "https://assets.test/avatars/one.png",
+      avatarUrl: `https://assets.test/a/${account.id}/${randomUUID()}`,
       status: "published",
     },
   });
@@ -321,6 +321,19 @@ describe("DELETE /v2/accounts/me", () => {
         "s3_object",
       ].sort(),
     );
+    const publicAvatarTask = tasks.find((task) => {
+      const payload = task.payload;
+      return (
+        typeof payload === "object" &&
+        payload !== null &&
+        !Array.isArray(payload) &&
+        payload.target === "public"
+      );
+    });
+    expect(publicAvatarTask?.payload).toMatchObject({
+      target: "public",
+      accountId,
+    });
 
     // Ops audit: pre-existing entries retained as-is, deletion entry uses
     // the sentinel account id + keyed ref.

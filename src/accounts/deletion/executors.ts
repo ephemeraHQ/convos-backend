@@ -2,7 +2,11 @@ import { DeleteObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import { z } from "zod";
 import type { DeletionTaskKind } from "@/accounts/deletion/service";
 import { createComposioService } from "@/api/v2/connections/composio.service";
-import { POSTHOG_HOST, POSTHOG_PROJECT_TOKEN } from "@/config";
+import {
+  CDN_BASE_URL,
+  POSTHOG_API_HOST,
+  POSTHOG_PROJECT_TOKEN,
+} from "@/config";
 import { createNotificationClient } from "@/notifications/client";
 import { AppError } from "@/utils/errors";
 import logger from "@/utils/logger";
@@ -17,7 +21,11 @@ import logger from "@/utils/logger";
 export type DeletionExecutor = (payload: unknown) => Promise<void>;
 
 const s3PayloadSchema = z.union([
-  z.object({ target: z.literal("public"), url: z.string().min(1) }),
+  z.object({
+    target: z.literal("public"),
+    accountId: z.string().uuid().optional(),
+    url: z.string().min(1),
+  }),
   z.object({ target: z.literal("private"), key: z.string().min(1) }),
 ]);
 
@@ -35,14 +43,59 @@ const getS3Client = (): S3Client => {
   return _s3Client;
 };
 
+const AVATAR_OBJECT_ID =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+
+/**
+ * Derive an owned avatar key from a canonical CDN URL. The URL can select an
+ * object only inside the deleting account's namespace; arbitrary hosts,
+ * legacy unscoped paths, malformed URLs, and noncanonical object ids are
+ * ignored.
+ */
+export const publicAvatarObjectKey = (args: {
+  url: string;
+  accountId: string;
+  cdnBaseUrl?: string;
+}): string | null => {
+  let avatarUrl: URL;
+  let cdnUrl: URL;
+  try {
+    avatarUrl = new URL(args.url);
+    cdnUrl = new URL(args.cdnBaseUrl ?? CDN_BASE_URL);
+  } catch {
+    return null;
+  }
+  if (
+    avatarUrl.origin !== cdnUrl.origin ||
+    avatarUrl.username ||
+    avatarUrl.password ||
+    avatarUrl.search ||
+    avatarUrl.hash
+  ) {
+    return null;
+  }
+  const cdnPath = cdnUrl.pathname.replace(/\/+$/, "");
+  const ownedPrefix = `${cdnPath}/a/${args.accountId}/`;
+  if (!avatarUrl.pathname.startsWith(ownedPrefix)) return null;
+  const objectId = avatarUrl.pathname.slice(ownedPrefix.length);
+  if (!AVATAR_OBJECT_ID.test(objectId)) return null;
+  return `a/${args.accountId}/${objectId}`;
+};
+
 /** S3 object removal. Deleting a nonexistent key succeeds (S3 semantics). */
 const executeS3Object: DeletionExecutor = async (payload) => {
   const parsed = s3PayloadSchema.parse(payload);
   let bucket: string;
   let key: string;
   if (parsed.target === "public") {
+    if (!parsed.accountId) return;
+    const ownedKey = publicAvatarObjectKey({
+      url: parsed.url,
+      accountId: parsed.accountId,
+    });
+    if (!ownedKey) return;
     bucket = process.env.PUBLIC_ASSETS_BUCKET ?? "";
-    key = new URL(parsed.url).pathname.replace(/^\//, "");
+    key = ownedKey;
   } else {
     bucket = process.env.PRIVATE_ASSETS_BUCKET ?? "";
     key = parsed.key;
@@ -63,6 +116,7 @@ const executeS3Object: DeletionExecutor = async (payload) => {
 };
 
 const notificationClient = createNotificationClient();
+const POSTHOG_FETCH_TIMEOUT_MS = 10_000;
 
 /** Remove one notification-server installation (per ClientIdentifier). */
 const executeNotificationInstallation: DeletionExecutor = async (payload) => {
@@ -117,11 +171,11 @@ const executePosthogPerson: DeletionExecutor = async (payload) => {
       "PostHog person deletion not configured (POSTHOG_PERSONAL_API_KEY / POSTHOG_PROJECT_ID)",
     );
   }
-  const base = `${POSTHOG_HOST}/api/projects/${projectId}`;
+  const base = `${POSTHOG_API_HOST.replace(/\/+$/, "")}/api/projects/${projectId}`;
   const headers = { Authorization: `Bearer ${personalApiKey}` };
   const lookup = await fetch(
     `${base}/persons/?distinct_id=${encodeURIComponent(parsed.distinctId)}`,
-    { headers },
+    { headers, signal: AbortSignal.timeout(POSTHOG_FETCH_TIMEOUT_MS) },
   );
   if (!lookup.ok) {
     throw new AppError(502, `PostHog person lookup failed: ${lookup.status}`);
@@ -137,6 +191,7 @@ const executePosthogPerson: DeletionExecutor = async (payload) => {
   const del = await fetch(`${base}/persons/${person.id}/?delete_events=true`, {
     method: "DELETE",
     headers,
+    signal: AbortSignal.timeout(POSTHOG_FETCH_TIMEOUT_MS),
   });
   // 404 = already deleted (idempotent replay).
   if (!del.ok && del.status !== 404) {

@@ -211,7 +211,17 @@ const verifyAppleProof = async (
     return { status: 400 };
   }
 
-  const { tier, period } = productMapping(productId);
+  let mapping: ReturnType<typeof productMapping>;
+  try {
+    mapping = productMapping(productId);
+  } catch (error) {
+    req.log.warn(
+      { error, productId },
+      "subscription.claim.unrecognized_product",
+    );
+    return { status: 400 };
+  }
+  const { tier, period } = mapping;
   const status = deriveSubscriptionStatusFromTransaction(decoded);
   const currentPeriodStart = new Date(decoded.purchaseDate ?? Date.now());
   let lineageId: string;

@@ -183,6 +183,23 @@ describe("tombstone restoration tier", () => {
     expect(body(res).code).toBe("invalid_claim_proof");
   });
 
+  test("unrecognized entitled product: 400 invalid_claim_proof", async () => {
+    const otx = "9000000000000041";
+    installLocalTestingVerifier();
+    const claimer = await newAccount();
+    passAppCheck();
+    const jws = await signTransaction({
+      transactionId: otx,
+      originalTransactionId: otx,
+      productId: "app.convos.subs.unknown.monthly",
+    });
+    installAppleStatuses({ otx, status: 1, signedLatest: jws });
+
+    const res = await claimRequest(claimer, jws);
+    expect(res.status).toBe(400);
+    expect(body(res).code).toBe("invalid_claim_proof");
+  });
+
   test("unknown provider key (no row, no tombstone): 404 subscription_not_found", async () => {
     const otx = "9000000000000042";
     installLocalTestingVerifier();

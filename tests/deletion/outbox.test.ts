@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { afterEach, describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import { __setDeletionExecutorsForTests } from "@/accounts/deletion/executors";
 import {
   completeDeletionRecords,
@@ -41,6 +41,34 @@ const newTask = (
   });
 
 describe("deletion outbox drain", () => {
+  test("concurrent drains execute a due task once", async () => {
+    const operationId = await newRecord();
+    await newTask(operationId);
+    let releaseExecutor!: () => void;
+    const executorGate = new Promise<void>((resolve) => {
+      releaseExecutor = resolve;
+    });
+    let markEntered!: () => void;
+    const entered = new Promise<void>((resolve) => {
+      markEntered = resolve;
+    });
+    const executor = vi.fn(async () => {
+      markEntered();
+      await executorGate;
+    });
+    __setDeletionExecutorsForTests({
+      notification_installation: executor,
+    });
+
+    const first = drainDeletionTasks();
+    await entered;
+    const second = await drainDeletionTasks();
+    expect(second).toEqual({ done: 0, retried: 0, failed: 0 });
+    releaseExecutor();
+    await expect(first).resolves.toEqual({ done: 1, retried: 0, failed: 0 });
+    expect(executor).toHaveBeenCalledTimes(1);
+  });
+
   test("failure schedules a retry with backoff and records the error", async () => {
     const operationId = await newRecord();
     __setDeletionExecutorsForTests({

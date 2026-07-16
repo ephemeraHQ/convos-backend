@@ -10,6 +10,7 @@ const newOptionalEnvVars = [
   "BUILDER_EXA_SERVICE_KEY",
   "POSTHOG_PROJECT_TOKEN",
   "POSTHOG_HOST",
+  "POSTHOG_API_HOST",
 ] as const;
 
 describe("Builder dependency and optional env setup", () => {

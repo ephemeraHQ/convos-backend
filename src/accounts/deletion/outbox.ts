@@ -26,6 +26,9 @@ const DRAIN_BATCH_SIZE = 25;
 const MAX_ATTEMPTS = 10;
 const BACKOFF_BASE_MS = 30_000;
 const BACKOFF_CAP_MS = 60 * 60 * 1000; // 1 hour
+const OUTBOX_ADVISORY_LOCK_CLASS_ID = 7_281;
+const OUTBOX_ADVISORY_LOCK_OBJECT_ID = 93_643;
+const OUTBOX_LEASE_TIMEOUT_MS = 10 * 60 * 1000;
 /** How long a completed DeletionRecord (and its task rows) is kept. */
 const RECORD_AUDIT_WINDOW_DAYS = 30;
 
@@ -39,11 +42,13 @@ export const retryDelayMs = (attempts: number): number =>
 /**
  * Drain one batch of due pending tasks. Returns counts for observability.
  */
-export const drainDeletionTasks = async (): Promise<{
+type DrainCounts = {
   done: number;
   retried: number;
   failed: number;
-}> => {
+};
+
+const drainDeletionTasksUnderLease = async (): Promise<DrainCounts> => {
   const now = new Date();
   const due = await prisma.deletionTask.findMany({
     where: { status: "pending", nextAttemptAt: { lte: now } },
@@ -62,20 +67,21 @@ export const drainDeletionTasks = async (): Promise<{
         throw new Error(`No executor for deletion task kind "${task.kind}"`);
       }
       await executor(task.payload);
-      await prisma.deletionTask.update({
-        where: { id: task.id },
+      const completed = await prisma.deletionTask.updateMany({
+        where: { id: task.id, status: "pending" },
         data: { status: "done", completedAt: new Date() },
       });
-      done += 1;
+      done += completed.count;
     } catch (err) {
       const attempts = task.attempts + 1;
       const lastError = err instanceof Error ? err.message : String(err);
       if (attempts >= MAX_ATTEMPTS) {
-        await prisma.deletionTask.update({
-          where: { id: task.id },
+        const transitioned = await prisma.deletionTask.updateMany({
+          where: { id: task.id, status: "pending" },
           data: { status: "failed", attempts, lastError },
         });
-        failed += 1;
+        if (transitioned.count === 0) continue;
+        failed += transitioned.count;
         // Terminal purge failure: defined operator remediation path, never
         // silent abandonment.
         logger.error(
@@ -89,15 +95,16 @@ export const drainDeletionTasks = async (): Promise<{
           "deletion.task.terminal_failure",
         );
       } else {
-        await prisma.deletionTask.update({
-          where: { id: task.id },
+        const transitioned = await prisma.deletionTask.updateMany({
+          where: { id: task.id, status: "pending" },
           data: {
             attempts,
             lastError,
             nextAttemptAt: new Date(Date.now() + retryDelayMs(attempts)),
           },
         });
-        retried += 1;
+        if (transitioned.count === 0) continue;
+        retried += transitioned.count;
         logger.warn(
           {
             taskId: task.id,
@@ -113,6 +120,34 @@ export const drainDeletionTasks = async (): Promise<{
   }
 
   return { done, retried, failed };
+};
+
+/**
+ * Drain one batch under a cross-replica lease. The transaction exists only
+ * to hold the advisory lock; task reads and writes use ordinary pooled
+ * connections. A process loss releases the lease and leaves pending work for
+ * the next runner. If the lease itself times out, executors remain safe to
+ * retry because every external purge operation is required to be idempotent.
+ */
+export const drainDeletionTasks = async (): Promise<DrainCounts> => {
+  let counts: DrainCounts = { done: 0, retried: 0, failed: 0 };
+  await prisma.$transaction(
+    async (tx) => {
+      const lockRows = await tx.$queryRaw<Array<{ locked: boolean }>>`
+        SELECT pg_try_advisory_xact_lock(
+          ${OUTBOX_ADVISORY_LOCK_CLASS_ID}::int,
+          ${OUTBOX_ADVISORY_LOCK_OBJECT_ID}::int
+        ) AS locked
+      `;
+      if (!lockRows[0]?.locked) {
+        logger.info("deletion.outbox.lease_held_elsewhere");
+        return;
+      }
+      counts = await drainDeletionTasksUnderLease();
+    },
+    { timeout: OUTBOX_LEASE_TIMEOUT_MS, maxWait: 5_000 },
+  );
+  return counts;
 };
 
 /**

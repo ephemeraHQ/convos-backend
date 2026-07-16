@@ -61,6 +61,25 @@ describe("/account-auth-check", () => {
     expect(res.body).toEqual({ error: "Unauthorized" });
   });
 
+  test("account fence lookup failure → 500, never 401", async () => {
+    const token = await createJwtToken({
+      deviceId: "dev-db-error",
+      accountId: "11111111-1111-4111-8111-111111111111",
+    });
+    const lookup = vi
+      .spyOn(prisma.account, "findUnique")
+      .mockRejectedValueOnce(new Error("database unavailable"));
+    try {
+      const res = await request(makeApp())
+        .get("/account-auth-check")
+        .set("X-Convos-AuthToken", token);
+      expect(res.status).toBe(500);
+      expect(res.body).toEqual({ error: "Internal server error" });
+    } finally {
+      lookup.mockRestore();
+    }
+  });
+
   test("legacy device-only JWT (no accountId) → 403 Account required", async () => {
     const token = await createJwtToken({ deviceId: "dev-legacy" });
     const res = await request(makeApp())

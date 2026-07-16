@@ -203,6 +203,9 @@ export const POSTHOG_PROJECT_TOKEN =
   process.env.POSTHOG_PROJECT_TOKEN?.trim() || "";
 export const POSTHOG_HOST =
   process.env.POSTHOG_HOST?.trim() || "https://us.i.posthog.com";
+export const POSTHOG_API_HOST =
+  process.env.POSTHOG_API_HOST?.trim() || "https://us.posthog.com";
+export const CDN_BASE_URL = process.env.CDN_BASE_URL?.trim() || "";
 
 // Generation pipeline timing knobs (override via env in tests / staging).
 const parsePositiveInt = (

@@ -186,10 +186,16 @@ describe("voided purchases fail closed on unmatched orders", () => {
 });
 
 describe("global claim ceiling (shared counter)", () => {
-  const ceilingApp = (limit: number) => {
+  const ceilingApp = (limit: number, errorLog?: ReturnType<typeof vi.fn>) => {
     const app = express();
     app.use(pinoMiddleware);
     app.use(json());
+    if (errorLog) {
+      app.use((req, _res, next) => {
+        req.log.error = errorLog as never;
+        next();
+      });
+    }
     app.post(
       "/claim",
       makeClaimGlobalCeiling({ windowSeconds: 3600, limit }),
@@ -201,14 +207,23 @@ describe("global claim ceiling (shared counter)", () => {
   };
 
   test("fails CLOSED (503) when the counter store errors", async () => {
+    const errorLog = vi.fn();
     __setClaimCeilingIncrementForTests(() =>
       Promise.reject(new Error("counter store down")),
     );
-    const res = await request(ceilingApp(200)).post("/claim").send({});
+    const res = await request(ceilingApp(200, errorLog))
+      .post("/claim")
+      .send({});
     expect(res.status).toBe(503);
     expect(res.body).toEqual({
       error: "Subscription claims are temporarily unavailable",
     });
+    expect(errorLog).toHaveBeenCalledTimes(1);
+    const call = errorLog.mock.calls.at(0) as unknown as
+      | [{ err: unknown }, string]
+      | undefined;
+    expect(call?.[0].err).toBeInstanceOf(Error);
+    expect(call?.[1]).toBe("subscription.claim.global_ceiling_unavailable");
   });
 
   test("blocks past the ceiling and counts concurrent increments exactly", async () => {
@@ -264,6 +279,31 @@ describe("reconciliation sweep", () => {
     expect(second.quarantineRecovered).toBe(0);
     expect(await getBalance(owner)).toBe(2n * PERIOD_CREDITS);
     expect(await prisma.lineagePeriodGrant.count()).toBe(2);
+  });
+
+  test("keeps an order-resolved event parked until a subscription exists", async () => {
+    const token = "sweep-orphan-1";
+    await prisma.lineageQuarantine.create({
+      data: {
+        provider: BillingProvider.googlePlay,
+        token,
+        reason: "missing_latest_order_id",
+        payload: { source: "verify" },
+      },
+    });
+    setPlayApiFixtureForTests(() =>
+      playPurchase({ latestOrderId: `GPA.${token}..0` }),
+    );
+
+    const counts = await runReclaimReconciliationSweep();
+    expect(counts.quarantineRecovered).toBe(0);
+    expect(counts.quarantineDeferred).toBe(1);
+    const parked = await prisma.lineageQuarantine.findFirstOrThrow({
+      where: { token },
+    });
+    expect(parked.resolvedAt).toBeNull();
+    expect(parked.attempts).toBe(1);
+    expect(await prisma.subscription.count()).toBe(0);
   });
 
   test("conflict-class quarantine rows are never auto-merged", async () => {

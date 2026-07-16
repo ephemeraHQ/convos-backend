@@ -222,7 +222,7 @@ const reconcileGoogleToken = async (
           ? { cancelledAt: new Date() }
           : {}),
       };
-  await applyNotification({
+  const result = await applyNotification({
     provider: BillingProvider.googlePlay,
     purchaseToken: row.token,
     linkedPurchaseToken: purchase.linkedPurchaseToken ?? null,
@@ -235,7 +235,7 @@ const reconcileGoogleToken = async (
     signedPayload: JSON.stringify(purchase),
     update,
   });
-  return "recovered";
+  return result.kind === "unknown_subscription" ? "deferred" : "recovered";
 };
 
 const quarantineBackoffMs = (attempts: number): number => {

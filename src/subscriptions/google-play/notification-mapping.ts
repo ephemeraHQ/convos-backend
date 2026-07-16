@@ -1,7 +1,12 @@
 import { SubscriptionStatus } from "@prisma/client";
+import { productMapping } from "@/subscriptions/product-mapping";
 import type { NotificationStateUpdate } from "@/subscriptions/repository";
 import type { SubscriptionPurchaseV2 } from "./play-api";
-import { deriveStatusFromPurchase, extractPeriodWindow } from "./status";
+import {
+  deriveStatusFromPurchase,
+  extractPeriodWindow,
+  extractProductId,
+} from "./status";
 
 /**
  * Google's RTDN `subscriptionNotification.notificationType` values. Stable
@@ -63,8 +68,12 @@ export const mapNotificationToUpdate = (
     case PlayNotificationType.renewed:
     case PlayNotificationType.restarted: {
       const window = extractPeriodWindow(input.purchase);
+      const productId = extractProductId(input.purchase);
+      const { tier } = productMapping(productId);
       return {
         status: deriveStatusFromPurchase(input.purchase, now),
+        tier,
+        productId,
         currentPeriodStart: window.currentPeriodStart,
         currentPeriodEnd: window.currentPeriodEnd,
         willRenew: true,

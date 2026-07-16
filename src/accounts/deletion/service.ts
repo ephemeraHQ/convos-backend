@@ -334,7 +334,11 @@ const runDeleteAccountTransaction = async (args: {
           tasks.push({
             operationId,
             kind: "s3_object",
-            payload: { target: "public", url: template.avatarUrl },
+            payload: {
+              target: "public",
+              accountId,
+              url: template.avatarUrl,
+            },
           });
         }
       }
