@@ -198,7 +198,7 @@ describe("webhooks against deletion tombstones", () => {
     expect(await prisma.billingReceipt.count()).toBe(0);
   });
 
-  test("Play RTDN rotation onto a tombstoned token: counted no-op", async () => {
+  test("Play RTDN rotation onto a tombstoned token: no-op + absorption", async () => {
     await tombstone(BillingProvider.googlePlay, "token-old");
     const result = await applyNotification({
       provider: BillingProvider.googlePlay,
@@ -211,6 +211,10 @@ describe("webhooks against deletion tombstones", () => {
       update: { status: SubscriptionStatus.active },
     });
     expect(result).toEqual({ kind: "tombstoned" });
+    const absorbed = await prisma.lineageTokenAlias.findUnique({
+      where: { token: "token-new" },
+    });
+    expect(absorbed).not.toBeNull();
   });
 
   test("unknown key with no tombstone stays unknown_subscription", async () => {
