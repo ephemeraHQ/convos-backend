@@ -116,7 +116,7 @@ describe("GET /api/v2/credits-admin/accounts/:accountId/ledger", () => {
   });
 });
 
-describe("GET …/ledger — filter params", () => {
+describe("GET /api/v2/credits-admin/accounts/:accountId/ledger — filter params", () => {
   let app2: Express;
   const t2: string[] = [];
   beforeAll(() => {
@@ -246,5 +246,50 @@ describe("GET …/ledger — filter params", () => {
     );
     expect(res.status).toBe(200);
     expect((res.body as LedgerResponse).rows).toHaveLength(2);
+  });
+
+  it("reason=adjust narrows to adjust-reason rows via HTTP", async () => {
+    const a = await seedAccount();
+    t2.push(a);
+    await addLedger(
+      a,
+      100n,
+      new Date("2026-07-10T00:00:00Z"),
+      "grant",
+      "sub_grant",
+    );
+    await addLedger(
+      a,
+      -40n,
+      new Date("2026-07-11T00:00:00Z"),
+      "adjust",
+      "sub_forfeit",
+    );
+    await addLedger(a, -7n, new Date("2026-07-12T00:00:00Z"), "adjust", null);
+    const res = await adminRequest(app2).get(
+      `/api/v2/credits-admin/accounts/${a}/ledger?reason=adjust`,
+    );
+    expect(res.status).toBe(200);
+    const body = res.body as LedgerResponse;
+    expect(body.rows).toHaveLength(2);
+    expect(new Set(body.rows.map((r) => r.delta))).toEqual(
+      new Set(["-40", "-7"]),
+    );
+  });
+
+  it("from/to date range narrows via HTTP, whole to-day inclusive", async () => {
+    const a = await seedAccount();
+    t2.push(a);
+    await addLedger(a, 1n, new Date("2026-07-09T00:00:00Z"), "grant", "manual"); // before from
+    await addLedger(a, 2n, new Date("2026-07-10T06:00:00Z"), "grant", "manual"); // in range
+    await addLedger(a, 3n, new Date("2026-07-12T23:59:00Z"), "grant", "manual"); // whole to-day
+    await addLedger(a, 4n, new Date("2026-07-13T00:00:00Z"), "grant", "manual"); // after to
+    const res = await adminRequest(app2).get(
+      `/api/v2/credits-admin/accounts/${a}/ledger?from=2026-07-10&to=2026-07-12`,
+    );
+    expect(res.status).toBe(200);
+    const body = res.body as LedgerResponse;
+    expect(body.rows).toHaveLength(2);
+    expect(new Set(body.rows.map((r) => r.delta))).toEqual(new Set(["2", "3"]));
   });
 });
