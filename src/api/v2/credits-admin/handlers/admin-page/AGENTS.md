@@ -14,12 +14,12 @@ The whole page is one server-rendered HTML document — **no framework, no build
 step, no external assets**. Four files, assembled by `index.ts`
 (`adminPageHandler`):
 
-| File | Role |
-| --- | --- |
+| File              | Role                                                                                                     |
+| ----------------- | -------------------------------------------------------------------------------------------------------- |
 | `console-view.ts` | Static HTML shell (`consoleView()`), plus `login-view.ts`. Exposes the shared inline-SVG chevron `CHEV`. |
-| `script.ts` | All client JS, returned as a **template string** by `clientScript()`. Runtime DOM lives here. |
-| `styles.ts` | All CSS, as the `STYLES` string. Design tokens in `:root`. |
-| `index.ts` | Sets CSP + assembles `<style>${STYLES}</style>` + shell + `<script nonce>${clientScript()}</script>`. |
+| `script.ts`       | All client JS, returned as a **template string** by `clientScript()`. Runtime DOM lives here.            |
+| `styles.ts`       | All CSS, as the `STYLES` string. Design tokens in `:root`.                                               |
+| `index.ts`        | Sets CSP + assembles `<style>${STYLES}</style>` + shell + `<script nonce>${clientScript()}</script>`.    |
 
 ## Hard constraints (CSP) — these bite
 
@@ -69,7 +69,7 @@ Defined in `:root` in `styles.ts`. Load-bearing ones:
   it, so existing `change` listeners keep working. Build the option list on the
   native select; the branded menu mirrors it.
 - **Floating panels (menus, tooltips, popovers): `background:var(--surface);
-  border:1px solid var(--edge); box-shadow:var(--shadow-pop); border-radius`.**
+border:1px solid var(--edge); box-shadow:var(--shadow-pop); border-radius`.**
   Match `.dd-menu`. This is the single popover look.
 - **Tooltips: never use the native `title=` attribute.** It's OS-grey chrome and
   has a ~1s hover delay. Use `data-tip="…"` + a CSS `:hover::before` (or
@@ -98,7 +98,7 @@ Defined in `:root` in `styles.ts`. Load-bearing ones:
   at load over `document.querySelectorAll(".dd")`. Anything rendered later — e.g.
   a `.dd` inside the detail modal built on click — **must be initialized
   explicitly** after injection: `Array.prototype.forEach.call(
-  el("detail-body").querySelectorAll(".dd"), initDropdown)`. (Per-open init
+el("detail-body").querySelectorAll(".dd"), initDropdown)`. (Per-open init
   registers one document click-listener each open — a harmless minor leak in an
   admin tool.) Programmatic `select.value = …` won't resync the branded label;
   `initDropdown` stashes `dd.__sync` for that.
@@ -119,7 +119,7 @@ Defined in `:root` in `styles.ts`. Load-bearing ones:
     dispatch (a failed fetch must leave the visible state consistent);
   - when an action supersedes a control (e.g. applying a filter), clear/disable
     the superseded affordance at dispatch so no interleaved action starts.
-  See `applyLedgerFilter` / `loadLedgerMore` for the worked pattern.
+    See `applyLedgerFilter` / `loadLedgerMore` for the worked pattern.
 
 ## Responsive
 
@@ -141,7 +141,7 @@ narrow-screen media query that re-wraps and constrains popover width
   CI, so screenshot a standalone harness that pulls the real `STYLES` and runs
   the real `initDropdown` over representative markup, via headless Chrome
   (`/Applications/Google Chrome.app/Contents/MacOS/Google Chrome --headless
-  --screenshot=out.png file://harness.html`). Render both wide and narrow. This
+--screenshot=out.png file://harness.html`). Render both wide and narrow. This
   is how brand match / layout / a tooltip is actually confirmed.
 - **Behavior (render timing, hover feel, async races):** browser-walk only — the
   human gate. Static tests can't reach it; call it out in the PR test plan.
