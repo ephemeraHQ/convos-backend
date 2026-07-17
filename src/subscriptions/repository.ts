@@ -473,6 +473,27 @@ export const upsertFromVerify = async (
       // subscription … wallet credits persist until forfeit"). Switching this
       // to the effective check would break that pinned semantic for nothing.
       if (!isStaleVerify && isEntitledSubscriptionStatus(subscription.status)) {
+        // Renewal observed via verify: if the period start advanced past the
+        // stored one, forfeit the ending period's unused allotment (no
+        // carryover) before granting the new period. Guard strictly on
+        // start-advance so a re-verify of the SAME period does not claw the
+        // live period. The compare is ms-precise and relies on the provider
+        // returning a STABLE per-period currentPeriodStart (Apple purchaseDate /
+        // Play startTime are byte-identical across verify + S2S for one period);
+        // a same-period re-verify therefore does not trip this guard. `existing`
+        // is the pre-update row (ending period); the subscription.update above
+        // holds the row lock that fences a racing S2S renewal onto the same
+        // idempotent per-period forfeit key.
+        if (
+          existing !== null &&
+          input.currentPeriodStart.getTime() >
+            existing.currentPeriodStart.getTime()
+        ) {
+          await forfeitSubscriptionPeriod(tx, {
+            subscription: existing,
+            periodStart: existing.currentPeriodStart,
+          });
+        }
         const grantResult = await grantSubscriptionPeriod(tx, {
           subscription,
           periodStart: subscription.currentPeriodStart,

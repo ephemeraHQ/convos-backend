@@ -127,14 +127,27 @@ describe("subscription grant materialization (single-ledger)", () => {
     expect(row?.delta).toBe(BigInt(perPeriod()));
   });
 
-  it("re-verify of the same period is idempotent — no double grant", async () => {
+  it("re-verify of the same period is idempotent — no double grant, no forfeit", async () => {
     const accountId = await newAccount();
     const otid = `otid-${accountId}`;
-    await verifyApple(accountId, { originalTransactionId: otid });
+    // Pin the period window so BOTH verifies carry a byte-identical
+    // currentPeriodStart — exactly what Apple does (stable purchaseDate per
+    // period). Relying on verifyApple's Date.now() default would recompute the
+    // start a few ms later on the second call, which the ms-precise renewal
+    // advance-guard would misread as a new period and forfeit the live one.
+    const start = new Date(Date.now() - 5 * DAY_MS);
+    const end = new Date(Date.now() + 25 * DAY_MS);
+    await verifyApple(accountId, {
+      originalTransactionId: otid,
+      currentPeriodStart: start,
+      currentPeriodEnd: end,
+    });
     // Same period, different provider transactionId (e.g. a re-verify).
     await verifyApple(accountId, {
       originalTransactionId: otid,
       transactionId: `tx-${randomUUID()}`,
+      currentPeriodStart: start,
+      currentPeriodEnd: end,
     });
 
     expect(await getBalance(accountId)).toBe(BigInt(perPeriod()));
@@ -142,6 +155,12 @@ describe("subscription grant materialization (single-ledger)", () => {
       where: { accountId, grantKindId: "sub_grant" },
     });
     expect(grantRows).toBe(1);
+    // The advance guard must treat an identical-start re-verify as the SAME
+    // period → no forfeit of the live period.
+    const forfeitRows = await prisma.creditLedger.count({
+      where: { accountId, grantKindId: "sub_forfeit" },
+    });
+    expect(forfeitRows).toBe(0);
   });
 
   it("renewal forfeits the prior period and grants the new one (no carryover)", async () => {
@@ -183,6 +202,40 @@ describe("subscription grant materialization (single-ledger)", () => {
       subscription.id,
       subscription.currentPeriodStart,
     );
+    const forfeitRow = await prisma.creditLedger.findUnique({
+      where: {
+        accountId_idempotencyKey: { accountId, idempotencyKey: forfeitKey },
+      },
+    });
+    expect(forfeitRow?.grantKindId).toBe("sub_forfeit");
+    expect(forfeitRow?.delta).toBe(BigInt(-perPeriod()));
+  });
+
+  it("renewal via verify forfeits the prior period and grants the new one", async () => {
+    const accountId = await newAccount();
+    const otid = `otid-${accountId}`;
+    const oldStart = new Date(Date.now() - 40 * DAY_MS);
+    const oldEnd = new Date(Date.now() - 10 * DAY_MS);
+    const { subscription } = await verifyApple(accountId, {
+      originalTransactionId: otid,
+      currentPeriodStart: oldStart,
+      currentPeriodEnd: oldEnd,
+    });
+    expect(await getBalance(accountId)).toBe(BigInt(perPeriod()));
+
+    // iOS re-verifies with an ADVANCED period (renewal observed via /verify).
+    const newStart = new Date(Date.now() - 5 * DAY_MS);
+    const newEnd = new Date(Date.now() + 25 * DAY_MS);
+    await verifyApple(accountId, {
+      originalTransactionId: otid,
+      transactionId: `tx-${randomUUID()}`,
+      currentPeriodStart: newStart,
+      currentPeriodEnd: newEnd,
+    });
+
+    // Prior period forfeited, new period granted → one perPeriod.
+    expect(await getBalance(accountId)).toBe(BigInt(perPeriod()));
+    const forfeitKey = subForfeitKey(subscription.id, oldStart);
     const forfeitRow = await prisma.creditLedger.findUnique({
       where: {
         accountId_idempotencyKey: { accountId, idempotencyKey: forfeitKey },

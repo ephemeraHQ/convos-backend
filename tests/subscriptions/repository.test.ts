@@ -515,7 +515,8 @@ describe("upsertFromVerify", () => {
           currentPeriodEnd: CURRENT_END,
         }),
       );
-      expect(await getBalance(accountId)).toBe(BigInt(perPeriod() * 2));
+      // Renewal forfeited period 1 (−perPeriod) and granted period 2 → one perPeriod.
+      expect(await getBalance(accountId)).toBe(BigInt(perPeriod()));
 
       // Remove period 2's grant, then replay the OLD transaction. Its period
       // end predates the stored one → stale → must NOT backfill period 2.
@@ -526,7 +527,9 @@ describe("upsertFromVerify", () => {
       );
       const replay = await upsertFromVerify(oldInput);
       expect(replay.receiptCreated).toBe(false);
-      expect(await getBalance(accountId)).toBe(BigInt(perPeriod()));
+      // Period 1 was forfeited at renewal and period 2's grant was just
+      // stripped → wallet is 0. The stale replay must NOT re-materialize it.
+      expect(await getBalance(accountId)).toBe(0n);
       expect(await countSubGrants(accountId)).toBe(1);
     });
 
