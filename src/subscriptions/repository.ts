@@ -475,16 +475,24 @@ export const upsertFromVerify = async (
       const isStaleVerify =
         locked !== null && input.currentPeriodEnd < locked.currentPeriodEnd;
 
-      const subscription = existing
-        ? isStaleVerify
-          ? existing
-          : await tx.subscription.update({
-              where: { id: existing.id },
-              data: subscriptionUpdateData(input),
-            })
-        : await tx.subscription.create({
-            data: subscriptionCreateData(input),
-          });
+      let subscription: Subscription;
+      if (existing === null) {
+        subscription = await tx.subscription.create({
+          data: subscriptionCreateData(input),
+        });
+      } else if (isStaleVerify) {
+        // Stale/out-of-order verify: don't roll the row back, but return its
+        // CURRENT committed state — a concurrent renewal may have advanced it
+        // since the pre-lock `existing` read.
+        subscription =
+          (await tx.subscription.findUnique({ where: { id: existing.id } })) ??
+          existing;
+      } else {
+        subscription = await tx.subscription.update({
+          where: { id: existing.id },
+          data: subscriptionUpdateData(input),
+        });
+      }
 
       await tx.billingReceipt.create({
         data: {
@@ -853,7 +861,16 @@ export const applyNotification = async (
         input.update.currentPeriodEnd.getTime() <
           locked.currentPeriodEnd.getTime()
       ) {
-        return { kind: "applied" as const, subscription };
+        // Stale/out-of-order: skip the state-apply, but return the row's CURRENT
+        // committed state — a concurrent renewal may have advanced it since the
+        // pre-lock `notificationLookup` snapshot.
+        const current = await tx.subscription.findUnique({
+          where: { id: subscription.id },
+        });
+        return {
+          kind: "applied" as const,
+          subscription: current ?? subscription,
+        };
       }
 
       const updated = await tx.subscription.update({
