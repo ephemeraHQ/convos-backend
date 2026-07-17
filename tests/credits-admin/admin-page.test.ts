@@ -242,3 +242,42 @@ describe("admin client script — syntax", () => {
     expect(() => new Function(clientScript())).not.toThrow();
   });
 });
+
+describe("admin page — ledger movements filter", () => {
+  let app: Express;
+  beforeAll(() => {
+    app = buildCreditsAdminApp();
+  });
+  const get = () => adminRequest(app).get("/api/v2/credits-admin/");
+
+  it("renames the card to Ledger movements and drops Recent ledger", async () => {
+    const res = await get();
+    expect(res.text).toContain("Ledger movements");
+    expect(res.text).not.toContain("Recent ledger");
+  });
+
+  it("renders the Kind, Reason, date, and Clear filter controls", async () => {
+    const res = await get();
+    expect(res.text).toContain('id="d-lf-kind"');
+    expect(res.text).toContain('id="d-lf-reason"');
+    expect(res.text).toContain('id="d-lf-from"');
+    expect(res.text).toContain('id="d-lf-to"');
+    expect(res.text).toContain('id="d-lf-clear"');
+    expect(res.text).toContain('value="subscription"');
+    // dead refill value must never be offered as a filter
+    expect(res.text).not.toContain('value="refill"');
+  });
+
+  it("defines the filter apply + query builder and carries the filter into load-more", async () => {
+    const res = await get();
+    expect(res.text).toContain("applyLedgerFilter");
+    expect(res.text).toContain("buildLedgerQuery");
+    // load-more must build its URL through buildLedgerQuery (filter carry-forward),
+    // not the old cursor-only concatenation.
+    expect(res.text).toContain("buildLedgerQuery(ledgerCursor)");
+    expect(res.text).not.toContain(
+      '/ledger?cursor="+encodeURIComponent(ledgerCursor)',
+    );
+    expect(res.text).toContain("No movements match this filter");
+  });
+});

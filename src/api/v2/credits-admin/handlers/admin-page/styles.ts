@@ -161,6 +161,11 @@ tbody tr.row-clickable:hover td.mono{color:var(--fg);}
 @keyframes pop{from{opacity:0;transform:translateY(8px) scale(.98);}to{opacity:1;transform:none;}}
 .detail-close{position:absolute;top:16px;right:16px;}
 
+.ledger-filter{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px;}
+.ledger-filter select,.ledger-filter input{flex:0 0 auto;width:auto;min-height:var(--control-h);margin-bottom:0;background:var(--surface);border:1px solid var(--edge);border-radius:var(--radius);padding:8px 10px;font-family:var(--sans);font-size:12px;color:var(--fg);}
+.ledger-filter select:focus,.ledger-filter input:focus{outline:none;border-color:var(--fg-3);}
+.ledger-filter .btn{min-height:var(--control-h);}
+
 /* Responsive */
 @media (max-width:768px){
   .console-grid{grid-template-columns:1fr;}
