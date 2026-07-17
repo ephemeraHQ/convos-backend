@@ -305,7 +305,10 @@ describe("subscription forfeit (bounded clawback)", () => {
     expect(await getBalance(accountId)).toBe(30n);
 
     const result = await prisma.$transaction((tx) =>
-      forfeitSubscriptionPeriod(tx, { subscription: sub }),
+      forfeitSubscriptionPeriod(tx, {
+        subscription: sub,
+        periodStart: sub.currentPeriodStart,
+      }),
     );
 
     // unusedSub = perPeriod - (perPeriod - 30) = 30; lockedBalance = 30; so
@@ -347,7 +350,10 @@ describe("subscription forfeit (bounded clawback)", () => {
       // the forfeit clamps against the balance it actually mutates.
       const forfeitP = prisma
         .$transaction((tx) =>
-          forfeitSubscriptionPeriod(tx, { subscription: sub }),
+          forfeitSubscriptionPeriod(tx, {
+            subscription: sub,
+            periodStart: sub.currentPeriodStart,
+          }),
         )
         .catch(() => null);
       const consumeP = consume({

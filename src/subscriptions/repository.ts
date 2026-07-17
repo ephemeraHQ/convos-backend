@@ -803,7 +803,10 @@ export const applyNotification = async (
         // out-of-order terminal events were already short-circuited by the
         // staleness guard above, so this only fires for the current period
         // (natural expiry or a legitimate mid-period refund/revoke).
-        await forfeitSubscriptionPeriod(tx, { subscription: updated });
+        await forfeitSubscriptionPeriod(tx, {
+          subscription: updated,
+          periodStart: updated.currentPeriodStart,
+        });
       } else if (
         isEntitledSubscriptionStatus(updated.status) &&
         updated.currentPeriodStart.getTime() >

@@ -159,10 +159,10 @@ export type ForfeitSubscriptionPeriodResult =
 
 /**
  * On expiry/refund/revoke, write ONE bounded `sub_forfeit` adjustment
- * that removes only the unused subscription portion of the current period:
+ * that removes only the unused subscription portion of the passed period:
  *
  *   periodGrant    = the sub_grant delta we wrote for this period
- *   periodConsumes = |consume deltas| since currentPeriodStart
+ *   periodConsumes = |consume deltas| since periodStart
  *   unusedSub      = max(0, periodGrant − periodConsumes)
  *   forfeitDelta   = −min(lockedBalance, unusedSub)        # clamp ≥ 0
  *
@@ -174,7 +174,7 @@ export type ForfeitSubscriptionPeriodResult =
  * drive the wallet negative. A `floorCheck: { minBalance: 0n }` on the apply is
  * a belt-and-suspenders guard that throws (rather than silently writing a
  * negative balance) should the clamp ever be defeated. Idempotent on
- * `sub_forfeit:{subscription.id}:{periodStartEpoch}` so a duplicate
+ * `sub_forfeit:{subscription.id}:{periodStart epoch}` so a duplicate
  * EXPIRED/REVOKE webhook doesn't double-claw.
  *
  * Cancel-while-active (auto-renew off, period still running) must NOT call this
@@ -182,10 +182,9 @@ export type ForfeitSubscriptionPeriodResult =
  */
 export const forfeitSubscriptionPeriod = async (
   tx: TxClient,
-  args: { subscription: Subscription },
+  args: { subscription: Subscription; periodStart: Date },
 ): Promise<ForfeitSubscriptionPeriodResult> => {
-  const { subscription } = args;
-  const periodStart = subscription.currentPeriodStart;
+  const { subscription, periodStart } = args;
   const forfeitKey = subForfeitKey(subscription.id, periodStart);
 
   const priorForfeit = await findLedgerRow(
