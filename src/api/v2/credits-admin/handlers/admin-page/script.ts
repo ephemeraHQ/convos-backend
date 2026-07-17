@@ -285,7 +285,7 @@ export const clientScript = (): string => `
         el("d-ledger").innerHTML=rowsHtml(rows, ledgerCols);
         paintFoot("d-ledger-foot", true, ledgerCursor, function(){ loadLedgerMore(); });
       })
-      .catch(function(e){ if(e.message!=="reauth") toast("Failed to filter ledger","error"); });
+      .catch(function(e){ if(acct!==currentAccountId||gen!==detailGen||myGen!==ledgerGen) return; paintFoot("d-ledger-foot", true, ledgerCursor, function(){ loadLedgerMore(); }); if(e.message!=="reauth") toast("Failed to filter ledger","error"); });
   }
   var ledgerCols=[[function(r){return fmtDate(r.createdAt);},"nowrap"],[function(r){return esc(r.delta);},"num"],function(r){return esc(r.reason);},[function(r){return esc(r.grantKindId||"—");},"mono"],function(r){return esc(r.note||"");}];
   function paintFoot(footId, hasRows, nextCursor, moreFn){
