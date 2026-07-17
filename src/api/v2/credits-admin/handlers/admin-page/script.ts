@@ -310,7 +310,7 @@ export const clientScript = (): string => `
         ledgerCursor=j.nextCursor||null;
         paintFoot("d-ledger-foot", true, ledgerCursor, function(){ loadLedgerMore(); });
       })
-      .catch(function(e){ paintFoot("d-ledger-foot", true, ledgerCursor, function(){ loadLedgerMore(); }); if(e.message!=="reauth") toast("Failed to load more","error"); });
+      .catch(function(e){ if(acct!==currentAccountId||gen!==detailGen||myGen!==ledgerGen) return; paintFoot("d-ledger-foot", true, ledgerCursor, function(){ loadLedgerMore(); }); if(e.message!=="reauth") toast("Failed to load more","error"); });
   }
   function renderDetail(j){
     var sub=j.subscription;
