@@ -828,4 +828,115 @@ describe("forfeit-on-renewal invariants", () => {
     expect(await getBalance(accountId)).toBe(0n);
     expect(await countForfeits(accountId)).toBe(2);
   });
+
+  it("renewal forfeit excludes spends that belong to the NEW period (bounded consume window)", async () => {
+    const accountId = await newAccount();
+    const otid = `otid-${accountId}`;
+    const { subscription } = await verifyApple(accountId, {
+      originalTransactionId: otid,
+    });
+    // Admin credits lift the wallet above the forfeit clamp so the bound is
+    // observable (otherwise min(balance, unusedSub) would mask it).
+    await grant({
+      accountId,
+      credits: 1000,
+      kind: "manual",
+      idempotencyKey: `admin-${randomUUID()}`,
+    });
+    // A spend made "now" — it lands AFTER the new period's start below, so it is
+    // a NEW-period spend and must NOT reduce the OLD period's clawback.
+    const spend = await consume({
+      accountId,
+      usdCostMicros: 50_000n, // 100 credits
+      idempotencyKey: `c-${randomUUID()}`,
+      requestId: "r",
+    });
+
+    // Renew with a new period whose start is just before now (so it is > the old
+    // start, an advance) but before the spend's createdAt.
+    const newStart = new Date(Date.now() - 60_000);
+    const newEnd = new Date(Date.now() + 30 * DAY_MS);
+    await renewViaNotification(otid, newStart, newEnd);
+
+    // Old-period consumes bounded to [oldStart, newStart) = none (the spend is
+    // after newStart). Old period fully forfeited; the spend stays debited (not
+    // refunded via a shrunken forfeit). Final = admin − spend + one new period.
+    expect(await getBalance(accountId)).toBe(
+      1000n - BigInt(spend.spent) + BigInt(perPeriod()),
+    );
+    const forfeitKey = subForfeitKey(
+      subscription.id,
+      subscription.currentPeriodStart,
+    );
+    const forfeitRow = await prisma.creditLedger.findUnique({
+      where: {
+        accountId_idempotencyKey: { accountId, idempotencyKey: forfeitKey },
+      },
+    });
+    expect(forfeitRow?.delta).toBe(BigInt(-perPeriod()));
+  });
+
+  it("concurrent successive renewals never leave more than one period's credits (stress)", async () => {
+    const TRIALS = 25;
+    for (let i = 0; i < TRIALS; i++) {
+      const accountId = await newAccount();
+      const otid = `otid-${accountId}`;
+      await verifyApple(accountId, { originalTransactionId: otid }); // period A
+
+      // Two concurrent renewals advancing to DIFFERENT successive periods.
+      const bStart = new Date(Date.now() + 25 * DAY_MS);
+      const bEnd = new Date(bStart.getTime() + 30 * DAY_MS);
+      const cStart = new Date(Date.now() + 55 * DAY_MS);
+      const cEnd = new Date(cStart.getTime() + 30 * DAY_MS);
+
+      const renewB = renewViaNotification(otid, bStart, bEnd).catch(() => null);
+      const renewC = verifyApple(accountId, {
+        originalTransactionId: otid,
+        transactionId: `tx-${randomUUID()}`,
+        currentPeriodStart: cStart,
+        currentPeriodEnd: cEnd,
+      }).catch(() => null);
+      await Promise.all([renewB, renewC]);
+
+      // No carryover under concurrency: at most one period's credits remain,
+      // and the wallet always equals the exact ledger sum.
+      const balance = await getBalance(accountId);
+      expect(balance).toBeLessThanOrEqual(BigInt(perPeriod()));
+      const agg = await prisma.creditLedger.aggregate({
+        where: { accountId },
+        _sum: { delta: true },
+      });
+      expect(balance).toBe(agg._sum.delta ?? 0n);
+    }
+  });
+
+  it("concurrent S2S notifications for one subscription never deadlock (stress)", async () => {
+    const TRIALS = 12;
+    for (let i = 0; i < TRIALS; i++) {
+      const accountId = await newAccount();
+      const otid = `otid-${accountId}`;
+      await verifyApple(accountId, { originalTransactionId: otid });
+
+      const newStart = new Date(Date.now() + 25 * DAY_MS);
+      const newEnd = new Date(newStart.getTime() + 30 * DAY_MS);
+      // Two concurrent S2S notifications (distinct notificationUUIDs) for the
+      // SAME subscription. Each inserts a BillingReceipt (a KEY SHARE lock on the
+      // Subscription FK row) then takes the FOR UPDATE row lock. If the row lock
+      // were taken AFTER the receipt insert, both would hold KEY SHARE and
+      // deadlock on the upgrade (Postgres 40P01 → Prisma P2010). No `.catch()`:
+      // a deadlock rejects Promise.all and fails the test.
+      await Promise.all([
+        renewViaNotification(otid, newStart, newEnd),
+        renewViaNotification(otid, newStart, newEnd),
+      ]);
+
+      // Both applied cleanly, exactly one period materialized (no carryover).
+      expect(await getBalance(accountId)).toBe(BigInt(perPeriod()));
+      const agg = await prisma.creditLedger.aggregate({
+        where: { accountId },
+        _sum: { delta: true },
+      });
+      expect(await getBalance(accountId)).toBe(agg._sum.delta ?? 0n);
+    }
+  });
 });
