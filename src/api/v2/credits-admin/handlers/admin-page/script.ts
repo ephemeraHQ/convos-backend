@@ -1,6 +1,9 @@
+import { CHEV } from "./console-view";
+
 export const clientScript = (): string => `
   var TOKEN_KEY = "credits_admin_token";
   var CREDITS_PER_USD = null; // set from whoami; usdHint guards on falsy
+  var DD_CHEV = ${JSON.stringify(CHEV)};
 
   function el(id){ return document.getElementById(id); }
   function esc(s){ if(s==null) return ""; return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;"); }
@@ -236,7 +239,7 @@ export const clientScript = (): string => `
     var max=usage.reduce(function(m,u){ var c=Number(u.consumed); return c>m?c:m; },0);
     var total=usage.reduce(function(s,u){ return s+Number(u.consumed); },0);
     var bars=usage.map(function(u){ var c=Number(u.consumed); var h=max>0?Math.max(2,Math.round(c/max*100)):2;
-      return '<div class="bar'+(max>0&&c===max?" peak":"")+'" style="height:'+h+'%" data-val="'+esc(fmtCredits(c))+'" title="'+esc(u.bucketStart+" · "+fmtCredits(c)+" credits")+'"></div>'; }).join("");
+      return '<div class="bar'+(max>0&&c===max?" peak":"")+'" style="height:'+h+'%" data-val="'+esc(fmtCredits(c))+'" data-tip="'+esc(u.bucketStart+" · "+fmtCredits(c)+" credits")+'"></div>'; }).join("");
     var firstDate=fmtDate(usage[0].bucketStart).split(" ")[0];
     var lastDate=fmtDate(usage[usage.length-1].bucketStart).split(" ")[0];
     return '<div class="usage-head"><span>Peak <b>'+esc(fmtCredits(max))+'</b>/day</span><span>Total <b>'+esc(fmtCredits(total))+'</b> · 30d</span></div>'
@@ -286,6 +289,12 @@ export const clientScript = (): string => `
         paintFoot("d-ledger-foot", true, ledgerCursor, function(){ loadLedgerMore(); });
       })
       .catch(function(e){ if(acct!==currentAccountId||gen!==detailGen||myGen!==ledgerGen) return; paintFoot("d-ledger-foot", true, ledgerCursor, function(){ loadLedgerMore(); }); if(e.message!=="reauth") toast("Failed to filter ledger","error"); });
+  }
+  function resetLedgerDd(id){
+    var s=el(id); if(!s) return;
+    s.selectedIndex=0;
+    var dd=s.parentNode;
+    if(dd&&dd.__sync) dd.__sync();
   }
   var ledgerCols=[[function(r){return fmtDate(r.createdAt);},"nowrap"],[function(r){return esc(r.delta);},"num"],function(r){return esc(r.reason);},[function(r){return esc(r.grantKindId||"—");},"mono"],function(r){return esc(r.note||"");}];
   function paintFoot(footId, hasRows, nextCursor, moreFn){
@@ -337,7 +346,7 @@ export const clientScript = (): string => `
       +'<div class="card"><h3>Daily refills</h3><div class="tablewrap"><table><tbody id="d-refills"></tbody></table></div></div>'
       +'<div class="card"><h3>Ledger movements</h3>'
       +'<div class="ledger-filter">'
-      +'<select id="d-lf-kind">'
+      +'<div class="dd" data-dd="d-lf-kind"><select id="d-lf-kind" class="dd-native">'
       +'<option value="">Kind: all</option>'
       +'<option value="subscription">Subscription (grants + forfeits)</option>'
       +'<option value="sub_grant">Sub grant</option>'
@@ -345,13 +354,13 @@ export const clientScript = (): string => `
       +'<option value="signup_bonus">Signup bonus</option>'
       +'<option value="daily_refill">Daily refill</option>'
       +'<option value="manual">Manual</option>'
-      +'</select>'
-      +'<select id="d-lf-reason">'
+      +'</select><button type="button" class="dd-btn" aria-haspopup="listbox" aria-expanded="false"><span class="dd-label"></span>'+DD_CHEV+'</button><div class="dd-menu" role="listbox"></div></div>'
+      +'<div class="dd" data-dd="d-lf-reason"><select id="d-lf-reason" class="dd-native">'
       +'<option value="">Reason: all</option>'
       +'<option value="consume">consume</option>'
       +'<option value="grant">grant</option>'
       +'<option value="adjust">adjust</option>'
-      +'</select>'
+      +'</select><button type="button" class="dd-btn" aria-haspopup="listbox" aria-expanded="false"><span class="dd-label"></span>'+DD_CHEV+'</button><div class="dd-menu" role="listbox"></div></div>'
       +'<input id="d-lf-from" type="date" aria-label="From date">'
       +'<input id="d-lf-to" type="date" aria-label="To date">'
       +'<button id="d-lf-clear" class="btn btn-secondary">Clear</button>'
@@ -365,11 +374,12 @@ export const clientScript = (): string => `
     renderLedgerFirst(j);
     el("d-grant-btn").addEventListener("click", function(){ mutate("grant"); });
     el("d-adjust-btn").addEventListener("click", function(){ mutate("adjust"); });
+    Array.prototype.forEach.call(el("detail-body").querySelectorAll(".dd"), initDropdown);
     ["d-lf-kind","d-lf-reason","d-lf-from","d-lf-to"].forEach(function(id){
       el(id).addEventListener("change", applyLedgerFilter);
     });
     el("d-lf-clear").addEventListener("click", function(){
-      el("d-lf-kind").value=""; el("d-lf-reason").value="";
+      resetLedgerDd("d-lf-kind"); resetLedgerDd("d-lf-reason");
       el("d-lf-from").value=""; el("d-lf-to").value="";
       applyLedgerFilter();
     });
@@ -448,6 +458,7 @@ export const clientScript = (): string => `
     });
     document.addEventListener("click", function(e){ if(!dd.contains(e.target)) close(); });
     syncLabel();
+    dd.__sync=syncLabel;
   }
   Array.prototype.forEach.call(document.querySelectorAll(".dd"), initDropdown);
 

@@ -282,4 +282,25 @@ describe("admin page — ledger movements filter", () => {
     );
     expect(res.text).toContain("No movements match this filter");
   });
+
+  it("renders the Kind/Reason filters as branded .dd dropdowns, not native selects", async () => {
+    const res = await get();
+    // same branded custom-dropdown component as the rail view-mode/gk-kind
+    expect(res.text).toContain('class="dd" data-dd="d-lf-kind"');
+    expect(res.text).toContain('class="dd" data-dd="d-lf-reason"');
+    expect(res.text).toContain('id="d-lf-kind" class="dd-native"');
+    expect(res.text).toContain('id="d-lf-reason" class="dd-native"');
+    // the injected modal dropdowns get initialised on open (not just boot-time)
+    expect(res.text).toContain(
+      'el("detail-body").querySelectorAll(".dd"), initDropdown',
+    );
+  });
+
+  it("uses an instant brand tooltip on usage bars, not the native title attribute", async () => {
+    const res = await get();
+    // usage bars carry data-tip (CSS :hover tooltip), no native title= (OS-grey + delay)
+    expect(res.text).toContain('data-tip="');
+    expect(res.text).not.toContain('" title="');
+    expect(res.text).toContain(".usage-bars .bar:hover::before");
+  });
 });
