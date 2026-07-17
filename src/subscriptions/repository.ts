@@ -186,6 +186,36 @@ const providerSubscriptionId = (input: VerifyInput): string =>
     ? input.originalTransactionId
     : input.purchaseToken;
 
+type LockedSubscriptionPeriod = {
+  currentPeriodStart: Date;
+  currentPeriodEnd: Date;
+};
+
+/**
+ * Lock the Subscription row (FOR UPDATE) for the rest of the caller's
+ * transaction and return its CURRENT (pre-advance) period. Renewal decisions —
+ * staleness, whether the period advanced, and WHICH period to forfeit — must run
+ * against this serialized read, not a snapshot taken before the row lock: two
+ * concurrent renewals (A→B, A→C) would otherwise both read period A, and the
+ * second would forfeit A (a no-op replay) instead of the period the row actually
+ * advanced from, leaking a full period's credits. Locking here also fences the
+ * verify and S2S paths against each other on the same row. Lock order:
+ * Subscription then UserCredits (matching the forfeit/grant helpers) — no
+ * deadlock. Returns null only if the row vanished (never in practice).
+ */
+const lockSubscriptionPeriod = async (
+  tx: Prisma.TransactionClient,
+  id: string,
+): Promise<LockedSubscriptionPeriod | null> => {
+  const rows = await tx.$queryRaw<LockedSubscriptionPeriod[]>`
+    SELECT "currentPeriodStart", "currentPeriodEnd"
+    FROM "Subscription"
+    WHERE "id" = ${id}::uuid
+    FOR UPDATE
+  `;
+  return rows[0] ?? null;
+};
+
 const findExistingForVerify = async (
   tx: Prisma.TransactionClient,
   input: VerifyInput,
@@ -429,22 +459,40 @@ export const upsertFromVerify = async (
         };
       }
 
+      // Lock the row for the rest of the tx and read its TRUE current period, so
+      // staleness / advance / forfeit-target all judge against the serialized
+      // state — not the pre-lock `existing` snapshot a concurrent renewal may
+      // have already superseded. Only the update path (existing !== null) needs
+      // it; a first-time create has no prior period to lock.
+      const locked =
+        existing !== null
+          ? await lockSubscriptionPeriod(tx, existing.id)
+          : null;
+
       // A valid but old transaction can arrive after a later renewal/webhook.
       // Keep the audit row, but do not roll the subscription's entitlement
       // window or status backwards.
       const isStaleVerify =
-        existing !== null && input.currentPeriodEnd < existing.currentPeriodEnd;
+        locked !== null && input.currentPeriodEnd < locked.currentPeriodEnd;
 
-      const subscription = existing
-        ? isStaleVerify
-          ? existing
-          : await tx.subscription.update({
-              where: { id: existing.id },
-              data: subscriptionUpdateData(input),
-            })
-        : await tx.subscription.create({
-            data: subscriptionCreateData(input),
-          });
+      let subscription: Subscription;
+      if (existing === null) {
+        subscription = await tx.subscription.create({
+          data: subscriptionCreateData(input),
+        });
+      } else if (isStaleVerify) {
+        // Stale/out-of-order verify: don't roll the row back, but return its
+        // CURRENT committed state — a concurrent renewal may have advanced it
+        // since the pre-lock `existing` read.
+        subscription =
+          (await tx.subscription.findUnique({ where: { id: existing.id } })) ??
+          existing;
+      } else {
+        subscription = await tx.subscription.update({
+          where: { id: existing.id },
+          data: subscriptionUpdateData(input),
+        });
+      }
 
       await tx.billingReceipt.create({
         data: {
@@ -473,6 +521,26 @@ export const upsertFromVerify = async (
       // subscription … wallet credits persist until forfeit"). Switching this
       // to the effective check would break that pinned semantic for nothing.
       if (!isStaleVerify && isEntitledSubscriptionStatus(subscription.status)) {
+        // Renewal observed via verify: if the period start advanced past the
+        // LOCKED current one, forfeit the ending period's unused allotment (no
+        // carryover) before granting the new period. Comparing against `locked`
+        // (read under the row lock) rather than the pre-lock snapshot means a
+        // concurrent renewal that already advanced the row is seen — we forfeit
+        // the period the row actually advanced FROM, and a same-period re-verify
+        // (identical stable provider start) does not trip the guard.
+        // `consumesUntil` bounds the clawed period's consumes to spends made
+        // before the new period began.
+        if (
+          locked !== null &&
+          input.currentPeriodStart.getTime() >
+            locked.currentPeriodStart.getTime()
+        ) {
+          await forfeitSubscriptionPeriod(tx, {
+            subscription,
+            periodStart: locked.currentPeriodStart,
+            consumesUntil: input.currentPeriodStart,
+          });
+        }
         const grantResult = await grantSubscriptionPeriod(tx, {
           subscription,
           periodStart: subscription.currentPeriodStart,
@@ -752,6 +820,15 @@ export const applyNotification = async (
 
   try {
     return await prisma.$transaction(async (tx) => {
+      // Lock the row FIRST — before the receipt insert, whose Subscription FK
+      // takes a KEY SHARE lock. Requesting FOR UPDATE ahead of that avoids a
+      // KEY-SHARE→FOR-UPDATE upgrade deadlock between two concurrent
+      // notifications for the same subscription, and gives the staleness guard +
+      // renewal forfeit a serialized read of the TRUE current period rather than
+      // the pre-tx `subscription` snapshot a concurrent renewal may have
+      // superseded.
+      const locked = await lockSubscriptionPeriod(tx, subscription.id);
+
       await tx.billingReceipt.create({
         data: {
           subscriptionId: subscription.id,
@@ -779,11 +856,21 @@ export const applyNotification = async (
       // period to compare; updates that omit it (no period drift possible) fall
       // through and apply as before.
       if (
+        locked !== null &&
         input.update.currentPeriodEnd !== undefined &&
         input.update.currentPeriodEnd.getTime() <
-          subscription.currentPeriodEnd.getTime()
+          locked.currentPeriodEnd.getTime()
       ) {
-        return { kind: "applied" as const, subscription };
+        // Stale/out-of-order: skip the state-apply, but return the row's CURRENT
+        // committed state — a concurrent renewal may have advanced it since the
+        // pre-lock `notificationLookup` snapshot.
+        const current = await tx.subscription.findUnique({
+          where: { id: subscription.id },
+        });
+        return {
+          kind: "applied" as const,
+          subscription: current ?? subscription,
+        };
       }
 
       const updated = await tx.subscription.update({
@@ -802,16 +889,31 @@ export const applyNotification = async (
         // period end. Idempotent per (subscription, periodStart). Stale
         // out-of-order terminal events were already short-circuited by the
         // staleness guard above, so this only fires for the current period
-        // (natural expiry or a legitimate mid-period refund/revoke).
-        await forfeitSubscriptionPeriod(tx, { subscription: updated });
+        // (natural expiry or a legitimate mid-period refund/revoke). Forfeit the
+        // LOCKED current period — the one the sub is actually in.
+        await forfeitSubscriptionPeriod(tx, {
+          subscription: updated,
+          periodStart: locked?.currentPeriodStart ?? updated.currentPeriodStart,
+        });
       } else if (
         isEntitledSubscriptionStatus(updated.status) &&
+        locked !== null &&
         updated.currentPeriodStart.getTime() >
-          subscription.currentPeriodStart.getTime()
+          locked.currentPeriodStart.getTime()
       ) {
-        // A renewal advanced the period start → materialize the new period's
-        // allotment. Guarding on "the start advanced" means a grace/billing-
-        // retry transition that keeps the same period does not re-grant.
+        // A renewal advanced the period start past the LOCKED current one →
+        // forfeit the period the row actually advanced FROM (read under the row
+        // lock, so a concurrent renewal that already advanced is seen), bounding
+        // its consumes to spends made before the new period began, then grant the
+        // new period. A grace/billing-retry that keeps the same period does not
+        // advance `locked`, so it neither forfeits nor re-grants. The per-period
+        // forfeit key + the row lock make a racing verify for the same advance
+        // resolve to exactly one forfeit and one grant.
+        await forfeitSubscriptionPeriod(tx, {
+          subscription: updated,
+          periodStart: locked.currentPeriodStart,
+          consumesUntil: updated.currentPeriodStart,
+        });
         const grantResult = await grantSubscriptionPeriod(tx, {
           subscription: updated,
           periodStart: updated.currentPeriodStart,

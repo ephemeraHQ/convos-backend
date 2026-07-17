@@ -515,7 +515,8 @@ describe("upsertFromVerify", () => {
           currentPeriodEnd: CURRENT_END,
         }),
       );
-      expect(await getBalance(accountId)).toBe(BigInt(perPeriod() * 2));
+      // Renewal forfeited period 1 (−perPeriod) and granted period 2 → one perPeriod.
+      expect(await getBalance(accountId)).toBe(BigInt(perPeriod()));
 
       // Remove period 2's grant, then replay the OLD transaction. Its period
       // end predates the stored one → stale → must NOT backfill period 2.
@@ -526,7 +527,9 @@ describe("upsertFromVerify", () => {
       );
       const replay = await upsertFromVerify(oldInput);
       expect(replay.receiptCreated).toBe(false);
-      expect(await getBalance(accountId)).toBe(BigInt(perPeriod()));
+      // Period 1 was forfeited at renewal and period 2's grant was just
+      // stripped → wallet is 0. The stale replay must NOT re-materialize it.
+      expect(await getBalance(accountId)).toBe(0n);
       expect(await countSubGrants(accountId)).toBe(1);
     });
 
@@ -863,7 +866,8 @@ describe("applyNotification", () => {
       },
     });
     expect(renew.kind).toBe("applied");
-    expect(await getBalance(accountId)).toBe(BigInt(perPeriod() * 2));
+    // Renewal forfeited period 1 and granted period 2 → one perPeriod.
+    expect(await getBalance(accountId)).toBe(BigInt(perPeriod()));
 
     // Now a STALE EXPIRED for the OLD period (currentPeriodEnd = oldEnd < newEnd).
     const stale = await applyNotification({
@@ -887,12 +891,14 @@ describe("applyNotification", () => {
         newEnd.toISOString(),
       );
     }
-    // No forfeit — wallet untouched.
-    expect(await getBalance(accountId)).toBe(BigInt(perPeriod() * 2));
+    // Balance unchanged by the stale EXPIRED (still the single post-renewal period).
+    expect(await getBalance(accountId)).toBe(BigInt(perPeriod()));
+    // The stale EXPIRED added NO forfeit; the single forfeit present is the
+    // one the renewal already wrote for period 1.
     const forfeitRows = await prisma.creditLedger.count({
       where: { accountId, grantKindId: "sub_forfeit" },
     });
-    expect(forfeitRows).toBe(0);
+    expect(forfeitRows).toBe(1);
     // The stale receipt is still recorded for audit.
     const receipt = await findReceiptByTransactionId(
       BillingProvider.apple,
