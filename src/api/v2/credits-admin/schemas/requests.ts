@@ -21,6 +21,19 @@ export const auditRecentQuerySchema = z.object({
 
 export const ledgerQuerySchema = z.object({
   cursor: z.string().trim().min(1).max(512).optional(),
+  kind: z
+    .enum([
+      "subscription",
+      "sub_grant",
+      "sub_forfeit",
+      "signup_bonus",
+      "daily_refill",
+      "manual",
+    ])
+    .optional(),
+  reason: z.enum(["consume", "grant", "adjust"]).optional(),
+  from: z.coerce.date().optional(),
+  to: z.coerce.date().optional(),
 });
 
 export const grantBodySchema = z.object({

@@ -223,6 +223,8 @@ export const clientScript = (): string => `
   });
   var currentAccountId=null;
   var ledgerCursor=null, auditCursor=null;
+  var ledgerFilter={kind:"",reason:"",from:"",to:""};
+  var ledgerGen=0;
   var detailGen=0;
   function subChip(j){
     var state=j.subscription?j.subscription.effectiveStatus:"none";
@@ -247,6 +249,44 @@ export const clientScript = (): string => `
       return "<td"+(cls?' class="'+cls+'"':"")+">"+fn(r)+"</td>";
     }).join("")+"</tr>"; }).join("");
   }
+  function currentFilterFromControls(){
+    return {
+      kind: el("d-lf-kind").value,
+      reason: el("d-lf-reason").value,
+      from: el("d-lf-from").value,
+      to: el("d-lf-to").value
+    };
+  }
+  function buildLedgerQuery(filter, cursor){
+    var p=[];
+    if(filter.kind) p.push("kind="+encodeURIComponent(filter.kind));
+    if(filter.reason) p.push("reason="+encodeURIComponent(filter.reason));
+    if(filter.from) p.push("from="+encodeURIComponent(filter.from));
+    if(filter.to) p.push("to="+encodeURIComponent(filter.to));
+    if(cursor) p.push("cursor="+encodeURIComponent(cursor));
+    return p.length?("?"+p.join("&")):"";
+  }
+  function applyLedgerFilter(){
+    if(!currentAccountId) return;
+    var f=currentFilterFromControls();
+    var acct=currentAccountId, gen=detailGen, myGen=++ledgerGen;
+    el("d-ledger-foot").innerHTML="";
+    guardFetch("/accounts/"+encodeURIComponent(acct)+"/ledger"+buildLedgerQuery(f,null))
+      .then(function(r){ if(!r.ok) throw new Error("filter_failed"); return r.json(); })
+      .then(function(j){ if(acct!==currentAccountId||gen!==detailGen||myGen!==ledgerGen) return;
+        ledgerFilter=f;
+        var rows=j.rows||[];
+        ledgerCursor=j.nextCursor||null;
+        if(rows.length===0){
+          el("d-ledger").innerHTML='<tr><td class="muted-note">No movements match this filter.</td></tr>';
+          el("d-ledger-foot").innerHTML="";
+          return;
+        }
+        el("d-ledger").innerHTML=rowsHtml(rows, ledgerCols);
+        paintFoot("d-ledger-foot", true, ledgerCursor, function(){ loadLedgerMore(); });
+      })
+      .catch(function(e){ if(acct!==currentAccountId||gen!==detailGen||myGen!==ledgerGen) return; paintFoot("d-ledger-foot", true, ledgerCursor, function(){ loadLedgerMore(); }); if(e.message!=="reauth") toast("Failed to filter ledger","error"); });
+  }
   var ledgerCols=[[function(r){return fmtDate(r.createdAt);},"nowrap"],[function(r){return esc(r.delta);},"num"],function(r){return esc(r.reason);},[function(r){return esc(r.grantKindId||"—");},"mono"],function(r){return esc(r.note||"");}];
   function paintFoot(footId, hasRows, nextCursor, moreFn){
     var foot=el(footId); if(!foot) return;
@@ -262,15 +302,15 @@ export const clientScript = (): string => `
   function loadLedgerMore(){
     if(!ledgerCursor||!currentAccountId) return;
     var btn=el("d-ledger-foot")&&el("d-ledger-foot").querySelector("button"); if(btn&&btn.disabled) return; if(btn) btn.disabled=true;
-    var acct=currentAccountId, gen=detailGen;
-    guardFetch("/accounts/"+encodeURIComponent(acct)+"/ledger?cursor="+encodeURIComponent(ledgerCursor))
+    var acct=currentAccountId, gen=detailGen, myGen=ledgerGen;
+    guardFetch("/accounts/"+encodeURIComponent(acct)+"/ledger"+buildLedgerQuery(ledgerFilter,ledgerCursor))
       .then(function(r){ if(!r.ok) throw new Error("more_failed"); return r.json(); })
-      .then(function(j){ if(acct!==currentAccountId||gen!==detailGen) return;
+      .then(function(j){ if(acct!==currentAccountId||gen!==detailGen||myGen!==ledgerGen) return;
         el("d-ledger").insertAdjacentHTML("beforeend", rowsHtml(j.rows, ledgerCols));
         ledgerCursor=j.nextCursor||null;
         paintFoot("d-ledger-foot", true, ledgerCursor, function(){ loadLedgerMore(); });
       })
-      .catch(function(e){ paintFoot("d-ledger-foot", true, ledgerCursor, function(){ loadLedgerMore(); }); if(e.message!=="reauth") toast("Failed to load more","error"); });
+      .catch(function(e){ if(acct!==currentAccountId||gen!==detailGen||myGen!==ledgerGen) return; paintFoot("d-ledger-foot", true, ledgerCursor, function(){ loadLedgerMore(); }); if(e.message!=="reauth") toast("Failed to load more","error"); });
   }
   function renderDetail(j){
     var sub=j.subscription;
@@ -295,7 +335,28 @@ export const clientScript = (): string => `
       +'<div class="card"><h3>Adjust</h3><input id="d-adjust-delta" type="number" placeholder="±credits"><input id="d-adjust-reason" placeholder="Reason"><button id="d-adjust-btn" class="btn btn-danger">Adjust</button></div>'
       +'<div class="card"><h3>Usage (30d)</h3><div id="usage-spark"></div></div>'
       +'<div class="card"><h3>Daily refills</h3><div class="tablewrap"><table><tbody id="d-refills"></tbody></table></div></div>'
-      +'<div class="card"><h3>Recent ledger</h3><div class="tablewrap"><table><tbody id="d-ledger"></tbody></table></div><div id="d-ledger-foot"></div></div>'
+      +'<div class="card"><h3>Ledger movements</h3>'
+      +'<div class="ledger-filter">'
+      +'<select id="d-lf-kind">'
+      +'<option value="">Kind: all</option>'
+      +'<option value="subscription">Subscription (grants + forfeits)</option>'
+      +'<option value="sub_grant">Sub grant</option>'
+      +'<option value="sub_forfeit">Sub forfeit</option>'
+      +'<option value="signup_bonus">Signup bonus</option>'
+      +'<option value="daily_refill">Daily refill</option>'
+      +'<option value="manual">Manual</option>'
+      +'</select>'
+      +'<select id="d-lf-reason">'
+      +'<option value="">Reason: all</option>'
+      +'<option value="consume">consume</option>'
+      +'<option value="grant">grant</option>'
+      +'<option value="adjust">adjust</option>'
+      +'</select>'
+      +'<input id="d-lf-from" type="date" aria-label="From date">'
+      +'<input id="d-lf-to" type="date" aria-label="To date">'
+      +'<button id="d-lf-clear" class="btn btn-secondary">Clear</button>'
+      +'</div>'
+      +'<div class="tablewrap"><table><tbody id="d-ledger"></tbody></table></div><div id="d-ledger-foot"></div></div>'
       +'<div class="card"><h3>Admin audit</h3><div class="tablewrap"><table><tbody id="d-audit"></tbody></table></div><div id="d-audit-foot"></div></div>';
     el("usage-spark").innerHTML = renderUsage(j.usageDaily);
     el("d-refills").innerHTML = (j.dailyRefills&&j.dailyRefills.length)
@@ -304,6 +365,14 @@ export const clientScript = (): string => `
     renderLedgerFirst(j);
     el("d-grant-btn").addEventListener("click", function(){ mutate("grant"); });
     el("d-adjust-btn").addEventListener("click", function(){ mutate("adjust"); });
+    ["d-lf-kind","d-lf-reason","d-lf-from","d-lf-to"].forEach(function(id){
+      el(id).addEventListener("change", applyLedgerFilter);
+    });
+    el("d-lf-clear").addEventListener("click", function(){
+      el("d-lf-kind").value=""; el("d-lf-reason").value="";
+      el("d-lf-from").value=""; el("d-lf-to").value="";
+      applyLedgerFilter();
+    });
   }
   var auditCols=[[function(r){return fmtDate(r.createdAt);},"nowrap"],function(r){return esc(r.actorEmail);},function(r){return esc(r.action);},[function(r){return esc(r.deltaCredits);},"num"],function(r){return esc(r.reason);}];
   function loadAudit(accountId){
@@ -329,6 +398,7 @@ export const clientScript = (): string => `
   }
   function openDetail(accountId){
     currentAccountId=accountId;
+    ledgerFilter={kind:"",reason:"",from:"",to:""};
     detailGen++;
     el("detail-body").innerHTML='<div class="muted-note">Loading…</div>';
     el("detail").setAttribute("aria-hidden","false"); el("detail-scrim").classList.remove("hidden");

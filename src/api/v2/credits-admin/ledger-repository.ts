@@ -26,13 +26,47 @@ export const serializeLedger = (r: CreditLedger): SerializedLedger => ({
   createdAt: r.createdAt.toISOString(),
 });
 
+export type LedgerFilter = {
+  kind?:
+    | "subscription"
+    | "sub_grant"
+    | "sub_forfeit"
+    | "signup_bonus"
+    | "daily_refill"
+    | "manual";
+  reason?: "consume" | "grant" | "adjust";
+  from?: Date;
+  to?: Date;
+};
+
+// Whole-`to`-day-inclusive upper bound. UTC accessors only — never local time —
+// so the boundary does not drift by the server's timezone.
+const startOfNextUtcDay = (d: Date): Date =>
+  new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() + 1));
+
 export const listLedgerPageByAccount = async (args: {
   accountId: string;
   cursor?: RecentAuditCursor | null;
   limit?: number;
+  filter?: LedgerFilter;
 }): Promise<{ rows: CreditLedger[]; nextCursor: string | null }> => {
   const limit = args.limit ?? LEDGER_PAGE_LIMIT;
   const where: Prisma.CreditLedgerWhereInput = { accountId: args.accountId };
+  const f = args.filter;
+  if (f?.kind === "subscription") {
+    where.grantKindId = { in: ["sub_grant", "sub_forfeit"] };
+  } else if (f?.kind) {
+    where.grantKindId = f.kind;
+  }
+  if (f?.reason) {
+    where.reason = f.reason;
+  }
+  if (f?.from || f?.to) {
+    where.createdAt = {
+      ...(f.from ? { gte: f.from } : {}),
+      ...(f.to ? { lt: startOfNextUtcDay(f.to) } : {}),
+    };
+  }
   if (args.cursor) {
     where.OR = [
       { createdAt: { lt: args.cursor.createdAt } },
