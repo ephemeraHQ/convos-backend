@@ -176,6 +176,12 @@ tbody tr.row-clickable:hover td.mono{color:var(--fg);}
   .detail{width:100%;}
   .detail-scrim{padding:24px 12px;}
 }
+@media (max-width:600px){
+  /* One line is a wide-screen goal; on narrow screens wrap so controls stay usable */
+  .ledger-filter{flex-wrap:wrap;}
+  .ledger-filter .dd,.ledger-filter input{flex:1 1 140px;}
+  .ledger-filter .dd-menu{left:0;right:0;min-width:0;}
+}
 @media (pointer:coarse){
   .rail input,.rail select,.mode-ctl input,.mode-ctl select{min-height:44px;font-size:16px;}
   .btn{min-height:40px;}
