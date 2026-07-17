@@ -812,9 +812,18 @@ export const applyNotification = async (
         updated.currentPeriodStart.getTime() >
           subscription.currentPeriodStart.getTime()
       ) {
-        // A renewal advanced the period start → materialize the new period's
-        // allotment. Guarding on "the start advanced" means a grace/billing-
-        // retry transition that keeps the same period does not re-grant.
+        // A renewal advanced the period start → forfeit the ending period's
+        // unused allotment (no carryover), then materialize the new period.
+        // `subscription` is the pre-update row, so its currentPeriodStart is
+        // the ending period. Guarding on "the start advanced" means a grace/
+        // billing-retry transition that keeps the same period neither forfeits
+        // nor re-grants. Forfeit is idempotent per (sub, period) and fenced by
+        // the preceding subscription.update row lock, so a racing verify for
+        // the same advance no-ops on the forfeit key.
+        await forfeitSubscriptionPeriod(tx, {
+          subscription,
+          periodStart: subscription.currentPeriodStart,
+        });
         const grantResult = await grantSubscriptionPeriod(tx, {
           subscription: updated,
           periodStart: updated.currentPeriodStart,

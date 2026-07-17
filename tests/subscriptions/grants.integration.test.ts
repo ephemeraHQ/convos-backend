@@ -144,10 +144,10 @@ describe("subscription grant materialization (single-ledger)", () => {
     expect(grantRows).toBe(1);
   });
 
-  it("renewal advancing the period grants the new period again", async () => {
+  it("renewal forfeits the prior period and grants the new one (no carryover)", async () => {
     const accountId = await newAccount();
     const otid = `otid-${accountId}`;
-    await verifyApple(accountId, {
+    const { subscription } = await verifyApple(accountId, {
       originalTransactionId: otid,
     });
     expect(await getBalance(accountId)).toBe(BigInt(perPeriod()));
@@ -170,12 +170,26 @@ describe("subscription grant materialization (single-ledger)", () => {
     });
     expect(res.kind).toBe("applied");
 
-    // Two periods granted → wallet holds 2 × perPeriod.
-    expect(await getBalance(accountId)).toBe(BigInt(perPeriod() * 2));
+    // No carryover: prior period forfeited (nothing consumed), new period
+    // granted → wallet holds exactly one perPeriod, not two.
+    expect(await getBalance(accountId)).toBe(BigInt(perPeriod()));
     const grantRows = await prisma.creditLedger.count({
       where: { accountId, grantKindId: "sub_grant" },
     });
     expect(grantRows).toBe(2);
+    // The ending period's forfeit is keyed to its OLD start and claws the full
+    // unused allotment.
+    const forfeitKey = subForfeitKey(
+      subscription.id,
+      subscription.currentPeriodStart,
+    );
+    const forfeitRow = await prisma.creditLedger.findUnique({
+      where: {
+        accountId_idempotencyKey: { accountId, idempotencyKey: forfeitKey },
+      },
+    });
+    expect(forfeitRow?.grantKindId).toBe("sub_forfeit");
+    expect(forfeitRow?.delta).toBe(BigInt(-perPeriod()));
   });
 });
 
