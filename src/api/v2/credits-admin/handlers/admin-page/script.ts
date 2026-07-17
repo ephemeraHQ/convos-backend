@@ -224,6 +224,7 @@ export const clientScript = (): string => `
   var currentAccountId=null;
   var ledgerCursor=null, auditCursor=null;
   var ledgerFilter={kind:"",reason:"",from:"",to:""};
+  var ledgerGen=0;
   var detailGen=0;
   function subChip(j){
     var state=j.subscription?j.subscription.effectiveStatus:"none";
@@ -248,30 +249,32 @@ export const clientScript = (): string => `
       return "<td"+(cls?' class="'+cls+'"':"")+">"+fn(r)+"</td>";
     }).join("")+"</tr>"; }).join("");
   }
-  function readLedgerFilter(){
-    ledgerFilter={
-      kind: el("d-lf-kind")?el("d-lf-kind").value:"",
-      reason: el("d-lf-reason")?el("d-lf-reason").value:"",
-      from: el("d-lf-from")?el("d-lf-from").value:"",
-      to: el("d-lf-to")?el("d-lf-to").value:""
+  function currentFilterFromControls(){
+    return {
+      kind: el("d-lf-kind").value,
+      reason: el("d-lf-reason").value,
+      from: el("d-lf-from").value,
+      to: el("d-lf-to").value
     };
   }
-  function buildLedgerQuery(cursor){
+  function buildLedgerQuery(filter, cursor){
     var p=[];
-    if(ledgerFilter.kind) p.push("kind="+encodeURIComponent(ledgerFilter.kind));
-    if(ledgerFilter.reason) p.push("reason="+encodeURIComponent(ledgerFilter.reason));
-    if(ledgerFilter.from) p.push("from="+encodeURIComponent(ledgerFilter.from));
-    if(ledgerFilter.to) p.push("to="+encodeURIComponent(ledgerFilter.to));
+    if(filter.kind) p.push("kind="+encodeURIComponent(filter.kind));
+    if(filter.reason) p.push("reason="+encodeURIComponent(filter.reason));
+    if(filter.from) p.push("from="+encodeURIComponent(filter.from));
+    if(filter.to) p.push("to="+encodeURIComponent(filter.to));
     if(cursor) p.push("cursor="+encodeURIComponent(cursor));
     return p.length?("?"+p.join("&")):"";
   }
   function applyLedgerFilter(){
     if(!currentAccountId) return;
-    readLedgerFilter();
-    var acct=currentAccountId, gen=detailGen;
-    guardFetch("/accounts/"+encodeURIComponent(acct)+"/ledger"+buildLedgerQuery(null))
+    var f=currentFilterFromControls();
+    var acct=currentAccountId, gen=detailGen, myGen=++ledgerGen;
+    el("d-ledger-foot").innerHTML="";
+    guardFetch("/accounts/"+encodeURIComponent(acct)+"/ledger"+buildLedgerQuery(f,null))
       .then(function(r){ if(!r.ok) throw new Error("filter_failed"); return r.json(); })
-      .then(function(j){ if(acct!==currentAccountId||gen!==detailGen) return;
+      .then(function(j){ if(acct!==currentAccountId||gen!==detailGen||myGen!==ledgerGen) return;
+        ledgerFilter=f;
         var rows=j.rows||[];
         ledgerCursor=j.nextCursor||null;
         if(rows.length===0){
@@ -299,10 +302,10 @@ export const clientScript = (): string => `
   function loadLedgerMore(){
     if(!ledgerCursor||!currentAccountId) return;
     var btn=el("d-ledger-foot")&&el("d-ledger-foot").querySelector("button"); if(btn&&btn.disabled) return; if(btn) btn.disabled=true;
-    var acct=currentAccountId, gen=detailGen;
-    guardFetch("/accounts/"+encodeURIComponent(acct)+"/ledger"+buildLedgerQuery(ledgerCursor))
+    var acct=currentAccountId, gen=detailGen, myGen=ledgerGen;
+    guardFetch("/accounts/"+encodeURIComponent(acct)+"/ledger"+buildLedgerQuery(ledgerFilter,ledgerCursor))
       .then(function(r){ if(!r.ok) throw new Error("more_failed"); return r.json(); })
-      .then(function(j){ if(acct!==currentAccountId||gen!==detailGen) return;
+      .then(function(j){ if(acct!==currentAccountId||gen!==detailGen||myGen!==ledgerGen) return;
         el("d-ledger").insertAdjacentHTML("beforeend", rowsHtml(j.rows, ledgerCols));
         ledgerCursor=j.nextCursor||null;
         paintFoot("d-ledger-foot", true, ledgerCursor, function(){ loadLedgerMore(); });

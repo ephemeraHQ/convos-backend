@@ -274,7 +274,9 @@ describe("admin page — ledger movements filter", () => {
     expect(res.text).toContain("buildLedgerQuery");
     // load-more must build its URL through buildLedgerQuery (filter carry-forward),
     // not the old cursor-only concatenation.
-    expect(res.text).toContain("buildLedgerQuery(ledgerCursor)");
+    expect(res.text).toContain("buildLedgerQuery(ledgerFilter,ledgerCursor)");
+    // race guard: a per-apply generation token invalidates in-flight load-more.
+    expect(res.text).toContain("ledgerGen");
     expect(res.text).not.toContain(
       '/ledger?cursor="+encodeURIComponent(ledgerCursor)',
     );
