@@ -648,3 +648,184 @@ describe("B2: n=1 materialization writes the FULL perPeriod grant", () => {
     );
   });
 });
+
+describe("forfeit-on-renewal invariants", () => {
+  const renewViaNotification = (otid: string, newStart: Date, newEnd: Date) =>
+    applyNotification({
+      provider: BillingProvider.apple,
+      originalTransactionId: otid,
+      transactionId: `tx-renew-${randomUUID()}`,
+      notificationUUID: randomUUID(),
+      notificationType: "DID_RENEW",
+      signedPayload: "stub.jws",
+      update: {
+        status: SubscriptionStatus.active,
+        currentPeriodStart: newStart,
+        currentPeriodEnd: newEnd,
+        willRenew: true,
+      },
+    });
+
+  const countForfeits = (accountId: string) =>
+    prisma.creditLedger.count({
+      where: { accountId, grantKindId: "sub_forfeit" },
+    });
+  const countGrants = (accountId: string) =>
+    prisma.creditLedger.count({
+      where: { accountId, grantKindId: "sub_grant" },
+    });
+
+  it("renewal seen by S2S then verify forfeits the prior period exactly once", async () => {
+    const accountId = await newAccount();
+    const otid = `otid-${accountId}`;
+    await verifyApple(accountId, { originalTransactionId: otid });
+
+    const newStart = new Date(Date.now() + 25 * DAY_MS);
+    const newEnd = new Date(newStart.getTime() + 30 * DAY_MS);
+    await renewViaNotification(otid, newStart, newEnd);
+    // iOS re-verifies the same, already-advanced period → no second forfeit.
+    await verifyApple(accountId, {
+      originalTransactionId: otid,
+      transactionId: `tx-${randomUUID()}`,
+      currentPeriodStart: newStart,
+      currentPeriodEnd: newEnd,
+    });
+
+    expect(await getBalance(accountId)).toBe(BigInt(perPeriod()));
+    expect(await countGrants(accountId)).toBe(2);
+    expect(await countForfeits(accountId)).toBe(1);
+  });
+
+  it("renewal seen by verify then S2S forfeits the prior period exactly once", async () => {
+    const accountId = await newAccount();
+    const otid = `otid-${accountId}`;
+    const oldStart = new Date(Date.now() - 40 * DAY_MS);
+    const oldEnd = new Date(Date.now() - 10 * DAY_MS);
+    await verifyApple(accountId, {
+      originalTransactionId: otid,
+      currentPeriodStart: oldStart,
+      currentPeriodEnd: oldEnd,
+    });
+
+    const newStart = new Date(Date.now() - 5 * DAY_MS);
+    const newEnd = new Date(Date.now() + 25 * DAY_MS);
+    await verifyApple(accountId, {
+      originalTransactionId: otid,
+      transactionId: `tx-${randomUUID()}`,
+      currentPeriodStart: newStart,
+      currentPeriodEnd: newEnd,
+    });
+    // S2S DID_RENEW for the same already-advanced period → no second forfeit.
+    await renewViaNotification(otid, newStart, newEnd);
+
+    expect(await getBalance(accountId)).toBe(BigInt(perPeriod()));
+    expect(await countGrants(accountId)).toBe(2);
+    expect(await countForfeits(accountId)).toBe(1);
+  });
+
+  it("renewal forfeits only the UNUSED portion of the prior period", async () => {
+    const accountId = await newAccount();
+    const otid = `otid-${accountId}`;
+    const { subscription } = await verifyApple(accountId, {
+      originalTransactionId: otid,
+    });
+    const spend = await consume({
+      accountId,
+      usdCostMicros: 50_000n, // 100 credits
+      idempotencyKey: `c-${randomUUID()}`,
+      requestId: "r",
+    });
+
+    const newStart = new Date(Date.now() + 25 * DAY_MS);
+    const newEnd = new Date(newStart.getTime() + 30 * DAY_MS);
+    await renewViaNotification(otid, newStart, newEnd);
+
+    const unusedSub = perPeriod() - spend.spent;
+    const forfeitKey = subForfeitKey(
+      subscription.id,
+      subscription.currentPeriodStart,
+    );
+    const forfeitRow = await prisma.creditLedger.findUnique({
+      where: {
+        accountId_idempotencyKey: { accountId, idempotencyKey: forfeitKey },
+      },
+    });
+    expect(forfeitRow?.delta).toBe(BigInt(-unusedSub));
+    // prior consumed portion already left the wallet; prior unused clawed;
+    // new full period granted → exactly one perPeriod.
+    expect(await getBalance(accountId)).toBe(BigInt(perPeriod()));
+  });
+
+  it("renewal forfeit never touches non-subscription credits", async () => {
+    const accountId = await newAccount();
+    const otid = `otid-${accountId}`;
+    await verifyApple(accountId, { originalTransactionId: otid });
+    await grant({
+      accountId,
+      credits: 1000,
+      kind: "manual",
+      idempotencyKey: `admin-${randomUUID()}`,
+    });
+
+    const newStart = new Date(Date.now() + 25 * DAY_MS);
+    const newEnd = new Date(newStart.getTime() + 30 * DAY_MS);
+    await renewViaNotification(otid, newStart, newEnd);
+
+    // Prior sub period clawed, admin 1000 untouched, new period granted.
+    expect(await getBalance(accountId)).toBe(BigInt(perPeriod()) + 1000n);
+  });
+
+  it("a renewal that skips intermediate periods forfeits only the last-recorded period", async () => {
+    const accountId = await newAccount();
+    const otid = `otid-${accountId}`;
+    const { subscription } = await verifyApple(accountId, {
+      originalTransactionId: otid,
+    });
+
+    // Jump straight to a much later period (intermediate periods never observed).
+    const newStart = new Date(Date.now() + 60 * DAY_MS);
+    const newEnd = new Date(newStart.getTime() + 30 * DAY_MS);
+    await renewViaNotification(otid, newStart, newEnd);
+
+    expect(await getBalance(accountId)).toBe(BigInt(perPeriod()));
+    expect(await countGrants(accountId)).toBe(2);
+    expect(await countForfeits(accountId)).toBe(1);
+    // The single forfeit is keyed to the last-recorded (only granted) period.
+    const forfeitKey = subForfeitKey(
+      subscription.id,
+      subscription.currentPeriodStart,
+    );
+    const forfeitRow = await prisma.creditLedger.findUnique({
+      where: {
+        accountId_idempotencyKey: { accountId, idempotencyKey: forfeitKey },
+      },
+    });
+    expect(forfeitRow?.delta).toBe(BigInt(-perPeriod()));
+  });
+
+  it("terminal expiry after a renewal claws only the current period (no accumulation left)", async () => {
+    const accountId = await newAccount();
+    const otid = `otid-${accountId}`;
+    await verifyApple(accountId, { originalTransactionId: otid });
+
+    const newStart = new Date(Date.now() + 25 * DAY_MS);
+    const newEnd = new Date(newStart.getTime() + 30 * DAY_MS);
+    await renewViaNotification(otid, newStart, newEnd);
+    expect(await getBalance(accountId)).toBe(BigInt(perPeriod()));
+
+    await applyNotification({
+      provider: BillingProvider.apple,
+      originalTransactionId: otid,
+      transactionId: `tx-exp-${randomUUID()}`,
+      notificationUUID: randomUUID(),
+      notificationType: "EXPIRED",
+      signedPayload: "stub.jws",
+      update: { status: SubscriptionStatus.expired, willRenew: false },
+    });
+
+    // Period 1 forfeited at renewal, period 2 forfeited at expiry → wallet 0,
+    // two forfeit rows total. No stacked prior periods survive.
+    expect(await getBalance(accountId)).toBe(0n);
+    expect(await countForfeits(accountId)).toBe(2);
+  });
+});
