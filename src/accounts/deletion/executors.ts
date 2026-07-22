@@ -1,4 +1,5 @@
 import { DeleteObjectCommand, S3Client } from "@aws-sdk/client-s3";
+import { Code, ConnectError } from "@connectrpc/connect";
 import { z } from "zod";
 import type { DeletionTaskKind } from "@/accounts/deletion/service";
 import { createComposioService } from "@/api/v2/connections/composio.service";
@@ -138,6 +139,19 @@ export const __setDeletionNotificationClientForTests = (
 };
 const POSTHOG_FETCH_TIMEOUT_MS = 10_000;
 
+/**
+ * NotFound and Unimplemented from the notification server both mean the
+ * installation is already gone: NotFound is the explicit answer, and the
+ * Connect protocol maps a bare HTTP 404 (route no longer served) to
+ * `unimplemented`. Either way there is nothing left to purge, so the task
+ * must complete instead of retrying forever. Genuinely transient failures
+ * (unavailable, 5xx, timeouts, connection refused) carry other codes and
+ * keep their retry semantics.
+ */
+const isInstallationAlreadyAbsent = (err: unknown): err is ConnectError =>
+  err instanceof ConnectError &&
+  (err.code === Code.NotFound || err.code === Code.Unimplemented);
+
 /** Remove one notification-server installation (per ClientIdentifier). */
 const executeNotificationInstallation: DeletionExecutor = async (payload) => {
   const parsed = installationPayloadSchema.parse(payload);
@@ -147,11 +161,20 @@ const executeNotificationInstallation: DeletionExecutor = async (payload) => {
   const result = await withInstallationMutationFence({
     installationId: parsed.installationId,
     expectation: { state: "absent" },
-    mutate: () =>
-      notificationClient.deleteInstallation(
-        { installationId: parsed.installationId },
-        notificationMutationCallOptions(),
-      ),
+    mutate: async () => {
+      try {
+        await notificationClient.deleteInstallation(
+          { installationId: parsed.installationId },
+          notificationMutationCallOptions(),
+        );
+      } catch (err) {
+        if (!isInstallationAlreadyAbsent(err)) throw err;
+        logger.info(
+          { installationId: parsed.installationId, code: Code[err.code] },
+          "deletion.notification_installation.already_absent",
+        );
+      }
+    },
   });
   if (!result.applied) {
     logger.info(
