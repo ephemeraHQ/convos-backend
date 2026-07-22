@@ -252,9 +252,12 @@ export async function patchHandler(req: Request, res: Response) {
         });
         return;
       }
-      if (template.featuredRank !== 0) {
-        data.featuredRank = 0;
-      }
+      // Clear the weight unconditionally — NOT gated on the `featuredRank` we
+      // read above. The read and this write are not one transaction, so a
+      // concurrent reorder can assign this row a weight in between; gating on
+      // the stale read would skip the clear and leave that weight stranded on a
+      // row that has left the gallery.
+      data.featuredRank = 0;
     }
 
     // PII redaction — scrub the content fields being written. Only the fields
