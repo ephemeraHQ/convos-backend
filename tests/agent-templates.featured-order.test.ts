@@ -1,3 +1,4 @@
+import type { Prisma } from "@prisma/client";
 import {
   afterAll,
   beforeAll,
@@ -5,6 +6,7 @@ import {
   describe,
   expect,
   test,
+  vi,
 } from "vitest";
 import { __setAgentAssetsApiKeyOverrideForTests } from "@/middleware/agentAuth";
 import { ADMIN_ACCOUNT_ID } from "@/utils/constants";
@@ -272,6 +274,78 @@ describe("Agent templates — featured gallery order", () => {
       }),
     ]);
     expect([200, 409]).toContain(order.response.status);
+
+    const stranded = await prisma.agentTemplate.findMany({
+      where: {
+        slug: { startsWith: "fo-" },
+        featuredRank: { not: 0 },
+        OR: [{ featured: false }, { status: { not: "published" } }],
+      },
+      select: { agentName: true, featuredRank: true },
+    });
+    expect(stranded).toEqual([]);
+  });
+
+  // The same invariant, forced deterministically rather than left to timing —
+  // this is the interleaving the flaky sibling above only sometimes hits. An
+  // unfeature is parked right after it reads `three` (weight 0) and before its
+  // write; the reorder then weights the whole gallery, so `three` takes the lead
+  // slot; only then does the unfeature's write land. The weight was assigned
+  // after the unfeature's read, so a handler that trusts that read to decide the
+  // row is weightless walks `three` out of the gallery still holding a slot. The
+  // outcome is invariant-not-mechanism: the unfeature may clear the weight or be
+  // refused (409) because the row moved under it — never strand it.
+  test("an unfeature racing a reorder that weights the row never strands it", async () => {
+    const one = await seedGalleryTemplate("Fone");
+    const two = await seedGalleryTemplate("Ftwo");
+    const three = await seedGalleryTemplate("Fthree");
+
+    let signalParked!: () => void;
+    const parked = new Promise<void>((resolve) => {
+      signalParked = resolve;
+    });
+    let releaseWrite!: () => void;
+    const released = new Promise<void>((resolve) => {
+      releaseWrite = resolve;
+    });
+
+    const realUpdateMany = prisma.agentTemplate.updateMany.bind(
+      prisma.agentTemplate,
+    );
+    const spy = vi
+      .spyOn(prisma.agentTemplate, "updateMany")
+      .mockImplementation(((args: Prisma.AgentTemplateUpdateManyArgs) => {
+        // Park only the unfeature's own write to `three`; everything else (the
+        // reorder uses raw SQL, not updateMany) runs untouched.
+        if ((args.where?.id as string | undefined) === three) {
+          signalParked();
+          return released.then(() => realUpdateMany(args));
+        }
+        return realUpdateMany(args);
+      }) as unknown as typeof prisma.agentTemplate.updateMany);
+
+    try {
+      const unfeature = patchTemplate({
+        baseURL,
+        headers: agentKeyHeaders(),
+        id: three,
+        body: { featured: false },
+      });
+
+      // The unfeature has read `three` (weight 0) and is parked at its write.
+      await parked;
+
+      const reorder = await setOrder({ templateIds: [three, one, two] });
+      expect(reorder.response.status).toBe(200);
+
+      releaseWrite();
+      const unfeatureResult = await unfeature;
+      // Either it applied and cleared the weight, or it was refused because the
+      // row's weight moved under it — both are fine, a 500 is not.
+      expect([200, 409]).toContain(unfeatureResult.response.status);
+    } finally {
+      spy.mockRestore();
+    }
 
     const stranded = await prisma.agentTemplate.findMany({
       where: {

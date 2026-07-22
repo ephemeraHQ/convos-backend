@@ -331,10 +331,14 @@ export async function patchHandler(req: Request, res: Response) {
     }
 
     // Pin the WHERE clause to the row state we just validated. A concurrent
-    // publish, slug rename, ownership transfer or status flip would
-    // invalidate our invariant checks above, so any such mutation drops us
-    // into the count === 0 branch and surfaces as a 409 (or 404 if the row
-    // was deleted).
+    // publish, slug rename, ownership transfer, status flip, or curation change
+    // (a `featured` toggle or a reorder weight) would invalidate our invariant
+    // checks above, so any such mutation drops us into the count === 0 branch
+    // and surfaces as a 409 (or 404 if the row was deleted). Pinning `featured`
+    // and `featuredRank` is what makes the gallery-weight decision above safe
+    // under concurrency: if a reorder weights this row after our read, our clear
+    // (or our leaving-it-alone) can't clobber that weight — the write simply
+    // doesn't match.
     const result = await prisma.agentTemplate.updateMany({
       where: {
         id: template.id,
@@ -342,6 +346,8 @@ export async function patchHandler(req: Request, res: Response) {
         slug: template.slug,
         status: template.status,
         firstPublishedAt: template.firstPublishedAt,
+        featured: template.featured,
+        featuredRank: template.featuredRank,
       },
       data,
     });
