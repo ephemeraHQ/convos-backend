@@ -3,8 +3,8 @@ name: Validate code quality
 on:
   push:
     branches:
-      - main
-      - dev
+      - otr-dev
+      - otr-prod
 
   pull_request:
 
