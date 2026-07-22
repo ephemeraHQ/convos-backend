@@ -290,11 +290,12 @@ describe("Agent templates — featured gallery order", () => {
   // this is the interleaving the flaky sibling above only sometimes hits. An
   // unfeature is parked right after it reads `three` (weight 0) and before its
   // write; the reorder then weights the whole gallery, so `three` takes the lead
-  // slot; only then does the unfeature's write land. If the unfeature decides
-  // whether to clear the weight from the value it READ, it misses the weight
-  // written after that read, and `three` walks out of the gallery still holding
-  // a slot.
-  test("an unfeature clears a weight a concurrent reorder wrote after its read", async () => {
+  // slot; only then does the unfeature's write land. The weight was assigned
+  // after the unfeature's read, so a handler that trusts that read to decide the
+  // row is weightless walks `three` out of the gallery still holding a slot. The
+  // outcome is invariant-not-mechanism: the unfeature may clear the weight or be
+  // refused (409) because the row moved under it — never strand it.
+  test("an unfeature racing a reorder that weights the row never strands it", async () => {
     const one = await seedGalleryTemplate("Fone");
     const two = await seedGalleryTemplate("Ftwo");
     const three = await seedGalleryTemplate("Fthree");
@@ -338,7 +339,10 @@ describe("Agent templates — featured gallery order", () => {
       expect(reorder.response.status).toBe(200);
 
       releaseWrite();
-      await unfeature;
+      const unfeatureResult = await unfeature;
+      // Either it applied and cleared the weight, or it was refused because the
+      // row's weight moved under it — both are fine, a 500 is not.
+      expect([200, 409]).toContain(unfeatureResult.response.status);
     } finally {
       spy.mockRestore();
     }
