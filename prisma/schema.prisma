@@ -339,6 +339,12 @@ model DeletionRecord {
   /// Plain string column, validated in app code (see the AuthMethod.type
   /// comment for why Postgres enums are avoided).
   status      String    @default("purging")
+  /// Display-only snapshot of the wallet balance at deletion time, read
+  /// inside the teardown transaction BEFORE any escrow debit or wallet
+  /// teardown (what the user had). Null on records written before the
+  /// field existed; 0 when the account never had a wallet row
+  /// (getBalance semantics).
+  finalBalanceCredits BigInt?
   requestedAt DateTime  @default(now())
   completedAt DateTime?
   /// When the retention job may delete this record (set once the drain

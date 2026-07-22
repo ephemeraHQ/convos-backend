@@ -315,6 +315,9 @@ describe("DELETE /v2/accounts/me", () => {
     });
     expect(record?.status).toBe("purging");
     expect(record?.accountRef).toBe(hashAccountRef(accountId));
+    // Pre-escrow wallet snapshot: 100 manual + 2500 subscription credits
+    // (captured before the 2500 escrow debit and the wallet teardown).
+    expect(record?.finalBalanceCredits).toBe(2600n);
 
     const tasks = await prisma.deletionTask.findMany({
       where: { operationId },
@@ -371,17 +374,48 @@ describe("DELETE /v2/accounts/me", () => {
     expect(deletionAudit?.reason).toContain(hashAccountRef(accountId));
   });
 
+  test("records a 0 balance snapshot for an account with no wallet", async () => {
+    const address = `0x${randomUUID().replaceAll("-", "").padEnd(40, "b").slice(0, 40)}`;
+    const account = await prisma.account.create({
+      data: {
+        authMethods: { create: { type: "SIWE", externalKey: address } },
+      },
+    });
+    const operationId = randomUUID();
+    const token = await tokenFor(account.id);
+
+    const res = await request(makeApp())
+      .delete("/api/v2/accounts/me")
+      .set("X-Convos-AuthToken", token)
+      .send({ operationId });
+    expect(res.status).toBe(200);
+
+    // Never had a UserCredits row: the snapshot reads 0 (getBalance
+    // semantics), not null — null is reserved for pre-field records.
+    const record = await prisma.deletionRecord.findUnique({
+      where: { operationId },
+    });
+    expect(record?.finalBalanceCredits).toBe(0n);
+  });
+
   // The two replay tests carry the response body and durable DB state in
   // their assertion messages: a rare flake was once observed here and a
   // bare status assertion would discard the actual failure body.
+  // BigInt-safe stringify: DeletionRecord.finalBalanceCredits is a BigInt,
+  // which plain JSON.stringify refuses to serialize.
+  const jsonish = (value: unknown): string =>
+    JSON.stringify(value, (_key, v: unknown) =>
+      typeof v === "bigint" ? v.toString() : v,
+    );
+
   const replayDiagnostics = async (
     label: string,
     res: request.Response,
   ): Promise<string> => {
     const records = await prisma.deletionRecord.findMany();
-    return `${label}: status=${res.status} body=${JSON.stringify(
+    return `${label}: status=${res.status} body=${jsonish(
       res.body,
-    )} deletionRecords=${JSON.stringify(records)}`;
+    )} deletionRecords=${jsonish(records)}`;
   };
 
   test("replay with the same operationId returns the identical stored record", async () => {

@@ -227,6 +227,17 @@ const runDeleteAccountTransaction = async (args: {
         select: { inputs: true },
       });
 
+      // Display-only balance snapshot for the DeletionRecord: what the wallet
+      // held BEFORE the escrow debits and the wallet teardown below. A plain
+      // read (no ledger mutation) — stable because the Account FOR UPDATE
+      // lock above fences every concurrent ledger writer. Missing wallet row
+      // reads as 0, matching getBalance semantics.
+      const walletRow = await tx.userCredits.findUnique({
+        where: { accountId },
+        select: { balance: true },
+      });
+      const finalBalanceCredits = walletRow?.balance ?? 0n;
+
       // Money bookkeeping before the wallet goes: escrow the conservative
       // remainder of each held custody period (the tombstone snapshot,
       // released to a future claimant), journal the move, and flip the
@@ -331,7 +342,12 @@ const runDeleteAccountTransaction = async (args: {
       const record = await tx.deletionRecord.upsert({
         where: { operationId },
         update: {},
-        create: { operationId, accountRef, status: "purging" },
+        create: {
+          operationId,
+          accountRef,
+          status: "purging",
+          finalBalanceCredits,
+        },
       });
 
       const tasks: Prisma.DeletionTaskCreateManyInput[] = [];
