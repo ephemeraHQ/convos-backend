@@ -578,3 +578,54 @@ The two plans should compose in this order:
 The July 12-13 incident demonstrates the need: account recreation orphaned
 subscriptions, leaving the new account with a verify 409 while renewals kept
 enriching the ghost account's wallet.
+
+## Design decisions (agreed 2026-07-22)
+
+Agreed between Louis and Borja after the ledger retention review and the
+first end-to-end device deletions. These decisions resolve the retention,
+forfeit, and transfer-policy open questions above; the mechanisms they name
+(SubscriptionLineage, period custody/escrow, LineagePeriodGrant,
+DeletionRecord, DeletedIdentity) are built on the implementation branch
+(`feature/delete-account-live-transfer`).
+
+- **Immediate deletion on request.** No defer-to-subscription-expiry
+  variant: Apple 5.1.1(v) and GDPR erasure timing both point at deleting
+  when asked. The store subscription itself is not cancelled (store-owned,
+  disclosed client-side).
+- **Wallet zeroed at deletion.** The teardown escrows the conservative
+  subscription remainder (the escrow debit), then hard-deletes the
+  CreditLedger, UserCredits, and BillingReceipt rows. There is NO
+  pseudonymized ledger retention window; retention stays the amount-only
+  tombstone set below.
+- **Tombstone model.** What survives: DeletionRecord (keyed accountRef),
+  the DeletedIdentity barrier (keyed identity hash), and the
+  SubscriptionLineage tombstone with its custody/registry/journal rows.
+  Honest note: SubscriptionLineage.lineageKey stores the RAW provider
+  transaction id (Apple originalTransactionId, Google token-chain root).
+  Retention basis: active billing contract plus fraud prevention; account
+  linkage is hash-only (deletedAccountRef). Open nice-to-have: HMAC the
+  lineageKey too, with verify-time equality via HMAC as the identity
+  barrier does; check that Google token-alias chaining still resolves
+  before committing to it.
+- **Restore semantics.** Deletion does not cancel the store subscription.
+  A re-verify from a new accountId hits the lineage tombstone and gets the
+  409 with the claimable signal; the one-shot store-proven claim releases
+  the escrowed remainder, min(remaining balance, unspent period cap), to
+  the claimant; the next renewal funds the new account normally.
+- **Anti-abuse invariant.** Credits released per paid period never exceed
+  that period's cap, across any number of delete/restore cycles. Defense
+  in depth: the lineage tombstone blocks silent rebinding at verify AND
+  the LineagePeriodGrant registry independently suppresses re-funding an
+  already-funded period.
+- **Escrow forfeit.** Unclaimed escrow forfeits at the 30-day tombstone
+  expiry; the expiry sweep purges the rows.
+- **Deferred: non-subscription remainder escrow.** The two-bucket design
+  (subscription custody vs deletion escrow, with separate refund-clawback
+  semantics) is deferred. The decision will be data-driven via the new
+  DeletionRecord.finalBalanceCredits snapshot of the pre-escrow wallet
+  balance.
+- **E2E evidence.** Two device deletions verified end to end on 2026-07-22
+  (teardown, writer fencing, external purge, re-onboard). Fixes shipped the
+  same day: the finalBalanceCredits snapshot, the purge treating provider
+  NotFound as already-gone, and the escrow-before-wallet-teardown ordering
+  guard.
