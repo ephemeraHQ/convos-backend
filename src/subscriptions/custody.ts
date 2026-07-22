@@ -30,6 +30,25 @@ export const CUSTODY_STATE_ESCROW = "escrow";
 export const CUSTODY_STATE_INVALIDATED = "invalidated";
 export const CUSTODY_STATE_EXHAUSTED = "exhausted";
 
+/**
+ * Ordering guard for the deletion teardown: escrow settlement must run
+ * BEFORE deleteWalletForAccountWithTx. A held custody's owner always has a
+ * UserCredits row (funding created it), so a missing row here means the
+ * teardown already tore the wallet down — proceeding would let the balance
+ * lock silently recreate a zero wallet (conserving 0 and breaking the
+ * Account delete on its RESTRICT FK). Fail loudly instead.
+ */
+export class EscrowWalletMissingError extends Error {
+  constructor(accountId: string) {
+    super(
+      `escrowCustody: UserCredits row missing for holder ${accountId} — ` +
+        "escrow must settle before the wallet teardown " +
+        "(deleteWalletForAccountWithTx) in the deletion transaction",
+    );
+    Object.setPrototypeOf(this, EscrowWalletMissingError.prototype);
+  }
+}
+
 export const findCustody = async (
   tx: TxClient,
   ctx: LineageLockContext,
@@ -263,6 +282,13 @@ export const escrowCustody = async (
   const { custody } = args;
   const fromAccountId = custody.ownerAccountId;
   if (!fromAccountId) return custody.remainderCap;
+  // Escrow-before-teardown assertion (see EscrowWalletMissingError): check
+  // the wallet row exists BEFORE computeMoveAmount's lock upserts one.
+  const wallet = await tx.userCredits.findUnique({
+    where: { accountId: fromAccountId },
+    select: { accountId: true },
+  });
+  if (!wallet) throw new EscrowWalletMissingError(fromAccountId);
   const amount = await computeMoveAmount(tx, custody);
   if (amount > 0n) {
     await applyDeltaWithTx(tx, {
