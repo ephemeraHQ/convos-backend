@@ -11,12 +11,12 @@ Every dev build is pushed to GHCR tagged `sha-<gitsha>` (immutable), `latest`
 
 ## Production (manual)
 
-Production is a manual promotion of an already-tested image — not a branch push.
-Both ways below promote an image that already passed the gate (on its PR or on
-`otr-dev`), and both deploy to the `production` GitHub Environment: the image's
-digest is written to Terraform Cloud workspace `convos-otr-prod` and the ECS
-service rolls. There is no approval gate — a prod deploy runs as soon as you
-trigger it, so trigger one only deliberately. Prod deliberately may lag dev.
+Production is a manual promotion of an already-tested image, triggered by a
+release tag or a dispatch (below). Both promote an image that already passed the
+gate (on its PR or on `otr-dev`) and deploy it to the `production` GitHub
+Environment: the image's digest is written to Terraform Cloud workspace
+`convos-otr-prod` and the ECS service rolls. A prod deploy runs as soon as you
+trigger it — you are the only gate, so trigger deliberately. Prod may lag dev.
 
 ### A. Tag release (versioned — preferred)
 
@@ -40,5 +40,6 @@ Promote any pre-gated image directly, without cutting a version tag:
 `...@sha256:...` digest. Use this to roll back to an older image or ship a
 specific PR build.
 
-There is no `otr-prod` branch; "what is live in prod" is the `production`
-Environment deployment history plus the `convos-otr-prod` `api_image` value.
+Prod is identified by its deployed image digest, recorded in two places: the
+`production` Environment's deployment history (GitHub) and the `api_image` value
+in the `convos-otr-prod` Terraform Cloud workspace.
