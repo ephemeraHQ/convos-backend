@@ -1,8 +1,12 @@
 import type { Composio } from "@composio/core";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import {
+  ABILITY_ENTITLEMENTS_BACKFILL_EPOCH,
+  ABILITY_ENTITLEMENTS_BACKFILL_KEY,
+  ABILITY_ENTITLEMENTS_CUTOVER_KEY,
   backfillAbilityEntitlements,
   listAllConnectedAccounts,
+  runEntitlementCutoverConfirmOnce,
   type ConnectedAccountSummary,
 } from "@/api/v2/abilities/backfill-entitlements";
 import { getServedAbilityVersion } from "@/api/v2/abilities/manifests.config";
@@ -505,6 +509,102 @@ describe("backfillAbilityEntitlements — reconciliation sweep (DB)", () => {
       where: { id: variant.id },
     });
     expect(gone).toBeNull();
+  });
+
+  test("the post-drain sweep converges late legacy writes without touching entitlement status", async () => {
+    const accountId = await makeAccount();
+    const entitlement = await prisma.abilityEntitlement.create({
+      data: {
+        accountId,
+        abilityId: "googlecalendar",
+        status: "active",
+        externalConnectionId: "conn-live",
+      },
+    });
+    // A legacy write an old replica landed after the pass snapshot.
+    const late = await prisma.connectionGrant.create({
+      data: {
+        ownerAccountId: accountId,
+        ownerInboxId: "owner-late",
+        granteeInboxId: "agent-late",
+        conversationId: "conv-late-write",
+        toolkit: "googlecalendar",
+        bundleIds: ["calendar.events"],
+      },
+    });
+
+    await backfillAbilityEntitlements({
+      log: logger,
+      source: fromArray([]),
+      refreshEntitlementStatus: false,
+    });
+
+    const row = await prisma.abilityEntitlement.findUniqueOrThrow({
+      where: { id: entitlement.id },
+      include: { extensions: true },
+    });
+    // The empty inventory must not read as "credential gone" in drain mode.
+    expect(row.status).toBe("active");
+    expect(row.externalConnectionId).toBe("conn-live");
+    expect(row.extensions.some((e) => e.id === late.id)).toBe(true);
+  });
+
+  test("cutover confirm: DB-only sweep converges, cutover marker records the epoch", async () => {
+    const priorBackfill = await prisma.runtimeConfig.findUnique({
+      where: { key: ABILITY_ENTITLEMENTS_BACKFILL_KEY },
+    });
+    const priorCutover = await prisma.runtimeConfig.findUnique({
+      where: { key: ABILITY_ENTITLEMENTS_CUTOVER_KEY },
+    });
+    const epochValue = String(ABILITY_ENTITLEMENTS_BACKFILL_EPOCH);
+    async function restoreMarker(key: string, prior: { value: string } | null) {
+      if (prior) {
+        await prisma.runtimeConfig.upsert({
+          where: { key },
+          create: { key, value: prior.value },
+          update: { value: prior.value },
+        });
+      } else {
+        await prisma.runtimeConfig.deleteMany({ where: { key } });
+      }
+    }
+
+    try {
+      await prisma.runtimeConfig.upsert({
+        where: { key: ABILITY_ENTITLEMENTS_BACKFILL_KEY },
+        create: { key: ABILITY_ENTITLEMENTS_BACKFILL_KEY, value: epochValue },
+        update: { value: epochValue },
+      });
+      await prisma.runtimeConfig.deleteMany({
+        where: { key: ABILITY_ENTITLEMENTS_CUTOVER_KEY },
+      });
+
+      const accountId = await makeAccount();
+      // A legacy write landing inside the drain window.
+      const late = await prisma.connectionGrant.create({
+        data: {
+          ownerAccountId: accountId,
+          ownerInboxId: "owner-drain",
+          granteeInboxId: "agent-drain",
+          conversationId: "conv-drain-window",
+          toolkit: "googlecalendar",
+        },
+      });
+
+      await runEntitlementCutoverConfirmOnce();
+
+      const cutover = await prisma.runtimeConfig.findUnique({
+        where: { key: ABILITY_ENTITLEMENTS_CUTOVER_KEY },
+      });
+      expect(cutover?.value).toBe(epochValue);
+      const extension = await prisma.conversationAbility.findUnique({
+        where: { id: late.id },
+      });
+      expect(extension).not.toBeNull();
+    } finally {
+      await restoreMarker(ABILITY_ENTITLEMENTS_BACKFILL_KEY, priorBackfill);
+      await restoreMarker(ABILITY_ENTITLEMENTS_CUTOVER_KEY, priorCutover);
+    }
   });
 
   test("unknown Composio statuses are warn-logged where mapped", async () => {
