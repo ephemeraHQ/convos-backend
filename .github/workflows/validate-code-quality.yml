@@ -1,12 +1,8 @@
 name: Validate code quality
 
 on:
-  push:
-    branches:
-      - otr-dev
-      - otr-prod
-
   pull_request:
+  workflow_call:
 
 jobs:
   check:
