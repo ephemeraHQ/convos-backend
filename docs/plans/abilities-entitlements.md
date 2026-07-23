@@ -117,7 +117,8 @@ yet) get the catalog with `entitlement: null` - browsable, not entitleable.
 {
   "catalogVersion": 3,            // bump on any served-catalog change (manifests and bundles)
   // "entitlementsUnavailable": true  -- present only when entitlement state could not
-  //                                     be derived (upstream outage); see below
+  //                                     be derived (upstream outage); abilities then
+  //                                     carry no entitlement key at all - see below
   "abilities": [
     {
       "id": "googlecalendar",
@@ -134,35 +135,43 @@ yet) get the catalog with `entitlement: null` - browsable, not entitleable.
           "defaultEnabled": true
         }
       ],
-      "entitlement": {                 // object when entitled; null otherwise - never absent
+      "entitlement": {                 // object or null when authoritative; omitted under entitlementsUnavailable
         "status": "active",            // pending_auth | active | needs_reauth | expired | revoked
         "expiresAt": "2026-09-01T00:00:00Z",
-        "extensionCount": 2            // live (conversation, agent) opt-ins backed by this entitlement
+        "extensionCount": 2            // distinct conversations this entitlement is extended to
       }
     }
   ]
 }
 ```
 
-- `entitlement` has exactly two states: an object (entitled, server-owned status) or
-  `null` (not entitled, or device-only caller). It is never omitted; clients never
-  infer state from key presence, which generated decoders cannot distinguish from
-  `null`.
-- When entitlement state cannot be derived (upstream outage, missing service config),
-  the catalog still serves, each `entitlement` is `null`, and the top-level
-  `entitlementsUnavailable: true` flag marks the entitlement values as not
-  authoritative: clients keep last-known state instead of rendering "not connected".
+- On an authoritative response (no `entitlementsUnavailable` flag), `entitlement` has
+  exactly two states: an object (entitled, server-owned status) or `null` (not
+  entitled, or device-only caller).
+- When entitlement state cannot be derived (upstream outage, missing or incomplete
+  upstream state), the catalog still serves with top-level
+  `entitlementsUnavailable: true` and the abilities carry no `entitlement` key at
+  all: clients keep last-known state instead of rendering "not connected". Clients
+  branch on the flag, never on key presence, which generated decoders cannot
+  reliably distinguish from `null`.
 - Status provenance: the V1-derived adapter emits `pending_auth`, `active`, and
-  `expired` only (mapped from Composio connected-account state at read time).
-  `needs_reauth` is reserved for the service-mediated revalidation job to set, and
-  `revoked` for explicit user revocation - both arrive with the entitlement tables.
-- `extensionCount` is a bounded summary (enough for the ability list and the re-auth
-  nudge); per-conversation, per-agent detail comes only from
-  `GET /v2/conversations/{conversationId}/abilities`.
+  `expired` only, mapped from Composio connected-account state at read time:
+  in-progress auth reads as `pending_auth`, an active credential as `active`, and
+  every terminal or unknown state collapses to `expired` (unknown states are
+  logged). `needs_reauth` is reserved for the service-mediated revalidation job to
+  set, and `revoked` for explicit user revocation - both arrive with the
+  entitlement tables.
+- `extensionCount` is the number of distinct conversations the entitlement is
+  extended to - the user-meaningful unit - in the V1-adapter era (distinct
+  conversations across live grants) and once the tables land (distinct
+  `conversationId` values over `ConversationAbility` rows) alike. It is a bounded
+  summary for the ability list and the re-auth nudge; per-conversation, per-agent
+  detail comes only from `GET /v2/conversations/{conversationId}/abilities`.
 - Composio action slugs never appear (security boundary, unchanged from bundles doc).
-- `tools[]` / `actions[]` (MCP + queue schemas) are part of the manifest **internally**
-  from day one so plugin registration emits the same shape later, but are not served to
-  clients until the gateway needs them.
+- `tools[]` / `actions[]` (MCP + queue schemas) join the manifest **internally** when
+  the gateway work lands, so plugin registration emits the same shape; they are not
+  part of the day-one manifest and are never served to clients until the gateway
+  needs them.
 - Client refresh: on launch, on foreground, on abilities-screen appearance. Payload is
   small; `catalogVersion` + `If-None-Match` can come later if it ever matters.
 
@@ -251,6 +260,11 @@ then the check must not require it.
   several Composio connections exist for the same toolkit, the most-usable one (best
   lifecycle status) backs the entitlement; the remaining connections are deleted when
   the entitlement is revoked.
+- **Rolling deploy**: the V1-endpoints-as-adapters switch ships in the same deploy as
+  the backfill. While that deploy rolls out, old replicas can still write legacy
+  `ConnectionGrant` state; the backfill is idempotent and is re-run
+  (RuntimeConfig-ledgered) after full rollout as a reconciliation sweep, so late
+  legacy writes converge into the new tables.
 
 ## iOS client
 
@@ -321,7 +335,8 @@ the V1 adapters are removed last.
    hidden flag is the per-ability launch switch.
 2. Backend: entitlement + extension tables, lifecycle endpoints, backfill, exec on
    `checkEntitlement`. V1 `/v2/connections/*` handlers become adapters over the new
-   tables (old clients keep working, one source of truth).
+   tables in the same deploy as the backfill (old clients keep working, one source
+   of truth; rolling-deploy note in the data model).
 3. iOS: Track A screens land dark behind the abilities feature flag (debug-menu toggle
    on dev builds); Track B wires them up.
 4. Backend: worker-authenticated per-conversation/per-agent enumerate endpoint;
@@ -350,15 +365,17 @@ From the 2026-07-22 review:
 
 From the 2026-07-23 review:
 
-- **The catalog summary is bounded.** `GET /v2/abilities` reports `extensionCount` per
-  entitlement instead of a conversation-ID list: an ID list grows with lifetime usage
-  and erases the agent dimension (the authoritative key is entitlement x conversation
-  x agent). Per-conversation, per-agent detail comes only from
+- **The catalog summary is bounded.** `GET /v2/abilities` reports `extensionCount`
+  (distinct conversations, the user-meaningful unit) per entitlement instead of a
+  conversation-ID list: an ID list grows with lifetime usage and erases the agent
+  dimension (the authoritative key is entitlement x conversation x agent).
+  Per-conversation, per-agent detail comes only from
   `GET /v2/conversations/{conversationId}/abilities`.
-- **Two entitlement states on the wire, plus one availability flag.** Per-ability
-  `entitlement` is an object or `null`, never absent; outages are signaled by the
-  top-level `entitlementsUnavailable` flag, not by key presence, which generated
-  decoders cannot distinguish from `null`.
+- **One explicit availability flag, no presence-sniffing.** On authoritative
+  responses per-ability `entitlement` is an object or `null`; under the top-level
+  `entitlementsUnavailable` flag the key is omitted entirely. Clients branch on the
+  flag, never on key presence, which generated decoders cannot reliably distinguish
+  from `null`.
 - **The check trusts the (conversation, agent) pair, not an account ID.** No day-one
   caller can prove an initiating account, so `checkEntitlement` resolves owner
   candidates from the trusted pair plus the optional `onBehalfOf` selector and keeps
