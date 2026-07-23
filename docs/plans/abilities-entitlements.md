@@ -221,6 +221,12 @@ trusted `x-convos-conversation-id` / `x-convos-agent-inbox-id` headers.
 
 Two tracks; Track A needs zero backend.
 
+All V2 surfaces ship dark behind a feature flag, toggleable from the debug menu on dev
+builds to start; the V1 connections UI stays the default until the flag flips. This
+lets Track A land continuously without exposing half-built surfaces, gives design/QA a
+switch for side-by-side comparison against V1, and makes public enablement a flag flip
+once Track B is wired to live endpoints.
+
 ### Track A — mock-first UI (start immediately, iterate with design)
 
 Protocol-first per house conventions: `AbilitiesServiceProtocol` + `MockAbilitiesService`
@@ -266,7 +272,8 @@ excision ships.
 2. Backend: entitlement + extension tables, lifecycle endpoints, backfill, exec on
    `checkEntitlement`. V1 `/v2/connections/*` handlers become adapters over the new
    tables (old clients keep working, one source of truth).
-3. iOS: Track A screens land behind the existing feature-gating; Track B wires them up.
+3. iOS: Track A screens land dark behind the abilities feature flag (debug-menu toggle
+   on dev builds); Track B wires them up.
 4. Client excision (B2 above) once the runtime reads backend-only.
 5. Remove V1 endpoints + adapters when shipped-client traffic drains.
 
