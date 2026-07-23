@@ -5,6 +5,7 @@ import { abilitiesRouter } from "@/api/v2/abilities/abilities.router";
 import { getServedAbilityVersion } from "@/api/v2/abilities/manifests.config";
 import {
   __resetComposioServiceForTests,
+  __setComposioServiceUnconfiguredForTests,
   ComposioService,
 } from "@/api/v2/connections/composio.service";
 import { issueConnectionGrant } from "@/api/v2/connections/v1-grant-adapter";
@@ -357,6 +358,32 @@ describe("DELETE /v2/abilities/:abilityId/entitlement", () => {
       .set("X-Convos-AuthToken", await token(accountId));
     expect(res.status).toBe(502);
     expect(res.body).toEqual({ code: "revoke_failed" });
+    const row = await prisma.abilityEntitlement.findUnique({
+      where: {
+        accountId_abilityId: { accountId, abilityId: "googlecalendar" },
+      },
+    });
+    expect(row!.status).toBe("active");
+    expect(row!.revokedAt).toBeNull();
+    expect(row!.externalConnectionId).toBe("conn_a");
+  });
+
+  test("503 when Composio is unconfigured — entitlement untouched (teardown-first, same rule as an outage)", async () => {
+    const accountId = await makeAccount();
+    await prisma.abilityEntitlement.create({
+      data: {
+        accountId,
+        abilityId: "googlecalendar",
+        status: "active",
+        externalConnectionId: "conn_a",
+      },
+    });
+    __setComposioServiceUnconfiguredForTests();
+    const res = await request(makeApp())
+      .delete("/abilities/googlecalendar/entitlement")
+      .set("X-Convos-AuthToken", await token(accountId));
+    expect(res.status).toBe(503);
+    // Never a tombstone over a possibly-live external credential.
     const row = await prisma.abilityEntitlement.findUnique({
       where: {
         accountId_abilityId: { accountId, abilityId: "googlecalendar" },

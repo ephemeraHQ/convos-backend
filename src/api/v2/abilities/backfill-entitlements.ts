@@ -1,19 +1,22 @@
 import { Composio } from "@composio/core";
 import type { PrismaClient } from "@prisma/client";
 import type { Logger } from "pino";
+import { normalizeAbilityId } from "@/api/v2/abilities/ability-id";
 import {
   COMPOSIO_DERIVED_STATUS_RANK,
   toEntitlementStatus,
   type ComposioDerivedStatus,
 } from "@/api/v2/abilities/entitlement-status";
 import { getServedAbilityVersion } from "@/api/v2/abilities/manifests.config";
+import { COMPOSIO_USER_ID_MIGRATION_KEY } from "@/api/v2/connections/migrate-user-ids";
 import { COMPOSIO_API_KEY } from "@/config";
 import logger from "@/utils/logger";
 import { prisma } from "@/utils/prisma";
 
 /**
- * Boot-time backfill: converge V1 connection state into the entitlement
- * tables (docs/plans/abilities-entitlements.md, data model).
+ * Boot-time backfill + reconciliation sweep: converge V1 connection state
+ * into the entitlement tables (docs/plans/abilities-entitlements.md, data
+ * model).
  *
  * Entitlements source from the UNION of two sides, because each covers rows
  * the other misses:
@@ -26,31 +29,74 @@ import { prisma } from "@/utils/prisma";
  *
  * Each live grant then maps 1:1 to a ConversationAbility. The extension keeps
  * the grant's id and createdAt, so wire-visible grant ids and timestamps stay
- * stable when the V1 handlers switch to reading these tables.
+ * stable when the V1 handlers switch to reading these tables. Ability ids are
+ * normalized to their canonical lowercase form at every write; a merge step
+ * folds historical case-variant entitlement rows onto the canonical id first.
  *
- * The pass is convergent/idempotent: re-running refreshes status and
- * externalConnectionId from Composio and re-upserts extensions, so it doubles
- * as the post-rollout reconciliation sweep (old replicas may write legacy
- * ConnectionGrant rows while a deploy rolls out). Two hard rules:
- *   - a revoked entitlement (revokedAt set) is never touched: explicit user
- *     revocation must not be resurrected by a stale credential whose external
- *     deletion failed. The V1 complete adapter un-revokes on an explicit
- *     reconnect instead;
- *   - the pass only creates and refreshes — it never deletes rows, so state
- *     written by the V2 endpoints between sweeps is preserved.
+ * The pass is convergent/idempotent, and it doubles as the PRD's post-rollout
+ * reconciliation sweep (old replicas may write legacy ConnectionGrant rows
+ * while a deploy rolls out):
+ *   - it creates/refreshes entitlements and extensions from current truth;
+ *   - it DELETES extensions stranded by a late legacy revocation: adapter-
+ *     and backfill-created extensions share their legacy grant's id, so an
+ *     extension whose id matches a revoked or expired grant is exactly the
+ *     carry-over of a grant that died after it was mirrored. V2-native rows
+ *     have their own generated ids and are never matched, so V2-written
+ *     state always survives sweeps.
+ * One hard rule on top: a revoked entitlement (revokedAt set) is never
+ * touched — explicit user revocation must not be resurrected by a stale
+ * credential whose external deletion failed. The V1 complete adapter
+ * un-revokes on an explicit reconnect instead.
  *
- * To force a reconciliation re-run: delete the RuntimeConfig marker row (ops)
- * or bump the key suffix below (code); the next boot re-runs the pass.
+ * Operational trigger — the ledger is EPOCH-keyed. The RuntimeConfig marker
+ * stores the epoch of the last completed pass; every boot re-runs the pass
+ * until the stored epoch reaches ABILITY_ENTITLEMENTS_BACKFILL_EPOCH. To run
+ * the post-rollout reconciliation sweep (or force any re-run):
+ *   - code: bump ABILITY_ENTITLEMENTS_BACKFILL_EPOCH and deploy — the next
+ *     boot of each environment re-runs the sweep exactly once. This is the
+ *     intended "after full rollout" trigger: ship the feature at epoch N,
+ *     then land an epoch N+1 bump once every replica is on the new code;
+ *   - ops: delete the marker row (or lower its value) and restart a replica.
+ * While an environment's ledger is behind the code's epoch, the exec reader
+ * stays on the legacy matcher (see read-readiness.ts) — new-table reads are
+ * served only from a snapshot this sweep has confirmed complete.
  */
 
 // Marker row in RuntimeConfig — the backfill ledger (cf. _prisma_migrations).
+// The VALUE holds the completed epoch (integer as string; the historical
+// value "done" reads as epoch 1).
 export const ABILITY_ENTITLEMENTS_BACKFILL_KEY =
   "ability_entitlements_backfill_v1";
+
+/**
+ * Current backfill epoch. Bump to make every environment re-run the
+ * reconciliation sweep on its next boot (see the module comment for when).
+ * Epoch 2 = normalization + dead-grant reconciliation shipped.
+ */
+export const ABILITY_ENTITLEMENTS_BACKFILL_EPOCH = 2;
+
+/** Parse a ledger value into the completed epoch (0 = never completed). */
+export function backfillLedgerEpoch(value: string | null | undefined): number {
+  if (!value) return 0;
+  if (value === "done") return 1;
+  const parsed = Number.parseInt(value, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+}
+
+/** True when the ledger confirms the CURRENT epoch's pass has completed. */
+export function isBackfillLedgerCurrent(
+  value: string | null | undefined,
+): boolean {
+  return backfillLedgerEpoch(value) >= ABILITY_ENTITLEMENTS_BACKFILL_EPOCH;
+}
 
 // Arbitrary constant identifying this routine's Postgres advisory lock, so two
 // instances booting at once cannot both run it. Distinct from the
 // migrate-user-ids lock (728_193_641).
 const ADVISORY_LOCK_KEY = 811_442_907;
+
+// deleteMany(id IN ...) batch size for the dead-grant reconciliation step.
+const DELETE_CHUNK_SIZE = 500;
 
 /** One Composio connected account, reduced to what the backfill consumes. */
 export type ConnectedAccountSummary = {
@@ -93,6 +139,8 @@ export type BackfillCounts = {
   // user_id is not a known Account.id (device-keyed leftovers belong to the
   // user-id migration, which runs first; true orphans are log-only there too).
   connectionsOrphaned: number;
+  // Case-variant entitlement rows folded onto the canonical lowercase id.
+  entitlementsCaseMerged: number;
   entitlementsCreated: number;
   entitlementsRefreshed: number;
   entitlementsUnchanged: number;
@@ -101,6 +149,9 @@ export type BackfillCounts = {
   grantsScanned: number;
   grantsSkippedRevokedEntitlement: number;
   extensionsUpserted: number;
+  // Reconciliation: extensions whose shared-id legacy grant died (late
+  // revocation/expiry written by an old replica) are removed.
+  extensionsRemovedForDeadGrants: number;
 };
 
 type BackfillDb = Pick<
@@ -117,6 +168,83 @@ function candidateKey(accountId: string, abilityId: string): string {
   return `${accountId}\u0000${abilityId}`;
 }
 
+/**
+ * Fold case-variant entitlement rows onto the canonical lowercase ability id
+ * so one (account, ability) never splits across rows the lifecycle routes
+ * cannot all address. Variant rows are rare (old V1-adapter writes stored the
+ * toolkit as sent), so this works row by row:
+ *   - no canonical row yet: rename the variant in place (id and extensions
+ *     kept);
+ *   - canonical row exists and is a revocation tombstone: the tombstone wins
+ *     — the variant row and its extensions are deleted (never resurrect);
+ *   - both live: re-parent the variant's extensions onto the canonical row
+ *     (duplicate (conversation, agent) opt-ins are dropped — the canonical
+ *     row's version wins), then delete the variant row.
+ */
+async function mergeCaseVariantEntitlements(
+  db: BackfillDb,
+  log: Logger,
+  counts: BackfillCounts,
+): Promise<void> {
+  const all = await db.abilityEntitlement.findMany({
+    select: { id: true, accountId: true, abilityId: true, revokedAt: true },
+  });
+  const variants = all.filter(
+    (row) => row.abilityId !== normalizeAbilityId(row.abilityId),
+  );
+  for (const variant of variants) {
+    const abilityId = normalizeAbilityId(variant.abilityId);
+    const canonical = await db.abilityEntitlement.findUnique({
+      where: {
+        accountId_abilityId: { accountId: variant.accountId, abilityId },
+      },
+    });
+    if (!canonical) {
+      await db.abilityEntitlement.update({
+        where: { id: variant.id },
+        data: { abilityId },
+      });
+      counts.entitlementsCaseMerged += 1;
+      continue;
+    }
+    if (!canonical.revokedAt) {
+      const extensions = await db.conversationAbility.findMany({
+        where: { entitlementId: variant.id },
+        select: { id: true, conversationId: true, agentInboxId: true },
+      });
+      for (const extension of extensions) {
+        const duplicate = await db.conversationAbility.findUnique({
+          where: {
+            entitlementId_conversationId_agentInboxId: {
+              entitlementId: canonical.id,
+              conversationId: extension.conversationId,
+              agentInboxId: extension.agentInboxId,
+            },
+          },
+          select: { id: true },
+        });
+        if (duplicate) continue;
+        await db.conversationAbility.update({
+          where: { id: extension.id },
+          data: { entitlementId: canonical.id },
+        });
+      }
+    }
+    // Deleting the variant row cascades whatever extensions were not
+    // re-parented (all of them when the canonical row is a tombstone).
+    await db.abilityEntitlement.delete({ where: { id: variant.id } });
+    counts.entitlementsCaseMerged += 1;
+    log.info(
+      {
+        accountId: variant.accountId,
+        variant: variant.abilityId,
+        canonical: abilityId,
+      },
+      "[abilities-backfill] merged case-variant entitlement",
+    );
+  }
+}
+
 /** Core convergence pass. See the module comment for sources and rules. */
 export async function backfillAbilityEntitlements(opts: {
   log: Logger;
@@ -130,6 +258,7 @@ export async function backfillAbilityEntitlements(opts: {
   const counts: BackfillCounts = {
     connectionsScanned: 0,
     connectionsOrphaned: 0,
+    entitlementsCaseMerged: 0,
     entitlementsCreated: 0,
     entitlementsRefreshed: 0,
     entitlementsUnchanged: 0,
@@ -137,7 +266,10 @@ export async function backfillAbilityEntitlements(opts: {
     grantsScanned: 0,
     grantsSkippedRevokedEntitlement: 0,
     extensionsUpserted: 0,
+    extensionsRemovedForDeadGrants: 0,
   };
+
+  await mergeCaseVariantEntitlements(db, log, counts);
 
   const accounts = await db.account.findMany({ select: { id: true } });
   const accountIds = new Set(accounts.map((a) => a.id));
@@ -163,10 +295,10 @@ export async function backfillAbilityEntitlements(opts: {
       );
       continue;
     }
-    const abilityId = connection.toolkitSlug.toLowerCase();
+    const abilityId = normalizeAbilityId(connection.toolkitSlug);
     const key = candidateKey(connection.userId, abilityId);
     wanted.set(key, { accountId: connection.userId, abilityId });
-    const status = toEntitlementStatus(connection.status);
+    const status = toEntitlementStatus(connection.status, log);
     const prev = candidates.get(key);
     if (
       !prev ||
@@ -177,7 +309,9 @@ export async function backfillAbilityEntitlements(opts: {
     }
   }
 
-  // Grant side: live rows only — the same predicate exec enforces.
+  // Grant side: live rows only — the same predicate exec enforces. Toolkits
+  // are normalized so both sides' keys coincide regardless of the casing an
+  // old client sent.
   const now = new Date();
   const liveGrants = await db.connectionGrant.findMany({
     where: {
@@ -187,16 +321,11 @@ export async function backfillAbilityEntitlements(opts: {
   });
   counts.grantsScanned = liveGrants.length;
 
-  // Grant toolkits are keyed as stored (the V1 adapter writes them as the
-  // client sent them; in practice the lowercase Composio slug, which makes
-  // both sides' keys coincide).
   for (const grant of liveGrants) {
-    const key = candidateKey(grant.ownerAccountId, grant.toolkit);
+    const abilityId = normalizeAbilityId(grant.toolkit);
+    const key = candidateKey(grant.ownerAccountId, abilityId);
     if (!wanted.has(key)) {
-      wanted.set(key, {
-        accountId: grant.ownerAccountId,
-        abilityId: grant.toolkit,
-      });
+      wanted.set(key, { accountId: grant.ownerAccountId, abilityId });
     }
   }
 
@@ -247,7 +376,10 @@ export async function backfillAbilityEntitlements(opts: {
   // The extension keeps the grant's id and createdAt on create, so the V1
   // adapters serve stable ids and timestamps from the new tables.
   for (const grant of liveGrants) {
-    const key = candidateKey(grant.ownerAccountId, grant.toolkit);
+    const key = candidateKey(
+      grant.ownerAccountId,
+      normalizeAbilityId(grant.toolkit),
+    );
     const entitlementId = entitlementIdByKey.get(key);
     if (!entitlementId) {
       counts.grantsSkippedRevokedEntitlement += 1;
@@ -282,31 +414,88 @@ export async function backfillAbilityEntitlements(opts: {
     counts.extensionsUpserted += 1;
   }
 
+  // Reconcile late revocations/expiries written by old replicas: adapter- and
+  // backfill-created extensions share their legacy grant's id, so an
+  // extension whose id matches a dead grant is exactly the stale carry-over
+  // of that grant. V2-native extensions have their own generated ids (no
+  // legacy grant ever shares them) and are never matched. A live re-issue
+  // clears revokedAt on the same legacy row, taking it out of this set.
+  const deadGrants = await db.connectionGrant.findMany({
+    where: {
+      OR: [{ revokedAt: { not: null } }, { expiresAt: { lte: now } }],
+    },
+    select: { id: true },
+  });
+  for (let i = 0; i < deadGrants.length; i += DELETE_CHUNK_SIZE) {
+    const chunk = deadGrants
+      .slice(i, i + DELETE_CHUNK_SIZE)
+      .map((grant) => grant.id);
+    const removed = await db.conversationAbility.deleteMany({
+      where: { id: { in: chunk } },
+    });
+    counts.extensionsRemovedForDeadGrants += removed.count;
+  }
+
   log.info({ counts }, "[abilities-backfill] pass complete");
   return counts;
 }
 
+async function* fromMaterialized(
+  items: ConnectedAccountSummary[],
+): AsyncGenerator<ConnectedAccountSummary> {
+  for (const item of items) {
+    yield await Promise.resolve(item);
+  }
+}
+
 /**
- * Boot-time guard, mirroring runComposioUserIdMigrationOnce: short-circuits on
- * the ledger marker, takes a transaction-scoped advisory lock so concurrent
- * replicas cannot both run, records the marker on success, and never throws —
- * a failure leaves the marker unset so the next boot retries. Runs after the
- * user-id migration (see src/index.ts), which re-keys connections to
- * accountIds this pass depends on.
+ * Boot-time guard, mirroring runComposioUserIdMigrationOnce with three extra
+ * rules:
+ *   - it refuses to run until the user-id migration's OWN ledger confirms
+ *     completion — advisory-lock contention over there resolves the promise
+ *     without doing the work, and running this pass against partially
+ *     migrated Composio ownership would converge (and mark done) a wrong
+ *     snapshot;
+ *   - the Composio inventory is fetched BEFORE the database transaction
+ *     opens, so external HTTP never runs while a DB connection and advisory
+ *     lock are held;
+ *   - the ledger is epoch-keyed (see the module comment): the pass re-runs on
+ *     every boot until the stored epoch reaches the code's epoch, which is
+ *     how the post-rollout reconciliation sweep is triggered.
+ * Never throws — a failure leaves the ledger unset so the next boot retries.
  */
 export async function runAbilityEntitlementsBackfillOnce() {
   if (!COMPOSIO_API_KEY) return;
 
   try {
+    const migration = await prisma.runtimeConfig.findUnique({
+      where: { key: COMPOSIO_USER_ID_MIGRATION_KEY },
+    });
+    if (migration?.value !== "done") {
+      logger.info(
+        "[abilities-backfill] user-id migration not confirmed done; deferring to a later boot",
+      );
+      return;
+    }
+
     const existing = await prisma.runtimeConfig.findUnique({
       where: { key: ABILITY_ENTITLEMENTS_BACKFILL_KEY },
     });
-    if (existing?.value === "done") return;
+    if (isBackfillLedgerCurrent(existing?.value)) return;
 
     const composio = new Composio({
       apiKey: COMPOSIO_API_KEY,
       allowTracking: false,
     });
+
+    // Materialize the full inventory outside the transaction: the DB
+    // transaction below must never wait on Composio HTTP.
+    const inventory: ConnectedAccountSummary[] = [];
+    for await (const connection of listAllConnectedAccounts(
+      composio.getClient(),
+    )) {
+      inventory.push(connection);
+    }
 
     await prisma.$transaction(
       async (tx) => {
@@ -324,25 +513,26 @@ export async function runAbilityEntitlementsBackfillOnce() {
         const inside = await tx.runtimeConfig.findUnique({
           where: { key: ABILITY_ENTITLEMENTS_BACKFILL_KEY },
         });
-        if (inside?.value === "done") return;
+        if (isBackfillLedgerCurrent(inside?.value)) return;
 
         const counts = await backfillAbilityEntitlements({
           log: logger,
           db: tx,
-          source: listAllConnectedAccounts(composio.getClient()),
+          source: fromMaterialized(inventory),
         });
+        const value = String(ABILITY_ENTITLEMENTS_BACKFILL_EPOCH);
         await tx.runtimeConfig.upsert({
           where: { key: ABILITY_ENTITLEMENTS_BACKFILL_KEY },
-          create: { key: ABILITY_ENTITLEMENTS_BACKFILL_KEY, value: "done" },
-          update: { value: "done" },
+          create: { key: ABILITY_ENTITLEMENTS_BACKFILL_KEY, value },
+          update: { value },
         });
         logger.info(
-          { counts },
+          { counts, epoch: ABILITY_ENTITLEMENTS_BACKFILL_EPOCH },
           "[abilities-backfill] completed and marked done",
         );
       },
-      // External Composio HTTP calls run inside the lock; give the pass
-      // headroom rather than the 5s interactive-tx default.
+      // The pass is DB-only (inventory pre-fetched) but may touch many rows;
+      // keep headroom over the 5s interactive-tx default.
       { timeout: 10 * 60 * 1000, maxWait: 15_000 },
     );
   } catch (error) {

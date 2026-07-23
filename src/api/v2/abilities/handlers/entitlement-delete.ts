@@ -1,20 +1,27 @@
 import type { Request, Response } from "express";
 import { z } from "zod";
+import { normalizeAbilityId } from "@/api/v2/abilities/ability-id";
+import { ABILITY_MANIFESTS } from "@/api/v2/abilities/manifests.config";
 import { createComposioService } from "@/api/v2/connections/composio.service";
 import { prisma } from "@/utils/prisma";
 
 // DELETE /v2/abilities/{abilityId}/entitlement — revoke
 // (docs/plans/abilities-entitlements.md, "Bind"). requireAccount.
 //
-// Order matters: the external teardown runs FIRST, and a Composio failure
-// answers 502 with the entitlement untouched — tombstoning a row whose
-// credential still exists would lie to the user (and the backfill's
-// never-touch-revoked rule means reconciliation could not repair it). On
-// success: every Composio connection for the toolkit is deleted (the
-// multi-credential rule — duplicates go with the entitlement), conversation
-// extensions are deleted, legacy V1 grants are soft-revoked (rolling-deploy
-// symmetry), and the row is kept as an audit tombstone (status revoked,
-// revokedAt, credential ref cleared).
+// Order matters: the external teardown runs FIRST, and a Composio failure —
+// including Composio being UNCONFIGURED on this replica — answers 5xx with
+// the entitlement untouched: tombstoning a row whose credential may still
+// exist would lie to the user (and the backfill's never-touch-revoked rule
+// means reconciliation could not repair it). A missing service is treated
+// exactly like an outage, because "not configured here" says nothing about
+// credentials created elsewhere; only an ability the manifest declares
+// auth-less, with no recorded external credential, may tear down locally
+// without the service. On success: every Composio connection for the toolkit
+// is deleted (the multi-credential rule — duplicates go with the
+// entitlement), then in ONE transaction the conversation extensions are
+// deleted, legacy V1 grants are soft-revoked (rolling-deploy symmetry), and
+// the row is kept as an audit tombstone (status revoked, revokedAt,
+// credential ref cleared).
 //
 // Idempotent: deleting an already-revoked entitlement re-runs the teardown
 // (harmlessly) and answers 204 again; only a never-bound ability is 404.
@@ -35,7 +42,7 @@ export async function entitlementDeleteHandler(req: Request, res: Response) {
     res.status(400).json({ code: "invalid_request" });
     return;
   }
-  const abilityId = params.data.abilityId.toLowerCase();
+  const abilityId = normalizeAbilityId(params.data.abilityId);
   const entitlement = await prisma.abilityEntitlement.findUnique({
     where: { accountId_abilityId: { accountId, abilityId } },
   });
@@ -44,9 +51,22 @@ export async function entitlementDeleteHandler(req: Request, res: Response) {
     return;
   }
 
-  // External teardown first (see the module comment). No service configured
-  // means no external credential can exist — local teardown only.
+  // External teardown first (see the module comment). Skipping it is allowed
+  // only when the manifest says the ability never has an external credential
+  // AND none was ever recorded; otherwise an unconfigured service is an
+  // outage — 503, row untouched, never a tombstone over a live credential.
+  const manifest = ABILITY_MANIFESTS.find((m) => m.id === abilityId);
+  const authless =
+    manifest?.auth.type === "none" && entitlement.externalConnectionId === null;
   const service = createComposioService();
+  if (!service && !authless) {
+    req.log.error(
+      { accountId, abilityId },
+      "[Abilities] revoke: Composio not configured — refusing local-only teardown",
+    );
+    res.status(503).json({ error: "Connections not configured" });
+    return;
+  }
   if (service) {
     try {
       const { items } = await service.listForUser(accountId);
@@ -72,24 +92,28 @@ export async function entitlementDeleteHandler(req: Request, res: Response) {
     }
   }
 
-  await prisma.conversationAbility.deleteMany({
-    where: { entitlementId: entitlement.id },
-  });
-  await prisma.connectionGrant.updateMany({
-    where: {
-      ownerAccountId: accountId,
-      toolkit: { equals: abilityId, mode: "insensitive" },
-      revokedAt: null,
-    },
-    data: { revokedAt: new Date() },
-  });
-  await prisma.abilityEntitlement.update({
-    where: { id: entitlement.id },
-    data: {
-      status: "revoked",
-      revokedAt: entitlement.revokedAt ?? new Date(),
-      externalConnectionId: null,
-    },
+  // Local teardown in one transaction: extensions, legacy mirror, tombstone
+  // move together or not at all — no divergent half-revoked state.
+  await prisma.$transaction(async (tx) => {
+    await tx.conversationAbility.deleteMany({
+      where: { entitlementId: entitlement.id },
+    });
+    await tx.connectionGrant.updateMany({
+      where: {
+        ownerAccountId: accountId,
+        toolkit: { equals: abilityId, mode: "insensitive" },
+        revokedAt: null,
+      },
+      data: { revokedAt: new Date() },
+    });
+    await tx.abilityEntitlement.update({
+      where: { id: entitlement.id },
+      data: {
+        status: "revoked",
+        revokedAt: entitlement.revokedAt ?? new Date(),
+        externalConnectionId: null,
+      },
+    });
   });
 
   req.log.info({ accountId, abilityId }, "[Abilities] entitlement revoked");

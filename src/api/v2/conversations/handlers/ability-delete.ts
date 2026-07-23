@@ -1,5 +1,6 @@
 import type { Request, Response } from "express";
 import { z } from "zod";
+import { normalizeAbilityId } from "@/api/v2/abilities/ability-id";
 import { prisma } from "@/utils/prisma";
 
 // DELETE /v2/conversations/{conversationId}/abilities/{abilityId}
@@ -9,7 +10,10 @@ import { prisma } from "@/utils/prisma";
 // Deletes the extension row (no per-extension tombstone; the entitlement is
 // the audit record) and soft-revokes the matching legacy V1 grant rows so old
 // replicas reading ConnectionGrant during a rolling deploy see the withdrawal
-// too. Scoped to the caller's own entitlement — one member cannot withdraw
+// too. Both writes run in ONE transaction, and the legacy revoke runs even
+// when no extension row was found: a retry after a partial failure (or state
+// an old replica diverged) heals the surviving counterpart before answering
+// 404. Scoped to the caller's own entitlement — one member cannot withdraw
 // another member's opt-in. Matched against the caller's rows, not the
 // catalog, so an opt-in for a since-hidden ability can still be withdrawn.
 
@@ -40,7 +44,7 @@ export async function conversationAbilityDeleteHandler(
     return;
   }
   const conversationId = params.data.conversationId;
-  const abilityId = params.data.abilityId.toLowerCase();
+  const abilityId = normalizeAbilityId(params.data.abilityId);
   const parsed = querySchema.safeParse(req.query);
   if (!parsed.success) {
     res
@@ -53,29 +57,36 @@ export async function conversationAbilityDeleteHandler(
   const entitlement = await prisma.abilityEntitlement.findUnique({
     where: { accountId_abilityId: { accountId, abilityId } },
   });
-  if (!entitlement) {
+
+  const deletedCount = await prisma.$transaction(async (tx) => {
+    const deleted = entitlement
+      ? await tx.conversationAbility.deleteMany({
+          where: {
+            entitlementId: entitlement.id,
+            conversationId,
+            agentInboxId,
+          },
+        })
+      : { count: 0 };
+    // Unconditional: heals a live legacy row even when the extension is
+    // already gone (retry after partial failure, old-replica divergence).
+    await tx.connectionGrant.updateMany({
+      where: {
+        ownerAccountId: accountId,
+        toolkit: { equals: abilityId, mode: "insensitive" },
+        conversationId,
+        granteeInboxId: agentInboxId,
+        revokedAt: null,
+      },
+      data: { revokedAt: new Date() },
+    });
+    return deleted.count;
+  });
+
+  if (deletedCount === 0) {
     res.status(404).json({ code: "not_found" });
     return;
   }
-
-  const deleted = await prisma.conversationAbility.deleteMany({
-    where: { entitlementId: entitlement.id, conversationId, agentInboxId },
-  });
-  if (deleted.count === 0) {
-    res.status(404).json({ code: "not_found" });
-    return;
-  }
-
-  await prisma.connectionGrant.updateMany({
-    where: {
-      ownerAccountId: accountId,
-      toolkit: { equals: abilityId, mode: "insensitive" },
-      conversationId,
-      granteeInboxId: agentInboxId,
-      revokedAt: null,
-    },
-    data: { revokedAt: new Date() },
-  });
 
   req.log.info(
     { accountId, abilityId, conversationId, agentInboxId },

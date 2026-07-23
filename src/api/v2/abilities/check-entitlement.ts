@@ -1,5 +1,7 @@
 import type { Logger } from "pino";
+import { normalizeAbilityId } from "@/api/v2/abilities/ability-id";
 import { ABILITY_MANIFESTS } from "@/api/v2/abilities/manifests.config";
+import { isEntitlementReadModelReady } from "@/api/v2/abilities/read-readiness";
 import {
   getServiceConfig,
   isInvalidAction,
@@ -21,6 +23,12 @@ import { prisma } from "@/utils/prisma";
 //     ability — denying ambiguous_grant when it cannot.
 //   - account: a proven account id (the future MCP-gateway path after PKI
 //     validation; no consumer today).
+//
+// The conversation path reads the entitlement tables ONLY once the migration
+// ledgers confirm they are complete (see read-readiness.ts); until then it
+// runs the same matcher over the legacy ConnectionGrant rows, so a replica
+// booted mid-rollout never denies existing grants. Both paths share one
+// decision function — the store they read differs, the semantics cannot.
 //
 // The denial vocabulary is the frozen cross-team contract: exec's existing
 // codes verbatim (no_grant, ambiguous_grant, invalid_action), plus the
@@ -46,7 +54,8 @@ export type CheckEntitlementResult =
       allowed: true;
       /** Whose credential to act with (the entitlement's account). */
       ownerAccountId: string;
-      entitlementId: string;
+      /** Null only on the legacy-fallback path (no entitlement row yet). */
+      entitlementId: string | null;
       /**
        * The resolved allowed action slugs (legacy explicit actions plus the
        * bundle-resolved set against the CURRENT catalog). Empty means the
@@ -84,34 +93,102 @@ export async function checkEntitlement(
 }
 
 /**
+ * One extension-shaped row, whichever store it came from: a
+ * ConversationAbility (new tables) or a live ConnectionGrant reshaped
+ * (legacy fallback). The matcher below sees only this shape.
+ */
+type MatchableRow = {
+  id: string;
+  actions: string[];
+  bundleIds: string[];
+  extendedByInboxId: string | null;
+  ownerAccountId: string;
+  entitlementId: string | null;
+};
+
+/**
  * The exec-parity path. Semantics are a verbatim port of the V1 exec grant
- * matcher over ConversationAbility rows: live-extension predicate (expiry),
- * exact ability match, onBehalfOf filtering on the extender's inbox id, the
- * action-scope union (legacy actions + bundle-resolved, whole-toolkit only
- * when both are empty), invalid_action-before-no_grant when nothing applies,
- * and ambiguous_grant when more than one owner remains. Entitlement lifecycle
- * status is deliberately NOT consulted here (see the module comment).
+ * matcher: live-extension predicate (expiry), case-normalized ability match,
+ * onBehalfOf filtering on the extender's inbox id, the action-scope union
+ * (legacy actions + bundle-resolved, whole-toolkit only when both are empty),
+ * invalid_action-before-no_grant when nothing applies, and ambiguous_grant
+ * when more than one owner remains. Entitlement lifecycle status is
+ * deliberately NOT consulted here (see the module comment).
+ *
+ * Which store it reads is gated by the migration ledgers: ConversationAbility
+ * once the backfill has confirmed convergence, the legacy ConnectionGrant
+ * rows before that (a replica must never authorize from tables still being
+ * populated). Both feed the same decision function.
  */
 async function checkForConversation(
   args: CheckEntitlementArgs,
   caller: Extract<CheckEntitlementCaller, { kind: "conversation" }>,
 ): Promise<CheckEntitlementResult> {
-  const { abilityId, action, onBehalfOf, log } = args;
-
+  const abilityId = normalizeAbilityId(args.abilityId);
   const now = new Date();
-  const rows = await prisma.conversationAbility.findMany({
-    where: {
-      conversationId: caller.conversationId,
-      agentInboxId: caller.agentInboxId,
-      // Exact match, as V1 exec matched ConnectionGrant.toolkit — a
-      // case-variant request must keep failing closed, not start matching.
-      entitlement: { is: { abilityId } },
-      OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
-    },
-    include: {
-      entitlement: { select: { id: true, accountId: true } },
-    },
-  });
+
+  let rows: MatchableRow[];
+  if (await isEntitlementReadModelReady()) {
+    const extensions = await prisma.conversationAbility.findMany({
+      where: {
+        conversationId: caller.conversationId,
+        agentInboxId: caller.agentInboxId,
+        // Stored ability ids are canonical lowercase (writes normalize; the
+        // reconciliation sweep merged historical case variants before this
+        // read path was declared ready).
+        entitlement: { is: { abilityId } },
+        OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
+      },
+      include: {
+        entitlement: { select: { id: true, accountId: true } },
+      },
+    });
+    rows = extensions.map(
+      (row): MatchableRow => ({
+        id: row.id,
+        actions: row.actions,
+        bundleIds: row.bundleIds,
+        extendedByInboxId: row.extendedByInboxId,
+        ownerAccountId: row.entitlement.accountId,
+        entitlementId: row.entitlement.id,
+      }),
+    );
+  } else {
+    // Legacy fallback: the same live predicate over ConnectionGrant, which
+    // the adapters keep dual-writing for exactly this window. Toolkit
+    // casing in legacy rows is as-sent, so the match is case-insensitive.
+    const grants = await prisma.connectionGrant.findMany({
+      where: {
+        conversationId: caller.conversationId,
+        granteeInboxId: caller.agentInboxId,
+        toolkit: { equals: abilityId, mode: "insensitive" },
+        revokedAt: null,
+        OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
+      },
+    });
+    rows = grants.map(
+      (grant): MatchableRow => ({
+        id: grant.id,
+        actions: grant.actions,
+        bundleIds: grant.bundleIds,
+        extendedByInboxId: grant.ownerInboxId,
+        ownerAccountId: grant.ownerAccountId,
+        entitlementId: null,
+      }),
+    );
+  }
+
+  return decideForConversation(args, caller, abilityId, rows);
+}
+
+/** The store-independent V1 exec decision tree (see checkForConversation). */
+async function decideForConversation(
+  args: CheckEntitlementArgs,
+  caller: Extract<CheckEntitlementCaller, { kind: "conversation" }>,
+  abilityId: string,
+  rows: MatchableRow[],
+): Promise<CheckEntitlementResult> {
+  const { action, onBehalfOf, log } = args;
 
   const applicable = rows.filter((row) => {
     if (onBehalfOf !== undefined && row.extendedByInboxId !== onBehalfOf) {
@@ -162,7 +239,7 @@ async function checkForConversation(
     return { allowed: false, code: "no_grant" };
   }
 
-  const owners = new Set(applicable.map((row) => row.entitlement.accountId));
+  const owners = new Set(applicable.map((row) => row.ownerAccountId));
   if (owners.size > 1) {
     log.warn(
       { conversationId: caller.conversationId, abilityId, owners: owners.size },
@@ -174,8 +251,8 @@ async function checkForConversation(
   const chosen = applicable[0];
   return {
     allowed: true,
-    ownerAccountId: chosen.entitlement.accountId,
-    entitlementId: chosen.entitlement.id,
+    ownerAccountId: chosen.ownerAccountId,
+    entitlementId: chosen.entitlementId,
     actions: resolvedActions(abilityId, chosen),
   };
 }
@@ -191,7 +268,7 @@ async function checkForAccount(
   caller: Extract<CheckEntitlementCaller, { kind: "account" }>,
 ): Promise<CheckEntitlementResult> {
   const { action, log } = args;
-  const abilityId = args.abilityId.toLowerCase();
+  const abilityId = normalizeAbilityId(args.abilityId);
 
   if (!ABILITY_MANIFESTS.some((m) => m.id === abilityId)) {
     return { allowed: false, code: "unknown_ability" };
