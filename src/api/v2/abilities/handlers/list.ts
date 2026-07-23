@@ -1,5 +1,10 @@
-import type { ConnectedAccountStatus } from "@composio/core";
 import type { Request, Response } from "express";
+import {
+  COMPOSIO_DERIVED_STATUS_RANK,
+  KNOWN_COMPOSIO_STATUSES,
+  toEntitlementStatus,
+  type ComposioDerivedStatus,
+} from "@/api/v2/abilities/entitlement-status";
 import {
   getCatalogVersion,
   getPublicAbilities,
@@ -28,7 +33,10 @@ import { prisma } from "@/utils/prisma";
 //     clients keep their last-known state instead of rendering
 //     "not connected".
 
-export type EntitlementStatus = "pending_auth" | "active" | "expired";
+// The V1-derived read path emits only the Composio-derivable subset
+// (pending_auth | active | expired); the mapping and rank live in
+// entitlement-status.ts, shared with the backfill and the V1 adapters.
+export type EntitlementStatus = ComposioDerivedStatus;
 
 type ServedEntitlement = {
   status: EntitlementStatus;
@@ -37,45 +45,6 @@ type ServedEntitlement = {
 
 type ServedAbility = PublicAbility & {
   entitlement?: ServedEntitlement | null;
-};
-
-// Composio status -> wire status, over the SDK's actual status union
-// (INITIALIZING | INITIATED | ACTIVE | FAILED | EXPIRED | INACTIVE | REVOKED).
-// The V1 adapter emits only pending_auth/active/expired: every non-active,
-// non-in-flight state (EXPIRED, REVOKED, FAILED, INACTIVE, or a value outside
-// the union from SDK drift) means the credential cannot be used and re-running
-// OAuth is the remedy, which is what `expired` means to the client.
-// needs_reauth is reserved for B2's revalidation flow and never emitted here.
-function toEntitlementStatus(
-  composioStatus: ConnectedAccountStatus,
-): EntitlementStatus {
-  switch (composioStatus) {
-    case "ACTIVE":
-      return "active";
-    case "INITIALIZING":
-    case "INITIATED":
-      return "pending_auth";
-    default:
-      return "expired";
-  }
-}
-
-const KNOWN_COMPOSIO_STATUSES: ReadonlySet<string> = new Set([
-  "INITIALIZING",
-  "INITIATED",
-  "ACTIVE",
-  "FAILED",
-  "EXPIRED",
-  "INACTIVE",
-  "REVOKED",
-]);
-
-// An account can hold several Composio connections for one toolkit; the most
-// usable one determines the ability's status.
-const STATUS_RANK: Record<EntitlementStatus, number> = {
-  active: 0,
-  pending_auth: 1,
-  expired: 2,
 };
 
 export async function abilitiesListHandler(req: Request, res: Response) {
@@ -114,7 +83,11 @@ export async function abilitiesListHandler(req: Request, res: Response) {
         }
         const status = toEntitlementStatus(item.status);
         const prev = statusByAbility.get(id);
-        if (!prev || STATUS_RANK[status] < STATUS_RANK[prev]) {
+        if (
+          !prev ||
+          COMPOSIO_DERIVED_STATUS_RANK[status] <
+            COMPOSIO_DERIVED_STATUS_RANK[prev]
+        ) {
           statusByAbility.set(id, status);
         }
       }
