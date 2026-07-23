@@ -1,6 +1,6 @@
 import type { Request, Response } from "express";
 import { z } from "zod";
-import { prisma } from "@/utils/prisma";
+import { revokeConnectionGrantById } from "@/api/v2/connections/v1-grant-adapter";
 
 const paramsSchema = z.object({ id: z.string().uuid() });
 
@@ -21,16 +21,14 @@ export async function grantsDeleteHandler(req: Request, res: Response) {
     return;
   }
 
-  const result = await prisma.connectionGrant.updateMany({
-    where: {
-      id: parsed.data.id,
-      ownerAccountId: accountId,
-      revokedAt: null,
-    },
-    data: { revokedAt: new Date() },
+  // Adapter over the entitlement tables (see v1-grant-adapter.ts): the legacy
+  // row is soft-revoked and the extension (sharing its id) is deleted.
+  const count = await revokeConnectionGrantById({
+    accountId,
+    grantId: parsed.data.id,
   });
 
-  if (result.count === 0) {
+  if (count === 0) {
     // Not found, not owned, or already revoked — all indistinguishable to the
     // caller on purpose (don't leak existence of another account's grant).
     res.status(404).json({ code: "not_found" });
