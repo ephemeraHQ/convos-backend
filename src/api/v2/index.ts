@@ -39,6 +39,7 @@ import { composioRouter } from "./composio/composio.router";
 import { connectionsRouter } from "./connections/connections.router";
 import { actionsGetHandler } from "./connections/handlers/actions-get";
 import { servicesGetHandler } from "./connections/handlers/services-get";
+import { conversationsRouter } from "./conversations/conversations.router";
 import { creditsAdminRouter } from "./credits-admin/credits-admin.router";
 import { dailyRefillRouter } from "./credits/daily.router";
 import { devRouter } from "./dev/dev.router";
@@ -147,7 +148,16 @@ v2Router.use("/attachments", authMiddleware, attachmentsRouter);
 // The Connections V2 ability catalog (docs/plans/abilities-entitlements.md).
 // JWT-only, deliberately without requireAccount: device-only tokens can browse
 // the catalog; entitlement state appears only when the JWT carries an account.
+// The entitlement lifecycle routes inside apply requireAccount per-route.
 v2Router.use("/abilities", authMiddleware, abilitiesRouter);
+// Conversation-scoped ability extensions (Connections V2 "Extend"). Every
+// route is a signed-in-account surface.
+v2Router.use(
+  "/conversations",
+  authMiddleware,
+  requireAccount,
+  conversationsRouter,
+);
 // The connections-picker catalog is JWT-only (NOT account-scoped): the catalog
 // is identical for every user, so requireAccount is deliberately not applied.
 // Declared BEFORE the requireAccount-gated /connections mount so this more
