@@ -57,9 +57,21 @@ import { prisma } from "@/utils/prisma";
  *     intended "after full rollout" trigger: ship the feature at epoch N,
  *     then land an epoch N+1 bump once every replica is on the new code;
  *   - ops: delete the marker row (or lower its value) and restart a replica.
- * While an environment's ledger is behind the code's epoch, the exec reader
- * stays on the legacy matcher (see read-readiness.ts) — new-table reads are
- * served only from a snapshot this sweep has confirmed complete.
+ *
+ * Cutover is a SECOND marker, not the backfill marker: the pass snapshots
+ * legacy grants at a point in time, and an old replica can commit a legacy
+ * write after that snapshot but before (or after) the pass marker lands —
+ * converged by nothing if reads flipped on the pass marker alone. So the
+ * new-table read model (read-readiness.ts) requires the cutover marker,
+ * which is written only by a post-drain step: LEGACY_WRITER_DRAIN_MS after
+ * the pass completes (comfortably longer than any rolling deploy's
+ * old-replica overlap), a DB-only sweep re-converges everything the drain
+ * window let old replicas write, then records the cutover epoch. Until then
+ * every reader stays on the legacy matcher, which is complete by
+ * construction (old replicas write it natively, new replicas dual-write).
+ * While an environment's ledgers are behind the code's epoch, the exec
+ * reader likewise stays on the legacy matcher — new-table reads are served
+ * only from a snapshot the sweep has confirmed complete AND drained.
  */
 
 // Marker row in RuntimeConfig — the backfill ledger (cf. _prisma_migrations).
@@ -89,6 +101,29 @@ export function isBackfillLedgerCurrent(
 ): boolean {
   return backfillLedgerEpoch(value) >= ABILITY_ENTITLEMENTS_BACKFILL_EPOCH;
 }
+
+// Cutover marker: written by the post-drain step (see the module comment).
+// Same epoch encoding as the backfill marker; read-readiness requires BOTH
+// at the current epoch before new-table-only reads are served.
+export const ABILITY_ENTITLEMENTS_CUTOVER_KEY =
+  "ability_entitlements_cutover_v1";
+
+/**
+ * How long after the pass completes before the cutover confirm runs. Must
+ * exceed the longest old-replica overlap of a rolling deploy: any legacy
+ * write an old replica lands in this window is picked up by the confirm's
+ * DB-only sweep before reads flip.
+ */
+export const LEGACY_WRITER_DRAIN_MS = 15 * 60 * 1000;
+
+// Short-lived lease taken BEFORE the Composio inventory fetch, so an epoch
+// bump does not stampede every starting replica into the same project-wide
+// external scan (the advisory lock cannot cover the fetch — it is
+// transaction-scoped, and holding a transaction open across external HTTP is
+// exactly what the materialize-first structure exists to avoid). Value is
+// the lease's expiry epoch-millis; an expired lease is stealable.
+const BACKFILL_LEASE_KEY = "ability_entitlements_backfill_lease_v1";
+const BACKFILL_LEASE_TTL_MS = 15 * 60 * 1000;
 
 // Arbitrary constant identifying this routine's Postgres advisory lock, so two
 // instances booting at once cannot both run it. Distinct from the
@@ -251,9 +286,19 @@ export async function backfillAbilityEntitlements(opts: {
   db?: BackfillDb;
   /** Injectable inventory for tests; defaults to the live Composio pager. */
   source: AsyncIterable<ConnectedAccountSummary>;
+  /**
+   * False for the DB-only post-drain sweep: existing entitlement rows keep
+   * their status/credential ref untouched (there is no Composio inventory to
+   * refresh them FROM — an empty source would otherwise read as "credential
+   * gone" and downgrade live rows to expired). Creation for pairs that are
+   * genuinely new still happens, with the expired fallback; the next full
+   * pass reconciles their status. Default true.
+   */
+  refreshEntitlementStatus?: boolean;
 }): Promise<BackfillCounts> {
   const { log, source } = opts;
   const db = opts.db ?? prisma;
+  const refreshEntitlementStatus = opts.refreshEntitlementStatus ?? true;
 
   const counts: BackfillCounts = {
     connectionsScanned: 0,
@@ -359,8 +404,9 @@ export async function backfillAbilityEntitlements(opts: {
     }
     entitlementIdByKey.set(key, existing.id);
     if (
-      existing.status === status &&
-      existing.externalConnectionId === externalConnectionId
+      !refreshEntitlementStatus ||
+      (existing.status === status &&
+        existing.externalConnectionId === externalConnectionId)
     ) {
       counts.entitlementsUnchanged += 1;
       continue;
@@ -449,19 +495,56 @@ async function* fromMaterialized(
 }
 
 /**
- * Boot-time guard, mirroring runComposioUserIdMigrationOnce with three extra
- * rules:
+ * Take the inventory lease (see BACKFILL_LEASE_KEY). Serialized by a short
+ * advisory-locked transaction; returns false when a peer holds an unexpired
+ * lease.
+ */
+async function tryAcquireBackfillLease(): Promise<boolean> {
+  return prisma.$transaction(async (tx) => {
+    const lockRows = await tx.$queryRaw<{ locked: boolean }[]>`
+      SELECT pg_try_advisory_xact_lock(${ADVISORY_LOCK_KEY}) AS locked
+    `;
+    if (!lockRows[0]?.locked) return false;
+    const lease = await tx.runtimeConfig.findUnique({
+      where: { key: BACKFILL_LEASE_KEY },
+    });
+    const now = Date.now();
+    const heldUntil = lease ? Number.parseInt(lease.value, 10) : 0;
+    if (Number.isFinite(heldUntil) && heldUntil > now) return false;
+    const value = String(now + BACKFILL_LEASE_TTL_MS);
+    await tx.runtimeConfig.upsert({
+      where: { key: BACKFILL_LEASE_KEY },
+      create: { key: BACKFILL_LEASE_KEY, value },
+      update: { value },
+    });
+    return true;
+  });
+}
+
+async function releaseBackfillLease(): Promise<void> {
+  await prisma.runtimeConfig.deleteMany({
+    where: { key: BACKFILL_LEASE_KEY },
+  });
+}
+
+/**
+ * Boot-time guard, mirroring runComposioUserIdMigrationOnce with extra rules:
  *   - it refuses to run until the user-id migration's OWN ledger confirms
  *     completion — advisory-lock contention over there resolves the promise
  *     without doing the work, and running this pass against partially
  *     migrated Composio ownership would converge (and mark done) a wrong
  *     snapshot;
+ *   - the inventory LEASE is taken before the Composio fetch, so concurrent
+ *     boots (an epoch bump restarts the whole fleet) do not stampede the
+ *     same project-wide external scan;
  *   - the Composio inventory is fetched BEFORE the database transaction
  *     opens, so external HTTP never runs while a DB connection and advisory
  *     lock are held;
  *   - the ledger is epoch-keyed (see the module comment): the pass re-runs on
  *     every boot until the stored epoch reaches the code's epoch, which is
- *     how the post-rollout reconciliation sweep is triggered.
+ *     how the post-rollout reconciliation sweep is triggered;
+ *   - completing (or finding complete) the pass schedules the post-drain
+ *     cutover confirm, which is what actually flips new-table-only reads.
  * Never throws — a failure leaves the ledger unset so the next boot retries.
  */
 export async function runAbilityEntitlementsBackfillOnce() {
@@ -481,21 +564,128 @@ export async function runAbilityEntitlementsBackfillOnce() {
     const existing = await prisma.runtimeConfig.findUnique({
       where: { key: ABILITY_ENTITLEMENTS_BACKFILL_KEY },
     });
-    if (isBackfillLedgerCurrent(existing?.value)) return;
-
-    const composio = new Composio({
-      apiKey: COMPOSIO_API_KEY,
-      allowTracking: false,
-    });
-
-    // Materialize the full inventory outside the transaction: the DB
-    // transaction below must never wait on Composio HTTP.
-    const inventory: ConnectedAccountSummary[] = [];
-    for await (const connection of listAllConnectedAccounts(
-      composio.getClient(),
-    )) {
-      inventory.push(connection);
+    if (existing && isBackfillLedgerCurrent(existing.value)) {
+      // Pass already done; make sure the cutover confirm still happens (the
+      // replica that ran the pass may have died before its drain timer).
+      scheduleEntitlementCutoverConfirm(existing.updatedAt);
+      return;
     }
+
+    if (!(await tryAcquireBackfillLease())) {
+      logger.info(
+        "[abilities-backfill] inventory lease held by another instance; skipping",
+      );
+      return;
+    }
+
+    let completed: boolean;
+    try {
+      const composio = new Composio({
+        apiKey: COMPOSIO_API_KEY,
+        allowTracking: false,
+      });
+
+      // Materialize the full inventory outside the transaction: the DB
+      // transaction below must never wait on Composio HTTP.
+      const inventory: ConnectedAccountSummary[] = [];
+      for await (const connection of listAllConnectedAccounts(
+        composio.getClient(),
+      )) {
+        inventory.push(connection);
+      }
+
+      completed = await prisma.$transaction(
+        async (tx): Promise<boolean> => {
+          const lockRows = await tx.$queryRaw<{ locked: boolean }[]>`
+            SELECT pg_try_advisory_xact_lock(${ADVISORY_LOCK_KEY}) AS locked
+          `;
+          if (!lockRows[0]?.locked) {
+            logger.info(
+              "[abilities-backfill] advisory lock held by another instance; skipping",
+            );
+            return false;
+          }
+
+          // Re-check inside the lock in case a peer finished while we waited.
+          const inside = await tx.runtimeConfig.findUnique({
+            where: { key: ABILITY_ENTITLEMENTS_BACKFILL_KEY },
+          });
+          if (isBackfillLedgerCurrent(inside?.value)) return true;
+
+          const counts = await backfillAbilityEntitlements({
+            log: logger,
+            db: tx,
+            source: fromMaterialized(inventory),
+          });
+          const value = String(ABILITY_ENTITLEMENTS_BACKFILL_EPOCH);
+          await tx.runtimeConfig.upsert({
+            where: { key: ABILITY_ENTITLEMENTS_BACKFILL_KEY },
+            create: { key: ABILITY_ENTITLEMENTS_BACKFILL_KEY, value },
+            update: { value },
+          });
+          logger.info(
+            { counts, epoch: ABILITY_ENTITLEMENTS_BACKFILL_EPOCH },
+            "[abilities-backfill] pass completed and marked; cutover confirm follows the drain window",
+          );
+          return true;
+        },
+        // The pass is DB-only (inventory pre-fetched) but may touch many rows;
+        // keep headroom over the 5s interactive-tx default.
+        { timeout: 10 * 60 * 1000, maxWait: 15_000 },
+      );
+    } finally {
+      await releaseBackfillLease();
+    }
+
+    if (completed) {
+      scheduleEntitlementCutoverConfirm(new Date());
+    }
+  } catch (error) {
+    logger.error(
+      { error },
+      "[abilities-backfill] run failed; will retry on next boot",
+    );
+  }
+}
+
+/**
+ * Schedule the post-drain cutover confirm relative to when the pass
+ * completed. The timer is unref'd (never keeps the process alive) and the
+ * confirm never throws; a replica dying before its timer fires is covered by
+ * the next boot re-scheduling from the marker row's own updatedAt.
+ */
+function scheduleEntitlementCutoverConfirm(passCompletedAt: Date): void {
+  const waitMs =
+    passCompletedAt.getTime() + LEGACY_WRITER_DRAIN_MS - Date.now();
+  if (waitMs <= 0) {
+    void runEntitlementCutoverConfirmOnce();
+    return;
+  }
+  const timer = setTimeout(() => {
+    void runEntitlementCutoverConfirmOnce();
+  }, waitMs);
+  timer.unref();
+}
+
+/**
+ * The post-drain step that actually flips new-table-only reads (see the
+ * module comment): once the drain window has passed, a DB-only sweep
+ * (extension convergence + dead-grant reconciliation + case merge, no
+ * entitlement-status refresh) converges whatever legacy writes old replicas
+ * landed after the pass snapshot, then the cutover marker records the epoch.
+ * Guarded like the pass itself: advisory lock + marker re-check; never
+ * throws.
+ */
+export async function runEntitlementCutoverConfirmOnce() {
+  try {
+    const backfill = await prisma.runtimeConfig.findUnique({
+      where: { key: ABILITY_ENTITLEMENTS_BACKFILL_KEY },
+    });
+    if (!isBackfillLedgerCurrent(backfill?.value)) return;
+    const cutover = await prisma.runtimeConfig.findUnique({
+      where: { key: ABILITY_ENTITLEMENTS_CUTOVER_KEY },
+    });
+    if (isBackfillLedgerCurrent(cutover?.value)) return;
 
     await prisma.$transaction(
       async (tx) => {
@@ -504,41 +694,38 @@ export async function runAbilityEntitlementsBackfillOnce() {
         `;
         if (!lockRows[0]?.locked) {
           logger.info(
-            "[abilities-backfill] advisory lock held by another instance; skipping",
+            "[abilities-backfill] cutover confirm: advisory lock held by another instance; skipping",
           );
           return;
         }
-
-        // Re-check inside the lock in case a peer finished while we waited.
         const inside = await tx.runtimeConfig.findUnique({
-          where: { key: ABILITY_ENTITLEMENTS_BACKFILL_KEY },
+          where: { key: ABILITY_ENTITLEMENTS_CUTOVER_KEY },
         });
         if (isBackfillLedgerCurrent(inside?.value)) return;
 
         const counts = await backfillAbilityEntitlements({
           log: logger,
           db: tx,
-          source: fromMaterialized(inventory),
+          source: fromMaterialized([]),
+          refreshEntitlementStatus: false,
         });
         const value = String(ABILITY_ENTITLEMENTS_BACKFILL_EPOCH);
         await tx.runtimeConfig.upsert({
-          where: { key: ABILITY_ENTITLEMENTS_BACKFILL_KEY },
-          create: { key: ABILITY_ENTITLEMENTS_BACKFILL_KEY, value },
+          where: { key: ABILITY_ENTITLEMENTS_CUTOVER_KEY },
+          create: { key: ABILITY_ENTITLEMENTS_CUTOVER_KEY, value },
           update: { value },
         });
         logger.info(
           { counts, epoch: ABILITY_ENTITLEMENTS_BACKFILL_EPOCH },
-          "[abilities-backfill] completed and marked done",
+          "[abilities-backfill] cutover confirmed — new-table reads enabled",
         );
       },
-      // The pass is DB-only (inventory pre-fetched) but may touch many rows;
-      // keep headroom over the 5s interactive-tx default.
       { timeout: 10 * 60 * 1000, maxWait: 15_000 },
     );
   } catch (error) {
     logger.error(
       { error },
-      "[abilities-backfill] run failed; will retry on next boot",
+      "[abilities-backfill] cutover confirm failed; will retry on next boot",
     );
   }
 }

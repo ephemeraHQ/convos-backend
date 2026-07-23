@@ -131,22 +131,31 @@ export type PublicAbility = {
 };
 
 /**
- * The served catalog: hidden manifests dropped, bundles pulled from the
- * service catalog for Composio-backed abilities (empty when no service entry
- * exists yet — a registered-but-bundle-less ability renders, it just offers
- * nothing to toggle). The served version is manifest version + service
+ * Servable = visible AND usable. An OAuth ability whose service entry is
+ * missing (or resolves to zero public bundles) can begin an OAuth flow but
+ * can never be extended through the non-empty-bundle contract — serving it
+ * would strand users mid-flow. Such a manifest is treated as still hidden
+ * (warn once) until its bundles.config.ts entry lands; unhiding it is not
+ * enough to launch it. Auth-less abilities have no bundle requirement.
+ */
+function isServable(m: AbilityManifest): boolean {
+  if (m.hidden) return false;
+  if (m.auth.type !== "oauth") return true;
+  const svc = getServiceConfig(m.id);
+  if (svc && toPublicServiceConfig(svc).bundles.length > 0) return true;
+  warnOnceMissingService(m.id);
+  return false;
+}
+
+/**
+ * The served catalog: hidden manifests dropped, and visible OAuth manifests
+ * without a usable service entry dropped too (see isServable). Bundles come
+ * from the service catalog; the served version is manifest version + service
  * version (0 when none), so any change to either side bumps it.
  */
 export function getPublicAbilities(): PublicAbility[] {
-  return ABILITY_MANIFESTS.filter((m) => !m.hidden).map((m) => {
+  return ABILITY_MANIFESTS.filter(isServable).map((m) => {
     const svc = getServiceConfig(m.id);
-    if (!svc && m.auth.type === "oauth") {
-      // A visible OAuth ability with no service entry serves zero bundles.
-      // Legitimate for future non-Composio-backed abilities, so this warns
-      // rather than throws — but for a Composio-backed one it means the
-      // launch flag was cleared before the bundles.config.ts entry landed.
-      warnOnceMissingService(m.id);
-    }
     return {
       id: m.id,
       version: m.version + (svc?.version ?? 0),
@@ -181,16 +190,16 @@ export function getServedAbilityVersion(abilityId: string): number {
  * whenever an ability launches (unhiding adds its version to the sum).
  */
 export function getCatalogVersion(): number {
-  return ABILITY_MANIFESTS.filter((m) => !m.hidden).reduce(
+  return ABILITY_MANIFESTS.filter(isServable).reduce(
     (sum: number, m: AbilityManifest): number =>
       sum + m.version + (getServiceConfig(m.id)?.version ?? 0),
     CATALOG_VERSION,
   );
 }
 
-// A missing service entry is static configuration, not a transient condition;
-// one warning per process per ability is signal enough without flooding the
-// log on every catalog request.
+// A missing/bundle-less service entry is static configuration, not a
+// transient condition; one warning per process per ability is signal enough
+// without flooding the log on every catalog request.
 const warnedMissingServiceIds = new Set<string>();
 
 function warnOnceMissingService(abilityId: string) {
@@ -198,6 +207,6 @@ function warnOnceMissingService(abilityId: string) {
   warnedMissingServiceIds.add(abilityId);
   logger.warn(
     { abilityId },
-    "[Abilities] Visible OAuth ability has no service entry — serving zero bundles",
+    "[Abilities] Visible OAuth ability has no usable service entry (no bundles) — excluded from the served catalog",
   );
 }

@@ -210,6 +210,27 @@ describe("GET /v2/abilities", () => {
     }
   });
 
+  test("a visible OAuth ability without a usable service entry is excluded, not served empty", async () => {
+    // Simulates the launch-flag-before-bundles misconfiguration: visible,
+    // OAuth, but no bundles.config.ts entry. It must be suppressed (its bind
+    // flow could start OAuth yet the ability could never be extended).
+    ABILITY_MANIFESTS.push({
+      id: "halflaunched",
+      version: 1,
+      displayName: { en: "Half Launched" },
+      subtitle: { en: "No bundles yet" },
+      auth: { type: "oauth" },
+    });
+    try {
+      const res = await getAbilities(await accountToken());
+      const body = res.body as AbilitiesResponse;
+      expect(body.abilities.some((a) => a.id === "halflaunched")).toBe(false);
+    } finally {
+      const index = ABILITY_MANIFESTS.findIndex((m) => m.id === "halflaunched");
+      if (index >= 0) ABILITY_MANIFESTS.splice(index, 1);
+    }
+  });
+
   test("an entitlement for a hidden ability does not unhide it", async () => {
     await seedEntitlement("active", { abilityId: "gmail" });
     const res = await getAbilities(await accountToken());

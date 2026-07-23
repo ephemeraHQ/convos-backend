@@ -127,8 +127,9 @@ validateJWTKeys()
       // accountIds that migration establishes — and it re-checks the
       // migration's ledger itself (a resolved promise here also covers
       // advisory-lock contention and failure, which must NOT start the
-      // backfill; neither routine throws). Until both ledgers confirm, exec
-      // stays on the legacy grant matcher (see abilities/read-readiness.ts).
+      // backfill; neither routine throws). Until the ledgers confirm —
+      // including the post-drain cutover marker — exec stays on the legacy
+      // grant matcher (see abilities/read-readiness.ts).
       void runComposioUserIdMigrationOnce().then(() =>
         runAbilityEntitlementsBackfillOnce(),
       );
