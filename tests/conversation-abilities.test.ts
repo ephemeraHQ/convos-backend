@@ -151,6 +151,50 @@ describe("PUT /v2/conversations/:conversationId/abilities/:abilityId", () => {
     expect(rows[0].actions).toEqual([]);
   });
 
+  test("PUT mirrors a legacy grant row sharing the extension's id (rolling-deploy coherence)", async () => {
+    const accountId = await makeAccount();
+    const entitlement = await makeActiveEntitlement(accountId);
+    const res = await putAbility(accountId, {
+      agentInboxId: "agent-1",
+      bundleIds: ["calendar.events"],
+      extendedByInboxId: "owner-inbox-1",
+    });
+    expect(res.status).toBe(200);
+
+    const extension = await prisma.conversationAbility.findFirstOrThrow({
+      where: { entitlementId: entitlement.id },
+    });
+    // The mirror keeps old exec replicas authorizing this opt-in, and its
+    // shared id keeps V1 GET/DELETE pairing working for V2-created state.
+    const legacy = await prisma.connectionGrant.findUnique({
+      where: { id: extension.id },
+    });
+    expect(legacy).not.toBeNull();
+    expect(legacy!.ownerAccountId).toBe(accountId);
+    expect(legacy!.granteeInboxId).toBe("agent-1");
+    expect(legacy!.conversationId).toBe(CONVERSATION);
+    expect(legacy!.toolkit).toBe("googlecalendar");
+    expect(legacy!.bundleIds).toEqual(["calendar.events"]);
+    expect(legacy!.ownerInboxId).toBe("owner-inbox-1");
+    expect(legacy!.revokedAt).toBeNull();
+
+    // Re-PUT updates the SAME pair (and would un-revoke a revoked mirror).
+    await prisma.connectionGrant.update({
+      where: { id: extension.id },
+      data: { revokedAt: new Date() },
+    });
+    const again = await putAbility(accountId, {
+      agentInboxId: "agent-1",
+      bundleIds: ["calendar.events.read"],
+    });
+    expect(again.status).toBe(200);
+    const healed = await prisma.connectionGrant.findUnique({
+      where: { id: extension.id },
+    });
+    expect(healed!.revokedAt).toBeNull();
+    expect(healed!.bundleIds).toEqual(["calendar.events.read"]);
+  });
+
   test("re-PUT updates the same opt-in (idempotent per (ability, agent))", async () => {
     const accountId = await makeAccount();
     const entitlement = await makeActiveEntitlement(accountId);
@@ -263,6 +307,34 @@ describe("DELETE /v2/conversations/:conversationId/abilities/:abilityId", () => 
       )
       .set("X-Convos-AuthToken", await token(accountId));
     expect(again.status).toBe(404);
+  });
+
+  test("a 404 retry still heals a surviving legacy row (withdrawal converges)", async () => {
+    const accountId = await makeAccount();
+    await makeActiveEntitlement(accountId);
+    // Divergent state a partial failure (or an old replica) could leave: the
+    // opt-in is gone but the legacy row still authorizes on old readers.
+    await prisma.connectionGrant.create({
+      data: {
+        ownerAccountId: accountId,
+        ownerInboxId: "owner-inbox-1",
+        granteeInboxId: "agent-1",
+        conversationId: CONVERSATION,
+        toolkit: "googlecalendar",
+      },
+    });
+
+    const res = await request(makeApp())
+      .delete(
+        `/conversations/${CONVERSATION}/abilities/googlecalendar?agentInboxId=agent-1`,
+      )
+      .set("X-Convos-AuthToken", await token(accountId));
+    expect(res.status).toBe(404);
+
+    const legacy = await prisma.connectionGrant.findFirstOrThrow({
+      where: { ownerAccountId: accountId },
+    });
+    expect(legacy.revokedAt).not.toBeNull();
   });
 
   test("400 without agentInboxId; scoping cannot touch another member's opt-in", async () => {

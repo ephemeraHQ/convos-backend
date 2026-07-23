@@ -345,3 +345,11 @@ export function __resetComposioServiceForTests(
   cached = override;
   initialized = override !== null;
 }
+
+// Exposed for tests — pins the factory to "unconfigured" (returns null even
+// when the environment carries a COMPOSIO_API_KEY). Undo with
+// __resetComposioServiceForTests(null).
+export function __setComposioServiceUnconfiguredForTests() {
+  cached = null;
+  initialized = true;
+}

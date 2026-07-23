@@ -1,7 +1,9 @@
 import type { Request, Response } from "express";
 import { z } from "zod";
+import { normalizeAbilityId } from "@/api/v2/abilities/ability-id";
 import { getPublicAbilities } from "@/api/v2/abilities/manifests.config";
 import { getServiceConfig } from "@/api/v2/connections/bundles.config";
+import { upsertConversationAbilityExtension } from "@/api/v2/connections/v1-grant-adapter";
 import { prisma } from "@/utils/prisma";
 
 // PUT /v2/conversations/{conversationId}/abilities/{abilityId} — extend (or
@@ -53,7 +55,7 @@ export async function conversationAbilityPutHandler(
     return;
   }
   const conversationId = params.data.conversationId;
-  const abilityId = params.data.abilityId.toLowerCase();
+  const abilityId = normalizeAbilityId(params.data.abilityId);
   const ability = getPublicAbilities().find((a) => a.id === abilityId);
   if (!ability) {
     res.status(404).json({ code: "unknown_ability" });
@@ -92,25 +94,18 @@ export async function conversationAbilityPutHandler(
     return;
   }
 
-  const extension = await prisma.conversationAbility.upsert({
-    where: {
-      entitlementId_conversationId_agentInboxId: {
-        entitlementId: entitlement.id,
-        conversationId,
-        agentInboxId,
-      },
-    },
-    create: {
-      entitlementId: entitlement.id,
-      conversationId,
-      agentInboxId,
-      bundleIds,
-      extendedByInboxId: extendedByInboxId ?? null,
-    },
-    update: {
-      bundleIds,
-      ...(extendedByInboxId !== undefined ? { extendedByInboxId } : {}),
-    },
+  // The shared cross-store write service (see v1-grant-adapter.ts): upserts
+  // the opt-in and mirrors a legacy ConnectionGrant row in one transaction,
+  // so old exec replicas and V1 read/delete surfaces stay coherent with
+  // V2-written state during the compatibility window.
+  const extension = await upsertConversationAbilityExtension({
+    accountId,
+    entitlementId: entitlement.id,
+    abilityId,
+    conversationId,
+    agentInboxId,
+    bundleIds,
+    extendedByInboxId,
   });
 
   req.log.info(

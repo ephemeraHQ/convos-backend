@@ -123,8 +123,12 @@ validateJWTKeys()
       // runs exactly once per environment (like a DB migration) and is a no-op
       // on every subsequent boot. Fired after listen so a slow/failing external
       // call never blocks startup or health checks. The entitlement backfill
-      // runs strictly after it (never throws), because it keys the Composio
-      // inventory by the accountIds that migration establishes.
+      // runs strictly after it because it keys the Composio inventory by the
+      // accountIds that migration establishes — and it re-checks the
+      // migration's ledger itself (a resolved promise here also covers
+      // advisory-lock contention and failure, which must NOT start the
+      // backfill; neither routine throws). Until both ledgers confirm, exec
+      // stays on the legacy grant matcher (see abilities/read-readiness.ts).
       void runComposioUserIdMigrationOnce().then(() =>
         runAbilityEntitlementsBackfillOnce(),
       );

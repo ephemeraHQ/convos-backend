@@ -18,6 +18,30 @@
 -- (exec, the abilities catalog, the V2 endpoints) works off the new tables.
 -- A boot-time backfill (see src/api/v2/abilities/backfill-entitlements.ts)
 -- converges existing Composio connected accounts and live grants into them.
+--
+-- Deploy paths — this file must reach every environment, whichever way its
+-- schema is managed:
+--   - migrate-deploy environments (CI/prod, `prisma migrate deploy`): the
+--     file applies and is recorded in _prisma_migrations automatically.
+--   - schema-pushed environments (e.g. the shared dev database, which has no
+--     _prisma_migrations table): `prisma db push` creates the TABLES but not
+--     the CHECK constraints below (Prisma's schema language cannot express
+--     them) — apply this file once via psql instead. The DDL is byte-matched
+--     to what Prisma generates for schema.prisma (verified with
+--     `prisma migrate diff`), so a later push sees no drift; CHECK
+--     constraints are invisible to Prisma's diff either way.
+--   - an environment that applied this file manually (psql) and LATER adopts
+--     migrate deploy must record it first:
+--       prisma migrate resolve --applied 20260723170000_ability_entitlements
+--     otherwise migrate deploy re-runs the unguarded CREATEs and fails.
+--
+-- Array nullability note: `TEXT[] DEFAULT ARRAY[]::TEXT[]` without NOT NULL
+-- is exactly what Prisma emits for `String[] @default([])` (scalar lists are
+-- nullable at the DB level in Prisma's canonical DDL — adding NOT NULL here
+-- would make migrated and schema-pushed databases diverge). The CHECK
+-- constraints below give the NOT NULL guarantee instead, without drift: no
+-- Prisma write can produce NULL for a scalar list, and raw SQL now cannot
+-- either, so readers may dereference `.length` unconditionally.
 
 -- CreateTable
 CREATE TABLE "AbilityEntitlement" (
@@ -56,6 +80,14 @@ ALTER TABLE "AbilityEntitlement"
   ADD CONSTRAINT "AbilityEntitlement_status_check"
   CHECK ("status" IN ('pending_auth', 'active', 'needs_reauth', 'expired', 'revoked'));
 
+-- Tombstone invariant: status 'revoked' if and only if revokedAt is set.
+-- Readers interpret either field as "revoked"; the biconditional keeps them
+-- from ever disagreeing (a revoked row without its audit timestamp, or an
+-- active row carrying one).
+ALTER TABLE "AbilityEntitlement"
+  ADD CONSTRAINT "AbilityEntitlement_revoked_tombstone_check"
+  CHECK (("status" = 'revoked') = ("revokedAt" IS NOT NULL));
+
 -- CreateTable
 CREATE TABLE "ConversationAbility" (
     "id" UUID NOT NULL DEFAULT gen_random_uuid(),
@@ -86,6 +118,16 @@ CREATE TABLE "ConversationAbility" (
 
     CONSTRAINT "ConversationAbility_pkey" PRIMARY KEY ("id")
 );
+
+-- Null-strength for the scalar lists (see the header note: NOT NULL itself
+-- would drift from Prisma's canonical DDL; a CHECK enforces the same without
+-- Prisma seeing it). The check-time matcher dereferences both arrays.
+ALTER TABLE "ConversationAbility"
+  ADD CONSTRAINT "ConversationAbility_bundleIds_not_null_check"
+  CHECK ("bundleIds" IS NOT NULL);
+ALTER TABLE "ConversationAbility"
+  ADD CONSTRAINT "ConversationAbility_actions_not_null_check"
+  CHECK ("actions" IS NOT NULL);
 
 -- CreateIndex: one entitlement per (account, ability) — re-binding upserts
 CREATE UNIQUE INDEX "AbilityEntitlement_accountId_abilityId_key" ON "AbilityEntitlement"("accountId", "abilityId");

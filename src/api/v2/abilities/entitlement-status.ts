@@ -32,23 +32,6 @@ export type ComposioDerivedStatus = Extract<
   "pending_auth" | "active" | "expired"
 >;
 
-// Accepts plain string (not the SDK's ConnectedAccountStatus union) on
-// purpose: SDK drift can serve values outside the union, and they must
-// collapse to `expired` rather than fail to type-check.
-export function toEntitlementStatus(
-  composioStatus: string,
-): ComposioDerivedStatus {
-  switch (composioStatus) {
-    case "ACTIVE":
-      return "active";
-    case "INITIALIZING":
-    case "INITIATED":
-      return "pending_auth";
-    default:
-      return "expired";
-  }
-}
-
 /** The SDK's actual status union, for unknown-value warn logging. */
 export const KNOWN_COMPOSIO_STATUSES: ReadonlySet<string> = new Set([
   "INITIALIZING",
@@ -59,6 +42,35 @@ export const KNOWN_COMPOSIO_STATUSES: ReadonlySet<string> = new Set([
   "INACTIVE",
   "REVOKED",
 ]);
+
+/** The subset of a logger this module needs (any pino logger satisfies it). */
+type WarnLogger = { warn: (obj: object, msg: string) => void };
+
+// Accepts plain string (not the SDK's ConnectedAccountStatus union) on
+// purpose: SDK drift can serve values outside the union, and they must
+// collapse to `expired` rather than fail to type-check. Callers pass their
+// logger so a value outside the known union is warn-logged wherever it is
+// mapped (backfill, adapters) — silent collapse would hide SDK drift.
+export function toEntitlementStatus(
+  composioStatus: string,
+  log?: WarnLogger,
+): ComposioDerivedStatus {
+  if (log && !KNOWN_COMPOSIO_STATUSES.has(composioStatus)) {
+    log.warn(
+      { composioStatus },
+      "[Abilities] unknown Composio connection status — mapping to expired",
+    );
+  }
+  switch (composioStatus) {
+    case "ACTIVE":
+      return "active";
+    case "INITIALIZING":
+    case "INITIATED":
+      return "pending_auth";
+    default:
+      return "expired";
+  }
+}
 
 /**
  * An account can hold several Composio connections for one toolkit; the most

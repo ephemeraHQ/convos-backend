@@ -241,6 +241,35 @@ describe("Connection grants API", () => {
     expect(row?.revokedAt).toBeNull();
   });
 
+  test("a DELETE retry heals a surviving extension when the legacy row is already revoked", async () => {
+    const accountId = await makeAccount();
+    const { id } = await asJson<{ id: string }>(
+      await postGrant(accountId, GRANT_BODY),
+    );
+    // Divergent state a pre-transaction failure (or an old replica) could
+    // leave: legacy already revoked, extension still authorizing.
+    await prisma.connectionGrant.update({
+      where: { id },
+      data: { revokedAt: new Date() },
+    });
+    const before = await prisma.conversationAbility.findUnique({
+      where: { id },
+    });
+    expect(before).not.toBeNull();
+
+    const res = await fetch(`${baseURL}/api/v2/connections/grants/${id}`, {
+      method: "DELETE",
+      headers: { "X-Convos-AuthToken": await token(accountId) },
+    });
+    // The wire keeps the V1 contract (already-revoked reads as not found),
+    // but the retry converges the stores: the extension is gone.
+    expect(res.status).toBe(404);
+    const after = await prisma.conversationAbility.findUnique({
+      where: { id },
+    });
+    expect(after).toBeNull();
+  });
+
   async function postRevoke(
     accountId: string,
     body: { toolkit: string; conversationId?: string; granteeInboxId?: string },

@@ -1,26 +1,42 @@
-import type { ConnectionGrant } from "@prisma/client";
+import type {
+  ConnectionGrant,
+  ConversationAbility,
+  Prisma,
+} from "@prisma/client";
+import { normalizeAbilityId } from "@/api/v2/abilities/ability-id";
 import { getServedAbilityVersion } from "@/api/v2/abilities/manifests.config";
 import { prisma } from "@/utils/prisma";
 
-// The V1 grant write path as an adapter over the entitlement tables
-// (docs/plans/abilities-entitlements.md, rollout step 2).
-//
-// Every V1 grant mutation lands in BOTH stores:
+// The single cross-store grant/extension write service (docs/plans/
+// abilities-entitlements.md, rollout step 2). Both the V1 /v2/connections
+// handlers AND the V2 conversation-ability PUT write through here, and every
+// mutation lands in BOTH stores inside ONE Prisma transaction:
 //   - the legacy ConnectionGrant row keeps being written byte-for-byte as
 //     before (same upsert/soft-revoke semantics, same wire-visible id), so
-//     old replicas still reading it during a rolling deploy — and a rollback —
-//     stay correct;
+//     old replicas still reading it during a rolling deploy — and a rollback,
+//     and the pre-readiness legacy matcher — stay correct;
 //   - the entitlement tables receive the same fact reshaped (entitlement
 //     find-or-create + extension upsert/delete), and every NEW reader (exec's
 //     checkEntitlement, the abilities catalog, the V2 endpoints) reads ONLY
 //     them.
+// The transaction is what keeps the stores from diverging: a failure rolls
+// BOTH back, so no path can answer 5xx while one store already authorizes
+// (or has stopped authorizing) the other's state.
 //
-// The legacy table thus becomes write-only for new replicas; the boot-time
-// reconciliation sweep (backfill-entitlements.ts) converges any rows old
-// replicas wrote in the meantime. Extensions created here keep the legacy
-// grant's id and createdAt, so ids served by V1 endpoints stay stable.
+// Revocation retries HEAL unconditionally: the extension delete is never
+// gated on the legacy row having transitioned in this attempt, so state left
+// divergent by an old replica (or a pre-transaction version) converges on the
+// next revoke call rather than surviving it.
 //
-// These functions are the single implementation behind the V1 handlers; tests
+// Cross-store identity: extension rows share their legacy grant's id (the
+// adapter creates them together; the V2 PUT mirror creates the legacy row
+// with the extension's id), so ids served by V1 endpoints stay stable and V1
+// DELETE-by-id can always address V2-created state. Entitlement ability ids
+// are canonical lowercase (normalizeAbilityId); the legacy row's toolkit
+// keeps the client's casing (its V1 wire echoes it) and is matched
+// case-insensitively.
+//
+// These functions are the single implementation behind the handlers; tests
 // that need V1-shaped state in the new tables seed through them ("the
 // V1-adapter path") instead of writing ConnectionGrant rows directly.
 
@@ -58,76 +74,78 @@ export async function issueConnectionGrant(
   const serviceVersion = input.serviceVersion ?? null;
   const expiresAt = input.expiresAt ?? null;
 
-  const grant = await prisma.connectionGrant.upsert({
-    where: {
-      ownerAccountId_granteeInboxId_conversationId_toolkit: {
+  return prisma.$transaction(async (tx) => {
+    const grant = await tx.connectionGrant.upsert({
+      where: {
+        ownerAccountId_granteeInboxId_conversationId_toolkit: {
+          ownerAccountId: input.accountId,
+          granteeInboxId: input.granteeInboxId,
+          conversationId: input.conversationId,
+          toolkit: input.toolkit,
+        },
+      },
+      create: {
         ownerAccountId: input.accountId,
+        ownerInboxId: input.ownerInboxId,
         granteeInboxId: input.granteeInboxId,
         conversationId: input.conversationId,
         toolkit: input.toolkit,
+        actions,
+        bundleIds,
+        serviceVersion,
+        expiresAt,
       },
-    },
-    create: {
-      ownerAccountId: input.accountId,
-      ownerInboxId: input.ownerInboxId,
-      granteeInboxId: input.granteeInboxId,
-      conversationId: input.conversationId,
-      toolkit: input.toolkit,
-      actions,
-      bundleIds,
-      serviceVersion,
-      expiresAt,
-    },
-    update: {
-      ownerInboxId: input.ownerInboxId,
-      actions,
-      bundleIds,
-      serviceVersion,
-      expiresAt,
-      revokedAt: null,
-    },
-  });
+      update: {
+        ownerInboxId: input.ownerInboxId,
+        actions,
+        bundleIds,
+        serviceVersion,
+        expiresAt,
+        revokedAt: null,
+      },
+    });
 
-  const entitlement = await ensureEntitlementForV1Issue({
-    accountId: input.accountId,
-    abilityId: input.toolkit,
-  });
+    const entitlement = await ensureEntitlementForV1Issue(tx, {
+      accountId: input.accountId,
+      abilityId: normalizeAbilityId(input.toolkit),
+    });
 
-  await prisma.conversationAbility.upsert({
-    where: {
-      entitlementId_conversationId_agentInboxId: {
+    await tx.conversationAbility.upsert({
+      where: {
+        entitlementId_conversationId_agentInboxId: {
+          entitlementId: entitlement.id,
+          conversationId: input.conversationId,
+          agentInboxId: input.granteeInboxId,
+        },
+      },
+      create: {
+        id: grant.id,
         entitlementId: entitlement.id,
         conversationId: input.conversationId,
         agentInboxId: input.granteeInboxId,
+        bundleIds,
+        actions,
+        extendedByInboxId: input.ownerInboxId,
+        expiresAt,
+        createdAt: grant.createdAt,
       },
-    },
-    create: {
-      id: grant.id,
-      entitlementId: entitlement.id,
-      conversationId: input.conversationId,
-      agentInboxId: input.granteeInboxId,
-      bundleIds,
-      actions,
-      extendedByInboxId: input.ownerInboxId,
-      expiresAt,
-      createdAt: grant.createdAt,
-    },
-    update: {
-      bundleIds,
-      actions,
-      extendedByInboxId: input.ownerInboxId,
-      expiresAt,
-    },
-  });
+      update: {
+        bundleIds,
+        actions,
+        extendedByInboxId: input.ownerInboxId,
+        expiresAt,
+      },
+    });
 
-  return grant;
+    return grant;
+  });
 }
 
-async function ensureEntitlementForV1Issue(args: {
-  accountId: string;
-  abilityId: string;
-}) {
-  const existing = await prisma.abilityEntitlement.findUnique({
+async function ensureEntitlementForV1Issue(
+  tx: Prisma.TransactionClient,
+  args: { accountId: string; abilityId: string },
+) {
+  const existing = await tx.abilityEntitlement.findUnique({
     where: {
       accountId_abilityId: {
         accountId: args.accountId,
@@ -136,7 +154,7 @@ async function ensureEntitlementForV1Issue(args: {
     },
   });
   if (!existing) {
-    return prisma.abilityEntitlement.create({
+    return tx.abilityEntitlement.create({
       data: {
         accountId: args.accountId,
         abilityId: args.abilityId,
@@ -146,7 +164,7 @@ async function ensureEntitlementForV1Issue(args: {
     });
   }
   if (existing.revokedAt) {
-    return prisma.abilityEntitlement.update({
+    return tx.abilityEntitlement.update({
       where: { id: existing.id },
       data: { status: "active", revokedAt: null },
     });
@@ -154,11 +172,96 @@ async function ensureEntitlementForV1Issue(args: {
   return existing;
 }
 
+export type UpsertConversationAbilityInput = {
+  /** The extender — from the authenticated JWT, never a body field. */
+  accountId: string;
+  /** The backing entitlement (already validated active by the handler). */
+  entitlementId: string;
+  /** Canonical (lowercase) ability id. */
+  abilityId: string;
+  conversationId: string;
+  agentInboxId: string;
+  bundleIds: string[];
+  extendedByInboxId?: string;
+};
+
+/**
+ * The V2 extend write (PUT /v2/conversations/.../abilities/...): upserts the
+ * ConversationAbility opt-in AND mirrors a legacy ConnectionGrant row in the
+ * same transaction, so old replicas' exec (and the pre-readiness legacy
+ * matcher) authorize V2-written opt-ins, and V1 GET/DELETE address them by a
+ * shared id. The mirror row is created with the extension's id; a later V1
+ * re-issue of the same natural key therefore updates the same pair. When the
+ * caller did not provide its inbox id, the mirror's ownerInboxId is empty —
+ * V1 responses (which require it) skip such rows, and onBehalfOf selection
+ * simply never matches them.
+ */
+export async function upsertConversationAbilityExtension(
+  input: UpsertConversationAbilityInput,
+): Promise<ConversationAbility> {
+  return prisma.$transaction(async (tx) => {
+    const extension = await tx.conversationAbility.upsert({
+      where: {
+        entitlementId_conversationId_agentInboxId: {
+          entitlementId: input.entitlementId,
+          conversationId: input.conversationId,
+          agentInboxId: input.agentInboxId,
+        },
+      },
+      create: {
+        entitlementId: input.entitlementId,
+        conversationId: input.conversationId,
+        agentInboxId: input.agentInboxId,
+        bundleIds: input.bundleIds,
+        extendedByInboxId: input.extendedByInboxId ?? null,
+      },
+      update: {
+        bundleIds: input.bundleIds,
+        ...(input.extendedByInboxId !== undefined
+          ? { extendedByInboxId: input.extendedByInboxId }
+          : {}),
+      },
+    });
+
+    await tx.connectionGrant.upsert({
+      where: {
+        ownerAccountId_granteeInboxId_conversationId_toolkit: {
+          ownerAccountId: input.accountId,
+          granteeInboxId: input.agentInboxId,
+          conversationId: input.conversationId,
+          toolkit: input.abilityId,
+        },
+      },
+      create: {
+        id: extension.id,
+        ownerAccountId: input.accountId,
+        ownerInboxId: input.extendedByInboxId ?? "",
+        granteeInboxId: input.agentInboxId,
+        conversationId: input.conversationId,
+        toolkit: input.abilityId,
+        actions: [],
+        bundleIds: input.bundleIds,
+      },
+      update: {
+        bundleIds: input.bundleIds,
+        revokedAt: null,
+        ...(input.extendedByInboxId !== undefined
+          ? { ownerInboxId: input.extendedByInboxId }
+          : {}),
+      },
+    });
+
+    return extension;
+  });
+}
+
 /**
  * Revoke by natural key (toolkit [+ conversation] [+ grantee]) — the V1
  * grants/revoke semantics. Legacy rows are soft-revoked (revokedAt, audit
  * trail); the matching extensions are deleted (withdrawn opt-ins have no
- * per-extension tombstone — the entitlement row is the audit record). Returns
+ * per-extension tombstone — the entitlement row is the audit record). Both
+ * happen in one transaction; the extension delete runs regardless of how
+ * many legacy rows transitioned, so a retry heals divergent state. Returns
  * the legacy revoked count, which is the wire-visible number.
  */
 export async function revokeConnectionGrantsByNaturalKey(args: {
@@ -167,64 +270,69 @@ export async function revokeConnectionGrantsByNaturalKey(args: {
   conversationId?: string;
   granteeInboxId?: string;
 }): Promise<number> {
-  const result = await prisma.connectionGrant.updateMany({
-    where: {
-      ownerAccountId: args.accountId,
-      toolkit: args.toolkit,
-      ...(args.conversationId ? { conversationId: args.conversationId } : {}),
-      ...(args.granteeInboxId ? { granteeInboxId: args.granteeInboxId } : {}),
-      revokedAt: null,
-    },
-    data: { revokedAt: new Date() },
-  });
-
-  const entitlement = await prisma.abilityEntitlement.findUnique({
-    where: {
-      accountId_abilityId: {
-        accountId: args.accountId,
-        abilityId: args.toolkit,
-      },
-    },
-  });
-  if (entitlement) {
-    await prisma.conversationAbility.deleteMany({
+  const abilityId = normalizeAbilityId(args.toolkit);
+  return prisma.$transaction(async (tx) => {
+    const result = await tx.connectionGrant.updateMany({
       where: {
-        entitlementId: entitlement.id,
+        ownerAccountId: args.accountId,
+        toolkit: { equals: args.toolkit, mode: "insensitive" },
         ...(args.conversationId ? { conversationId: args.conversationId } : {}),
-        ...(args.granteeInboxId ? { agentInboxId: args.granteeInboxId } : {}),
+        ...(args.granteeInboxId ? { granteeInboxId: args.granteeInboxId } : {}),
+        revokedAt: null,
+      },
+      data: { revokedAt: new Date() },
+    });
+
+    const entitlement = await tx.abilityEntitlement.findUnique({
+      where: {
+        accountId_abilityId: { accountId: args.accountId, abilityId },
       },
     });
-  }
+    if (entitlement) {
+      await tx.conversationAbility.deleteMany({
+        where: {
+          entitlementId: entitlement.id,
+          ...(args.conversationId
+            ? { conversationId: args.conversationId }
+            : {}),
+          ...(args.granteeInboxId ? { agentInboxId: args.granteeInboxId } : {}),
+        },
+      });
+    }
 
-  return result.count;
+    return result.count;
+  });
 }
 
 /**
  * Revoke one grant by id, scoped to the caller's account — the V1
  * DELETE /grants/:id semantics. Returns the legacy revoked count (0 means
  * not found / not owned / already revoked, indistinguishable on purpose).
- * The extension shares the legacy id (adapter- and backfill-created rows),
- * and the delete is additionally scoped to the caller's entitlements.
+ * The extension shares the legacy id (adapter-, backfill- and V2-mirror-
+ * created rows), and its delete runs UNCONDITIONALLY (scoped to the caller's
+ * entitlements) in the same transaction: a retry against an already-revoked
+ * or missing legacy row still clears a surviving extension instead of
+ * leaving it authorizing forever.
  */
 export async function revokeConnectionGrantById(args: {
   accountId: string;
   grantId: string;
 }): Promise<number> {
-  const result = await prisma.connectionGrant.updateMany({
-    where: {
-      id: args.grantId,
-      ownerAccountId: args.accountId,
-      revokedAt: null,
-    },
-    data: { revokedAt: new Date() },
-  });
-  if (result.count > 0) {
-    await prisma.conversationAbility.deleteMany({
+  return prisma.$transaction(async (tx) => {
+    const result = await tx.connectionGrant.updateMany({
+      where: {
+        id: args.grantId,
+        ownerAccountId: args.accountId,
+        revokedAt: null,
+      },
+      data: { revokedAt: new Date() },
+    });
+    await tx.conversationAbility.deleteMany({
       where: {
         id: args.grantId,
         entitlement: { is: { accountId: args.accountId } },
       },
     });
-  }
-  return result.count;
+    return result.count;
+  });
 }
