@@ -160,6 +160,21 @@ export function getPublicAbilities(): PublicAbility[] {
 }
 
 /**
+ * The composite version an ability is (or would be) served with: manifest
+ * version + linked service version. Resolves hidden manifests too — the
+ * entitlement tables record the version an account bound against even for a
+ * registered-but-unlaunched ability. 0 when the ability has no manifest at
+ * all (e.g. a legacy toolkit outside the catalog).
+ */
+export function getServedAbilityVersion(abilityId: string): number {
+  const manifest = ABILITY_MANIFESTS.find(
+    (m) => m.id === abilityId.toLowerCase(),
+  );
+  if (!manifest) return 0;
+  return manifest.version + (getServiceConfig(manifest.id)?.version ?? 0);
+}
+
+/**
  * The served catalog version: the manual base plus the sum of served ability
  * versions. Computed so it bumps on its own whenever an ability's composite
  * version moves (manifest edits, service-side bundle/copy changes) and
