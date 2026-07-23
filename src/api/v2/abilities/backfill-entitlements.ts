@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { Composio } from "@composio/core";
 import type { PrismaClient } from "@prisma/client";
 import type { Logger } from "pino";
@@ -121,9 +122,16 @@ export const LEGACY_WRITER_DRAIN_MS = 15 * 60 * 1000;
 // external scan (the advisory lock cannot cover the fetch — it is
 // transaction-scoped, and holding a transaction open across external HTTP is
 // exactly what the materialize-first structure exists to avoid). Value is
-// the lease's expiry epoch-millis; an expired lease is stealable.
-const BACKFILL_LEASE_KEY = "ability_entitlements_backfill_lease_v1";
+// "<expiry epoch-millis>:<owner token>": the token is what makes stealing
+// safe — an expired lease is stealable, the holder renews under its own
+// token while scanning, and release is a CAS on the holder's token, so a
+// stale original holder can never delete a thief's live lease (which would
+// admit a third concurrent scan). Exported for the concurrency test.
+export const BACKFILL_LEASE_KEY = "ability_entitlements_backfill_lease_v1";
 const BACKFILL_LEASE_TTL_MS = 15 * 60 * 1000;
+// Renew at a third of the TTL: two renewals must fail before a live scan's
+// lease can expire under it.
+const BACKFILL_LEASE_RENEW_MS = BACKFILL_LEASE_TTL_MS / 3;
 
 // Arbitrary constant identifying this routine's Postgres advisory lock, so two
 // instances booting at once cannot both run it. Distinct from the
@@ -494,24 +502,43 @@ async function* fromMaterialized(
   }
 }
 
+type BackfillLease = { expiresAtMs: number; token: string };
+
+function parseBackfillLease(value: string | undefined): BackfillLease | null {
+  if (!value) return null;
+  const separator = value.indexOf(":");
+  const expiresRaw = separator < 0 ? value : value.slice(0, separator);
+  const expiresAtMs = Number.parseInt(expiresRaw, 10);
+  return {
+    expiresAtMs: Number.isFinite(expiresAtMs) ? expiresAtMs : 0,
+    // A token-less value (the pre-token format) parses to "" — never equal
+    // to any real owner token, so it is stealable once expired and
+    // releasable by no one.
+    token: separator < 0 ? "" : value.slice(separator + 1),
+  };
+}
+
 /**
- * Take the inventory lease (see BACKFILL_LEASE_KEY). Serialized by a short
- * advisory-locked transaction; returns false when a peer holds an unexpired
- * lease.
+ * Take (or renew — the call is reentrant for its own token) the inventory
+ * lease. Serialized by a short advisory-locked transaction; returns false
+ * when another owner holds an unexpired lease, or on lock contention.
+ * Exported for the concurrency test.
  */
-async function tryAcquireBackfillLease(): Promise<boolean> {
+export async function tryAcquireBackfillLease(token: string): Promise<boolean> {
   return prisma.$transaction(async (tx) => {
     const lockRows = await tx.$queryRaw<{ locked: boolean }[]>`
       SELECT pg_try_advisory_xact_lock(${ADVISORY_LOCK_KEY}) AS locked
     `;
     if (!lockRows[0]?.locked) return false;
-    const lease = await tx.runtimeConfig.findUnique({
+    const row = await tx.runtimeConfig.findUnique({
       where: { key: BACKFILL_LEASE_KEY },
     });
+    const lease = parseBackfillLease(row?.value);
     const now = Date.now();
-    const heldUntil = lease ? Number.parseInt(lease.value, 10) : 0;
-    if (Number.isFinite(heldUntil) && heldUntil > now) return false;
-    const value = String(now + BACKFILL_LEASE_TTL_MS);
+    if (lease && lease.expiresAtMs > now && lease.token !== token) {
+      return false;
+    }
+    const value = `${now + BACKFILL_LEASE_TTL_MS}:${token}`;
     await tx.runtimeConfig.upsert({
       where: { key: BACKFILL_LEASE_KEY },
       create: { key: BACKFILL_LEASE_KEY, value },
@@ -521,10 +548,34 @@ async function tryAcquireBackfillLease(): Promise<boolean> {
   });
 }
 
-async function releaseBackfillLease(): Promise<void> {
-  await prisma.runtimeConfig.deleteMany({
-    where: { key: BACKFILL_LEASE_KEY },
-  });
+/**
+ * Release the lease ONLY if this token still owns it (advisory-lock-
+ * serialized CAS): after a TTL-expiry steal, the original holder's release
+ * must not delete the thief's lease. Never throws — an unreleased lease
+ * expires on its own. Exported for the concurrency test.
+ */
+export async function releaseBackfillLease(token: string): Promise<void> {
+  try {
+    await prisma.$transaction(async (tx) => {
+      const lockRows = await tx.$queryRaw<{ locked: boolean }[]>`
+        SELECT pg_try_advisory_xact_lock(${ADVISORY_LOCK_KEY}) AS locked
+      `;
+      // Ownership cannot be verified without the lock; leave it to the TTL.
+      if (!lockRows[0]?.locked) return;
+      const row = await tx.runtimeConfig.findUnique({
+        where: { key: BACKFILL_LEASE_KEY },
+      });
+      if (parseBackfillLease(row?.value)?.token !== token) return;
+      await tx.runtimeConfig.deleteMany({
+        where: { key: BACKFILL_LEASE_KEY },
+      });
+    });
+  } catch (error) {
+    logger.warn(
+      { error },
+      "[abilities-backfill] lease release failed; it will expire on its own",
+    );
+  }
 }
 
 /**
@@ -571,7 +622,8 @@ export async function runAbilityEntitlementsBackfillOnce() {
       return;
     }
 
-    if (!(await tryAcquireBackfillLease())) {
+    const leaseToken = randomUUID();
+    if (!(await tryAcquireBackfillLease(leaseToken))) {
       logger.info(
         "[abilities-backfill] inventory lease held by another instance; skipping",
       );
@@ -586,12 +638,24 @@ export async function runAbilityEntitlementsBackfillOnce() {
       });
 
       // Materialize the full inventory outside the transaction: the DB
-      // transaction below must never wait on Composio HTTP.
+      // transaction below must never wait on Composio HTTP. The lease is
+      // renewed while the scan runs; losing it (a peer stole an expired
+      // lease) aborts this attempt — the thief is doing the same work.
       const inventory: ConnectedAccountSummary[] = [];
+      let leaseRenewedAt = Date.now();
       for await (const connection of listAllConnectedAccounts(
         composio.getClient(),
       )) {
         inventory.push(connection);
+        if (Date.now() - leaseRenewedAt >= BACKFILL_LEASE_RENEW_MS) {
+          if (!(await tryAcquireBackfillLease(leaseToken))) {
+            logger.warn(
+              "[abilities-backfill] inventory lease lost mid-scan; aborting this attempt",
+            );
+            return;
+          }
+          leaseRenewedAt = Date.now();
+        }
       }
 
       completed = await prisma.$transaction(
@@ -634,7 +698,7 @@ export async function runAbilityEntitlementsBackfillOnce() {
         { timeout: 10 * 60 * 1000, maxWait: 15_000 },
       );
     } finally {
-      await releaseBackfillLease();
+      await releaseBackfillLease(leaseToken);
     }
 
     if (completed) {
