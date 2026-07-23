@@ -1,13 +1,12 @@
 import { randomUUID } from "node:crypto";
 import express, { json } from "express";
 import request from "supertest";
-import { beforeAll, describe, expect, test, vi } from "vitest";
+import { afterAll, beforeAll, describe, expect, test, vi } from "vitest";
 import { accountsMeRouter } from "@/api/v2/accounts/accountsMeRouter";
 import { authMiddleware } from "@/middleware/auth";
 import { pinoMiddleware } from "@/middleware/pino";
 import { createJwtToken, validateJWTKeys } from "@/utils/jwt";
 import { prisma } from "@/utils/prisma";
-import { setRuntimeConfig } from "@/utils/runtimeConfig";
 
 vi.mock("firebase-admin/app");
 vi.mock("firebase-admin/app-check");
@@ -25,10 +24,22 @@ const makeApp = () => {
   return app;
 };
 
+let previousDeletionFlag: string | undefined;
+
 beforeAll(async () => {
   await validateJWTKeys();
-  // Deletion ships default-OFF (rollout barrier); tests opt in explicitly.
-  await setRuntimeConfig("account_deletion_enabled", "true");
+  // Deletion ships default-OFF (ACCOUNT_DELETION_ENABLED env gate); tests
+  // opt in explicitly and restore the ambient value afterwards.
+  previousDeletionFlag = process.env.ACCOUNT_DELETION_ENABLED;
+  process.env.ACCOUNT_DELETION_ENABLED = "true";
+});
+
+afterAll(() => {
+  if (previousDeletionFlag === undefined) {
+    delete process.env.ACCOUNT_DELETION_ENABLED;
+  } else {
+    process.env.ACCOUNT_DELETION_ENABLED = previousDeletionFlag;
+  }
 });
 
 describe("POST /v2/accounts/me/subscription/claim rate limiting", () => {

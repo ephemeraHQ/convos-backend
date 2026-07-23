@@ -2,7 +2,15 @@ import { randomUUID } from "node:crypto";
 import { BillingProvider } from "@prisma/client";
 import express, { json } from "express";
 import request from "supertest";
-import { afterEach, beforeAll, describe, expect, test, vi } from "vitest";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  describe,
+  expect,
+  test,
+  vi,
+} from "vitest";
 import { isIdentityBarred } from "@/accounts/deletion/barrier";
 import { hashAccountRef } from "@/accounts/deletion/identity-hash";
 import { accountDeleteHandler } from "@/api/v2/accounts/handlers/account-delete";
@@ -19,7 +27,6 @@ import {
 } from "@/subscriptions/repository";
 import { createJwtToken, validateJWTKeys } from "@/utils/jwt";
 import { prisma } from "@/utils/prisma";
-import { setRuntimeConfig } from "@/utils/runtimeConfig";
 
 vi.mock("firebase-admin/app");
 vi.mock("firebase-admin/app-check");
@@ -29,6 +36,8 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 const PERIOD_START = new Date("2026-06-01T00:00:00.000Z");
 const PERIOD_END = new Date(Date.now() + 30 * DAY_MS);
 const SENTINEL = "00000000-0000-0000-0000-000000000000";
+
+let previousDeletionFlag: string | undefined;
 
 // Bare app: authMiddleware + handler, without the rate limiters (their
 // in-memory per-IP budget would starve the functional tests; wiring and 429
@@ -216,8 +225,18 @@ const wipe = async () => {
 
 beforeAll(async () => {
   await validateJWTKeys();
-  // Deletion ships default-OFF (rollout barrier); tests opt in explicitly.
-  await setRuntimeConfig("account_deletion_enabled", "true");
+  // Deletion ships default-OFF (ACCOUNT_DELETION_ENABLED env gate); tests
+  // opt in explicitly and restore the ambient value afterwards.
+  previousDeletionFlag = process.env.ACCOUNT_DELETION_ENABLED;
+  process.env.ACCOUNT_DELETION_ENABLED = "true";
+});
+
+afterAll(() => {
+  if (previousDeletionFlag === undefined) {
+    delete process.env.ACCOUNT_DELETION_ENABLED;
+  } else {
+    process.env.ACCOUNT_DELETION_ENABLED = previousDeletionFlag;
+  }
 });
 
 afterEach(wipe);
@@ -369,6 +388,40 @@ describe("DELETE /v2/accounts/me", () => {
       where: { accountId: SENTINEL, action: "account_deletion" },
     });
     expect(deletionAudit?.reason).toContain(hashAccountRef(accountId));
+  });
+
+  test("503 fail-closed when the env gate is off, unset, or garbage", async () => {
+    const { accountId } = await populateAccount();
+    const token = await tokenFor(accountId);
+    const app = makeApp();
+
+    // Strict `=== "true"` semantics: anything else — including unset,
+    // "false", "1", and the wrong case — reads as OFF.
+    for (const value of [undefined, "false", "1", "TRUE"]) {
+      if (value === undefined) {
+        delete process.env.ACCOUNT_DELETION_ENABLED;
+      } else {
+        process.env.ACCOUNT_DELETION_ENABLED = value;
+      }
+      const res = await request(app)
+        .delete("/api/v2/accounts/me")
+        .set("X-Convos-AuthToken", token)
+        .send({ operationId: randomUUID() });
+      expect(res.status, `flag=${String(value)}`).toBe(503);
+      expect(res.body).toEqual({
+        error: "Account deletion is temporarily unavailable",
+      });
+    }
+    // Nothing was deleted while the gate was off.
+    expect(await prisma.account.count({ where: { id: accountId } })).toBe(1);
+
+    // Flip back on: the same request now goes through (on→off→on).
+    process.env.ACCOUNT_DELETION_ENABLED = "true";
+    const res = await request(app)
+      .delete("/api/v2/accounts/me")
+      .set("X-Convos-AuthToken", token)
+      .send({ operationId: randomUUID() });
+    expect(res.status).toBe(200);
   });
 
   // The two replay tests carry the response body and durable DB state in
