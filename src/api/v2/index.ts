@@ -144,13 +144,16 @@ v2Router.use(
 // (cheap) and the provisioning endpoint (expensive) get separately tuned
 // limits. authMiddleware applies to the whole subtree.
 v2Router.use("/agents", authMiddleware, agentsRouter);
-// Agent participation is keyed by conversation, not by agent: one level governs
-// every agent in the room, so it hangs off the conversation, not /agents.
+// Conversation-scoped surfaces: agent participation (keyed by conversation,
+// not by agent: one level governs every agent in the room) and ability
+// extensions (Connections V2 "Extend"). Routes apply requireAccount
+// themselves.
 v2Router.use("/conversations", authMiddleware, conversationsRouter);
 v2Router.use("/attachments", authMiddleware, attachmentsRouter);
 // The Connections V2 ability catalog (docs/plans/abilities-entitlements.md).
 // JWT-only, deliberately without requireAccount: device-only tokens can browse
 // the catalog; entitlement state appears only when the JWT carries an account.
+// The entitlement lifecycle routes inside apply requireAccount per-route.
 v2Router.use("/abilities", authMiddleware, abilitiesRouter);
 // The connections-picker catalog is JWT-only (NOT account-scoped): the catalog
 // is identical for every user, so requireAccount is deliberately not applied.
