@@ -1,0 +1,145 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://convos.org/schemas/abilities.schema.json",
+  "title": "GET /v2/abilities response",
+  "description": "The Connections V2 ability catalog merged with the caller's entitlement state. Backend-owned manifests with Composio action slugs stripped (slugs stay backend-only; clients persist only bundle ids). The `entitlement` key on each ability is an object (entitled; status says whether it is currently usable) or null (not entitled, or the JWT carries no account). When the caller has an account but entitlement state cannot be determined (Composio lookup failed), the response instead carries top-level `entitlementsUnavailable: true` and every ability omits its `entitlement` key — clients keep last-known state instead of rendering 'not connected'. Source of truth: src/api/v2/abilities/manifests.config.ts (getPublicAbilities) and src/api/v2/abilities/handlers/list.ts.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["catalogVersion", "abilities"],
+  "properties": {
+    "catalogVersion": {
+      "description": "Computed: a manual base plus the sum of served ability versions, so manifest edits, service-side bundle changes, and newly launched abilities all bump it. Clients refetch on a mismatch (stale detection).",
+      "type": "integer",
+      "minimum": 0
+    },
+    "entitlementsUnavailable": {
+      "description": "Present (always true) only when the caller has an account and entitlement state could not be determined (Composio lookup failed). Every ability then omits its `entitlement` key; clients keep last-known state. Never present on the device-only or healthy account paths.",
+      "const": true
+    },
+    "abilities": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/Ability" }
+    }
+  },
+  "if": { "required": ["entitlementsUnavailable"] },
+  "then": {
+    "$comment": "State-unavailable response: no ability carries an entitlement key.",
+    "properties": {
+      "abilities": {
+        "items": { "not": { "required": ["entitlement"] } }
+      }
+    }
+  },
+  "else": {
+    "$comment": "Authoritative response: every ability carries entitlement (object or null).",
+    "properties": {
+      "abilities": {
+        "items": { "required": ["entitlement"] }
+      }
+    }
+  },
+  "$defs": {
+    "LocalizedString": {
+      "description": "A localized string map. MUST always carry an \"en\" key (the guaranteed fallback).",
+      "type": "object",
+      "required": ["en"],
+      "properties": {
+        "en": { "type": "string" }
+      },
+      "additionalProperties": { "type": "string" }
+    },
+    "PublicBundle": {
+      "description": "The user-facing permission unit inside an ability. Same shape as the connections-services contract; bundle ids persist on grants.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "title", "description", "defaultEnabled"],
+      "properties": {
+        "id": {
+          "description": "Stable id persisted on the grant, e.g. \"calendar.events\".",
+          "type": "string"
+        },
+        "title": { "$ref": "#/$defs/LocalizedString" },
+        "description": { "$ref": "#/$defs/LocalizedString" },
+        "defaultEnabled": { "type": "boolean" }
+      }
+    },
+    "Entitlement": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "extensionCount"],
+      "properties": {
+        "status": {
+          "description": "Backend-owned lifecycle state. The V1-derived adapter emits only pending_auth (Composio INITIALIZING/INITIATED), active (ACTIVE), and expired (every other Composio status — the credential cannot be used and OAuth must be re-run). needs_reauth and revoked are reserved for B2 (revalidation flow and the dedicated entitlement tables); the adapter never emits them.",
+          "enum": [
+            "pending_auth",
+            "active",
+            "needs_reauth",
+            "expired",
+            "revoked"
+          ]
+        },
+        "expiresAt": {
+          "description": "Optional entitlement expiry. Not emitted by the V1-derived adapter.",
+          "type": "string",
+          "format": "date-time"
+        },
+        "extensionCount": {
+          "description": "Count of distinct conversations this entitlement is extended to via live grants (non-revoked, non-expired — the same predicate exec enforces).",
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "Ability": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "version",
+        "displayName",
+        "subtitle",
+        "auth",
+        "bundles"
+      ],
+      "properties": {
+        "id": {
+          "description": "Stable ability id. For Composio-backed abilities equals the toolkit slug.",
+          "type": "string"
+        },
+        "version": {
+          "description": "Composite: manifest version + the linked service catalog's version (0 when none), so any manifest, bundle, or copy change bumps it. Clients refetch on a mismatch.",
+          "type": "integer",
+          "minimum": 0
+        },
+        "displayName": { "$ref": "#/$defs/LocalizedString" },
+        "subtitle": { "$ref": "#/$defs/LocalizedString" },
+        "auth": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type"],
+          "properties": {
+            "type": { "enum": ["oauth", "none"] }
+          }
+        },
+        "icon": {
+          "description": "Per-platform icon URLs. Optional until the asset story lands; clients fall back to a local placeholder.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["iosUrl", "androidUrl"],
+          "properties": {
+            "iosUrl": { "type": "string", "format": "uri" },
+            "androidUrl": { "type": "string", "format": "uri" }
+          }
+        },
+        "bundles": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/PublicBundle" }
+        },
+        "entitlement": {
+          "description": "Object (entitled) or null (not entitled / no account on the JWT). Omitted only when the top-level entitlementsUnavailable flag is set.",
+          "oneOf": [{ "$ref": "#/$defs/Entitlement" }, { "type": "null" }]
+        }
+      }
+    }
+  }
+}
