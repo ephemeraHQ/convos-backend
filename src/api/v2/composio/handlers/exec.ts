@@ -1,12 +1,7 @@
 import type { Request, Response } from "express";
 import { z } from "zod";
-import {
-  getServiceConfig,
-  isInvalidAction,
-  resolveBundleActions,
-} from "@/api/v2/connections/bundles.config";
+import { checkEntitlement } from "@/api/v2/abilities/check-entitlement";
 import { createComposioService } from "@/api/v2/connections/composio.service";
-import { prisma } from "@/utils/prisma";
 import { resolveTrustedCaller } from "../trusted-identity";
 
 // The agent contract: only what the toolkit needs, plus an optional owner
@@ -47,101 +42,52 @@ export async function execHandler(req: Request, res: Response) {
     return;
   }
 
-  // Authorize on the grant, keyed by the TRUSTED identity (never body fields):
-  // the agent (granteeInboxId) must hold a live grant for this conversation,
-  // toolkit, and action.
-  const now = new Date();
-  const grants = await prisma.connectionGrant.findMany({
-    where: {
-      granteeInboxId: caller.agentInboxId,
+  // Authorize via checkEntitlement, keyed by the TRUSTED identity (never body
+  // fields): the agent must hold a live conversation ability (the reshaped
+  // grant) for this conversation, ability, and action. The check preserves V1
+  // exec semantics verbatim — the action-scope union (legacy actions +
+  // bundle-resolved against the CURRENT catalog; whole-toolkit only when both
+  // are empty; unresolvable bundles fail closed), the onBehalfOf owner
+  // selector, invalid_action-before-no_grant on a slug the toolkit never had
+  // (fail-open on catalog outage), and ambiguous_grant when several owners
+  // extended the same ability here. See check-entitlement.ts for the full
+  // decision tree and rationale.
+  const check = await checkEntitlement({
+    caller: {
+      kind: "conversation",
       conversationId: caller.conversationId,
-      toolkit,
-      revokedAt: null,
-      OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
+      agentInboxId: caller.agentInboxId,
     },
+    abilityId: toolkit,
+    action,
+    onBehalfOf,
+    catalog: service,
+    log: req.log,
   });
 
-  // Action scope: the allowed set is the UNION of the grant's legacy `actions`
-  // and the actions its `bundleIds` resolve to against the CURRENT catalog (so
-  // re-mapping a bundle needs no client update — the point of bundles). The
-  // whole-toolkit transition default applies ONLY to true legacy grants that
-  // carry NEITHER actions NOR bundleIds; once clients always send bundleIds it
-  // tightens to fail-closed. A grant that DOES carry actions or bundleIds is
-  // scoped to exactly what they resolve to — if the union does not contain the
-  // requested action (including a union left EMPTY because the bundle ids are
-  // unknown/stale to the catalog), the grant is not applicable: fail closed
-  // (no_grant), never fall back to whole-toolkit. Owner scope: if the agent
-  // named a member (onBehalfOf), keep only that owner's grant — this is how a
-  // group query targets one person ("Alice's calendar") without touching
-  // anyone else's.
-  const applicable = grants.filter((g) => {
-    if (onBehalfOf !== undefined && g.ownerInboxId !== onBehalfOf) return false;
-    if (g.actions.length === 0 && g.bundleIds.length === 0) {
-      req.log.warn(
-        { grantId: g.id, toolkit, action },
-        "[Composio] exec: grant has no actions/bundleIds — whole-toolkit (transition default)",
-      );
-      return true;
+  if (!check.allowed) {
+    switch (check.code) {
+      case "invalid_action":
+        res.status(422).json({ code: "invalid_action", toolkit, action });
+        return;
+      case "ambiguous_grant":
+        res.status(409).json({ code: "ambiguous_grant" });
+        return;
+      case "no_grant":
+        res.status(403).json({ code: "no_grant" });
+        return;
+      default:
+        // Lifecycle codes (needs_reauth, unknown_ability) are account-path
+        // only and unreachable here; keep the exec wire frozen by failing
+        // closed as the consent denial.
+        req.log.warn(
+          { toolkit, action, code: check.code },
+          "[Composio] exec: unexpected check denial — mapping to no_grant",
+        );
+        res.status(403).json({ code: "no_grant" });
+        return;
     }
-    const resolved = resolveBundleActions(g.toolkit, g.bundleIds);
-    if (g.bundleIds.length > 0 && resolved.length === 0) {
-      req.log.warn(
-        { grantId: g.id, toolkit, bundleIds: g.bundleIds },
-        "[Composio] exec: grant bundleIds resolve to no actions (unknown/stale) — fail closed",
-      );
-    }
-    const allowed = new Set<string>([...g.actions, ...resolved]);
-    return allowed.has(action);
-  });
-  if (applicable.length === 0) {
-    // Backstop (authoritative): distinguish a bad slug from a real consent
-    // gap. A `no_grant` tells the agent "ask the user to (re-)approve" — but if
-    // the agent simply named an action the toolkit never had (observed live:
-    // "listEvents", the retired "GOOGLECALENDAR_LIST_EVENTS", "--list-tools"),
-    // that is NOT a consent problem, and re-prompting the user for a connection
-    // they already granted is the calendar re-auth loop. So when the toolkit is
-    // known but the requested action is not in its catalog vocabulary at all,
-    // return `invalid_action` instead of `no_grant`. This holds even if the
-    // runtime slug guard is bypassed, incomplete, or its allow-list fetch
-    // failed — the matcher is the backstop. Unknown toolkits keep falling
-    // through to `no_grant` (legacy whole-toolkit grants are keyed by toolkit,
-    // not catalog membership, so we must not reclassify those). `isInvalidAction`
-    // is the ONLY thing that escalates to invalid_action, and it fails OPEN: it
-    // returns true exclusively when a NON-EMPTY catalog was fetched and lacks the
-    // slug. An empty catalog or a Composio outage makes it return false, so the
-    // `if` below is false and we fall straight through to the no_grant response
-    // — a real slug is never mislabeled invalid during an outage.
-    const svc = getServiceConfig(toolkit);
-    if (svc && (await isInvalidAction(service, toolkit, action))) {
-      req.log.warn(
-        { agentInboxId: caller.agentInboxId, toolkit, action },
-        "[Composio] exec: action not in toolkit catalog — invalid_action (not a consent gap)",
-      );
-      res.status(422).json({ code: "invalid_action", toolkit, action });
-      return;
-    }
-    req.log.warn(
-      { agentInboxId: caller.agentInboxId, toolkit, action, onBehalfOf },
-      "[Composio] exec: no matching grant",
-    );
-    res.status(403).json({ code: "no_grant" });
-    return;
   }
-
-  // Multiple owners shared the same toolkit in this conversation and the agent
-  // didn't say whose to use. Fail closed and tell it to pass `onBehalfOf` rather
-  // than guess whose data to touch.
-  const owners = new Set(applicable.map((g) => g.ownerAccountId));
-  if (owners.size > 1) {
-    req.log.warn(
-      { conversationId: caller.conversationId, toolkit, owners: owners.size },
-      "[Composio] exec: ambiguous grant — onBehalfOf required",
-    );
-    res.status(409).json({ code: "ambiguous_grant" });
-    return;
-  }
-
-  const grant = applicable[0];
 
   try {
     // The connection (bearer capability) is resolved SERVER-SIDE from the
@@ -149,12 +95,12 @@ export async function execHandler(req: Request, res: Response) {
     // to the agent. This is what makes a stolen connection id unusable: there is
     // no path that acts on a caller-named connection.
     const connectedAccountId = await service.resolveConnectionId({
-      userId: grant.ownerAccountId,
+      userId: check.ownerAccountId,
       toolkit,
     });
     if (!connectedAccountId) {
       req.log.warn(
-        { ownerAccountId: grant.ownerAccountId, toolkit },
+        { ownerAccountId: check.ownerAccountId, toolkit },
         "[Composio] exec: no connection for owner+toolkit",
       );
       res.status(409).json({ code: "connection_not_found" });
@@ -177,7 +123,7 @@ export async function execHandler(req: Request, res: Response) {
 
     const result = await service.execute({
       action,
-      userId: grant.ownerAccountId,
+      userId: check.ownerAccountId,
       arguments: args,
       connectedAccountId,
       version,
