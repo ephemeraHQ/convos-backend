@@ -4,9 +4,12 @@ import {
   ABILITY_ENTITLEMENTS_BACKFILL_EPOCH,
   ABILITY_ENTITLEMENTS_BACKFILL_KEY,
   ABILITY_ENTITLEMENTS_CUTOVER_KEY,
+  BACKFILL_LEASE_KEY,
   backfillAbilityEntitlements,
   listAllConnectedAccounts,
+  releaseBackfillLease,
   runEntitlementCutoverConfirmOnce,
+  tryAcquireBackfillLease,
   type ConnectedAccountSummary,
 } from "@/api/v2/abilities/backfill-entitlements";
 import { getServedAbilityVersion } from "@/api/v2/abilities/manifests.config";
@@ -604,6 +607,63 @@ describe("backfillAbilityEntitlements — reconciliation sweep (DB)", () => {
     } finally {
       await restoreMarker(ABILITY_ENTITLEMENTS_BACKFILL_KEY, priorBackfill);
       await restoreMarker(ABILITY_ENTITLEMENTS_CUTOVER_KEY, priorCutover);
+    }
+  });
+
+  test("lease: a steal after TTL expiry survives the original holder's release (owner-token CAS)", async () => {
+    const prior = await prisma.runtimeConfig.findUnique({
+      where: { key: BACKFILL_LEASE_KEY },
+    });
+    try {
+      await prisma.runtimeConfig.deleteMany({
+        where: { key: BACKFILL_LEASE_KEY },
+      });
+
+      const holderA = "lease-token-a";
+      const holderB = "lease-token-b";
+      expect(await tryAcquireBackfillLease(holderA)).toBe(true);
+      // A live lease is not stealable, and acquire is reentrant for its
+      // owner (that reentry is the renewal path).
+      expect(await tryAcquireBackfillLease(holderB)).toBe(false);
+      expect(await tryAcquireBackfillLease(holderA)).toBe(true);
+
+      // A's scan overruns the TTL: rewrite its lease as expired, keeping
+      // A's token, then B steals it.
+      await prisma.runtimeConfig.update({
+        where: { key: BACKFILL_LEASE_KEY },
+        data: { value: `${Date.now() - 1_000}:${holderA}` },
+      });
+      expect(await tryAcquireBackfillLease(holderB)).toBe(true);
+
+      // The stale original holder releases — this must NOT free B's lease
+      // (that would admit a third concurrent scan).
+      await releaseBackfillLease(holderA);
+      const afterStaleRelease = await prisma.runtimeConfig.findUnique({
+        where: { key: BACKFILL_LEASE_KEY },
+      });
+      expect(afterStaleRelease).not.toBeNull();
+      expect(afterStaleRelease!.value.endsWith(`:${holderB}`)).toBe(true);
+      expect(await tryAcquireBackfillLease("lease-token-c")).toBe(false);
+
+      // The rightful owner's release does free it.
+      await releaseBackfillLease(holderB);
+      expect(
+        await prisma.runtimeConfig.findUnique({
+          where: { key: BACKFILL_LEASE_KEY },
+        }),
+      ).toBeNull();
+    } finally {
+      if (prior) {
+        await prisma.runtimeConfig.upsert({
+          where: { key: BACKFILL_LEASE_KEY },
+          create: { key: BACKFILL_LEASE_KEY, value: prior.value },
+          update: { value: prior.value },
+        });
+      } else {
+        await prisma.runtimeConfig.deleteMany({
+          where: { key: BACKFILL_LEASE_KEY },
+        });
+      }
     }
   });
 
