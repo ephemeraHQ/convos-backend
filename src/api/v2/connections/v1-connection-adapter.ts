@@ -1,3 +1,4 @@
+import { normalizeAbilityId } from "@/api/v2/abilities/ability-id";
 import {
   COMPOSIO_DERIVED_STATUS_RANK,
   toEntitlementStatus,
@@ -29,7 +30,7 @@ export async function noteV1AuthFlowStarted(args: {
   accountId: string;
   serviceId: string;
 }): Promise<void> {
-  const abilityId = args.serviceId.toLowerCase();
+  const abilityId = normalizeAbilityId(args.serviceId);
   try {
     const existing = await prisma.abilityEntitlement.findUnique({
       where: { accountId_abilityId: { accountId: args.accountId, abilityId } },
@@ -68,7 +69,7 @@ export async function noteV1ConnectionCompleted(args: {
   connectionId: string;
   toolkitSlug: string;
 }): Promise<void> {
-  const abilityId = args.toolkitSlug.toLowerCase();
+  const abilityId = normalizeAbilityId(args.toolkitSlug);
   try {
     await prisma.abilityEntitlement.upsert({
       where: { accountId_abilityId: { accountId: args.accountId, abilityId } },
@@ -107,7 +108,7 @@ export async function noteV1ConnectionDeleted(args: {
   toolkitSlug: string;
   service: ComposioService;
 }): Promise<void> {
-  const abilityId = args.toolkitSlug.toLowerCase();
+  const abilityId = normalizeAbilityId(args.toolkitSlug);
   try {
     const existing = await prisma.abilityEntitlement.findUnique({
       where: { accountId_abilityId: { accountId: args.accountId, abilityId } },
@@ -133,7 +134,7 @@ export async function noteV1ConnectionDeleted(args: {
     let best: { status: ComposioDerivedStatus; connectionId: string } | null =
       null;
     for (const item of remaining) {
-      const status = toEntitlementStatus(item.status);
+      const status = toEntitlementStatus(item.status, logger);
       if (
         !best ||
         COMPOSIO_DERIVED_STATUS_RANK[status] <

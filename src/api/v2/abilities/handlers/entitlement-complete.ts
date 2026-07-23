@@ -1,5 +1,6 @@
 import type { Request, Response } from "express";
 import { z } from "zod";
+import { normalizeAbilityId } from "@/api/v2/abilities/ability-id";
 import {
   getPublicAbilities,
   getServedAbilityVersion,
@@ -41,7 +42,7 @@ export async function entitlementCompleteHandler(req: Request, res: Response) {
     res.status(400).json({ code: "invalid_request" });
     return;
   }
-  const abilityId = params.data.abilityId.toLowerCase();
+  const abilityId = normalizeAbilityId(params.data.abilityId);
   const ability = getPublicAbilities().find((a) => a.id === abilityId);
   if (!ability) {
     res.status(404).json({ code: "unknown_ability" });

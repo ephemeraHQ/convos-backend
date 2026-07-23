@@ -365,6 +365,176 @@ describe("backfillAbilityEntitlements — convergence rules (DB)", () => {
   });
 });
 
+describe("backfillAbilityEntitlements — reconciliation sweep (DB)", () => {
+  test("a late legacy revocation removes the carried extension; V2-native rows survive", async () => {
+    const accountId = await makeAccount();
+    const grant = await prisma.connectionGrant.create({
+      data: {
+        ownerAccountId: accountId,
+        ownerInboxId: "owner-inbox-bf",
+        granteeInboxId: "agent-inbox-bf",
+        conversationId: "conv-late-revoke",
+        toolkit: "googlecalendar",
+      },
+    });
+    await run([]);
+    const entitlement = await prisma.abilityEntitlement.findUniqueOrThrow({
+      where: {
+        accountId_abilityId: { accountId, abilityId: "googlecalendar" },
+      },
+    });
+    // A V2-written opt-in (own generated id, no legacy counterpart).
+    const v2Native = await prisma.conversationAbility.create({
+      data: {
+        entitlementId: entitlement.id,
+        conversationId: "conv-v2-native",
+        agentInboxId: "agent-v2",
+        bundleIds: ["calendar.events"],
+      },
+    });
+
+    // An old replica revokes the legacy row after the extension was carried.
+    await prisma.connectionGrant.update({
+      where: { id: grant.id },
+      data: { revokedAt: new Date() },
+    });
+    const counts = await run([]);
+
+    expect(counts.extensionsRemovedForDeadGrants).toBeGreaterThanOrEqual(1);
+    const carried = await prisma.conversationAbility.findUnique({
+      where: { id: grant.id },
+    });
+    expect(carried).toBeNull();
+    const survivor = await prisma.conversationAbility.findUnique({
+      where: { id: v2Native.id },
+    });
+    expect(survivor).not.toBeNull();
+  });
+
+  test("mixed-case grant toolkits converge onto the canonical ability id", async () => {
+    const accountId = await makeAccount();
+    const grant = await prisma.connectionGrant.create({
+      data: {
+        ownerAccountId: accountId,
+        ownerInboxId: "owner-inbox-bf",
+        granteeInboxId: "agent-inbox-bf",
+        conversationId: "conv-mixed-case",
+        toolkit: "GoogleCalendar",
+      },
+    });
+    await run([]);
+
+    const canonical = await prisma.abilityEntitlement.findUnique({
+      where: {
+        accountId_abilityId: { accountId, abilityId: "googlecalendar" },
+      },
+      include: { extensions: true },
+    });
+    expect(canonical).not.toBeNull();
+    expect(canonical!.extensions).toHaveLength(1);
+    expect(canonical!.extensions[0].id).toBe(grant.id);
+    const variant = await prisma.abilityEntitlement.findUnique({
+      where: {
+        accountId_abilityId: { accountId, abilityId: "GoogleCalendar" },
+      },
+    });
+    expect(variant).toBeNull();
+  });
+
+  test("case-variant entitlement rows merge onto the canonical row (extensions re-parented)", async () => {
+    const accountId = await makeAccount();
+    const canonical = await prisma.abilityEntitlement.create({
+      data: { accountId, abilityId: "googlecalendar", status: "active" },
+    });
+    const variant = await prisma.abilityEntitlement.create({
+      data: { accountId, abilityId: "GOOGLECALENDAR", status: "expired" },
+    });
+    const orphanOptIn = await prisma.conversationAbility.create({
+      data: {
+        entitlementId: variant.id,
+        conversationId: "conv-variant",
+        agentInboxId: "agent-variant",
+        bundleIds: ["calendar.events"],
+      },
+    });
+
+    const counts = await run([]);
+    expect(counts.entitlementsCaseMerged).toBeGreaterThanOrEqual(1);
+    const gone = await prisma.abilityEntitlement.findUnique({
+      where: { id: variant.id },
+    });
+    expect(gone).toBeNull();
+    const reparented = await prisma.conversationAbility.findUniqueOrThrow({
+      where: { id: orphanOptIn.id },
+    });
+    expect(reparented.entitlementId).toBe(canonical.id);
+  });
+
+  test("a canonical tombstone wins over a live case-variant row (never resurrect)", async () => {
+    const accountId = await makeAccount();
+    const revokedAt = new Date();
+    const canonical = await prisma.abilityEntitlement.create({
+      data: {
+        accountId,
+        abilityId: "googlecalendar",
+        status: "revoked",
+        revokedAt,
+      },
+    });
+    const variant = await prisma.abilityEntitlement.create({
+      data: { accountId, abilityId: "GOOGLECALENDAR", status: "active" },
+    });
+    await prisma.conversationAbility.create({
+      data: {
+        entitlementId: variant.id,
+        conversationId: "conv-variant-dead",
+        agentInboxId: "agent-variant",
+        bundleIds: ["calendar.events"],
+      },
+    });
+
+    await run([]);
+    const kept = await prisma.abilityEntitlement.findUniqueOrThrow({
+      where: { id: canonical.id },
+      include: { extensions: true },
+    });
+    expect(kept.status).toBe("revoked");
+    expect(kept.revokedAt).toEqual(revokedAt);
+    expect(kept.extensions).toHaveLength(0);
+    const gone = await prisma.abilityEntitlement.findUnique({
+      where: { id: variant.id },
+    });
+    expect(gone).toBeNull();
+  });
+
+  test("unknown Composio statuses are warn-logged where mapped", async () => {
+    const accountId = await makeAccount();
+    const warns: string[] = [];
+    const collectingLogger = {
+      info: () => undefined,
+      warn: (_obj: unknown, msg: string) => {
+        warns.push(msg);
+      },
+      error: () => undefined,
+    } as unknown as typeof logger;
+
+    await backfillAbilityEntitlements({
+      log: collectingLogger,
+      source: fromArray([
+        {
+          id: "conn-weird",
+          userId: accountId,
+          toolkitSlug: "googlecalendar",
+          status: "SOME_FUTURE_STATUS",
+        },
+      ]),
+    });
+    expect(
+      warns.some((msg) => msg.includes("unknown Composio connection status")),
+    ).toBe(true);
+  });
+});
+
 describe("listAllConnectedAccounts (no DB)", () => {
   test("follows Composio cursors across every page", async () => {
     const receivedCursors: Array<string | null> = [];

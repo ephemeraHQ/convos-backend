@@ -9,6 +9,7 @@ import {
   test,
   vi,
 } from "vitest";
+import { __setEntitlementReadReadinessForTests } from "@/api/v2/abilities/read-readiness";
 import { composioRouter } from "@/api/v2/composio/composio.router";
 import {
   AGENT_INBOX_ID_HEADER,
@@ -213,6 +214,10 @@ const VALID_BODY = {
 
 beforeAll(async () => {
   __setComposioExecApiKeyOverrideForTests(EXEC_KEY);
+  // Pin the check onto the entitlement tables: the real gate reads the
+  // shared database's migration ledgers, whose state this suite must not
+  // depend on. The ledger-gated fallback has its own test below.
+  __setEntitlementReadReadinessForTests(true);
   await new Promise<void>((resolve) => {
     server = app.listen(4014, () => {
       resolve();
@@ -227,6 +232,7 @@ afterAll(async () => {
     });
   });
   __setComposioExecApiKeyOverrideForTests(undefined);
+  __setEntitlementReadReadinessForTests(null);
   __resetComposioServiceForTests(null);
 });
 
@@ -919,5 +925,203 @@ describe("POST /v2/composio/exec — grant authorization (DB)", () => {
       expect(res.status).toBe(403);
       expect((await asJson<{ code: string }>(res)).code).toBe("no_grant");
     });
+  });
+});
+
+// --- DB-backed: the entitlement tables are the authoritative store ---
+//
+// The suite above seeds through the V1 adapter, which writes BOTH stores; it
+// would keep passing if exec silently regressed to reading ConnectionGrant.
+// These fixtures pin the store: positives seeded ONLY in the new tables,
+// denials seeded ONLY in the legacy table, and a poisoned legacy row that
+// must not widen a narrow new-table scope.
+
+describe("POST /v2/composio/exec — new tables are authoritative (DB)", () => {
+  const accountIds: string[] = [];
+
+  async function makeAccount(): Promise<string> {
+    const account = await prisma.account.create({ data: {} });
+    accountIds.push(account.id);
+    return account.id;
+  }
+
+  async function seedEntitlementOnly(
+    ownerAccountId: string,
+    extension: { actions?: string[]; bundleIds?: string[] } = {},
+  ) {
+    const entitlement = await prisma.abilityEntitlement.create({
+      data: {
+        accountId: ownerAccountId,
+        abilityId: "googlecalendar",
+        status: "active",
+      },
+    });
+    await prisma.conversationAbility.create({
+      data: {
+        entitlementId: entitlement.id,
+        conversationId: CONVERSATION,
+        agentInboxId: AGENT_INBOX,
+        actions: extension.actions ?? [],
+        bundleIds: extension.bundleIds ?? [],
+        extendedByInboxId: "owner-inbox",
+      },
+    });
+    return entitlement;
+  }
+
+  afterEach(async () => {
+    __setEntitlementReadReadinessForTests(true);
+    await prisma.connectionGrant.deleteMany({
+      where: { ownerAccountId: { in: accountIds } },
+    });
+    // Cascades entitlements + extensions.
+    await prisma.account.deleteMany({ where: { id: { in: accountIds } } });
+    accountIds.length = 0;
+  });
+
+  test("executes from the entitlement tables alone — no legacy row exists", async () => {
+    const ownerAccountId = await makeAccount();
+    await seedEntitlementOnly(ownerAccountId);
+    let seen: { userId: string } | null = null;
+    installComposioStub({
+      execute: (_slug, body) => {
+        seen = body;
+        return Promise.resolve({ data: { ok: true } });
+      },
+      connections: [
+        { id: "conn_owned", userId: ownerAccountId, slug: "googlecalendar" },
+      ],
+    });
+
+    const res = await exec(VALID_BODY, { headers: workerHeaders() });
+    expect(res.status).toBe(200);
+    expect(seen).toMatchObject({ userId: ownerAccountId });
+    // Prove the fixture really is new-table-only.
+    const legacy = await prisma.connectionGrant.findMany({
+      where: { ownerAccountId },
+    });
+    expect(legacy).toHaveLength(0);
+  });
+
+  test("a legacy-only grant does not authorize after cutover (403 no_grant)", async () => {
+    const ownerAccountId = await makeAccount();
+    await prisma.connectionGrant.create({
+      data: {
+        ownerAccountId,
+        ownerInboxId: "owner-inbox",
+        granteeInboxId: AGENT_INBOX,
+        conversationId: CONVERSATION,
+        toolkit: "googlecalendar",
+        actions: [],
+      },
+    });
+    installComposioStub({
+      connections: [
+        { id: "conn_owned", userId: ownerAccountId, slug: "googlecalendar" },
+      ],
+    });
+
+    const res = await exec(VALID_BODY, { headers: workerHeaders() });
+    expect(res.status).toBe(403);
+    expect((await asJson<{ code: string }>(res)).code).toBe("no_grant");
+  });
+
+  test("a wider legacy row cannot widen a narrow new-table scope (poisoned pair)", async () => {
+    const ownerAccountId = await makeAccount();
+    // New store: scoped to one action. Legacy store: whole-toolkit.
+    await seedEntitlementOnly(ownerAccountId, {
+      actions: ["GOOGLECALENDAR_EVENTS_LIST"],
+    });
+    await prisma.connectionGrant.create({
+      data: {
+        ownerAccountId,
+        ownerInboxId: "owner-inbox",
+        granteeInboxId: AGENT_INBOX,
+        conversationId: CONVERSATION,
+        toolkit: "googlecalendar",
+        actions: [],
+      },
+    });
+    installComposioStub({
+      connections: [
+        { id: "conn_owned", userId: ownerAccountId, slug: "googlecalendar" },
+      ],
+    });
+
+    const denied = await exec(
+      { ...VALID_BODY, action: "GOOGLECALENDAR_CREATE_EVENT" },
+      { headers: workerHeaders() },
+    );
+    expect(denied.status).toBe(403);
+    expect((await asJson<{ code: string }>(denied)).code).toBe("no_grant");
+
+    const allowed = await exec(VALID_BODY, { headers: workerHeaders() });
+    expect(allowed.status).toBe(200);
+  });
+
+  test("before the ledgers confirm, exec authorizes from the legacy matcher (fallback)", async () => {
+    __setEntitlementReadReadinessForTests(false);
+    const ownerAccountId = await makeAccount();
+    await prisma.connectionGrant.create({
+      data: {
+        ownerAccountId,
+        ownerInboxId: "owner-inbox",
+        granteeInboxId: AGENT_INBOX,
+        conversationId: CONVERSATION,
+        toolkit: "googlecalendar",
+        actions: [],
+      },
+    });
+    installComposioStub({
+      connections: [
+        { id: "conn_owned", userId: ownerAccountId, slug: "googlecalendar" },
+      ],
+    });
+
+    const res = await exec(VALID_BODY, { headers: workerHeaders() });
+    expect(res.status).toBe(200);
+  });
+
+  test("mixed-case toolkit grants converge and stay revocable (normalization regression)", async () => {
+    const ownerAccountId = await makeAccount();
+    // A V1 client issued with a case-variant toolkit; the adapter normalizes
+    // the entitlement id, so the canonical exec request matches.
+    await seedGrant({
+      ownerAccountId,
+      ownerInboxId: "owner-inbox",
+      granteeInboxId: AGENT_INBOX,
+      conversationId: CONVERSATION,
+      toolkit: "GoogleCalendar",
+      actions: [],
+    });
+    const entitlement = await prisma.abilityEntitlement.findUnique({
+      where: {
+        accountId_abilityId: {
+          accountId: ownerAccountId,
+          abilityId: "googlecalendar",
+        },
+      },
+    });
+    expect(entitlement).not.toBeNull();
+
+    installComposioStub({
+      connections: [
+        { id: "conn_owned", userId: ownerAccountId, slug: "googlecalendar" },
+      ],
+    });
+    const allowed = await exec(VALID_BODY, { headers: workerHeaders() });
+    expect(allowed.status).toBe(200);
+
+    // The canonical revoke reaches the case-variant legacy row too.
+    await revokeConnectionGrantsByNaturalKey({
+      accountId: ownerAccountId,
+      toolkit: "googlecalendar",
+    });
+    const denied = await exec(VALID_BODY, { headers: workerHeaders() });
+    expect(denied.status).toBe(403);
+    const legacy = await prisma.connectionGrant.findMany({
+      where: { ownerAccountId },
+    });
+    expect(legacy.every((grant) => grant.revokedAt !== null)).toBe(true);
   });
 });

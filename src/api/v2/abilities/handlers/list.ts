@@ -1,4 +1,5 @@
 import type { Request, Response } from "express";
+import { normalizeAbilityId } from "@/api/v2/abilities/ability-id";
 import type { EntitlementStatus as TableEntitlementStatus } from "@/api/v2/abilities/entitlement-status";
 import {
   getCatalogVersion,
@@ -111,7 +112,7 @@ export async function abilitiesListHandler(req: Request, res: Response) {
   const now = new Date();
   const entitlementByAbility = new Map<string, ServedEntitlement>();
   for (const row of rows) {
-    const id = row.abilityId.toLowerCase();
+    const id = normalizeAbilityId(row.abilityId);
     const status = row.status as EntitlementStatus;
     const conversations = new Set<string>();
     for (const extension of row.extensions) {
