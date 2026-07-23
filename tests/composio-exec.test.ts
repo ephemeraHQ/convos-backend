@@ -19,6 +19,10 @@ import {
   ComposioService,
 } from "@/api/v2/connections/composio.service";
 import {
+  issueConnectionGrant,
+  revokeConnectionGrantsByNaturalKey,
+} from "@/api/v2/connections/v1-grant-adapter";
+import {
   __setComposioExecApiKeyOverrideForTests,
   COMPOSIO_EXEC_API_KEY_HEADER,
   composioExecAuth,
@@ -162,6 +166,43 @@ function exec(
 
 async function asJson<T>(res: Response): Promise<T> {
   return (await res.json()) as T;
+}
+
+// Grant seeding goes through the V1-adapter path (the same service functions
+// the /v2/connections handlers call), which writes the legacy ConnectionGrant
+// row AND the entitlement tables that exec's checkEntitlement now reads.
+// Seeding the legacy table directly would leave the new tables empty and every
+// authorization test would fail for the wrong reason.
+async function seedGrant(data: {
+  ownerAccountId: string;
+  ownerInboxId: string;
+  granteeInboxId: string;
+  conversationId: string;
+  toolkit: string;
+  actions?: string[];
+  bundleIds?: string[];
+  serviceVersion?: number;
+  revokedAt?: Date;
+}) {
+  const grant = await issueConnectionGrant({
+    accountId: data.ownerAccountId,
+    ownerInboxId: data.ownerInboxId,
+    granteeInboxId: data.granteeInboxId,
+    conversationId: data.conversationId,
+    toolkit: data.toolkit,
+    actions: data.actions,
+    bundleIds: data.bundleIds,
+    serviceVersion: data.serviceVersion,
+  });
+  if (data.revokedAt) {
+    await revokeConnectionGrantsByNaturalKey({
+      accountId: data.ownerAccountId,
+      toolkit: data.toolkit,
+      conversationId: data.conversationId,
+      granteeInboxId: data.granteeInboxId,
+    });
+  }
+  return grant;
 }
 
 const VALID_BODY = {
@@ -376,15 +417,13 @@ describe("POST /v2/composio/exec — grant authorization (DB)", () => {
 
   test("executes when a live grant matches — connection resolved server-side", async () => {
     const ownerAccountId = await makeAccount();
-    await prisma.connectionGrant.create({
-      data: {
-        ownerAccountId,
-        ownerInboxId: "owner-inbox",
-        granteeInboxId: AGENT_INBOX,
-        conversationId: CONVERSATION,
-        toolkit: "googlecalendar",
-        actions: [],
-      },
+    await seedGrant({
+      ownerAccountId,
+      ownerInboxId: "owner-inbox",
+      granteeInboxId: AGENT_INBOX,
+      conversationId: CONVERSATION,
+      toolkit: "googlecalendar",
+      actions: [],
     });
     let seen: {
       userId: string;
@@ -416,15 +455,13 @@ describe("POST /v2/composio/exec — grant authorization (DB)", () => {
 
   test("502 toolkit_version_unresolved when Composio reports no versions — fail closed", async () => {
     const ownerAccountId = await makeAccount();
-    await prisma.connectionGrant.create({
-      data: {
-        ownerAccountId,
-        ownerInboxId: "owner-inbox",
-        granteeInboxId: AGENT_INBOX,
-        conversationId: CONVERSATION,
-        toolkit: "googlecalendar",
-        actions: [],
-      },
+    await seedGrant({
+      ownerAccountId,
+      ownerInboxId: "owner-inbox",
+      granteeInboxId: AGENT_INBOX,
+      conversationId: CONVERSATION,
+      toolkit: "googlecalendar",
+      actions: [],
     });
     let executed = false;
     installComposioStub({
@@ -449,15 +486,13 @@ describe("POST /v2/composio/exec — grant authorization (DB)", () => {
 
   test("a client-supplied connection id in the body is ignored (#2)", async () => {
     const ownerAccountId = await makeAccount();
-    await prisma.connectionGrant.create({
-      data: {
-        ownerAccountId,
-        ownerInboxId: "owner-inbox",
-        granteeInboxId: AGENT_INBOX,
-        conversationId: CONVERSATION,
-        toolkit: "googlecalendar",
-        actions: [],
-      },
+    await seedGrant({
+      ownerAccountId,
+      ownerInboxId: "owner-inbox",
+      granteeInboxId: AGENT_INBOX,
+      conversationId: CONVERSATION,
+      toolkit: "googlecalendar",
+      actions: [],
     });
     let seen: { connectedAccountId?: string } | null = null;
     installComposioStub({
@@ -492,15 +527,13 @@ describe("POST /v2/composio/exec — grant authorization (DB)", () => {
 
   test("403 no_grant for the same agent in a DIFFERENT conversation", async () => {
     const ownerAccountId = await makeAccount();
-    await prisma.connectionGrant.create({
-      data: {
-        ownerAccountId,
-        ownerInboxId: "owner-inbox",
-        granteeInboxId: AGENT_INBOX,
-        conversationId: CONVERSATION,
-        toolkit: "googlecalendar",
-        actions: [],
-      },
+    await seedGrant({
+      ownerAccountId,
+      ownerInboxId: "owner-inbox",
+      granteeInboxId: AGENT_INBOX,
+      conversationId: CONVERSATION,
+      toolkit: "googlecalendar",
+      actions: [],
     });
     installComposioStub();
     const res = await exec(VALID_BODY, {
@@ -515,15 +548,13 @@ describe("POST /v2/composio/exec — grant authorization (DB)", () => {
 
   test("403 no_grant when the action is outside the granted scope", async () => {
     const ownerAccountId = await makeAccount();
-    await prisma.connectionGrant.create({
-      data: {
-        ownerAccountId,
-        ownerInboxId: "owner-inbox",
-        granteeInboxId: AGENT_INBOX,
-        conversationId: CONVERSATION,
-        toolkit: "googlecalendar",
-        actions: ["GOOGLECALENDAR_EVENTS_LIST"],
-      },
+    await seedGrant({
+      ownerAccountId,
+      ownerInboxId: "owner-inbox",
+      granteeInboxId: AGENT_INBOX,
+      conversationId: CONVERSATION,
+      toolkit: "googlecalendar",
+      actions: ["GOOGLECALENDAR_EVENTS_LIST"],
     });
     installComposioStub();
     const res = await exec(
@@ -542,17 +573,15 @@ describe("POST /v2/composio/exec — grant authorization (DB)", () => {
   // slug that simply isn't granted stays `no_grant` (the consent path).
   test("422 invalid_action when the slug is not in the toolkit catalog (even with a covering grant)", async () => {
     const ownerAccountId = await makeAccount();
-    await prisma.connectionGrant.create({
-      data: {
-        ownerAccountId,
-        ownerInboxId: "owner-inbox",
-        granteeInboxId: AGENT_INBOX,
-        conversationId: CONVERSATION,
-        toolkit: "googlecalendar",
-        actions: [],
-        bundleIds: ["calendar.events"],
-        serviceVersion: 5,
-      },
+    await seedGrant({
+      ownerAccountId,
+      ownerInboxId: "owner-inbox",
+      granteeInboxId: AGENT_INBOX,
+      conversationId: CONVERSATION,
+      toolkit: "googlecalendar",
+      actions: [],
+      bundleIds: ["calendar.events"],
+      serviceVersion: 5,
     });
     installComposioStub({
       connections: [
@@ -665,17 +694,15 @@ describe("POST /v2/composio/exec — grant authorization (DB)", () => {
   // fail CLOSED (never the whole-toolkit transition default).
   test("bundle scope: an action inside the granted bundle is allowed", async () => {
     const ownerAccountId = await makeAccount();
-    await prisma.connectionGrant.create({
-      data: {
-        ownerAccountId,
-        ownerInboxId: "owner-inbox",
-        granteeInboxId: AGENT_INBOX,
-        conversationId: CONVERSATION,
-        toolkit: "googlecalendar",
-        actions: [],
-        bundleIds: ["calendar.events"],
-        serviceVersion: 1,
-      },
+    await seedGrant({
+      ownerAccountId,
+      ownerInboxId: "owner-inbox",
+      granteeInboxId: AGENT_INBOX,
+      conversationId: CONVERSATION,
+      toolkit: "googlecalendar",
+      actions: [],
+      bundleIds: ["calendar.events"],
+      serviceVersion: 1,
     });
     installComposioStub({
       connections: [
@@ -691,17 +718,15 @@ describe("POST /v2/composio/exec — grant authorization (DB)", () => {
 
   test("bundle scope: an action outside the granted bundle is no_grant", async () => {
     const ownerAccountId = await makeAccount();
-    await prisma.connectionGrant.create({
-      data: {
-        ownerAccountId,
-        ownerInboxId: "owner-inbox",
-        granteeInboxId: AGENT_INBOX,
-        conversationId: CONVERSATION,
-        toolkit: "googlecalendar",
-        actions: [],
-        bundleIds: ["calendar.events"],
-        serviceVersion: 1,
-      },
+    await seedGrant({
+      ownerAccountId,
+      ownerInboxId: "owner-inbox",
+      granteeInboxId: AGENT_INBOX,
+      conversationId: CONVERSATION,
+      toolkit: "googlecalendar",
+      actions: [],
+      bundleIds: ["calendar.events"],
+      serviceVersion: 1,
     });
     installComposioStub({
       connections: [
@@ -722,17 +747,15 @@ describe("POST /v2/composio/exec — grant authorization (DB)", () => {
     // used to fall through to the whole-toolkit transition default (fail-open).
     // It must now be inapplicable for EVERY action — read or write.
     const ownerAccountId = await makeAccount();
-    await prisma.connectionGrant.create({
-      data: {
-        ownerAccountId,
-        ownerInboxId: "owner-inbox",
-        granteeInboxId: AGENT_INBOX,
-        conversationId: CONVERSATION,
-        toolkit: "googlecalendar",
-        actions: [],
-        bundleIds: ["calendar.bogus"],
-        serviceVersion: 2,
-      },
+    await seedGrant({
+      ownerAccountId,
+      ownerInboxId: "owner-inbox",
+      granteeInboxId: AGENT_INBOX,
+      conversationId: CONVERSATION,
+      toolkit: "googlecalendar",
+      actions: [],
+      bundleIds: ["calendar.bogus"],
+      serviceVersion: 2,
     });
     installComposioStub({
       connections: [
@@ -758,17 +781,15 @@ describe("POST /v2/composio/exec — grant authorization (DB)", () => {
     // backward-compat guarantee that those grants keep resolving to LIST,
     // and ONLY to LIST, at exec time.
     const ownerAccountId = await makeAccount();
-    await prisma.connectionGrant.create({
-      data: {
-        ownerAccountId,
-        ownerInboxId: "owner-inbox",
-        granteeInboxId: AGENT_INBOX,
-        conversationId: CONVERSATION,
-        toolkit: "googlecalendar",
-        actions: [],
-        bundleIds: ["calendar.events.read"],
-        serviceVersion: 2,
-      },
+    await seedGrant({
+      ownerAccountId,
+      ownerInboxId: "owner-inbox",
+      granteeInboxId: AGENT_INBOX,
+      conversationId: CONVERSATION,
+      toolkit: "googlecalendar",
+      actions: [],
+      bundleIds: ["calendar.events.read"],
+      serviceVersion: 2,
     });
     installComposioStub({
       connections: [
@@ -800,15 +821,13 @@ describe("POST /v2/composio/exec — grant authorization (DB)", () => {
     // fields empty) — even a write action passes. Tightens once clients always
     // send bundleIds.
     const ownerAccountId = await makeAccount();
-    await prisma.connectionGrant.create({
-      data: {
-        ownerAccountId,
-        ownerInboxId: "owner-inbox",
-        granteeInboxId: AGENT_INBOX,
-        conversationId: CONVERSATION,
-        toolkit: "googlecalendar",
-        actions: [],
-      },
+    await seedGrant({
+      ownerAccountId,
+      ownerInboxId: "owner-inbox",
+      granteeInboxId: AGENT_INBOX,
+      conversationId: CONVERSATION,
+      toolkit: "googlecalendar",
+      actions: [],
     });
     installComposioStub({
       connections: [
@@ -824,16 +843,14 @@ describe("POST /v2/composio/exec — grant authorization (DB)", () => {
 
   test("403 no_grant once the grant is revoked", async () => {
     const ownerAccountId = await makeAccount();
-    await prisma.connectionGrant.create({
-      data: {
-        ownerAccountId,
-        ownerInboxId: "owner-inbox",
-        granteeInboxId: AGENT_INBOX,
-        conversationId: CONVERSATION,
-        toolkit: "googlecalendar",
-        actions: [],
-        revokedAt: new Date(),
-      },
+    await seedGrant({
+      ownerAccountId,
+      ownerInboxId: "owner-inbox",
+      granteeInboxId: AGENT_INBOX,
+      conversationId: CONVERSATION,
+      toolkit: "googlecalendar",
+      actions: [],
+      revokedAt: new Date(),
     });
     installComposioStub();
     const res = await exec(VALID_BODY, { headers: workerHeaders() });
@@ -849,15 +866,13 @@ describe("POST /v2/composio/exec — grant authorization (DB)", () => {
         [alice, "alice-inbox"],
         [bob, "bob-inbox"],
       ] as const) {
-        await prisma.connectionGrant.create({
-          data: {
-            ownerAccountId: accountId,
-            ownerInboxId: inbox,
-            granteeInboxId: AGENT_INBOX,
-            conversationId: CONVERSATION,
-            toolkit: "googlecalendar",
-            actions: [],
-          },
+        await seedGrant({
+          ownerAccountId: accountId,
+          ownerInboxId: inbox,
+          granteeInboxId: AGENT_INBOX,
+          conversationId: CONVERSATION,
+          toolkit: "googlecalendar",
+          actions: [],
         });
       }
       return { alice, bob };
