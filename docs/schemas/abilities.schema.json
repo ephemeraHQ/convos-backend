@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://convos.org/schemas/abilities.schema.json",
   "title": "GET /v2/abilities response",
-  "description": "The Connections V2 ability catalog merged with the caller's entitlement state. Backend-owned manifests with Composio action slugs stripped (slugs stay backend-only; clients persist only bundle ids). The `entitlement` key on each ability is an object (entitled; status says whether it is currently usable) or null (not entitled, or the JWT carries no account). When the caller has an account but entitlement state cannot be determined (Composio lookup failed), the response instead carries top-level `entitlementsUnavailable: true` and every ability omits its `entitlement` key — clients keep last-known state instead of rendering 'not connected'. Source of truth: src/api/v2/abilities/manifests.config.ts (getPublicAbilities) and src/api/v2/abilities/handlers/list.ts.",
+  "description": "The Connections V2 ability catalog merged with the caller's entitlement state. Backend-owned manifests with Composio action slugs stripped (slugs stay backend-only; clients persist only bundle ids). The `entitlement` key on each ability is an object (entitled; status says whether it is currently usable) or null (not entitled, or the JWT carries no account). When the caller has an account but entitlement state cannot be read (entitlement store failure), the response instead carries top-level `entitlementsUnavailable: true` and every ability omits its `entitlement` key — clients keep last-known state instead of rendering 'not connected'. Source of truth: src/api/v2/abilities/manifests.config.ts (getPublicAbilities) and src/api/v2/abilities/handlers/list.ts.",
   "type": "object",
   "additionalProperties": false,
   "required": ["catalogVersion", "abilities"],
@@ -13,7 +13,7 @@
       "minimum": 0
     },
     "entitlementsUnavailable": {
-      "description": "Present (always true) only when the caller has an account and entitlement state could not be determined (Composio lookup failed). Every ability then omits its `entitlement` key; clients keep last-known state. Never present on the device-only or healthy account paths.",
+      "description": "Present (always true) only when the caller has an account and entitlement state could not be read (entitlement store failure). Every ability then omits its `entitlement` key; clients keep last-known state. Never present on the device-only or healthy account paths.",
       "const": true
     },
     "abilities": {
@@ -69,7 +69,7 @@
       "required": ["status", "extensionCount"],
       "properties": {
         "status": {
-          "description": "Backend-owned lifecycle state. The V1-derived adapter emits only pending_auth (Composio INITIALIZING/INITIATED), active (ACTIVE), and expired (every other Composio status — the credential cannot be used and OAuth must be re-run). needs_reauth and revoked are reserved for B2 (revalidation flow and the dedicated entitlement tables); the adapter never emits them.",
+          "description": "Backend-owned lifecycle state, served verbatim from the entitlement tables (clients never derive it). pending_auth: auth flow in flight; active: usable; expired: the credential cannot be used and OAuth must be re-run (also what every dead Composio state collapses to at backfill/reconciliation); revoked: explicit user revocation (audit tombstone); needs_reauth: reserved for the service-mediated revalidation job.",
           "enum": [
             "pending_auth",
             "active",

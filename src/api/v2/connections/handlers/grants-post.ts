@@ -1,7 +1,7 @@
 import type { Request, Response } from "express";
 import { z } from "zod";
 import { getServiceConfig } from "@/api/v2/connections/bundles.config";
-import { prisma } from "@/utils/prisma";
+import { issueConnectionGrant } from "@/api/v2/connections/v1-grant-adapter";
 
 // iOS issues a grant when the owner approves a capability request. The owner is
 // taken from the authenticated JWT (res.locals.accountId), never the body, so a
@@ -88,36 +88,21 @@ export async function grantsPostHandler(req: Request, res: Response) {
     }
   }
 
-  // One grant per (owner, grantee, conversation, toolkit): re-approval updates
-  // the same row (refreshes scope/expiry, clears a prior revocation).
-  const grant = await prisma.connectionGrant.upsert({
-    where: {
-      ownerAccountId_granteeInboxId_conversationId_toolkit: {
-        ownerAccountId: accountId,
-        granteeInboxId,
-        conversationId,
-        toolkit,
-      },
-    },
-    create: {
-      ownerAccountId: accountId,
-      ownerInboxId,
-      granteeInboxId,
-      conversationId,
-      toolkit,
-      actions: actions ?? [],
-      bundleIds: bundleIds ?? [],
-      serviceVersion: serviceVersion ?? null,
-      expiresAt: expiresAt ? new Date(expiresAt) : null,
-    },
-    update: {
-      ownerInboxId,
-      actions: actions ?? [],
-      bundleIds: bundleIds ?? [],
-      serviceVersion: serviceVersion ?? null,
-      expiresAt: expiresAt ? new Date(expiresAt) : null,
-      revokedAt: null,
-    },
+  // Adapter over the entitlement tables (see v1-grant-adapter.ts): the
+  // legacy row keeps its exact upsert semantics — one grant per (owner,
+  // grantee, conversation, toolkit); re-approval refreshes scope/expiry and
+  // clears a prior revocation — and the same fact lands in the entitlement +
+  // extension tables that every new reader consumes.
+  const grant = await issueConnectionGrant({
+    accountId,
+    ownerInboxId,
+    granteeInboxId,
+    conversationId,
+    toolkit,
+    actions,
+    bundleIds,
+    serviceVersion,
+    expiresAt: expiresAt ? new Date(expiresAt) : null,
   });
 
   req.log.info(

@@ -1,16 +1,10 @@
 import type { Request, Response } from "express";
-import {
-  COMPOSIO_DERIVED_STATUS_RANK,
-  KNOWN_COMPOSIO_STATUSES,
-  toEntitlementStatus,
-  type ComposioDerivedStatus,
-} from "@/api/v2/abilities/entitlement-status";
+import type { EntitlementStatus as TableEntitlementStatus } from "@/api/v2/abilities/entitlement-status";
 import {
   getCatalogVersion,
   getPublicAbilities,
   type PublicAbility,
 } from "@/api/v2/abilities/manifests.config";
-import { createComposioService } from "@/api/v2/connections/composio.service";
 import { prisma } from "@/utils/prisma";
 
 // GET /v2/abilities — the ability catalog merged with the caller's
@@ -20,23 +14,23 @@ import { prisma } from "@/utils/prisma";
 // `entitlement: null` everywhere (browsable, not entitleable). With an
 // account on the JWT, each ability carries the caller's entitlement state.
 //
-// Entitlement state is currently derived from the V1 stores (Composio
-// connected accounts + ConnectionGrant rows). The dedicated entitlement
-// tables will replace this adapter without changing the wire shape.
+// Entitlement state comes from the AbilityEntitlement tables — the
+// backend-owned source of truth — never from a per-request Composio call:
+// status transitions originate server-side (lifecycle endpoints, backfill /
+// reconciliation, later the revalidation job) and clients only ever read
+// them. `extensionCount` is the number of distinct conversations with live
+// extensions (the same expiry predicate the check enforces).
 //
 // Wire contract (see docs/schemas/abilities.schema.json):
 //   - `entitlement` object -> entitled; `status` says whether it is usable
 //   - `entitlement: null`  -> not entitled (or no account on the token)
 //   - top-level `entitlementsUnavailable: true` -> the caller has an account
-//     but entitlement state could not be determined (Composio lookup failed
-//     or was truncated); abilities then carry NO `entitlement` key and
-//     clients keep their last-known state instead of rendering
-//     "not connected".
+//     but entitlement state could not be read (store failure); abilities then
+//     carry NO `entitlement` key and clients keep their last-known state
+//     instead of rendering "not connected". The catalog itself is code
+//     config and stays servable.
 
-// The V1-derived read path emits only the Composio-derivable subset
-// (pending_auth | active | expired); the mapping and rank live in
-// entitlement-status.ts, shared with the backfill and the V1 adapters.
-export type EntitlementStatus = ComposioDerivedStatus;
+export type EntitlementStatus = TableEntitlementStatus;
 
 type ServedEntitlement = {
   status: EntitlementStatus;
@@ -45,6 +39,22 @@ type ServedEntitlement = {
 
 type ServedAbility = PublicAbility & {
   entitlement?: ServedEntitlement | null;
+};
+
+// Should two rows ever fold onto one wire ability id (a case-variant legacy
+// toolkit next to the canonical id), the most usable status wins.
+const WIRE_STATUS_RANK: Record<EntitlementStatus, number> = {
+  active: 0,
+  pending_auth: 1,
+  needs_reauth: 2,
+  expired: 3,
+  revoked: 4,
+};
+
+type EntitlementRow = {
+  abilityId: string;
+  status: string;
+  extensions: Array<{ conversationId: string; expiresAt: Date | null }>;
 };
 
 export async function abilitiesListHandler(req: Request, res: Response) {
@@ -67,39 +77,26 @@ export async function abilitiesListHandler(req: Request, res: Response) {
     return;
   }
 
-  let statusByAbility: Map<string, EntitlementStatus> | null = null;
-  const service = createComposioService();
-  if (service) {
-    try {
-      const { items } = await service.listForUser(accountId);
-      statusByAbility = new Map();
-      for (const item of items) {
-        const id = item.toolkit.slug.toLowerCase();
-        if (!KNOWN_COMPOSIO_STATUSES.has(item.status)) {
-          req.log.warn(
-            { accountId, composioStatus: item.status },
-            "[Abilities] Unknown Composio status — mapping to expired",
-          );
-        }
-        const status = toEntitlementStatus(item.status);
-        const prev = statusByAbility.get(id);
-        if (
-          !prev ||
-          COMPOSIO_DERIVED_STATUS_RANK[status] <
-            COMPOSIO_DERIVED_STATUS_RANK[prev]
-        ) {
-          statusByAbility.set(id, status);
-        }
-      }
-    } catch (error) {
-      // Leave statusByAbility null: entitlement state is unknowable, so the
-      // response carries entitlementsUnavailable and omits every
-      // `entitlement` key per the contract.
-      req.log.error({ error, accountId }, "[Abilities] Composio list failed");
-    }
+  let rows: EntitlementRow[] | null = null;
+  try {
+    rows = await prisma.abilityEntitlement.findMany({
+      where: { accountId },
+      select: {
+        abilityId: true,
+        status: true,
+        extensions: {
+          select: { conversationId: true, expiresAt: true },
+        },
+      },
+    });
+  } catch (error) {
+    // Leave rows null: entitlement state is unknowable, so the response
+    // carries entitlementsUnavailable and omits every `entitlement` key per
+    // the contract — the catalog must stay servable.
+    req.log.error({ error, accountId }, "[Abilities] entitlement read failed");
   }
 
-  if (!statusByAbility) {
+  if (!rows) {
     res.status(200).json({
       catalogVersion: getCatalogVersion(),
       entitlementsUnavailable: true,
@@ -108,39 +105,35 @@ export async function abilitiesListHandler(req: Request, res: Response) {
     return;
   }
 
-  // Extension counts mirror exec's live-grant predicate: non-revoked and
-  // non-expired, so the catalog never counts a conversation exec would deny.
+  // Extension counts mirror the check's live predicate: non-expired, so the
+  // catalog never counts a conversation the check would deny. Revocation
+  // deletes extensions, so tombstones naturally count 0.
   const now = new Date();
-  const grants = await prisma.connectionGrant.findMany({
-    where: {
-      ownerAccountId: accountId,
-      revokedAt: null,
-      OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
-    },
-    select: { toolkit: true, conversationId: true },
-  });
-  const conversationsByAbility = new Map<string, Set<string>>();
-  for (const grant of grants) {
-    const id = grant.toolkit.toLowerCase();
-    const set = conversationsByAbility.get(id) ?? new Set<string>();
-    set.add(grant.conversationId);
-    conversationsByAbility.set(id, set);
+  const entitlementByAbility = new Map<string, ServedEntitlement>();
+  for (const row of rows) {
+    const id = row.abilityId.toLowerCase();
+    const status = row.status as EntitlementStatus;
+    const conversations = new Set<string>();
+    for (const extension of row.extensions) {
+      if (extension.expiresAt === null || extension.expiresAt > now) {
+        conversations.add(extension.conversationId);
+      }
+    }
+    const prev = entitlementByAbility.get(id);
+    if (prev && WIRE_STATUS_RANK[prev.status] <= WIRE_STATUS_RANK[status]) {
+      continue;
+    }
+    entitlementByAbility.set(id, {
+      status,
+      extensionCount: conversations.size,
+    });
   }
 
-  const entitlementByAbility = statusByAbility;
   res.status(200).json({
     catalogVersion: getCatalogVersion(),
     abilities: catalog.map((ability): ServedAbility => {
-      const status = entitlementByAbility.get(ability.id);
-      if (!status) return { ...ability, entitlement: null };
-      const conversations = conversationsByAbility.get(ability.id);
-      return {
-        ...ability,
-        entitlement: {
-          status,
-          extensionCount: conversations ? conversations.size : 0,
-        },
-      };
+      const entitlement = entitlementByAbility.get(ability.id);
+      return { ...ability, entitlement: entitlement ?? null };
     }),
   });
 }
