@@ -115,6 +115,7 @@ model Account {
   creditLedger             CreditLedger[]
   subscriptions            Subscription[]
   connectionGrants         ConnectionGrant[]
+  abilityEntitlements      AbilityEntitlement[]
 }
 
 /// Consent record for backend-mediated Composio tool execution (fork Y).
@@ -162,6 +163,90 @@ model ConnectionGrant {
   @@unique([ownerAccountId, granteeInboxId, conversationId, toolkit])
   @@index([granteeInboxId, conversationId])
   @@index([ownerAccountId])
+}
+
+/// Account <-> ability binding with a backend-owned lifecycle (Connections V2,
+/// docs/plans/abilities-entitlements.md). One row per (account, ability):
+/// connecting a service happens once per account; conversations hold cheap
+/// references (ConversationAbility). Replaces the V1 model where the external
+/// credential (Composio connected account) was the only account-scoped record
+/// and per-conversation state lived in ConnectionGrant alone.
+///
+/// `status` is plain text guarded by a CHECK constraint (house pattern, no
+/// Postgres enums): pending_auth | active | needs_reauth | expired | revoked.
+/// Status transitions originate server-side only; clients read, never derive.
+///
+/// externalConnectionId is the backing Composio connected-account id — a
+/// bearer capability, backend-only, never served. Revocation keeps the row as
+/// a tombstone (status revoked + revokedAt) for audit; the conversation
+/// extensions are deleted and the external credential is torn down.
+model AbilityEntitlement {
+  id        String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  accountId String @db.Uuid
+  /// Stable ability id (equals the Composio toolkit slug for Composio-backed
+  /// abilities). Stored as issued; V2 surfaces validate against the manifest
+  /// catalog, V1-adapter writes carry the toolkit string as the client sent it.
+  abilityId String
+  /// pending_auth | active | needs_reauth | expired | revoked (CHECK-guarded).
+  status    String
+  /// Backing Composio connected-account id. Bearer capability — backend-only,
+  /// never served to any client or agent. Null when unknown (e.g. auth-less
+  /// abilities, or a credential torn down at revocation).
+  externalConnectionId String?
+  /// Served composite ability version (manifest + service) at bind time.
+  /// Audit/staleness only — enforcement always resolves against the current
+  /// catalog. 0 when the ability was not in the catalog at bind time.
+  abilityVersion Int       @default(0)
+  expiresAt      DateTime?
+  revokedAt      DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  account    Account               @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  extensions ConversationAbility[]
+
+  @@unique([accountId, abilityId])
+}
+
+/// An entitlement extended to one agent within one conversation (the V2 shape
+/// of ConnectionGrant). The opt-in names the agent by its immutable inbox id,
+/// not just the conversation: a second agent joining a conversation does not
+/// inherit the first agent's access. Withdrawing an opt-in deletes the row
+/// (the entitlement tombstone is the audit record); there is no per-extension
+/// soft delete.
+///
+/// conversationId stays an opaque XMTP string (no Conversation table), as with
+/// V1 grants. Rows carried over from live V1 grants (backfill / V1 adapters)
+/// keep the grant's id, so wire-visible grant ids stay stable across the
+/// adapter switch.
+model ConversationAbility {
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  entitlementId  String   @db.Uuid
+  conversationId String
+  /// The agent allowed to act — the V1 grant's granteeInboxId.
+  agentInboxId   String
+  /// Granted permission-bundle ids (e.g. "calendar.events"). Resolved to
+  /// Composio actions against the CURRENT catalog at check time.
+  bundleIds      String[] @default([])
+  /// Legacy V1 scope: explicit Composio action slugs, carried 1:1 from
+  /// ConnectionGrant.actions so the check keeps V1 exec semantics (empty
+  /// actions + empty bundleIds = whole-toolkit transition default). V2
+  /// surfaces never write this; it drains with the V1 adapters.
+  actions        String[] @default([])
+  /// Who extended the opt-in, as the member's XMTP inbox id (the V1 grant's
+  /// ownerInboxId). Matched by the check's onBehalfOf selector. Null when a
+  /// V2 write did not provide it.
+  extendedByInboxId String?
+  /// Per-extension expiry, carried from V1 grants (V1 clients may set it).
+  /// The entitlement carries the account-level expiry.
+  expiresAt         DateTime?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  entitlement AbilityEntitlement @relation(fields: [entitlementId], references: [id], onDelete: Cascade)
+
+  @@unique([entitlementId, conversationId, agentInboxId])
+  @@index([conversationId, agentInboxId])
 }
 
 enum PublishStatus {
