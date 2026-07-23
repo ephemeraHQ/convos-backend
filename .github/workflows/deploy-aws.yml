@@ -75,6 +75,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: push_to_registry
     if: github.event_name == 'push' && github.ref == 'refs/heads/otr-dev'
+    environment: dev
     steps:
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
@@ -142,7 +143,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: resolve_prod_image
     if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref_type == 'tag')
-    environment: otr-prod
+    environment: production
     concurrency:
       group: deploy-prod
       cancel-in-progress: false
