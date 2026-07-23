@@ -10,6 +10,7 @@ import {
   vi,
 } from "vitest";
 import { connectionsRouter } from "@/api/v2/connections/connections.router";
+import { upsertConversationAbilityExtension } from "@/api/v2/connections/v1-grant-adapter";
 import { authMiddleware, requireAccount } from "@/middleware/auth";
 import { jsonMiddleware } from "@/middleware/json";
 import { pinoMiddleware } from "@/middleware/pino";
@@ -239,6 +240,117 @@ describe("Connection grants API", () => {
     expect(res.status).toBe(404);
     const row = await prisma.connectionGrant.findUnique({ where: { id } });
     expect(row?.revokedAt).toBeNull();
+  });
+
+  test("legacy-only row + later V2 PUT + by-id revoke leaves nothing executable (shared-id reconciliation)", async () => {
+    const accountId = await makeAccount();
+    // An old replica's legacy-only write, not yet carried to the new tables.
+    const legacy = await prisma.connectionGrant.create({
+      data: {
+        ownerAccountId: accountId,
+        ownerInboxId: "owner-inbox",
+        granteeInboxId: "agent-inbox",
+        conversationId: "conv-shared-id",
+        toolkit: "googlecalendar",
+        bundleIds: ["calendar.events"],
+      },
+    });
+    const entitlement = await prisma.abilityEntitlement.create({
+      data: { accountId, abilityId: "googlecalendar", status: "active" },
+    });
+    // A V2 PUT for the same natural key reconciles to the legacy row's id.
+    const extension = await upsertConversationAbilityExtension({
+      accountId,
+      entitlementId: entitlement.id,
+      abilityId: "googlecalendar",
+      conversationId: "conv-shared-id",
+      agentInboxId: "agent-inbox",
+      bundleIds: ["calendar.events"],
+      extendedByInboxId: "owner-inbox",
+    });
+    expect(extension.id).toBe(legacy.id);
+
+    // One by-id revoke kills the pair whole — nothing stays executable.
+    const res = await fetch(
+      `${baseURL}/api/v2/connections/grants/${legacy.id}`,
+      {
+        method: "DELETE",
+        headers: { "X-Convos-AuthToken": await token(accountId) },
+      },
+    );
+    expect(res.status).toBe(204);
+    const liveGrants = await prisma.connectionGrant.findMany({
+      where: { ownerAccountId: accountId, revokedAt: null },
+    });
+    expect(liveGrants).toHaveLength(0);
+    const extensions = await prisma.conversationAbility.findMany({
+      where: { entitlementId: entitlement.id },
+    });
+    expect(extensions).toHaveLength(0);
+  });
+
+  test("a pair whose ids diverged still dies whole from either id (natural-key healing)", async () => {
+    const accountId = await makeAccount();
+    const entitlement = await prisma.abilityEntitlement.create({
+      data: { accountId, abilityId: "googlecalendar", status: "active" },
+    });
+    async function seedDivergedPair(conversationId: string) {
+      const legacy = await prisma.connectionGrant.create({
+        data: {
+          ownerAccountId: accountId,
+          ownerInboxId: "owner-inbox",
+          granteeInboxId: "agent-inbox",
+          conversationId,
+          toolkit: "googlecalendar",
+        },
+      });
+      const extension = await prisma.conversationAbility.create({
+        data: {
+          entitlementId: entitlement.id,
+          conversationId,
+          agentInboxId: "agent-inbox",
+          bundleIds: ["calendar.events"],
+        },
+      });
+      return { legacy, extension };
+    }
+
+    // Revoking by the legacy id also deletes the differently-id'd extension.
+    const a = await seedDivergedPair("conv-diverged-a");
+    let res = await fetch(
+      `${baseURL}/api/v2/connections/grants/${a.legacy.id}`,
+      {
+        method: "DELETE",
+        headers: { "X-Convos-AuthToken": await token(accountId) },
+      },
+    );
+    expect(res.status).toBe(204);
+    expect(
+      await prisma.conversationAbility.findUnique({
+        where: { id: a.extension.id },
+      }),
+    ).toBeNull();
+
+    // Revoking by the extension id (the id grants-list serves for V2-created
+    // state) revokes the legacy counterpart too.
+    const b = await seedDivergedPair("conv-diverged-b");
+    res = await fetch(
+      `${baseURL}/api/v2/connections/grants/${b.extension.id}`,
+      {
+        method: "DELETE",
+        headers: { "X-Convos-AuthToken": await token(accountId) },
+      },
+    );
+    expect(res.status).toBe(204);
+    const legacyB = await prisma.connectionGrant.findUnique({
+      where: { id: b.legacy.id },
+    });
+    expect(legacyB!.revokedAt).not.toBeNull();
+    expect(
+      await prisma.conversationAbility.findUnique({
+        where: { id: b.extension.id },
+      }),
+    ).toBeNull();
   });
 
   test("a DELETE retry heals a surviving extension when the legacy row is already revoked", async () => {
