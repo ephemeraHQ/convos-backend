@@ -1,6 +1,6 @@
 # Abilities (Connections V2) — Entitlements, Account Binding, and Client Integration
 
-> **Status**: Draft PRD — review round 1 (Nick / Mike, 2026-07-22) incorporated
+> **Status**: Draft PRD — review round 1 (2026-07-22) incorporated
 > **Created**: 2026-07-22 · **Owner**: Louis
 > **Parent doc**: Notion "Abilities (Connections V2)" (goals, core components, first-round abilities)
 > **Builds on**: `docs/plans/composio-exec-grant-mediation.md`, `docs/plans/connections-bundles-backend.md`, `docs/architecture/composio-security-1pager.md`
@@ -27,7 +27,7 @@ backend; our nomenclature is "entitlements"; entitlements extend from account to
 conversation via the backend; no XMTP, no appData; V2 only — V1 is deprecated and
 existing users migrate.**
 
-This doc covers Mike's three questions plus the client:
+This doc answers three questions plus the client integration:
 
 1. How do we **enumerate** the set of possible items → the ability catalog
 2. How do we **bind** entitlements to accounts → the entitlement record + auth lifecycle
@@ -36,13 +36,13 @@ This doc covers Mike's three questions plus the client:
 
 ### Out of scope (owned elsewhere)
 
-- Plugin deployment model, plugin runtime RPCs (Mike — ability orchestration)
-- Agent Action Queue, debounce/rate limiting, observability, CI (Andrew)
-- MCP gateway, meta tools, agent-turn initialization, harness auth handshake (Borja)
+- Plugin deployment model, plugin runtime RPCs (ability orchestration workstream)
+- Agent Action Queue, debounce/rate limiting, observability, CI
+- MCP gateway, meta tools, agent-turn initialization, harness auth handshake
 - Herald/Hermes separation (deferred, per Notion non-goals)
 
 The entitlement **check** logic is in scope (backend function with a live consumer:
-exec). Its exposure as a standalone RPC for the MCP gateway ships when Borja's gateway
+exec). Its exposure as a standalone RPC for the MCP gateway ships when the gateway
 contract is real — a thin wrapper, not a phase.
 
 ## Nomenclature
@@ -56,7 +56,7 @@ contract is real — a thin wrapper, not a phase.
 | **Entitlement** | Account ↔ ability binding with a backend-owned lifecycle status | New `AbilityEntitlement` row |
 | **Conversation ability** | An entitlement extended to an agent within one conversation | New `ConversationAbility` row (reshaped `ConnectionGrant`) |
 
-In review discussion Mike deliberately used generic language to keep naming honest: a
+Review discussion deliberately used generic language to keep naming honest: a
 "binding" is the account ↔ service credential + privileges (our entitlement), and the
 per-conversation "opt-in" allows an agent in a conversation to use privileges scoped to
 a particular binding (our conversation ability).
@@ -197,7 +197,7 @@ trusted `x-convos-conversation-id` / `x-convos-agent-inbox-id` headers.
 - **Day-one consumer**: `POST /v2/composio/exec` migrates onto it (same wire contract,
   reads the new tables).
 - **Later consumer**: MCP gateway (`/v2/internal/entitlements/check` + an enumerate
-  variant for the meta tools), exposed once the gateway contract is agreed with Borja.
+  variant for the meta tools), exposed once the gateway contract is agreed.
 - The **denial vocabulary is the cross-team contract to freeze early**: these codes drive
   the agent's escalation prompts ("ask the user to grant X") and the iOS error UX,
   regardless of which caller hits the check.
@@ -256,7 +256,8 @@ endpoint exists.
 **Hard dependency for B2**: the agent runtime must stop reading
 `ProfileUpdate.metadata["connections"]` before (or at the same time as) the client stops
 writing it — otherwise agents go blind while V1 conversations still exist. Sequencing to
-agree with Mike: runtime reads backend first, then the client excision ships.
+agree with the agent-runtime workstream: runtime reads backend first, then the client
+excision ships.
 
 ## Rollout
 
@@ -269,7 +270,7 @@ agree with Mike: runtime reads backend first, then the client excision ships.
 4. Client excision (B2 above) once the runtime reads backend-only.
 5. Remove V1 endpoints + adapters when shipped-client traffic drains.
 
-## Determinations (2026-07-22 review, Nick / Mike)
+## Determinations (2026-07-22 review)
 
 - **Extensions keep agent scoping.** The opt-in binds `(conversation, agent inbox ID)`,
   not the conversation alone. Rationale: inbox/instance IDs are immutable; there is no
@@ -295,7 +296,7 @@ agree with Mike: runtime reads backend first, then the client excision ships.
    UIs already speak them.)
 4. **Escalation transport**: how the "request user permission" meta tool and the
    new-agent opt-in prompt reach the client (push? in-conversation message? poll) —
-   Borja/Andrew dependency; UI is mocked meanwhile.
+   gateway/action-queue dependency; UI is mocked meanwhile.
 5. **`conversationIds` in `GET /v2/abilities`**: convenient for the nudge + ability list,
    but grows with usage; cap or move behind the per-conversation endpoint?
 
