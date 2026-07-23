@@ -28,6 +28,11 @@ const TOOLKIT_ACTIONS_CACHE_TTL_MS = 60 * 60 * 1000;
 
 type ToolkitActionsCacheEntry = { slugs: Set<string>; expiresAt: number };
 
+// Safety bound on cursor-following in listForUser. Composio pages default to
+// tens of items, so 10 pages comfortably covers any real account; the bound
+// exists to keep a broken cursor chain from looping forever.
+const LIST_PAGE_LIMIT = 10;
+
 export class ComposioService {
   private composio: Composio;
   private authConfigCache = new Map<string, AuthConfigCacheEntry>();
@@ -223,15 +228,41 @@ export class ComposioService {
    * the caller's stable accountId.
    */
   async getIfOwned(args: { connectionId: string; userId: string }) {
-    const list = await this.composio.connectedAccounts.list({
-      userIds: [args.userId],
-    });
-    const items: ConnectedAccountListResponseItem[] = list.items;
+    const { items } = await this.listForUser(args.userId);
     return items.find((item) => item.id === args.connectionId) ?? null;
   }
 
-  async listForUser(userId: string) {
-    return this.composio.connectedAccounts.list({ userIds: [userId] });
+  /**
+   * Every connected account for a user, across all of Composio's result pages
+   * (the list endpoint is cursor-paginated). Bounded so a pathological cursor
+   * loop cannot hang a request; hitting the bound THROWS instead of returning
+   * a partial list, because truncated state must never be served as
+   * authoritative (callers treat the throw like any Composio failure — the
+   * abilities catalog surfaces entitlementsUnavailable, exec fails closed).
+   */
+  async listForUser(
+    userId: string,
+  ): Promise<{ items: ConnectedAccountListResponseItem[] }> {
+    const items: ConnectedAccountListResponseItem[] = [];
+    let cursor: string | undefined;
+    for (let page = 0; page < LIST_PAGE_LIMIT; page++) {
+      const list = await this.composio.connectedAccounts.list({
+        userIds: [userId],
+        ...(cursor ? { cursor } : {}),
+      });
+      items.push(...list.items);
+      if (!list.nextCursor) {
+        return { items };
+      }
+      cursor = list.nextCursor;
+    }
+    logger.warn(
+      { userId, pages: LIST_PAGE_LIMIT, count: items.length },
+      "[Composio] listForUser: page bound hit — refusing truncated state",
+    );
+    throw new Error(
+      `Composio connected-account list exceeded ${LIST_PAGE_LIMIT} pages`,
+    );
   }
 
   async delete(connectionId: string) {
@@ -250,11 +281,8 @@ export class ComposioService {
     userId: string;
     toolkit: string;
   }): Promise<string | null> {
-    const list = await this.composio.connectedAccounts.list({
-      userIds: [args.userId],
-    });
+    const { items } = await this.listForUser(args.userId);
     const normalized = args.toolkit.toLowerCase();
-    const items: ConnectedAccountListResponseItem[] = list.items;
     const match = items.find(
       (item) => item.toolkit.slug.toLowerCase() === normalized,
     );

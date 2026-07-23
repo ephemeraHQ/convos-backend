@@ -19,6 +19,7 @@ import {
   inviteCodeRedeemLimiter,
   telemetryLimiter,
 } from "@/middleware/rateLimit";
+import { abilitiesRouter } from "./abilities/abilities.router";
 import { accountsByIdRouter } from "./accounts/accountsByIdRouter";
 import { accountsMeRouter } from "./accounts/accountsMeRouter";
 import { meGuard } from "./accounts/middleware/meGuard";
@@ -143,6 +144,10 @@ v2Router.use(
 // limits. authMiddleware applies to the whole subtree.
 v2Router.use("/agents", authMiddleware, agentsRouter);
 v2Router.use("/attachments", authMiddleware, attachmentsRouter);
+// The Connections V2 ability catalog (docs/plans/abilities-entitlements.md).
+// JWT-only, deliberately without requireAccount: device-only tokens can browse
+// the catalog; entitlement state appears only when the JWT carries an account.
+v2Router.use("/abilities", authMiddleware, abilitiesRouter);
 // The connections-picker catalog is JWT-only (NOT account-scoped): the catalog
 // is identical for every user, so requireAccount is deliberately not applied.
 // Declared BEFORE the requireAccount-gated /connections mount so this more
