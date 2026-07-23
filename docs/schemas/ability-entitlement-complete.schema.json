@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://convos.org/schemas/ability-entitlement-complete.schema.json",
+  "title": "POST /v2/abilities/{abilityId}/entitlement/complete response",
+  "description": "Post-callback ownership verification (mirrors V1 /v2/connections/complete): the connection named by the request body's {connectionRequestId} must belong to the caller's own account (verified by listing the caller's connections, never by trusting the id) and to this ability's toolkit. On success the entitlement is active and backed by the verified credential (backend-only; never served). Errors: 400 {code: invalid_request}, 403 {code: connection_not_owned}, 404 {code: unknown_ability}, 409 {code: ability_mismatch} (the connection belongs to a different toolkit), 502 {code: complete_failed}, 503 when connections are not configured. requireAccount. Source of truth: src/api/v2/abilities/handlers/entitlement-complete.ts.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["status"],
+  "properties": {
+    "status": {
+      "description": "Always active on success.",
+      "const": "active"
+    }
+  }
+}

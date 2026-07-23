@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://convos.org/schemas/ability-entitlement-bind.schema.json",
+  "title": "POST /v2/abilities/{abilityId}/entitlement response",
+  "description": "Create or restart the caller's entitlement for one ability. Idempotent per (account, ability); requireAccount. OAuth abilities start the Composio link flow: `redirectUrl` opens the provider consent page and `connectionRequestId` is echoed back to POST .../entitlement/complete after the callback. Auth-less abilities answer status active with both auth fields null. `status` is the entitlement row's resulting status: a restart keeps an active entitlement active while re-auth is in flight; every other prior state (including a cleared revocation tombstone) reads pending_auth. Errors: 400 {code: invalid_request}, 404 {code: unknown_ability} (hidden manifests included), 502 {code: auth_config_unavailable | initiate_failed}, 503 when connections are not configured. Request body: optionally {redirectUri} (a per-environment OAuth callback URL, as V1 initiate). Source of truth: src/api/v2/abilities/handlers/entitlement-post.ts.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["status", "redirectUrl", "connectionRequestId"],
+  "properties": {
+    "status": {
+      "description": "The entitlement's resulting lifecycle status.",
+      "enum": ["pending_auth", "active"]
+    },
+    "redirectUrl": {
+      "description": "Provider consent URL to open; null for auth-less abilities.",
+      "type": ["string", "null"]
+    },
+    "connectionRequestId": {
+      "description": "Composio connection-request id to pass to complete; null for auth-less abilities. Not a bearer credential (ownership is re-verified server-side at complete).",
+      "type": ["string", "null"]
+    }
+  }
+}
