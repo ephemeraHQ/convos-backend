@@ -1,6 +1,6 @@
 # Abilities (Connections V2) — Entitlements, Account Binding, and Client Integration
 
-> **Status**: Draft PRD (for review with Mike / Borja / Andrew)
+> **Status**: Draft PRD — review round 1 (Nick / Mike, 2026-07-22) incorporated
 > **Created**: 2026-07-22 · **Owner**: Louis
 > **Parent doc**: Notion "Abilities (Connections V2)" (goals, core components, first-round abilities)
 > **Builds on**: `docs/plans/composio-exec-grant-mediation.md`, `docs/plans/connections-bundles-backend.md`, `docs/architecture/composio-security-1pager.md`
@@ -54,7 +54,12 @@ contract is real — a thin wrapper, not a phase.
 | **Bundle** | The user-facing permission unit inside an ability ("Events") | Existing bundles model, unchanged |
 | **Composio grant** | The external credential at the provider (Composio connected account / OAuth token) | Composio, keyed by `accountId` |
 | **Entitlement** | Account ↔ ability binding with a backend-owned lifecycle status | New `AbilityEntitlement` row |
-| **Conversation ability** | An entitlement extended into one conversation | New `ConversationAbility` row (reshaped `ConnectionGrant`) |
+| **Conversation ability** | An entitlement extended to an agent within one conversation | New `ConversationAbility` row (reshaped `ConnectionGrant`) |
+
+In review discussion Mike deliberately used generic language to keep naming honest: a
+"binding" is the account ↔ service credential + privileges (our entitlement), and the
+per-conversation "opt-in" allows an agent in a conversation to use privileges scoped to
+a particular binding (our conversation ability).
 
 ## Target model
 
@@ -67,25 +72,32 @@ GET /v2/abilities  ──────────────  catalog × caller
 Account ──< AbilityEntitlement >── ability_id, status, credential ref, expiry
         │         │ 1:N
         │         ▼
-        │   ConversationAbility ── conversation_id, bundle_ids
+        │   ConversationAbility ── conversation_id, agent_inbox_id, bundle_ids
         │
-        └── checkEntitlement(account, conversation, ability, tool?)
+        └── checkEntitlement(account, conversation, agent, ability, tool?)
                  │ consumed by exec today, MCP gateway later
                  ▼
         allowed actions | typed denial
 ```
 
-Three invariants:
+Four invariants:
 
 - **The backend is the only source of truth.** No grant data travels over XMTP or appData.
   Agents learn what they may do by asking the backend (exec today; gateway meta tools
   later), never by reading conversation metadata.
 - **Credentials live at account scope; conversations hold references.** Connecting a
   service happens once per account; extending it to a conversation is a cheap row.
-- **Extensions are conversation-level, not per-agent.** V1 keyed grants by
-  `granteeInboxId` and iOS fanned out one grant per agent inbox. V2 drops this: the
-  gateway/exec caller is authenticated by its own channel (worker secret today, bearer
-  handshake later), and the entitlement answers for `(account, conversation, ability)`.
+- **Extensions are scoped to an agent within a conversation.** The opt-in names the
+  agent by its immutable inbox/instance ID, not just the conversation: agents can join,
+  leave, or sit in many conversations, and there is no bearer proof that agent X is a
+  member of conversation Y — tying access to an immutable identity keeps soundness
+  provable. A second agent joining a conversation does not silently inherit the first
+  agent's access; it triggers a fresh opt-in.
+- **Validation happens at the MCP edge, never in plugins.** The gateway proves
+  (initiating user, agent, conversation participation) via whatever PKI fits the proof
+  (conversation keys, inbox keys), yielding a trusted (caller account ID, agent ID,
+  conversation ID) triple. The backend answers access levels for that trusted triple;
+  plugins receive already-validated identities and the resolved credentials only.
 
 ## Contracts
 
@@ -155,12 +167,15 @@ step already lists Composio).
 
 ### Extend — conversation abilities
 
-- `GET /v2/conversations/{conversationId}/abilities` → the conversation's view (what's
-  extended, by whom — for the conversation info screen).
+- `GET /v2/conversations/{conversationId}/abilities` → the conversation's view: one
+  entry per `(ability, agent)` opt-in, with who extended it — for the conversation info
+  screen.
 - `PUT /v2/conversations/{conversationId}/abilities/{abilityId}` body
-  `{ "bundleIds": ["calendar.events"] }` → extend/update. Requires an `active`
-  entitlement; 409 `needs_entitlement` otherwise.
-- `DELETE /v2/conversations/{conversationId}/abilities/{abilityId}` → withdraw.
+  `{ "agentInboxId": "...", "bundleIds": ["calendar.events"] }` → extend/update the
+  opt-in for that agent. Requires an `active` entitlement; 409 `needs_entitlement`
+  otherwise.
+- `DELETE /v2/conversations/{conversationId}/abilities/{abilityId}?agentInboxId=...` →
+  withdraw that agent's opt-in.
 
 `conversationId` remains an opaque XMTP string (no Conversation table), as with V1 grants.
 
@@ -169,11 +184,15 @@ step already lists Composio).
 Internal service function, not an endpoint at first:
 
 ```
-checkEntitlement(accountId, conversationId, abilityId, tool?)
+checkEntitlement(accountId, conversationId, agentInboxId, abilityId, tool?)
   → { allowed: true, actions: [...] }
-  | { allowed: false, code: "no_entitlement" | "not_extended_to_conversation"
+  | { allowed: false, code: "no_entitlement" | "not_extended_to_agent"
                           | "needs_reauth" | "unknown_ability" | "invalid_tool" }
 ```
+
+Callers pass an already-validated identity triple — the check trusts its inputs and
+answers access levels only. This matches today's exec pattern, where the worker stamps
+trusted `x-convos-conversation-id` / `x-convos-agent-inbox-id` headers.
 
 - **Day-one consumer**: `POST /v2/composio/exec` migrates onto it (same wire contract,
   reads the new tables).
@@ -189,13 +208,14 @@ checkEntitlement(accountId, conversationId, abilityId, tool?)
   `externalConnectionId?` (backend-only, never served), `abilityVersion`, `expiresAt?`,
   `revokedAt?`, timestamps. Unique `(accountId, abilityId)`.
 - **`ConversationAbility`**: `id`, `entitlementId` (FK, cascade), `conversationId`,
-  `bundleIds[]`, timestamps. Unique `(entitlementId, conversationId)`. Index
-  `(conversationId, abilityId-via-join)` for the check path.
+  `agentInboxId`, `bundleIds[]`, timestamps. Unique
+  `(entitlementId, conversationId, agentInboxId)`. Index
+  `(conversationId, agentInboxId)` for the check path.
 - `status` as String + CHECK constraint (house pattern; no Postgres enums).
 - **Backfill** (boot-time guarded routine + advisory lock, `migrate-user-ids.ts`
   pattern): distinct `(ownerAccountId, toolkit)` from live `ConnectionGrant` rows → one
-  `AbilityEntitlement`; each live grant → one `ConversationAbility`, collapsing the
-  per-`granteeInboxId` fan-out (union of `bundleIds` on collision).
+  `AbilityEntitlement`; each live grant maps 1:1 to a `ConversationAbility`
+  (`granteeInboxId` carries over as `agentInboxId`).
 
 ## iOS client
 
@@ -213,8 +233,9 @@ endpoint exists.
 2. **Authorize flow** — OAuth via the existing `OAuthSessionProvider` machinery;
    `pending_auth` and `needs_reauth` states.
 3. **Per-conversation toggles** — revamp `Convos/Conversation Detail/ConversationConnectionsSection.swift`:
-   one toggle per ability (no agent fan-out), bundle selection, "needs entitlement" state
-   that deep-links to the ability list.
+   one toggle per ability per agent (single-agent conversations render as one plain
+   toggle), bundle selection, "needs entitlement" state that deep-links to the ability
+   list. A newly added agent never inherits — it surfaces a fresh opt-in prompt.
 4. **Escalation prompt** — evolve `Convos/Capabilities/CapabilityApprovalSheetView.swift`
    for agent-initiated permission requests (driven later by the action queue).
 5. **Expiry/re-auth nudge** — top-of-home banner via the existing
@@ -248,6 +269,21 @@ agree with Mike: runtime reads backend first, then the client excision ships.
 4. Client excision (B2 above) once the runtime reads backend-only.
 5. Remove V1 endpoints + adapters when shipped-client traffic drains.
 
+## Determinations (2026-07-22 review, Nick / Mike)
+
+- **Extensions keep agent scoping.** The opt-in binds `(conversation, agent inbox ID)`,
+  not the conversation alone. Rationale: inbox/instance IDs are immutable; there is no
+  bearer proof of an agent's conversation membership; agents can be removed from or sit
+  in multiple conversations. Soundness stays provable.
+- **No silent inheritance.** A second agent added to a conversation does not inherit
+  the first agent's access; each agent gets its own opt-in.
+- **Validation layering.** The MCP edge validates (initiating user, agent, conversation
+  participation) via whatever PKI fits the proofs, yielding a trusted (caller account
+  ID, agent ID, conversation ID) triple. Each agent turn carries the original caller's
+  account and conversation. Plugins never validate; they receive validated identities
+  and resolved credentials only. The backend check answers access levels for the
+  trusted triple.
+
 ## Open questions
 
 1. **Icon delivery**: manifest URLs (S3/CDN, per Notion) vs V1's inline base64. URLs
@@ -257,12 +293,10 @@ agree with Mike: runtime reads backend first, then the client excision ships.
 3. **Bundles in the manifest**: confirmed as the user-facing permission unit? (Notion
    manifest lists `tools[]`/`actions[]` only; this doc keeps bundles — exec and both
    UIs already speak them.)
-4. **Per-agent scoping**: sign off that nothing needs `granteeInboxId` granularity after
-   the gateway authenticates callers itself.
-5. **Escalation transport**: how the "request user permission" meta tool reaches the
-   client (push? in-conversation message? poll) — Borja/Andrew dependency; UI is mocked
-   meanwhile.
-6. **`conversationIds` in `GET /v2/abilities`**: convenient for the nudge + ability list,
+4. **Escalation transport**: how the "request user permission" meta tool and the
+   new-agent opt-in prompt reach the client (push? in-conversation message? poll) —
+   Borja/Andrew dependency; UI is mocked meanwhile.
+5. **`conversationIds` in `GET /v2/abilities`**: convenient for the nudge + ability list,
    but grows with usage; cap or move behind the per-conversation endpoint?
 
 ## Success criteria
