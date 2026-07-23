@@ -133,20 +133,30 @@ describe("deletion fence: real router behavior", () => {
     // Simulate the committed deletion record the carve-out re-reads.
     const { hashAccountRef } =
       await import("@/accounts/deletion/identity-hash");
-    const { setRuntimeConfig } = await import("@/utils/runtimeConfig");
-    await setRuntimeConfig("account_deletion_enabled", "true");
-    await prisma.deletionRecord.create({
-      data: { operationId, accountRef: hashAccountRef(deletedAccountId) },
-    });
-    const res = await request(makeRealApp())
-      .delete("/api/v2/accounts/me")
-      .set("X-Convos-AuthToken", deletedAccountToken)
-      .send({ operationId: randomUUID() });
-    expect(
-      res.status,
-      `expected 200 replay, got ${res.status}: ${JSON.stringify(res.body)}`,
-    ).toBe(200);
-    expect((res.body as { operationId: string }).operationId).toBe(operationId);
+    const previousDeletionFlag = process.env.ACCOUNT_DELETION_ENABLED;
+    process.env.ACCOUNT_DELETION_ENABLED = "true";
+    try {
+      await prisma.deletionRecord.create({
+        data: { operationId, accountRef: hashAccountRef(deletedAccountId) },
+      });
+      const res = await request(makeRealApp())
+        .delete("/api/v2/accounts/me")
+        .set("X-Convos-AuthToken", deletedAccountToken)
+        .send({ operationId: randomUUID() });
+      expect(
+        res.status,
+        `expected 200 replay, got ${res.status}: ${JSON.stringify(res.body)}`,
+      ).toBe(200);
+      expect((res.body as { operationId: string }).operationId).toBe(
+        operationId,
+      );
+    } finally {
+      if (previousDeletionFlag === undefined) {
+        delete process.env.ACCOUNT_DELETION_ENABLED;
+      } else {
+        process.env.ACCOUNT_DELETION_ENABLED = previousDeletionFlag;
+      }
+    }
   });
 
   test("a live account's JWT still passes the fence (no false 401)", async () => {

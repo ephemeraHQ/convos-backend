@@ -592,9 +592,10 @@ open-question resolutions this implementation shipped with:
   and the credentials are missing, purge tasks retry and page ops.
 - **Purge SLA**: 24 hours, returned as `purgeWindowHours` and alerted on
   breach (`deletion.purge.sla_breach`).
-- **Ops kill switch**: RuntimeConfig `account_deletion_enabled` (default
-  "false") gates the endpoint without a redeploy. Ops enables it only after
-  the full rollout; the same switch remains the emergency kill switch.
+- **Ops kill switch**: env var `ACCOUNT_DELETION_ENABLED` (fail-closed,
+  default off) gates the endpoint; flips ship as an infra PR + task-definition
+  roll (dev true, prod false until launch). Ops enables it only after the
+  full rollout; the same switch remains the emergency kill switch.
 
 ## References
 

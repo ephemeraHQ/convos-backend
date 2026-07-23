@@ -5,8 +5,8 @@ import {
   findDeletionRecordForAccount,
   type DeletionOutcome,
 } from "@/accounts/deletion/service";
+import { loadAccountDeletionEnabled } from "@/config";
 import { accountIdSchema } from "@/utils/account-id";
-import { getRuntimeConfig } from "@/utils/runtimeConfig";
 
 const bodySchema = z.object({
   operationId: z.string().uuid(),
@@ -35,15 +35,16 @@ const serializeOutcome = (outcome: DeletionOutcome) => ({
  * mismatch).
  */
 export async function accountDeleteHandler(req: Request, res: Response) {
-  // Rollout barrier (RuntimeConfig, no redeploy needed). Deletion defaults
+  // Rollout barrier (ACCOUNT_DELETION_ENABLED env var). Deletion defaults
   // to DISABLED: a fresh replica must never delete accounts while older
   // replicas without the lineage/tombstone-aware verify/webhook code are
-  // still serving. Ops flips account_deletion_enabled to "true" only after
-  // migrations are complete and every replica runs this build; the same
-  // switch is the emergency kill switch afterwards.
-  const deletionEnabled =
-    (await getRuntimeConfig("account_deletion_enabled", "false")) === "true";
-  if (!deletionEnabled) {
+  // still serving. Ops flips the env var to "true" only after migrations
+  // are complete and every replica runs this build; the same switch is the
+  // emergency kill switch afterwards. Env is fixed at process start, so a
+  // flip requires an infra PR + task-definition roll (no 30s config-cache
+  // expiry) — accepted trade-off for a deploy-audited switch. Fail-closed:
+  // unset or garbage reads as off.
+  if (!loadAccountDeletionEnabled()) {
     req.log.warn({}, "account.delete.disabled");
     res
       .status(503)
