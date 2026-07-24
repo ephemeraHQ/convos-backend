@@ -38,6 +38,7 @@ import { composioRouter } from "./composio/composio.router";
 import { connectionsRouter } from "./connections/connections.router";
 import { actionsGetHandler } from "./connections/handlers/actions-get";
 import { servicesGetHandler } from "./connections/handlers/services-get";
+import { conversationsRouter } from "./conversations/conversations.router";
 import { creditsAdminRouter } from "./credits-admin/credits-admin.router";
 import { dailyRefillRouter } from "./credits/daily.router";
 import { devRouter } from "./dev/dev.router";
@@ -142,6 +143,9 @@ v2Router.use(
 // (cheap) and the provisioning endpoint (expensive) get separately tuned
 // limits. authMiddleware applies to the whole subtree.
 v2Router.use("/agents", authMiddleware, agentsRouter);
+// Agent participation is keyed by conversation, not by agent: one level governs
+// every agent in the room, so it hangs off the conversation, not /agents.
+v2Router.use("/conversations", authMiddleware, conversationsRouter);
 v2Router.use("/attachments", authMiddleware, attachmentsRouter);
 // The connections-picker catalog is JWT-only (NOT account-scoped): the catalog
 // is identical for every user, so requireAccount is deliberately not applied.
