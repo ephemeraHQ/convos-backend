@@ -1,5 +1,6 @@
 import { Router } from "express";
 import {
+  agentApiKeyAuth,
   authOrAgentApiKeyAuth,
   optionalAuthOrAgentApiKeyAuth,
 } from "@/middleware/agentAuth";
@@ -9,6 +10,7 @@ import { buildAttachmentPresignedHandler } from "./handlers/build-attachment-pre
 import { createHandler } from "./handlers/create";
 import { deleteHandler } from "./handlers/delete";
 import { detailHandler } from "./handlers/detail";
+import { featuredOrderHandler } from "./handlers/featured-order";
 import { generationsEphemeralPostHandler } from "./handlers/generations-ephemeral-post";
 import { generationsGetHandler } from "./handlers/generations-get";
 import { generationsPostHandler } from "./handlers/generations-post";
@@ -74,6 +76,21 @@ agentTemplatesRouter.get(
   "/counts",
   optionalAuthOrAgentApiKeyAuth,
   listCountsHandler,
+);
+
+// The featured gallery's order, written whole and in one transaction.
+//
+// Curation is not something a user does, so this isn't an endpoint a user
+// reaches: the agent key is required outright, and a signed-in caller is turned
+// away at the door rather than admitted and refused inside. The key IS the
+// identity here — there is no account to require.
+//
+// Mounted before /:id so the wildcard doesn't capture "featured-order" as a
+// template id.
+agentTemplatesRouter.put(
+  "/featured-order",
+  agentApiKeyAuth,
+  featuredOrderHandler,
 );
 
 agentTemplatesRouter.patch(

@@ -1,11 +1,15 @@
 import { Router } from "express";
 import { meGuard } from "@/api/v2/accounts/middleware/meGuard";
+import { accountLedgerGetHandler } from "./handlers/account-ledger-get";
 import { accountViewGetHandler } from "./handlers/account-view-get";
+import { accountsListGetHandler } from "./handlers/accounts-list-get";
 import { adjustPostHandler } from "./handlers/adjust-post";
 import { adminPageHandler } from "./handlers/admin-page";
 import { auditGetHandler } from "./handlers/audit-get";
+import { auditRecentGetHandler } from "./handlers/audit-recent-get";
 import { grantPostHandler } from "./handlers/grant-post";
 import { searchGetHandler } from "./handlers/search-get";
+import { whoamiGetHandler } from "./handlers/whoami-get";
 import { attachActorIdentity } from "./middleware/cf-identity";
 import { creditsAdminTokenAuth } from "./middleware/token-auth";
 
@@ -15,13 +19,35 @@ export const creditsAdminRouter = Router();
 creditsAdminRouter.get("/", adminPageHandler);
 
 // Reads — token gate only (no audit write).
+creditsAdminRouter.get(
+  "/whoami",
+  creditsAdminTokenAuth,
+  attachActorIdentity,
+  whoamiGetHandler,
+);
 creditsAdminRouter.get("/search", creditsAdminTokenAuth, searchGetHandler);
 creditsAdminRouter.get("/audit", creditsAdminTokenAuth, auditGetHandler);
+creditsAdminRouter.get(
+  "/audit/recent",
+  creditsAdminTokenAuth,
+  auditRecentGetHandler,
+);
+creditsAdminRouter.get(
+  "/accounts",
+  creditsAdminTokenAuth,
+  accountsListGetHandler,
+);
 creditsAdminRouter.get(
   "/accounts/:accountId",
   creditsAdminTokenAuth,
   meGuard,
   accountViewGetHandler,
+);
+creditsAdminRouter.get(
+  "/accounts/:accountId/ledger",
+  creditsAdminTokenAuth,
+  meGuard,
+  accountLedgerGetHandler,
 );
 
 // Audited mutations — token gate, then verified CF identity, then UUID guard.

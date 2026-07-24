@@ -16,8 +16,14 @@ export const searchGetHandler = async (
   }
   const { key, value } = parsed.data;
 
-  if (key === "accountId") {
-    if (!accountIdSchema.safeParse(value).success) {
+  // When key is omitted (single smart search box) infer the lane: a UUID is an
+  // accountId, anything else is treated as a SIWE wallet externalKey. UUID and
+  // 0x-wallet shapes never collide, so this is unambiguous.
+  const isAccountId = accountIdSchema.safeParse(value).success;
+  const lane = key ?? (isAccountId ? "accountId" : "wallet");
+
+  if (lane === "accountId") {
+    if (!isAccountId) {
       res.status(200).json({ accountId: null });
       return;
     }
@@ -29,6 +35,9 @@ export const searchGetHandler = async (
     return;
   }
 
+  // Wallet lane. externalKey is matched exactly (current behavior); do NOT add a
+  // blind .toLowerCase() — SIWE externalKey storage case is unverified and a
+  // lowercase would regress a checksummed row.
   const authMethod = await prisma.authMethod.findUnique({
     where: { type_externalKey: { type: "SIWE", externalKey: value } },
     select: { accountId: true },

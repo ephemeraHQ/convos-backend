@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { LedgerReason } from "@prisma/client";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { getBalance } from "@/payments";
+import { config } from "@/payments/credits/config";
 import { runDailyRefill } from "@/payments/daily-refill/service";
 import { ymdUtc } from "@/payments/daily-refill/utc";
 import { idempotencyKeySchema } from "@/payments/ledger/idempotency-key";
@@ -364,6 +365,32 @@ describe("runDailyRefill — idempotency", () => {
     );
     // Balance must remain at 40n — no double-credit.
     expect(await balanceOf(accountId)).toBe(40n);
+  });
+});
+
+describe("runDailyRefill — kill-switch (cap = 0)", () => {
+  // The refill can be disabled via PAYMENTS_FREE_TIER_DAILY_CAP_CREDITS=0
+  // (or unset). The route/service stay in place so the business can turn it
+  // back on; with cap 0 every eligible account has headroom = 0 − balance ≤ 0
+  // and the run is a clean no-op — no grants, no errors, no ledger rows.
+  test("cap 0 → eligible accounts get nothing, no ledger rows written", async () => {
+    const originalCap = config.freeTierDailyCapCredits;
+    config.freeTierDailyCapCredits = 0;
+    try {
+      const accountId = await seedAccount();
+      const summary = await runDailyRefill({ now: NOW });
+      expect(summary.skipped).toBe(false);
+      expect(summary.refilled).toEqual([]);
+      expect(summary.errors).toEqual([]);
+      expect(summary.noOp).toBeGreaterThanOrEqual(1);
+      expect(await balanceOf(accountId)).toBe(0n);
+      const rows = await prisma.creditLedger.count({
+        where: { accountId, grantKindId: "daily_refill" },
+      });
+      expect(rows).toBe(0);
+    } finally {
+      config.freeTierDailyCapCredits = originalCap;
+    }
   });
 });
 

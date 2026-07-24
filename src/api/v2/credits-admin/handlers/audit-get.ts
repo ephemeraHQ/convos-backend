@@ -1,5 +1,8 @@
 import type { Request, Response } from "express";
-import { listAdminAuditByAccount } from "../audit-repository";
+import {
+  decodeAuditCursor,
+  listAdminAuditPageByAccount,
+} from "../audit-repository";
 import { auditQuerySchema } from "../schemas/requests";
 
 export const auditGetHandler = async (
@@ -13,7 +16,16 @@ export const auditGetHandler = async (
       .json({ code: "invalid_request", details: parsed.error.errors });
     return;
   }
-  const rows = await listAdminAuditByAccount(parsed.data.accountId);
+  const { accountId, cursor: rawCursor } = parsed.data;
+  const cursor = rawCursor ? decodeAuditCursor(rawCursor) : null;
+  if (rawCursor && !cursor) {
+    res.status(400).json({ code: "invalid_cursor" });
+    return;
+  }
+  const { rows, nextCursor } = await listAdminAuditPageByAccount({
+    accountId,
+    cursor,
+  });
   res.status(200).json({
     audit: rows.map((r) => ({
       id: r.id,
@@ -24,5 +36,6 @@ export const auditGetHandler = async (
       idempotencyKey: r.idempotencyKey,
       createdAt: r.createdAt.toISOString(),
     })),
+    nextCursor,
   });
 };

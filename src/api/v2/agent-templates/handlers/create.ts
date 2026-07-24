@@ -114,6 +114,25 @@ export async function createHandler(req: Request, res: Response) {
   //     (users can't create rows owned by someone else).
   //   - Anonymous: no account → 403 below.
   const isApiKeyListener = res.locals.isApiKeyListener ?? false;
+
+  // Featuring is curation, and the gallery is the homepage's — not the template
+  // owner's. Anyone may create a template; only the dashboard may put one in
+  // front of everybody. Without this an ordinary signed-in user could mint a
+  // self-featured template in a single request and publish it into the gallery
+  // convos.org renders.
+  //
+  // Asking for `featured: false` is a no-op and passes: the runtime's builder
+  // sends it on every create, and a template that isn't featured is exactly what
+  // a create would produce anyway.
+  if (parsed.data.featured === true && !isApiKeyListener) {
+    req.log.warn(
+      { callerAccountId: res.locals.accountId, action: "create.featured" },
+      "Unauthorized agent-template curation attempt",
+    );
+    res.status(403).json({ error: "Not authorized to feature a template" });
+    return;
+  }
+
   let ownerAccountId: string | undefined;
   if (isApiKeyListener && parsed.data.ownerAccountId !== undefined) {
     const assertedAccountId = parsed.data.ownerAccountId;

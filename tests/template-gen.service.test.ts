@@ -919,6 +919,69 @@ describe("templateGen service — OpenRouter integration", () => {
   });
 
   // -----------------------------------------------------------------------
+  // Text attachments: an inline block fenced with its filename, so the model
+  // can tell an attached file from the user's directive
+  // -----------------------------------------------------------------------
+  test("text attachment becomes a fenced text block, not a file block", async () => {
+    const mod = await import("@/api/v2/agent-templates/services/templateGen");
+    generateTemplate = mod.generateTemplate;
+    setOpenRouterResponse(templateResponse());
+
+    await generateTemplate({
+      attachments: [
+        {
+          kind: "text",
+          filename: "support-faq.csv",
+          text: "question,answer\nrefunds?,30 days",
+        },
+      ],
+      text: "Answer support questions from this",
+    });
+
+    const userContent = getLastOpenRouterRequest().body.messages[1].content;
+    expect(Array.isArray(userContent)).toBe(true);
+    expect(userContent).toHaveLength(2);
+
+    // The lead directive counts a text file as a document, same as a PDF.
+    expect(userContent[0].type).toBe("text");
+    expect(userContent[0].text).toContain("document");
+    expect(userContent[0].text).toContain(
+      "User's intent: Answer support questions from this",
+    );
+
+    // The file rides as text, fenced by name — never a base64 file block.
+    expect(userContent[1].type).toBe("text");
+    expect(userContent[1].text).toBe(
+      "--- support-faq.csv ---\nquestion,answer\nrefunds?,30 days\n--- end support-faq.csv ---",
+    );
+    expect(JSON.stringify(userContent)).not.toContain("base64");
+  });
+
+  test("a text file mixed with an image keeps caller order and both block types", async () => {
+    const mod = await import("@/api/v2/agent-templates/services/templateGen");
+    generateTemplate = mod.generateTemplate;
+    setOpenRouterResponse(templateResponse());
+
+    await generateTemplate({
+      attachments: [
+        { kind: "text", filename: "notes.md", text: "# Notes" },
+        {
+          kind: "image",
+          mimeType: "image/png",
+          dataUri: "data:image/png;base64,iVBORw0KGgo=",
+        },
+      ],
+    });
+
+    const userContent = getLastOpenRouterRequest().body.messages[1].content;
+    expect(userContent[0].text).toContain("1 image");
+    expect(userContent[0].text).toContain("1 document");
+    expect(userContent[1].type).toBe("text");
+    expect(userContent[1].text).toContain("--- notes.md ---");
+    expect(userContent[2].type).toBe("image_url");
+  });
+
+  // -----------------------------------------------------------------------
   // Brevity rail asymmetry: appended on production-LLM path only
   // -----------------------------------------------------------------------
   test("brevity rail appended on production-LLM path", async () => {
@@ -1911,6 +1974,117 @@ describe("templateGen service — OpenRouter integration", () => {
     expect(looksLikeUrl("  https://example.com  ")).toBe(true);
     expect(looksLikeUrl("just some text")).toBe(false);
     expect(looksLikeUrl("Visit https://example.com for more")).toBe(false);
+  });
+
+  // -----------------------------------------------------------------------
+  // Link extraction: the link is the material, the prose around it is the
+  // instruction. Both survive into the prompt.
+  // -----------------------------------------------------------------------
+
+  test("extractFirstUrl finds a link anywhere in the text and splits off the prose", async () => {
+    const { extractFirstUrl } =
+      await import("@/api/v2/agent-templates/services/templateGen");
+
+    expect(extractFirstUrl("https://example.com")).toEqual({
+      url: "https://example.com",
+      residual: "",
+    });
+    expect(
+      extractFirstUrl("Make me an agent about https://example.com"),
+    ).toEqual({
+      url: "https://example.com",
+      residual: "Make me an agent about",
+    });
+    expect(extractFirstUrl("https://example.com check this out")).toEqual({
+      url: "https://example.com",
+      residual: "check this out",
+    });
+    // The link ends at whitespace — a trailing word is prose, not query string.
+    expect(extractFirstUrl("https://example.com/a?b=1 and more")).toEqual({
+      url: "https://example.com/a?b=1",
+      residual: "and more",
+    });
+    // Sentence punctuation that trails a link is not part of it.
+    expect(extractFirstUrl("Read https://example.com, it's great")).toEqual({
+      url: "https://example.com",
+      residual: "Read it's great",
+    });
+    // Several links: the first is the source material. The rest stay in the
+    // residual and reach the model as intent rather than being fetched.
+    expect(extractFirstUrl("compare https://a.com and https://b.com")).toEqual({
+      url: "https://a.com",
+      residual: "compare and https://b.com",
+    });
+
+    // A link wrapped in prose delimiters keeps them out of the URL. They stay
+    // behind in the residual, which only ever becomes an intent note — so the
+    // leftover brackets cost nothing and aren't worth a cleanup rule.
+    expect(extractFirstUrl("see <https://example.com> for more")).toEqual({
+      url: "https://example.com",
+      residual: "see <> for more",
+    });
+
+    expect(extractFirstUrl("just some text")).toBeNull();
+    expect(extractFirstUrl("https://[invalid-url")).toBeNull();
+  });
+
+  test("a link wrapped in an instruction is fetched, and the instruction rides the prompt", async () => {
+    const mod = await import("@/api/v2/agent-templates/services/templateGen");
+    generateTemplate = mod.generateTemplate;
+    mod.__setExaKeyOverrideForTests("test-exa-key");
+
+    fetchMockResponses.set("api.exa.ai", {
+      status: 200,
+      body: { results: [{ text: "Widgets Inc sells widgets." }] },
+    });
+    setOpenRouterResponse(templateResponse());
+
+    await generateTemplate({
+      text: "Make me an agent about https://example.com that answers support questions",
+    });
+
+    // The bare link is what gets fetched — not the whole sentence.
+    const exaReq = capturedRequests.find((r) => r.url.includes("api.exa.ai"));
+    expect(exaReq?.body.urls).toEqual(["https://example.com"]);
+
+    const userMsg = getLastOpenRouterRequest().body.messages.at(-1).content;
+    expect(userMsg).toContain("Widgets Inc sells widgets.");
+    expect(userMsg).toContain(
+      "User's intent: Make me an agent about that answers support questions",
+    );
+  });
+
+  test("a long paste that merely cites a link is the material — the link is not fetched", async () => {
+    const mod = await import("@/api/v2/agent-templates/services/templateGen");
+    generateTemplate = mod.generateTemplate;
+    mod.__setExaKeyOverrideForTests("test-exa-key");
+
+    const paste = `${"Our support playbook says to greet the customer warmly. ".repeat(
+      8,
+    )} See https://example.com for details.`;
+    expect(paste.length).toBeGreaterThan(300); // long enough for the classifier
+
+    setOpenRouterResponseQueue([
+      // classifier: raw material, not an agent definition
+      {
+        model: BUILDER_CLASSIFIER_MODEL,
+        choices: [
+          {
+            message: { content: JSON.stringify({ isPassthrough: false }) },
+          },
+        ],
+        usage: { prompt_tokens: 10, completion_tokens: 5 },
+      },
+      templateResponse(),
+    ]);
+
+    await generateTemplate({ text: paste });
+
+    expect(capturedRequests.some((r) => r.url.includes("api.exa.ai"))).toBe(
+      false,
+    );
+    const userMsg = getLastOpenRouterRequest().body.messages.at(-1).content;
+    expect(userMsg).toContain("Our support playbook");
   });
 
   // -----------------------------------------------------------------------

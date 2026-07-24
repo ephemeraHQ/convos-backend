@@ -115,18 +115,32 @@ const loadMinBalanceCredits = (): bigint => {
 
 // PAYMENTS_FREE_TIER_DAILY_CAP_CREDITS
 //   Daily top-up-to-cap amount applied by the /credits/daily cron to
-//   SIWE-verified non-subscriber accounts. Must be a positive integer.
+//   SIWE-verified non-subscriber accounts.
+//   OPTIONAL by design: unset/empty/"0" => 0 => daily refill DISABLED
+//   (kill-switch, mirrors PAYMENTS_SIGNUP_BONUS_CREDITS). The refill was
+//   deactivated as a business decision (~Jun 11 2026) by simply not running
+//   the cron, but the loader still REQUIRED a positive cap — so the OFF state
+//   was inexpressible in config and GET /v2/accounts/me/credits kept
+//   advertising a `nextRefreshAt` that never came. With 0/unset, the credits
+//   endpoint stops promising a refresh and `runDailyRefill` naturally no-ops
+//   (headroom = 0 − balance ≤ 0). Any positive value keeps the previous
+//   behavior identical. Do NOT convert back to a require* loader; "unset =
+//   off" is the intended contract.
 export const loadFreeTierDailyCapCredits = (): number => {
-  const big = requireBigInt(
-    "PAYMENTS_FREE_TIER_DAILY_CAP_CREDITS",
-    process.env.PAYMENTS_FREE_TIER_DAILY_CAP_CREDITS,
-  );
-  if (big <= 0n || big > BigInt(Number.MAX_SAFE_INTEGER)) {
+  const raw = process.env.PAYMENTS_FREE_TIER_DAILY_CAP_CREDITS;
+  if (raw === undefined || raw.trim() === "") {
+    return 0;
+  }
+  const trimmed = raw.trim();
+  if (
+    !/^\d+$/.test(trimmed) ||
+    BigInt(trimmed) > BigInt(Number.MAX_SAFE_INTEGER)
+  ) {
     throw new ValidationError(
-      `PAYMENTS_FREE_TIER_DAILY_CAP_CREDITS must be a positive safe integer, got: ${big}`,
+      `PAYMENTS_FREE_TIER_DAILY_CAP_CREDITS must be a non-negative safe integer, got: ${raw}`,
     );
   }
-  return Number(big);
+  return Number(trimmed);
 };
 
 // PAYMENTS_SIGNUP_BONUS_CREDITS

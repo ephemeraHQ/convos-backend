@@ -5,12 +5,35 @@ import { accountIdSchema } from "@/utils/account-id";
 export const MAX_ADMIN_GRANT_CREDITS = 100_000_000;
 
 export const searchQuerySchema = z.object({
-  key: z.enum(["accountId", "wallet"]),
+  key: z.enum(["accountId", "wallet"]).optional(),
   value: z.string().trim().min(1).max(256),
 });
 
 export const auditQuerySchema = z.object({
   accountId: accountIdSchema,
+  cursor: z.string().trim().min(1).max(512).optional(),
+});
+
+export const auditRecentQuerySchema = z.object({
+  cursor: z.string().trim().min(1).max(512).optional(),
+  action: z.enum(["all", "grant", "adjust"]).default("all"),
+});
+
+export const ledgerQuerySchema = z.object({
+  cursor: z.string().trim().min(1).max(512).optional(),
+  kind: z
+    .enum([
+      "subscription",
+      "sub_grant",
+      "sub_forfeit",
+      "signup_bonus",
+      "daily_refill",
+      "manual",
+    ])
+    .optional(),
+  reason: z.enum(["consume", "grant", "adjust"]).optional(),
+  from: z.coerce.date().optional(),
+  to: z.coerce.date().optional(),
 });
 
 export const grantBodySchema = z.object({
@@ -30,3 +53,55 @@ export const adjustBodySchema = z.object({
   reason: z.string().trim().min(1).max(256),
   idempotencyKey: idempotencyKeySchema,
 });
+
+export const MAX_ACCOUNTS_PAGE = 10_000;
+
+const balanceFilterCredits = z.coerce
+  .number()
+  .int()
+  .min(-MAX_ADMIN_GRANT_CREDITS)
+  .max(MAX_ADMIN_GRANT_CREDITS);
+
+const accountsPageLimit = {
+  page: z.coerce.number().int().min(0).max(MAX_ACCOUNTS_PAGE).default(0),
+  limit: z.coerce.number().int().min(1).max(100).default(50),
+};
+
+const sortDir = z.enum(["asc", "desc"]);
+
+export const accountsListQuerySchema = z.discriminatedUnion("mode", [
+  z.object({
+    mode: z.literal("balance"),
+    min: balanceFilterCredits.optional(),
+    max: balanceFilterCredits.optional(),
+    sort: z.enum(["asc", "desc"]).default("desc"),
+    sortBy: z.enum(["balance"]).default("balance"),
+    sortDir: sortDir.optional(),
+    ...accountsPageLimit,
+  }),
+  z.object({
+    mode: z.literal("broken"),
+    maxBalance: balanceFilterCredits.default(0),
+    sortBy: z.enum(["balance", "currentPeriodEnd", "tier"]).default("balance"),
+    sortDir: sortDir.default("asc"),
+    ...accountsPageLimit,
+  }),
+  z.object({
+    mode: z.literal("grantKind"),
+    kind: z
+      .string()
+      .trim()
+      .regex(/^[A-Za-z0-9_-]{1,64}$/),
+    sortBy: z.enum(["latestGrantAt", "balance"]).default("latestGrantAt"),
+    sortDir: sortDir.default("desc"),
+    ...accountsPageLimit,
+  }),
+  z.object({
+    mode: z.literal("activity"),
+    state: z.enum(["active", "dormant"]),
+    days: z.coerce.number().int().min(1).max(365).default(30),
+    sortBy: z.enum(["lastConsumeAt", "balance"]).default("lastConsumeAt"),
+    sortDir: sortDir.default("desc"),
+    ...accountsPageLimit,
+  }),
+]);

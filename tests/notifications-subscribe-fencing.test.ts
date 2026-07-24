@@ -168,8 +168,16 @@ describe("notification subscription deletion fence", () => {
     expect(
       await prisma.clientIdentifier.findUnique({ where: { id: clientId } }),
     ).toMatchObject({ accountId: jwtAccount.id, deviceId });
+    // Current-subscriber-wins adoption (persistSubscriptionIdentity
+    // semantics, run inside the fenced persist transaction): the
+    // authenticated subscribe re-owned the device, so the JWT account is
+    // now the device owner whose deletion the fence must compensate. The
+    // original registrant is no longer an owner of record.
+    expect(
+      await prisma.deviceRegistration.findUnique({ where: { deviceId } }),
+    ).toMatchObject({ accountId: jwtAccount.id });
     await expect(
-      deleteAccount({ accountId: deviceAccount.id, operationId }),
+      deleteAccount({ accountId: jwtAccount.id, operationId }),
     ).resolves.not.toBeNull();
     expect(
       await prisma.deletionTask.findFirst({

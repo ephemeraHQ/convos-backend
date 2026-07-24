@@ -1,3 +1,4 @@
+import type { Prisma } from "@prisma/client";
 import type { Request, Response } from "express";
 import { hexToUint8Array } from "uint8array-extras";
 import { z } from "zod";
@@ -16,6 +17,86 @@ import {
 import { verifyDeviceOwnership } from "@/utils/auth-guards";
 import { deviceIdSchema } from "@/utils/device-id";
 import { prisma } from "@/utils/prisma";
+
+/**
+ * The subset of a Prisma transaction client this module needs. Declared
+ * structurally so the persistence logic can be unit-tested against a tiny
+ * fake without standing up a real DB / `$transaction`.
+ */
+export interface SubscriptionIdentityTx {
+  clientIdentifier: {
+    upsert: (args: Prisma.ClientIdentifierUpsertArgs) => Promise<unknown>;
+  };
+  deviceRegistration: {
+    updateMany: (
+      args: Prisma.DeviceRegistrationUpdateManyArgs,
+    ) => Promise<{ count: number }>;
+  };
+}
+
+/**
+ * Persist the subscribing client's identity in ONE transaction: upsert the
+ * ClientIdentifier and (when authenticated) adopt the subscriber's account
+ * onto the device.
+ *
+ * Why also stamp DeviceRegistration.accountId here:
+ * The webhook delivery guard (isAccountIdMismatch) fails closed unless
+ * ClientIdentifier.accountId === DeviceRegistration.accountId (both non-null).
+ * `/v2/device/register` is AppCheck-only and never writes accountId, and the
+ * `/auth/token` backfill no-ops when the device row doesn't exist yet, so a
+ * device can sit with accountId = NULL indefinitely — silently dropping every
+ * push. A subscribe carrying a verified accountId is a fresh authenticated
+ * signal that *this* account currently owns the device, so we adopt it
+ * ("current-subscriber-wins"): set device.accountId when it is NULL OR differs
+ * from the subscriber.
+ *
+ * Safety: the guard fails closed, so a wrong/stale device.accountId can only
+ * ever DROP a push, never deliver to the wrong account — no cross-account leak.
+ * Shared-device thrash: two accounts actively subscribing on one physical
+ * device will flip device.accountId back and forth; each flip self-corrects on
+ * the next subscribe, and the loser merely misses pushes until it re-subscribes.
+ * Only an accountId-bearing JWT mutates anything — legacy/non-SIWE builds
+ * (accountId undefined) leave BOTH columns untouched so a backfilled or prior
+ * SIWE value is never clobbered.
+ *
+ * Exported for unit testing.
+ */
+export async function persistSubscriptionIdentity(args: {
+  tx: SubscriptionIdentityTx;
+  clientId: string;
+  deviceId: string;
+  accountId: string | undefined;
+}) {
+  const { tx, clientId, deviceId, accountId } = args;
+
+  await tx.clientIdentifier.upsert({
+    where: { id: clientId },
+    create: {
+      id: clientId,
+      deviceId,
+      ...(accountId !== undefined ? { accountId } : {}),
+    },
+    update: {
+      deviceId,
+      ...(accountId !== undefined ? { accountId } : {}),
+    },
+  });
+
+  // Adopt the authenticated subscriber's account onto the device when it is
+  // missing or stale. `updateMany` with the `not` predicate is a single
+  // conditional UPDATE (no read-modify-write race) that touches the row only
+  // when it actually needs changing. Skipped entirely for unauthenticated
+  // (legacy) subscribes.
+  if (accountId !== undefined) {
+    await tx.deviceRegistration.updateMany({
+      where: {
+        deviceId,
+        OR: [{ accountId: null }, { accountId: { not: accountId } }],
+      },
+      data: { accountId },
+    });
+  }
+}
 
 const subscribeRequestSchema = z.object({
   deviceId: deviceIdSchema,
@@ -419,9 +500,31 @@ const persistClientIdentifier = async (args: {
         },
         select: { accountId: true, deviceId: true, updatedAt: true },
       });
+      // Device adoption, mirroring persistSubscriptionIdentity (which the
+      // unit tests pin): an authenticated subscribe adopts the subscriber's
+      // account onto the device when it is missing or stale, healing
+      // NULL DeviceRegistration.accountId push drops. It runs inline here —
+      // not via the helper — because this fenced transaction already holds
+      // the device row FOR UPDATE and the ClientIdentifier write above must
+      // carry the fence's monotonic generation, which the helper's plain
+      // upsert does not.
+      if (args.jwtAccountId !== undefined) {
+        await tx.deviceRegistration.updateMany({
+          where: {
+            deviceId: args.deviceId,
+            OR: [
+              { accountId: null },
+              { accountId: { not: args.jwtAccountId } },
+            ],
+          },
+          data: { accountId: args.jwtAccountId },
+        });
+      }
       return {
         ...identifier,
-        deviceAccountId: device.accountId,
+        // Post-adoption value: the generation snapshot must match what the
+        // fence re-reads from the database after this transaction commits.
+        deviceAccountId: args.jwtAccountId ?? device.accountId,
         pushToken: device.pushToken,
         pushTokenType: device.pushTokenType,
       };

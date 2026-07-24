@@ -4,7 +4,7 @@ import {
   type Prisma,
 } from "@prisma/client";
 import { applyDeltaWithTx, lockUserCreditsBalance } from "@/payments/ledger";
-import { subGrantKey, sumConsumesSince } from "@/subscriptions/grants";
+import { subGrantKey, sumConsumesBetween } from "@/subscriptions/grants";
 import type { LineageLockContext } from "@/subscriptions/lineage";
 
 type TxClient = Prisma.TransactionClient;
@@ -200,7 +200,7 @@ const computeMoveAmount = async (
     custody.ownerAccountId,
   );
   const consumed = BigInt(
-    await sumConsumesSince(
+    await sumConsumesBetween(
       tx,
       custody.ownerAccountId,
       custody.custodyStartedAt,

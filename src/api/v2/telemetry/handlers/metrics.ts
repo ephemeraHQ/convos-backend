@@ -69,7 +69,24 @@ export async function postMetrics(req: Request, res: Response) {
 
   // Only an accepted batch keeps the claim; any other outcome releases it so
   // the client's retry with the same Idempotency-Key isn't dropped as a dup.
+  //
+  // The release has to land BEFORE the response goes out. A client that retries
+  // the instant it sees the error would otherwise race the delete and have its
+  // retry dropped as a duplicate — the precise outcome this claim/release pair
+  // exists to prevent. Releasing is idempotent, so the `finally` can still cover
+  // an unexpected throw without double-deleting.
   let accepted = false;
+  let released = false;
+  // Only a delete that actually landed marks the claim released. Latching the
+  // flag before the await would let a failed explicit release swallow the
+  // `finally`'s retry, stranding the claim until the TTL sweep — the same
+  // dropped-retry outcome this is here to avoid.
+  const releaseClaim = async () => {
+    if (released) return;
+    await releaseBatch(batchId);
+    released = true;
+  };
+
   try {
     const receivedAtMs = Date.now();
     let prepared;
@@ -83,6 +100,7 @@ export async function postMetrics(req: Request, res: Response) {
     } catch (error) {
       if (error instanceof ValidationError) {
         countTelemetryBatch(client, "rejected");
+        await releaseClaim();
         res.status(400).json({ error: error.message });
         return;
       }
@@ -118,6 +136,7 @@ export async function postMetrics(req: Request, res: Response) {
       const ok = await forwardMetrics(prepared.body);
       if (!ok) {
         countTelemetryBatch(client, "forward_failed");
+        await releaseClaim();
         res.status(502).json({ error: "Telemetry forwarding failed" });
         return;
       }
@@ -127,8 +146,9 @@ export async function postMetrics(req: Request, res: Response) {
     countTelemetryBatch(client, "accepted");
     res.status(202).json({ status: "accepted" });
   } finally {
+    // Covers an unexpected throw, where the error middleware answers after this.
     if (!accepted) {
-      await releaseBatch(batchId);
+      await releaseClaim();
     }
   }
 }

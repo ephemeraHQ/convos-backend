@@ -211,25 +211,46 @@ export const __drainDeletionTasksWithoutLeaseForTests =
  * connections. The per-task pending-to-processing claim remains authoritative
  * if this lease times out. A lost worker's stale claim is reclaimed later;
  * external purge operations must therefore remain idempotent.
+ *
+ * Because the tx holds nothing but the advisory lock, a lease timeout on
+ * COMMIT after the drain finished must not discard the drain's counts: the
+ * per-task writes already committed on the pooled client. That edge is
+ * logged and the counts are returned; only a failure BEFORE the drain
+ * completed (lock acquisition, mid-batch abort) propagates as a genuine
+ * drain failure.
  */
 export const drainDeletionTasks = async (): Promise<DrainCounts> => {
   let counts: DrainCounts = { done: 0, retried: 0, failed: 0 };
-  await prisma.$transaction(
-    async (tx) => {
-      const lockRows = await tx.$queryRaw<Array<{ locked: boolean }>>`
-        SELECT pg_try_advisory_xact_lock(
-          ${OUTBOX_ADVISORY_LOCK_CLASS_ID}::int,
-          ${OUTBOX_ADVISORY_LOCK_OBJECT_ID}::int
-        ) AS locked
-      `;
-      if (!lockRows[0]?.locked) {
-        logger.info("deletion.outbox.lease_held_elsewhere");
-        return;
-      }
-      counts = await drainDeletionTasksUnderLease();
-    },
-    { timeout: OUTBOX_LEASE_TIMEOUT_MS, maxWait: 5_000 },
-  );
+  // Explicitly widened: assigned inside the transaction closure, which
+  // TS's flow analysis cannot see from the catch block.
+  let drainCompleted: boolean = false;
+  try {
+    await prisma.$transaction(
+      async (tx) => {
+        const lockRows = await tx.$queryRaw<Array<{ locked: boolean }>>`
+          SELECT pg_try_advisory_xact_lock(
+            ${OUTBOX_ADVISORY_LOCK_CLASS_ID}::int,
+            ${OUTBOX_ADVISORY_LOCK_OBJECT_ID}::int
+          ) AS locked
+        `;
+        if (!lockRows[0]?.locked) {
+          logger.info("deletion.outbox.lease_held_elsewhere");
+          drainCompleted = true;
+          return;
+        }
+        counts = await drainDeletionTasksUnderLease();
+        drainCompleted = true;
+      },
+      { timeout: OUTBOX_LEASE_TIMEOUT_MS, maxWait: 5_000 },
+    );
+  } catch (err) {
+    if (!drainCompleted) throw err;
+    // The drain ran to completion and its work is durable on the pooled
+    // client; only the advisory-lock transaction's close failed (e.g. the
+    // lease timed out under a long batch). Surface the counts instead of a
+    // generic drain_failed that would hide completed work.
+    logger.warn({ err, ...counts }, "deletion.outbox.lease_commit_failed");
+  }
   return counts;
 };
 
