@@ -689,8 +689,24 @@ first end-to-end device deletions.
   in depth: the lineage tombstone blocks silent rebinding at verify AND
   the LineagePeriodGrant registry independently suppresses re-funding an
   already-funded period.
-- **Escrow forfeit.** Unclaimed escrow forfeits at the 30-day tombstone
-  expiry; the expiry sweep purges the rows.
+- **Two retention clocks (no 30-day escrow forfeit).** Only deletion-scoped
+  rows expire on the 30-day audit clock: the DeletionRecord and its
+  DeletionTask outbox (`expireDeletionRecords`,
+  `src/accounts/deletion/outbox.ts`); the identity barrier is permanent.
+  Subscription-scoped rows — the tombstoned SubscriptionLineage, the
+  LineagePeriodGrant funding registry, and LineagePeriodCustody escrow —
+  are on no sweep at all and survive record expiry, so the anti-abuse
+  invariant above outlives the deletion record: a re-verify after 30+ days
+  still hits the tombstone 409, and the registry still suppresses
+  re-funding. Unclaimed escrow is not forfeited on a timer; escrow of
+  already-ended periods is exhausted lazily when a claim settles the
+  lineage.
+- **Claim-window bound (open question, Borja).** As built, a tombstone
+  claim has no expiry in code; the 30-day constants are the transfer
+  cooldown and the undo deadline, and the dedup lifetime above is
+  independent of any claim window. Whether to bound claims (30 days vs
+  until the paid period's end) is a product choice, deliberately not
+  decided in code yet.
 - **Deferred: non-subscription remainder escrow.** The two-bucket design
   (subscription custody vs deletion escrow, with separate refund-clawback
   semantics) is deferred. The decision will be data-driven via the new
