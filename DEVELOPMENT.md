@@ -132,8 +132,10 @@ shared assistant key), so agent features route app -> here -> assistants worker.
 To exercise that whole chain locally:
 
 1. `./dev/up` for Postgres, then `pnpm exec prisma migrate deploy`.
-2. Point `ASSISTANT_API_URL` at the local worker (`http://localhost:8787`, the
-   default here) and set `ASSISTANT_API_KEY` to that worker's `CONVOS_API_KEY`.
+2. Start the assistants worker and point `ASSISTANT_API_URL` at it
+   (`http://localhost:8787`, the default here); set `ASSISTANT_API_KEY` to that
+   worker's `CONVOS_API_KEY`. The worker lives in the `convos-assistants` repo
+   (`pnpm dev` in `workers/assistant/`) — nothing here starts it for you.
 3. Expose this backend over HTTPS — `ngrok http 4000`. The app will not talk to
    plain HTTP, and a deployed backend cannot reach a worker on your laptop, so
    the tunnel has to front the local backend rather than the other way round.
@@ -163,6 +165,9 @@ tables directly — see `src/payments/AGENTS.md`):
 
 ```ts
 import { grant } from "@/payments";
+
+// Your account id — copy it from the app (Settings) or query the local DB.
+const accountId = "<your-account-id>";
 
 await grant({
   accountId,
