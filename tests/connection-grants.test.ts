@@ -9,8 +9,12 @@ import {
   test,
   vi,
 } from "vitest";
+import { __setEntitlementReadReadinessForTests } from "@/api/v2/abilities/read-readiness";
 import { connectionsRouter } from "@/api/v2/connections/connections.router";
-import { upsertConversationAbilityExtension } from "@/api/v2/connections/v1-grant-adapter";
+import {
+  issueConnectionGrant,
+  upsertConversationAbilityExtension,
+} from "@/api/v2/connections/v1-grant-adapter";
 import { authMiddleware, requireAccount } from "@/middleware/auth";
 import { jsonMiddleware } from "@/middleware/json";
 import { pinoMiddleware } from "@/middleware/pino";
@@ -71,6 +75,10 @@ const GRANT_BODY = {
 };
 
 beforeAll(async () => {
+  // Pin the list onto the entitlement tables: the real gate reads the shared
+  // database's migration ledgers, whose state this suite must not depend on.
+  // The boot-window legacy fallback has its own test below.
+  __setEntitlementReadReadinessForTests(true);
   await new Promise<void>((resolve) => {
     server = app.listen(4015, () => {
       resolve();
@@ -79,6 +87,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
+  __setEntitlementReadReadinessForTests(null);
   await new Promise<void>((resolve) => {
     server.close(() => {
       resolve();
@@ -179,6 +188,94 @@ describe("Connection grants API", () => {
     expect(grants).toHaveLength(1);
     expect(grants[0]).not.toHaveProperty("actions");
     expect(grants[0].bundleIds).toEqual(["calendar.events"]);
+  });
+
+  test("boot window (ledgers unconfirmed): GET lists from the legacy rows, not the incomplete tables", async () => {
+    const mine = await makeAccount();
+    // A grant only the legacy store carries — exactly what an old replica
+    // wrote before the backfill reached it.
+    const legacy = await prisma.connectionGrant.create({
+      data: {
+        ownerAccountId: mine,
+        ownerInboxId: "owner-inbox",
+        granteeInboxId: "agent-inbox",
+        conversationId: "conv-boot-window",
+        toolkit: "googlecalendar",
+        bundleIds: ["calendar.events"],
+      },
+    });
+    // A revoked row and a V2-mirror row without an extender inbox id stay
+    // invisible, matching both the V1 contract and the ready-path rules.
+    await prisma.connectionGrant.create({
+      data: {
+        ownerAccountId: mine,
+        ownerInboxId: "owner-inbox",
+        granteeInboxId: "agent-inbox",
+        conversationId: "conv-boot-revoked",
+        toolkit: "googlecalendar",
+        revokedAt: new Date(),
+      },
+    });
+    await prisma.connectionGrant.create({
+      data: {
+        ownerAccountId: mine,
+        ownerInboxId: "",
+        granteeInboxId: "agent-inbox",
+        conversationId: "conv-boot-mirror",
+        toolkit: "googlecalendar",
+        bundleIds: ["calendar.events"],
+      },
+    });
+
+    __setEntitlementReadReadinessForTests(false);
+    try {
+      const res = await fetch(`${baseURL}/api/v2/connections/grants`, {
+        headers: { "X-Convos-AuthToken": await token(mine) },
+      });
+      expect(res.status).toBe(200);
+      const { grants } = await asJson<{
+        grants: Array<Record<string, unknown>>;
+      }>(res);
+      expect(grants).toHaveLength(1);
+      expect(grants[0]).toMatchObject({
+        id: legacy.id,
+        ownerInboxId: "owner-inbox",
+        granteeInboxId: "agent-inbox",
+        conversationId: "conv-boot-window",
+        toolkit: "googlecalendar",
+        bundleIds: ["calendar.events"],
+      });
+      expect(grants[0]).not.toHaveProperty("connectionId");
+      expect(grants[0]).not.toHaveProperty("actions");
+    } finally {
+      __setEntitlementReadReadinessForTests(true);
+    }
+  });
+
+  test("re-issuing with a different toolkit casing updates the same grant (no second semantic row)", async () => {
+    const accountId = await makeAccount();
+    const first = await issueConnectionGrant({
+      accountId,
+      ownerInboxId: "owner-inbox",
+      granteeInboxId: "agent-inbox",
+      conversationId: "conv-case-reissue",
+      toolkit: "GoogleCalendar",
+      actions: ["GOOGLECALENDAR_EVENTS_LIST"],
+    });
+    const second = await issueConnectionGrant({
+      accountId,
+      ownerInboxId: "owner-inbox",
+      granteeInboxId: "agent-inbox",
+      conversationId: "conv-case-reissue",
+      toolkit: "googlecalendar",
+      bundleIds: ["calendar.events"],
+    });
+    expect(second.id).toBe(first.id);
+    const rows = await prisma.connectionGrant.findMany({
+      where: { ownerAccountId: accountId },
+    });
+    expect(rows).toHaveLength(1);
+    expect(rows[0].bundleIds).toEqual(["calendar.events"]);
   });
 
   test("POST persists catalog-known bundleIds (incl. DEPRECATED ones); unknown ones are 400 unknown_bundle", async () => {

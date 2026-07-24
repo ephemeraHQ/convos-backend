@@ -8,6 +8,7 @@ import {
   __setComposioServiceUnconfiguredForTests,
   ComposioService,
 } from "@/api/v2/connections/composio.service";
+import { noteV1ConnectionCompleted } from "@/api/v2/connections/v1-connection-adapter";
 import { issueConnectionGrant } from "@/api/v2/connections/v1-grant-adapter";
 import { authMiddleware } from "@/middleware/auth";
 import { jsonMiddleware } from "@/middleware/json";
@@ -29,7 +30,12 @@ function makeApp() {
   return app;
 }
 
-type StubConnection = { id: string; userId: string; slug: string };
+type StubConnection = {
+  id: string;
+  userId: string;
+  slug: string;
+  status?: string;
+};
 
 // Lifecycle endpoints touch authConfigs.list (bind), connectedAccounts.link
 // (bind), connectedAccounts.list (complete ownership + revoke inventory) and
@@ -77,7 +83,7 @@ function installComposioStub(
           .filter((c) => wanted.includes(c.userId))
           .map((c) => ({
             id: c.id,
-            status: "ACTIVE",
+            status: c.status ?? "ACTIVE",
             toolkit: { slug: c.slug },
           }));
         return Promise.resolve({ items, totalPages: 1, nextCursor: null });
@@ -283,6 +289,160 @@ describe("POST /v2/abilities/:abilityId/entitlement/complete", () => {
       .send({ connectionRequestId: "creq_1" });
     expect(res.status).toBe(409);
     expect(res.body).toEqual({ code: "ability_mismatch" });
+  });
+
+  test("409 auth_incomplete for an owned but not-yet-ACTIVE connection — the entitlement stays pending_auth", async () => {
+    // A complete fired right after initiate: the connection is owned but
+    // OAuth has not finished. Persisting active here would let the catalog
+    // and conversation PUT treat an unusable credential as connected.
+    const accountId = await makeAccount();
+    await prisma.abilityEntitlement.create({
+      data: { accountId, abilityId: "googlecalendar", status: "pending_auth" },
+    });
+    for (const composioStatus of ["INITIALIZING", "INITIATED"]) {
+      installComposioStub({
+        connections: [
+          {
+            id: "creq_1",
+            userId: accountId,
+            slug: "googlecalendar",
+            status: composioStatus,
+          },
+        ],
+      });
+      const res = await request(makeApp())
+        .post("/abilities/googlecalendar/entitlement/complete")
+        .set("X-Convos-AuthToken", await token(accountId))
+        .send({ connectionRequestId: "creq_1" });
+      expect(res.status).toBe(409);
+      expect(res.body).toEqual({
+        code: "auth_incomplete",
+        status: "pending_auth",
+      });
+      const row = await prisma.abilityEntitlement.findUniqueOrThrow({
+        where: {
+          accountId_abilityId: { accountId, abilityId: "googlecalendar" },
+        },
+      });
+      expect(row.status).toBe("pending_auth");
+      expect(row.externalConnectionId).toBeNull();
+    }
+
+    // The retry after OAuth really finishes activates as usual.
+    installComposioStub({
+      connections: [
+        { id: "creq_1", userId: accountId, slug: "googlecalendar" },
+      ],
+    });
+    const done = await request(makeApp())
+      .post("/abilities/googlecalendar/entitlement/complete")
+      .set("X-Convos-AuthToken", await token(accountId))
+      .send({ connectionRequestId: "creq_1" });
+    expect(done.status).toBe(200);
+    expect(done.body).toEqual({ status: "active" });
+  });
+
+  test("a FAILED connection maps to expired in the auth_incomplete answer and never activates", async () => {
+    const accountId = await makeAccount();
+    installComposioStub({
+      connections: [
+        {
+          id: "creq_1",
+          userId: accountId,
+          slug: "googlecalendar",
+          status: "FAILED",
+        },
+      ],
+    });
+    const res = await request(makeApp())
+      .post("/abilities/googlecalendar/entitlement/complete")
+      .set("X-Convos-AuthToken", await token(accountId))
+      .send({ connectionRequestId: "creq_1" });
+    expect(res.status).toBe(409);
+    expect(res.body).toEqual({ code: "auth_incomplete", status: "expired" });
+    const row = await prisma.abilityEntitlement.findUnique({
+      where: {
+        accountId_abilityId: { accountId, abilityId: "googlecalendar" },
+      },
+    });
+    expect(row).toBeNull();
+  });
+});
+
+describe("noteV1ConnectionCompleted (V1 mirror)", () => {
+  test("derives the mirrored status from the connection — non-active never writes active", async () => {
+    const accountId = await makeAccount();
+    // Still in-flight: the mirror records pending_auth, no credential ref.
+    await noteV1ConnectionCompleted({
+      accountId,
+      connectionId: "conn_pending",
+      toolkitSlug: "googlecalendar",
+      connectionStatus: "INITIATED",
+    });
+    let row = await prisma.abilityEntitlement.findUniqueOrThrow({
+      where: {
+        accountId_abilityId: { accountId, abilityId: "googlecalendar" },
+      },
+    });
+    expect(row.status).toBe("pending_auth");
+    expect(row.externalConnectionId).toBeNull();
+
+    // Verified ACTIVE: activates and records the credential.
+    await noteV1ConnectionCompleted({
+      accountId,
+      connectionId: "conn_live",
+      toolkitSlug: "googlecalendar",
+      connectionStatus: "ACTIVE",
+    });
+    row = await prisma.abilityEntitlement.findUniqueOrThrow({
+      where: {
+        accountId_abilityId: { accountId, abilityId: "googlecalendar" },
+      },
+    });
+    expect(row.status).toBe("active");
+    expect(row.externalConnectionId).toBe("conn_live");
+
+    // A late non-active complete neither downgrades the active entitlement
+    // (its credential still works) nor clears the ref.
+    await noteV1ConnectionCompleted({
+      accountId,
+      connectionId: "conn_pending",
+      toolkitSlug: "googlecalendar",
+      connectionStatus: "INITIALIZING",
+    });
+    row = await prisma.abilityEntitlement.findUniqueOrThrow({
+      where: {
+        accountId_abilityId: { accountId, abilityId: "googlecalendar" },
+      },
+    });
+    expect(row.status).toBe("active");
+    expect(row.externalConnectionId).toBe("conn_live");
+  });
+
+  test("a non-active complete never resurrects a revocation tombstone", async () => {
+    const accountId = await makeAccount();
+    const revokedAt = new Date();
+    await prisma.abilityEntitlement.create({
+      data: {
+        accountId,
+        abilityId: "googlecalendar",
+        status: "revoked",
+        revokedAt,
+      },
+    });
+    await noteV1ConnectionCompleted({
+      accountId,
+      connectionId: "conn_pending",
+      toolkitSlug: "googlecalendar",
+      connectionStatus: "INITIATED",
+    });
+    const row = await prisma.abilityEntitlement.findUniqueOrThrow({
+      where: {
+        accountId_abilityId: { accountId, abilityId: "googlecalendar" },
+      },
+    });
+    expect(row.status).toBe("revoked");
+    expect(row.revokedAt).toEqual(revokedAt);
   });
 });
 

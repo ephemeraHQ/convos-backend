@@ -22,6 +22,7 @@ import {
 import {
   issueConnectionGrant,
   revokeConnectionGrantsByNaturalKey,
+  upsertConversationAbilityExtension,
 } from "@/api/v2/connections/v1-grant-adapter";
 import {
   __setComposioExecApiKeyOverrideForTests,
@@ -1080,6 +1081,74 @@ describe("POST /v2/composio/exec — new tables are authoritative (DB)", () => {
 
     const res = await exec(VALID_BODY, { headers: workerHeaders() });
     expect(res.status).toBe(200);
+  });
+
+  test("a narrowing V2 PUT supersedes inherited legacy actions in BOTH stores (consent narrowing)", async () => {
+    const ownerAccountId = await makeAccount();
+    // A legacy V1 grant carrying an explicit write slug; the adapter mirrors
+    // it into the extension's `actions` (as the backfill does).
+    await seedGrant({
+      ownerAccountId,
+      ownerInboxId: "owner-inbox",
+      granteeInboxId: AGENT_INBOX,
+      conversationId: CONVERSATION,
+      toolkit: "googlecalendar",
+      actions: ["GOOGLECALENDAR_DELETE_EVENT", "GOOGLECALENDAR_EVENTS_LIST"],
+    });
+    const entitlement = await prisma.abilityEntitlement.findUniqueOrThrow({
+      where: {
+        accountId_abilityId: {
+          accountId: ownerAccountId,
+          abilityId: "googlecalendar",
+        },
+      },
+    });
+    // The user narrows consent to the read-only bundle via V2 PUT.
+    await upsertConversationAbilityExtension({
+      accountId: ownerAccountId,
+      entitlementId: entitlement.id,
+      abilityId: "googlecalendar",
+      conversationId: CONVERSATION,
+      agentInboxId: AGENT_INBOX,
+      bundleIds: ["calendar.events.read"],
+      extendedByInboxId: "owner-inbox",
+    });
+    installComposioStub({
+      connections: [
+        { id: "conn_owned", userId: ownerAccountId, slug: "googlecalendar" },
+      ],
+    });
+
+    // The write slug the legacy grant carried must NOT survive the
+    // narrowing: the check unions actions with bundle-resolved scope, so a
+    // stale action would resurrect the broader consent.
+    const denied = await exec(
+      { ...VALID_BODY, action: "GOOGLECALENDAR_DELETE_EVENT" },
+      { headers: workerHeaders() },
+    );
+    expect(denied.status).toBe(403);
+    expect((await asJson<{ code: string }>(denied)).code).toBe("no_grant");
+
+    // The narrowed bundle still authorizes its read.
+    const allowed = await exec(VALID_BODY, { headers: workerHeaders() });
+    expect(allowed.status).toBe(200);
+
+    // The legacy mirror was narrowed too — an old replica's exec (and the
+    // pre-readiness fallback matcher) must not authorize the write either.
+    const legacyRows = await prisma.connectionGrant.findMany({
+      where: { ownerAccountId },
+    });
+    expect(legacyRows).toHaveLength(1);
+    expect(legacyRows[0].actions).toEqual([]);
+    __setEntitlementReadReadinessForTests(false);
+    const deniedLegacy = await exec(
+      { ...VALID_BODY, action: "GOOGLECALENDAR_DELETE_EVENT" },
+      { headers: workerHeaders() },
+    );
+    expect(deniedLegacy.status).toBe(403);
+    expect((await asJson<{ code: string }>(deniedLegacy)).code).toBe(
+      "no_grant",
+    );
   });
 
   test("mixed-case toolkit grants converge and stay revocable (normalization regression)", async () => {
