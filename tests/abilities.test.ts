@@ -15,6 +15,7 @@ import {
   CATALOG_VERSION,
   getCatalogVersion,
 } from "@/api/v2/abilities/manifests.config";
+import { __setEntitlementReadReadinessForTests } from "@/api/v2/abilities/read-readiness";
 import { getServiceConfig } from "@/api/v2/connections/bundles.config";
 import {
   __resetComposioServiceForTests,
@@ -97,11 +98,16 @@ function seedGrant(overrides: {
 
 beforeAll(async () => {
   await validateJWTKeys();
+  // Pin the catalog onto the entitlement tables: the real gate reads the
+  // shared database's migration ledgers, whose state this suite must not
+  // depend on. The boot-window fallback has its own test below.
+  __setEntitlementReadReadinessForTests(true);
   const account = await prisma.account.create({ data: {} });
   accountId = account.id;
 });
 
 afterAll(async () => {
+  __setEntitlementReadReadinessForTests(null);
   __resetComposioServiceForTests(null);
   await prisma.connectionGrant.deleteMany({
     where: { ownerAccountId: accountId },
@@ -393,6 +399,33 @@ describe("GET /v2/abilities", () => {
     const res = await getAbilities(await accountToken());
     expect(res.status).toBe(200);
     const gcal = (res.body as AbilitiesResponse).abilities.find(
+      (a) => a.id === "googlecalendar",
+    );
+    expect(gcal!.entitlement).toEqual({ status: "active", extensionCount: 0 });
+  });
+
+  test("boot window (ledgers unconfirmed): entitlementsUnavailable, never an authoritative null", async () => {
+    // The row exists, but while the tables are still converging the catalog
+    // must not serve authoritative state: an account the backfill has not
+    // reached would read as "not connected".
+    await seedEntitlement("active");
+    __setEntitlementReadReadinessForTests(false);
+    try {
+      const res = await getAbilities(await accountToken());
+      expect(res.status).toBe(200);
+      const body = res.body as AbilitiesResponse;
+      expect(body.entitlementsUnavailable).toBe(true);
+      expect(body.abilities.length).toBeGreaterThan(0);
+      for (const ability of body.abilities) {
+        expect("entitlement" in ability).toBe(false);
+      }
+    } finally {
+      __setEntitlementReadReadinessForTests(true);
+    }
+
+    // The same account is authoritative again once the ledgers confirm.
+    const after = await getAbilities(await accountToken());
+    const gcal = (after.body as AbilitiesResponse).abilities.find(
       (a) => a.id === "googlecalendar",
     );
     expect(gcal!.entitlement).toEqual({ status: "active", extensionCount: 0 });

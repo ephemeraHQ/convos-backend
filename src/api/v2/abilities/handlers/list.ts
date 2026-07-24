@@ -6,6 +6,7 @@ import {
   getPublicAbilities,
   type PublicAbility,
 } from "@/api/v2/abilities/manifests.config";
+import { isEntitlementReadModelReady } from "@/api/v2/abilities/read-readiness";
 import { prisma } from "@/utils/prisma";
 
 // GET /v2/abilities — the ability catalog merged with the caller's
@@ -26,10 +27,13 @@ import { prisma } from "@/utils/prisma";
 //   - `entitlement` object -> entitled; `status` says whether it is usable
 //   - `entitlement: null`  -> not entitled (or no account on the token)
 //   - top-level `entitlementsUnavailable: true` -> the caller has an account
-//     but entitlement state could not be read (store failure); abilities then
-//     carry NO `entitlement` key and clients keep their last-known state
-//     instead of rendering "not connected". The catalog itself is code
-//     config and stays servable.
+//     but entitlement state could not be read: a store failure, or the
+//     entitlement tables are still converging (read-readiness.ts — boot/drain
+//     window; serving them then would report "not entitled" to accounts whose
+//     rows have not been backfilled yet). Abilities then carry NO
+//     `entitlement` key and clients keep their last-known state instead of
+//     rendering "not connected". The catalog itself is code config and stays
+//     servable.
 
 export type EntitlementStatus = TableEntitlementStatus;
 
@@ -80,16 +84,27 @@ export async function abilitiesListHandler(req: Request, res: Response) {
 
   let rows: EntitlementRow[] | null = null;
   try {
-    rows = await prisma.abilityEntitlement.findMany({
-      where: { accountId },
-      select: {
-        abilityId: true,
-        status: true,
-        extensions: {
-          select: { conversationId: true, expiresAt: true },
+    if (await isEntitlementReadModelReady()) {
+      rows = await prisma.abilityEntitlement.findMany({
+        where: { accountId },
+        select: {
+          abilityId: true,
+          status: true,
+          extensions: {
+            select: { conversationId: true, expiresAt: true },
+          },
         },
-      },
-    });
+      });
+    } else {
+      // Boot/drain window: rows stay null so the response carries
+      // entitlementsUnavailable — an authoritative `entitlement: null` here
+      // would read as "not connected" for accounts the backfill has not
+      // reached yet.
+      req.log.info(
+        { accountId },
+        "[Abilities] entitlement tables not ready — serving entitlementsUnavailable",
+      );
+    }
   } catch (error) {
     // Leave rows null: entitlement state is unknowable, so the response
     // carries entitlementsUnavailable and omits every `entitlement` key per

@@ -61,16 +61,51 @@ export async function noteV1AuthFlowStarted(args: {
 
 /**
  * A V1 connect completed with verified ownership (POST
- * /v2/connections/complete): the entitlement is active and backed by the
- * verified credential.
+ * /v2/connections/complete). The mirrored status is DERIVED from the
+ * connection's own Composio status, never assumed active: a complete fired
+ * right after initiate can find the connection still INITIALIZING/INITIATED,
+ * and the entitlement must then stay pending_auth. Only a verified ACTIVE
+ * connection activates the entitlement, records the credential ref, and (as
+ * an explicit, verified user action) clears a revocation tombstone; a
+ * non-active status never resurrects a tombstone and never downgrades an
+ * active entitlement (its previous credential still works — the same rule
+ * initiate applies).
  */
 export async function noteV1ConnectionCompleted(args: {
   accountId: string;
   connectionId: string;
   toolkitSlug: string;
+  connectionStatus: string;
 }): Promise<void> {
   const abilityId = normalizeAbilityId(args.toolkitSlug);
   try {
+    const status = toEntitlementStatus(args.connectionStatus, logger);
+    if (status !== "active") {
+      const existing = await prisma.abilityEntitlement.findUnique({
+        where: {
+          accountId_abilityId: { accountId: args.accountId, abilityId },
+        },
+      });
+      if (existing?.revokedAt || existing?.status === "active") return;
+      if (!existing) {
+        await prisma.abilityEntitlement.create({
+          data: {
+            accountId: args.accountId,
+            abilityId,
+            status,
+            abilityVersion: getServedAbilityVersion(abilityId),
+          },
+        });
+        return;
+      }
+      if (existing.status !== status) {
+        await prisma.abilityEntitlement.update({
+          where: { id: existing.id },
+          data: { status },
+        });
+      }
+      return;
+    }
     await prisma.abilityEntitlement.upsert({
       where: { accountId_abilityId: { accountId: args.accountId, abilityId } },
       create: {

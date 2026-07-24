@@ -1,6 +1,7 @@
 import type { Request, Response } from "express";
 import { z } from "zod";
 import { normalizeAbilityId } from "@/api/v2/abilities/ability-id";
+import { toEntitlementStatus } from "@/api/v2/abilities/entitlement-status";
 import {
   getPublicAbilities,
   getServedAbilityVersion,
@@ -11,13 +12,19 @@ import { prisma } from "@/utils/prisma";
 // POST /v2/abilities/{abilityId}/entitlement/complete — post-callback
 // ownership verification, mirroring V1 /v2/connections/complete: the
 // connection must belong to the caller's own account (verified by listing the
-// caller's connections, never by trusting the id) and to this ability's
-// toolkit. On success the entitlement flips to active and records the
-// credential as its backend-only externalConnectionId. requireAccount.
+// caller's connections, never by trusting the id), to this ability's toolkit,
+// and Composio must consider it ACTIVE — a complete fired right after
+// initiate can find the owned connection still INITIALIZING/INITIATED, and
+// persisting `active` for it would let the catalog and conversation PUT
+// treat an unfinished OAuth as a usable credential. A non-active connection
+// answers a retryable 409 auth_incomplete with the mapped status and leaves
+// the entitlement untouched (it stays pending_auth from bind). On success
+// the entitlement flips to active and records the credential as its
+// backend-only externalConnectionId. requireAccount.
 //
 // Lenient about a missing row (upsert): the OAuth callback can race a
 // restart, and completing a bind the backend lost track of is strictly
-// convergent. Completion is an explicit user action, so it clears a
+// convergent. Verified completion is an explicit user action, so it clears a
 // revocation tombstone.
 //
 // Response contract: docs/schemas/ability-entitlement-complete.schema.json.
@@ -76,6 +83,17 @@ export async function entitlementCompleteHandler(req: Request, res: Response) {
       // A real connection of the caller's, but for a different toolkit than
       // the ability being completed — reject rather than mis-bind.
       res.status(409).json({ code: "ability_mismatch" });
+      return;
+    }
+    const connectionStatus = toEntitlementStatus(owned.status, req.log);
+    if (connectionStatus !== "active") {
+      req.log.info(
+        { accountId, abilityId, composioStatus: owned.status },
+        "[Abilities] complete: connection not active yet — auth_incomplete",
+      );
+      res
+        .status(409)
+        .json({ code: "auth_incomplete", status: connectionStatus });
       return;
     }
 

@@ -2,6 +2,7 @@ import type { Request, Response } from "express";
 import { z } from "zod";
 import { normalizeAbilityId } from "@/api/v2/abilities/ability-id";
 import { getPublicAbilities } from "@/api/v2/abilities/manifests.config";
+import { isEntitlementReadModelReady } from "@/api/v2/abilities/read-readiness";
 import { getServiceConfig } from "@/api/v2/connections/bundles.config";
 import { upsertConversationAbilityExtension } from "@/api/v2/connections/v1-grant-adapter";
 import { prisma } from "@/utils/prisma";
@@ -14,6 +15,13 @@ import { prisma } from "@/utils/prisma";
 // client deep-links to the ability list to (re)connect first. The opt-in is
 // per (ability, agent): a second agent in the conversation never inherits,
 // it needs its own PUT.
+//
+// Until the migration ledgers confirm the entitlement tables are complete
+// (read-readiness.ts — boot/drain window), the PUT answers a retryable 503
+// entitlements_unavailable: its precondition reads the caller's entitlement
+// row, which the backfill may not have written yet — a 409 needs_entitlement
+// then would wrongly send a connected user back through OAuth, and skipping
+// the precondition would extend unverified state.
 //
 // bundleIds must be non-empty: an empty scope would collide with the legacy
 // whole-toolkit transition default in the check (empty actions + empty
@@ -79,6 +87,11 @@ export async function conversationAbilityPutHandler(
   const unknown = bundleIds.find((id) => !known.has(id));
   if (unknown !== undefined) {
     res.status(400).json({ code: "unknown_bundle", bundleId: unknown });
+    return;
+  }
+
+  if (!(await isEntitlementReadModelReady())) {
+    res.status(503).json({ code: "entitlements_unavailable" });
     return;
   }
 

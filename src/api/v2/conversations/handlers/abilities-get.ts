@@ -1,5 +1,7 @@
 import type { Request, Response } from "express";
 import { z } from "zod";
+import { normalizeAbilityId } from "@/api/v2/abilities/ability-id";
+import { isEntitlementReadModelReady } from "@/api/v2/abilities/read-readiness";
 import { prisma } from "@/utils/prisma";
 
 // GET /v2/conversations/{conversationId}/abilities — the conversation's view:
@@ -15,6 +17,14 @@ import { prisma } from "@/utils/prisma";
 // the backing entitlement's status — never another member's accountId, never
 // credential ids, never raw action slugs. `extendedByMe` marks the rows the
 // caller owns (the ones it may PUT/DELETE).
+//
+// Until the migration ledgers confirm the entitlement tables are complete
+// (read-readiness.ts — boot/drain window), the view derives from the live
+// legacy ConnectionGrant rows instead — the same rows exec's fallback
+// matcher authorizes from — so a conversation's opt-ins never read as empty
+// while its grants still execute. Lifecycle statuses live in the entitlement
+// store (not readable yet), so legacy-derived entries serve `active`: a live
+// legacy grant is exactly what V1 treated as usable consent.
 //
 // Response contract: docs/schemas/conversation-abilities.schema.json.
 
@@ -38,6 +48,28 @@ export async function conversationAbilitiesGetHandler(
     return;
   }
   const conversationId = params.data.conversationId;
+
+  if (!(await isEntitlementReadModelReady())) {
+    const grants = await prisma.connectionGrant.findMany({
+      where: { conversationId, revokedAt: null },
+      orderBy: { createdAt: "desc" },
+    });
+    res.status(200).json({
+      abilities: grants.map((grant) => ({
+        abilityId: normalizeAbilityId(grant.toolkit),
+        conversationId: grant.conversationId,
+        agentInboxId: grant.granteeInboxId,
+        bundleIds: grant.bundleIds,
+        extendedByInboxId:
+          grant.ownerInboxId === "" ? null : grant.ownerInboxId,
+        extendedByMe: grant.ownerAccountId === accountId,
+        status: "active",
+        createdAt: grant.createdAt,
+        updatedAt: grant.updatedAt,
+      })),
+    });
+    return;
+  }
 
   const rows = await prisma.conversationAbility.findMany({
     where: { conversationId },
