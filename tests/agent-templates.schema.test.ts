@@ -86,6 +86,7 @@ describe("AgentTemplate schema", () => {
       "@@index([status, createdAt, id])",
       "@@index([status, category, createdAt, id])",
       "@@index([status, featured, createdAt, id])",
+      "@@index([status, featured, featuredRank, id])",
       "@@index([forkedFromId])",
     ];
 
@@ -94,7 +95,7 @@ describe("AgentTemplate schema", () => {
     }
 
     expect(agentTemplateBlock).not.toMatch(/@@unique\(/);
-    expect(agentTemplateBlock.match(/@@(?:unique|index)\(/g)).toHaveLength(5);
+    expect(agentTemplateBlock.match(/@@(?:unique|index)\(/g)).toHaveLength(6);
   });
 
   test("applies PublishStatus enum, foreign keys, and required indexes in Postgres", async () => {
@@ -177,6 +178,7 @@ describe("AgentTemplate schema", () => {
       "AgentTemplate_status_category_createdAt_id_idx",
       "AgentTemplate_status_createdAt_id_idx",
       "AgentTemplate_status_featured_createdAt_id_idx",
+      "AgentTemplate_status_featured_featuredRank_id_idx",
     ]);
 
     const indexDefinitions = indexes.map((index) =>

@@ -21,9 +21,17 @@ const VALID_STATUS_FILTERS = [
 
 // Columns the list can be sorted by. `createdAt` desc is the default and
 // preserves prior behavior. Each is keyset-paginatable: the cursor encodes
-// the active column's value plus `id` as the tiebreaker.
-const SORT_FIELDS = ["createdAt", "updatedAt", "agentName"] as const;
+// the active column's value plus `id` as the tiebreaker. `featuredRank` is
+// the gallery's curation weight — pair it with `featured=true&order=desc`.
+const SORT_FIELDS = [
+  "createdAt",
+  "updatedAt",
+  "agentName",
+  "featuredRank",
+] as const;
 type SortField = (typeof SORT_FIELDS)[number];
+
+const INTEGER_RE = /^-?\d+$/;
 
 const querySchema = z
   .object({
@@ -89,8 +97,11 @@ const parseLimit = (value: string | undefined) => {
   return Math.min(parsed, MAX_LIMIT);
 };
 
-const cursorValue = (template: AgentTemplate, sort: SortField): string =>
-  sort === "agentName" ? template.agentName : template[sort].toISOString();
+const cursorValue = (template: AgentTemplate, sort: SortField): string => {
+  if (sort === "agentName") return template.agentName;
+  if (sort === "featuredRank") return String(template.featuredRank);
+  return template[sort].toISOString();
+};
 
 const encodeCursor = (
   template: AgentTemplate,
@@ -134,8 +145,12 @@ const decodeCursor = (
       return undefined;
     }
 
-    // Date columns must round-trip to a valid Date.
-    if (
+    // Non-string columns must round-trip to their own type.
+    if (sort === "featuredRank") {
+      if (!INTEGER_RE.test(parsed.data.v)) {
+        return undefined;
+      }
+    } else if (
       sort !== "agentName" &&
       Number.isNaN(new Date(parsed.data.v).getTime())
     ) {
@@ -277,8 +292,12 @@ export async function listHandler(req: Request, res: Response) {
   // Keyset cursor pagination, generalized over the active sort column.
   if (cursor) {
     const dir = order === "asc" ? "gt" : "lt";
-    const value: string | Date =
-      sort === "agentName" ? cursor.value : new Date(cursor.value);
+    const value: string | number | Date =
+      sort === "agentName"
+        ? cursor.value
+        : sort === "featuredRank"
+          ? Number(cursor.value)
+          : new Date(cursor.value);
     const cursorFilter: Prisma.AgentTemplateWhereInput = {
       OR: [
         { [sort]: { [dir]: value } },

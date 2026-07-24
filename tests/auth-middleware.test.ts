@@ -266,21 +266,47 @@ describe("agent-templates router auth wiring", () => {
     const requireAccountCount = (source.match(/requireAccount/g) ?? []).length;
     expect(requireAccountCount).toBe(5);
 
-    expect(source).toContain("requireAccount,\n  createHandler");
-    expect(source).toContain("requireAccount,\n  patchHandler");
-    expect(source).toContain("requireAccount,\n  deleteHandler");
-    expect(source).toContain("requireAccount,\n  publishHandler");
+    // These pin each route's middleware CHAIN by reading the router's source, so
+    // they're matched whitespace-agnostically: a formatter reflowing the file
+    // must not be able to turn a real auth regression into a green test, nor a
+    // harmless reflow into a red one. The leading lookbehind is what stops
+    // `agentApiKeyAuth` from matching inside `authOrAgentApiKeyAuth` — the two
+    // differ by exactly the thing these assertions exist to tell apart.
+    const chain = (middleware: string, handler: string) =>
+      new RegExp(`(?<![A-Za-z])${middleware},\\s+${handler}\\b`);
+
+    expect(source).toMatch(chain("requireAccount", "createHandler"));
+    expect(source).toMatch(chain("requireAccount", "patchHandler"));
+    expect(source).toMatch(chain("requireAccount", "deleteHandler"));
+    expect(source).toMatch(chain("requireAccount", "publishHandler"));
+
+    // Curating the featured gallery is not a user action, so the order endpoint
+    // takes the agent key ALONE — no JWT path reaches it, and there is no
+    // account to require. Either permissive middleware here would admit a
+    // signed-in caller and leave the refusal to the handler.
+    expect(source).toMatch(chain("agentApiKeyAuth", "featuredOrderHandler"));
+    expect(source).not.toMatch(
+      chain("authOrAgentApiKeyAuth", "featuredOrderHandler"),
+    );
+    expect(source).not.toMatch(
+      chain("optionalAuthOrAgentApiKeyAuth", "featuredOrderHandler"),
+    );
+    expect(source).not.toMatch(chain("requireAccount", "featuredOrderHandler"));
 
     // Public routes use the optional middleware: GET /, GET /:idOrUrlSlug,
     // POST /generations, GET /generations/:generationId. The optional
     // middleware MUST NOT be followed by requireAccount.
-    expect(source).toContain("optionalAuthOrAgentApiKeyAuth, listHandler");
-    expect(source).toContain("optionalAuthOrAgentApiKeyAuth,\n  detailHandler");
-    expect(source).toContain(
-      "optionalAuthOrAgentApiKeyAuth,\n  generationsPostHandler",
+    expect(source).toMatch(
+      chain("optionalAuthOrAgentApiKeyAuth", "listHandler"),
     );
-    expect(source).toContain(
-      "optionalAuthOrAgentApiKeyAuth,\n  generationsGetHandler",
+    expect(source).toMatch(
+      chain("optionalAuthOrAgentApiKeyAuth", "detailHandler"),
+    );
+    expect(source).toMatch(
+      chain("optionalAuthOrAgentApiKeyAuth", "generationsPostHandler"),
+    );
+    expect(source).toMatch(
+      chain("optionalAuthOrAgentApiKeyAuth", "generationsGetHandler"),
     );
     expect(source).not.toMatch(
       /optionalAuthOrAgentApiKeyAuth,\s*requireAccount/,

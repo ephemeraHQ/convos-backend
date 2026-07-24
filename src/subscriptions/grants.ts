@@ -74,7 +74,12 @@ const findLedgerRow = (
   });
 
 /**
- * |consume deltas| since `since` (period start), as a positive credit total.
+ * |consume deltas| in `[since, until)` (defaulting to open-ended when `until` is
+ * omitted), as a positive credit total. Renewal forfeits pass `until = the new
+ * period start` so spends made after the ending period are attributed to the new
+ * period, not clawed back against the old one; the terminal (expiry) forfeit
+ * omits `until` — that period has no successor, so every spend since its start
+ * belongs to it.
  *
  * S1 KNOWN APPROXIMATION (n=1, safe direction): the wallet is commingled —
  * `consume` rows carry no funding-source/bucket metadata, so we cannot tell a
@@ -89,16 +94,18 @@ const findLedgerRow = (
  * each consume with its funding bucket — over-engineering for n=1 and tracked as
  * a follow-up if subscription volume grows.
  */
-export const sumConsumesSince = async (
+export const sumConsumesBetween = async (
   tx: TxClient,
   accountId: string,
   since: Date,
+  until?: Date,
 ): Promise<number> => {
   const agg = await tx.creditLedger.aggregate({
     where: {
       accountId,
       reason: LedgerReason.consume,
-      createdAt: { gte: since },
+      createdAt:
+        until === undefined ? { gte: since } : { gte: since, lt: until },
     },
     _sum: { delta: true },
   });
@@ -274,12 +281,18 @@ export type ForfeitSubscriptionPeriodResult =
 
 /**
  * On expiry/refund/revoke, write ONE bounded `sub_forfeit` adjustment
- * that removes only the unused subscription portion of the current period:
+ * that removes only the unused subscription portion of the passed period:
  *
  *   periodGrant    = the sub_grant delta we wrote for this period
- *   periodConsumes = |consume deltas| since currentPeriodStart
+ *   periodConsumes = |consume deltas| in [periodStart, consumesUntil)
  *   unusedSub      = max(0, periodGrant − periodConsumes)
  *   forfeitDelta   = −min(lockedBalance, unusedSub)        # clamp ≥ 0
+ *
+ * `consumesUntil` bounds the consume window to the ending period: renewal
+ * callers pass the NEW period's start so spends made after the ending period are
+ * not attributed to it (which would shrink this forfeit and let the wallet keep
+ * more than one period's credits). The terminal (expiry) forfeit omits it — that
+ * period has no successor, so all spends since its start are its own.
  *
  * The `min(lockedBalance, unusedSub)` clamp guarantees the forfeit never drives
  * the wallet below the admin/promo/signup credits sharing it, and never below
@@ -289,7 +302,7 @@ export type ForfeitSubscriptionPeriodResult =
  * drive the wallet negative. A `floorCheck: { minBalance: 0n }` on the apply is
  * a belt-and-suspenders guard that throws (rather than silently writing a
  * negative balance) should the clamp ever be defeated. Idempotent on
- * `sub_forfeit:{subscription.id}:{periodStartEpoch}` so a duplicate
+ * `sub_forfeit:{subscription.id}:{periodStart epoch}` so a duplicate
  * EXPIRED/REVOKE webhook doesn't double-claw.
  *
  * Cancel-while-active (auto-renew off, period still running) must NOT call this
@@ -297,10 +310,9 @@ export type ForfeitSubscriptionPeriodResult =
  */
 export const forfeitSubscriptionPeriod = async (
   tx: TxClient,
-  args: { subscription: Subscription },
+  args: { subscription: Subscription; periodStart: Date; consumesUntil?: Date },
 ): Promise<ForfeitSubscriptionPeriodResult> => {
-  const { subscription } = args;
-  const periodStart = subscription.currentPeriodStart;
+  const { subscription, periodStart, consumesUntil } = args;
   const forfeitKey = subForfeitKey(subscription.id, periodStart);
 
   const priorForfeit = await findLedgerRow(
@@ -335,10 +347,11 @@ export const forfeitSubscriptionPeriod = async (
     subscription.accountId,
   );
 
-  const periodConsumes = await sumConsumesSince(
+  const periodConsumes = await sumConsumesBetween(
     tx,
     subscription.accountId,
     periodStart,
+    consumesUntil,
   );
   const unusedSub = Math.max(0, periodGrant - periodConsumes);
   if (unusedSub <= 0) {

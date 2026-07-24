@@ -53,6 +53,7 @@ export const serializeAgentTemplate = (
   publishedUrl: publishedUrlFor(template),
   status: template.status,
   featured: template.featured,
+  featuredRank: template.featuredRank,
   createdAt: template.createdAt.toISOString(),
   ...(options.includeSkills === true ? { skills: [] } : {}),
 });

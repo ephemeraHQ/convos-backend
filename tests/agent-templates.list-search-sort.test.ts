@@ -12,13 +12,18 @@ import { prisma } from "@/utils/prisma";
 import {
   agentKeyHeaders,
   createTemplate,
+  getTemplate,
+  jwtHeaders,
   listTemplates,
+  patchTemplate,
+  publishTemplate,
   startAgentTemplatesServer,
   validAgentAssetsApiKey,
 } from "./agent-templates.cross.helpers";
 
 // Covers the list-API additions: free-text `q`, `sort`/`order` (incl. keyset
-// cursor under a non-default sort), and the `/counts` aggregate endpoint.
+// cursor under a non-default sort), the `featuredRank` gallery ordering, and
+// the `/counts` aggregate endpoint.
 // Tokens are globally unique so search/sort assertions are unaffected by any
 // other rows in the test DB; counts assertions are delta-based for the same
 // reason.
@@ -35,6 +40,7 @@ const cleanup = () =>
         { agentName: { startsWith: "Zxq" } },
         { agentName: { startsWith: "Zsort" } },
         { agentName: { startsWith: "Zcount" } },
+        { agentName: { startsWith: "Zrank" } },
       ],
     },
   });
@@ -182,6 +188,322 @@ describe("Agent templates list — search / sort / counts", () => {
     expect(page2.body.data.map((t) => t.agentName as string)).toEqual([
       "Zsort Bravo",
     ]);
+  });
+
+  // ── Featured gallery curation ──
+  test("?sort=featuredRank&order=desc leads with the heaviest row and sinks unranked ones", async () => {
+    // Only a published template can hold a gallery position, so each row goes
+    // public before it's weighted.
+    const seed = async (name: string, rank: number | undefined) => {
+      const created = await createTemplate({
+        baseURL,
+        headers: agentKeyHeaders(),
+        body: {
+          agentName: name,
+          prompt: "p",
+          slug: `lss-${name.toLowerCase().replace(/\s+/g, "-")}`,
+          description: "zrankmarker",
+        },
+      });
+      const id = created.body.id as string;
+      await publishTemplate({ baseURL, headers: agentKeyHeaders(), id });
+      await patchTemplate({
+        baseURL,
+        headers: agentKeyHeaders(),
+        id,
+        body:
+          rank === undefined
+            ? { featured: true }
+            : { featured: true, featuredRank: rank },
+      });
+      return id;
+    };
+
+    await seed("Zrank Light", 10);
+    await seed("Zrank Heavy", 30);
+    await seed("Zrank Middle", 20);
+    // Featured with no explicit weight — the default 0 must not seize the lead.
+    await seed("Zrank Unranked", undefined);
+
+    const gallery = await listTemplates({
+      baseURL,
+      query:
+        "?q=zrankmarker&featured=true&sort=featuredRank&order=desc&limit=100",
+      headers: agentKeyHeaders(),
+    });
+    expect(gallery.response.status).toBe(200);
+    expect(gallery.body.data.map((t) => t.agentName as string)).toEqual([
+      "Zrank Heavy",
+      "Zrank Middle",
+      "Zrank Light",
+      "Zrank Unranked",
+    ]);
+    // The weight is serialized, so the dashboard can compute the next move.
+    expect(gallery.body.data.map((t) => t.featuredRank as number)).toEqual([
+      30, 20, 10, 0,
+    ]);
+
+    // keyset cursor walks the same order one page at a time
+    const page1 = await listTemplates({
+      baseURL,
+      query:
+        "?q=zrankmarker&featured=true&sort=featuredRank&order=desc&limit=1",
+      headers: agentKeyHeaders(),
+    });
+    expect(page1.body.data.map((t) => t.agentName as string)).toEqual([
+      "Zrank Heavy",
+    ]);
+    expect(page1.body.hasMore).toBe(true);
+
+    const page2 = await listTemplates({
+      baseURL,
+      query: `?q=zrankmarker&featured=true&sort=featuredRank&order=desc&limit=1&cursor=${encodeURIComponent(
+        page1.body.nextCursor as string,
+      )}`,
+      headers: agentKeyHeaders(),
+    });
+    expect(page2.body.data.map((t) => t.agentName as string)).toEqual([
+      "Zrank Middle",
+    ]);
+  });
+
+  test("a featuredRank outside the column's Int range is rejected", async () => {
+    const created = await createTemplate({
+      baseURL,
+      headers: agentKeyHeaders(),
+      body: {
+        agentName: "Zrank Bounds",
+        prompt: "p",
+        slug: "lss-rank-bounds",
+        description: "zrankmarker",
+      },
+    });
+    const id = created.body.id as string;
+    // Put it IN the gallery, so a 400 here can only be the bound — a template
+    // outside the gallery is refused a weight whatever the value.
+    await publishTemplate({ baseURL, headers: agentKeyHeaders(), id });
+    const ok = await patchTemplate({
+      baseURL,
+      headers: agentKeyHeaders(),
+      id,
+      body: { featured: true, featuredRank: 7 },
+    });
+    expect(ok.response.status).toBe(200);
+
+    const negative = await patchTemplate({
+      baseURL,
+      headers: agentKeyHeaders(),
+      id,
+      body: { featuredRank: -1 },
+    });
+    expect(negative.response.status).toBe(400);
+
+    // Above Postgres' Int ceiling. Without the cap this clears Zod and dies at
+    // persistence, surfacing as a 500 rather than a validation error.
+    const tooLarge = await patchTemplate({
+      baseURL,
+      headers: agentKeyHeaders(),
+      id,
+      body: { featuredRank: 2_147_483_648 },
+    });
+    expect(tooLarge.response.status).toBe(400);
+  });
+
+  // Curation is not an ownership right: the PATCH guard admits the template's
+  // owner, so without a separate gate an owner could weight their own template
+  // to the top of the convos.org homepage, above the whole curated gallery.
+  test("only the dashboard's API key may write featuredRank", async () => {
+    const created = await createTemplate({
+      baseURL,
+      headers: agentKeyHeaders(),
+      body: {
+        agentName: "Zrank Owner",
+        prompt: "p",
+        slug: "lss-rank-owner",
+        description: "zrankmarker",
+      },
+    });
+    const id = created.body.id as string;
+    await publishTemplate({ baseURL, headers: agentKeyHeaders(), id });
+    await patchTemplate({
+      baseURL,
+      headers: agentKeyHeaders(),
+      id,
+      body: { featured: true },
+    });
+
+    // The owner, authenticated as a user rather than as the dashboard.
+    const selfPromote = await patchTemplate({
+      baseURL,
+      headers: await jwtHeaders(),
+      id,
+      body: { featuredRank: 2_000_000_000 },
+    });
+    expect(selfPromote.response.status).toBe(403);
+
+    // …and the weight did not move.
+    const after = await getTemplate({
+      baseURL,
+      path: id,
+      headers: agentKeyHeaders(),
+    });
+    expect(after.body.featuredRank).toBe(0);
+
+    // The same owner still edits their own content — only curation is gated.
+    const contentEdit = await patchTemplate({
+      baseURL,
+      headers: await jwtHeaders(),
+      id,
+      body: { emoji: "🛶" },
+    });
+    expect(contentEdit.response.status).toBe(200);
+
+    // The dashboard writes the weight.
+    const curated = await patchTemplate({
+      baseURL,
+      headers: agentKeyHeaders(),
+      id,
+      body: { featuredRank: 42 },
+    });
+    expect(curated.response.status).toBe(200);
+    expect(curated.body.featuredRank).toBe(42);
+  });
+
+  // A weight is a slot in the gallery, and the gallery renders exactly what is
+  // featured AND published — so nothing outside it holds a position.
+  test("only a featured, published template can hold a gallery position", async () => {
+    const created = await createTemplate({
+      baseURL,
+      headers: agentKeyHeaders(),
+      body: {
+        agentName: "Zrank Unpublished",
+        prompt: "p",
+        slug: "lss-rank-unpublished",
+        description: "zrankmarker",
+      },
+    });
+    const id = created.body.id as string;
+
+    // Featured but not public: no slot.
+    const onDraft = await patchTemplate({
+      baseURL,
+      headers: agentKeyHeaders(),
+      id,
+      body: { featured: true, featuredRank: 9 },
+    });
+    expect(onDraft.response.status).toBe(400);
+
+    // Public but not featured: also no slot.
+    await publishTemplate({ baseURL, headers: agentKeyHeaders(), id });
+    const notFeatured = await patchTemplate({
+      baseURL,
+      headers: agentKeyHeaders(),
+      id,
+      body: { featuredRank: 9 },
+    });
+    expect(notFeatured.response.status).toBe(400);
+
+    // Both: it holds one.
+    const curated = await patchTemplate({
+      baseURL,
+      headers: agentKeyHeaders(),
+      id,
+      body: { featured: true, featuredRank: 9 },
+    });
+    expect(curated.response.status).toBe(200);
+    expect(curated.body.featuredRank).toBe(9);
+
+    // Taken back out of public view it gives the slot up rather than holding
+    // it, so re-publishing enters it at the end instead of silently reclaiming
+    // the position it used to occupy.
+    const unpublished = await patchTemplate({
+      baseURL,
+      headers: agentKeyHeaders(),
+      id,
+      body: { status: "draft" },
+    });
+    expect(unpublished.response.status).toBe(200);
+    expect(unpublished.body.featuredRank).toBe(0);
+
+    const republished = await publishTemplate({
+      baseURL,
+      headers: agentKeyHeaders(),
+      id,
+    });
+    expect(republished.body.featuredRank).toBe(0);
+  });
+
+  test("unfeaturing gives the slot up too", async () => {
+    const created = await createTemplate({
+      baseURL,
+      headers: agentKeyHeaders(),
+      body: {
+        agentName: "Zrank Unfeatured",
+        prompt: "p",
+        slug: "lss-rank-unfeatured",
+        description: "zrankmarker",
+      },
+    });
+    const id = created.body.id as string;
+    await publishTemplate({ baseURL, headers: agentKeyHeaders(), id });
+    const curated = await patchTemplate({
+      baseURL,
+      headers: agentKeyHeaders(),
+      id,
+      body: { featured: true, featuredRank: 6 },
+    });
+    expect(curated.body.featuredRank).toBe(6);
+
+    // Dropping out of the gallery drops the position with it — otherwise
+    // re-featuring silently restores the old slot.
+    const unfeatured = await patchTemplate({
+      baseURL,
+      headers: agentKeyHeaders(),
+      id,
+      body: { featured: false },
+    });
+    expect(unfeatured.response.status).toBe(200);
+    expect(unfeatured.body.featuredRank).toBe(0);
+
+    const refeatured = await patchTemplate({
+      baseURL,
+      headers: agentKeyHeaders(),
+      id,
+      body: { featured: true },
+    });
+    expect(refeatured.body.featuredRank).toBe(0);
+  });
+
+  test("a template made public in the same PATCH may be weighted by it", async () => {
+    const created = await createTemplate({
+      baseURL,
+      headers: agentKeyHeaders(),
+      body: {
+        agentName: "Zrank Atomic",
+        prompt: "p",
+        slug: "lss-rank-atomic",
+        description: "zrankmarker",
+      },
+    });
+    const id = created.body.id as string;
+    // A draft's first publish must go through /publish, so get it public first,
+    // then flip unlisted → published and weight it in one call.
+    await publishTemplate({ baseURL, headers: agentKeyHeaders(), id });
+    await patchTemplate({
+      baseURL,
+      headers: agentKeyHeaders(),
+      id,
+      body: { status: "unlisted" },
+    });
+
+    const atomic = await patchTemplate({
+      baseURL,
+      headers: agentKeyHeaders(),
+      id,
+      body: { status: "published", featured: true, featuredRank: 4 },
+    });
+    expect(atomic.response.status).toBe(200);
+    expect(atomic.body.featuredRank).toBe(4);
   });
 
   test("a cursor built for a different sort is rejected with 400", async () => {

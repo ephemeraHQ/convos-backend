@@ -27,6 +27,9 @@ const bodySchema = z
     description: z.string().nullable().optional(),
     emoji: z.string().nullable().optional(),
     featured: z.boolean().optional(),
+    // Capped to the column's `Int` range — a larger value would clear Zod and
+    // then blow up at persistence as a 500 rather than a 400.
+    featuredRank: z.number().int().min(0).max(2_147_483_647).optional(),
     prompt: z
       .string()
       .max(50_000, {
@@ -101,6 +104,11 @@ const applyContentFields = (
   // published template un-featured without a status change).
   if (body.featured !== undefined) {
     data.featured = body.featured;
+  }
+  // Position within the featured gallery. The dashboard reorders by writing a
+  // new weight per moved row; the gallery reads them descending.
+  if (body.featuredRank !== undefined) {
+    data.featuredRank = body.featuredRank;
   }
   if (body.prompt !== undefined) {
     data.prompt = body.prompt;
@@ -177,8 +185,77 @@ export async function patchHandler(req: Request, res: Response) {
       return;
     }
 
+    // Getting INTO the gallery is curation too, not just where you sit in it.
+    // The guard above admits the template's owner, so without this an owner
+    // could feature their own template onto convos.org — they couldn't pick a
+    // slot (that's gated below, and they'd enter at weight 0, last), but they
+    // would be in the gallery, and in front of everyone the moment it holds
+    // fewer than a homepage's worth of curated templates.
+    //
+    // Taking a template back OUT stays theirs: `featured: false` is a
+    // withdrawal, like unpublishing, and it can only ever remove something from
+    // the homepage.
+    if (parsedBody.data.featured === true && !isApiKeyListener) {
+      req.log.warn(
+        {
+          callerAccountId,
+          templateId: template.id,
+          action: "patch.featured",
+        },
+        "Unauthorized agent-template curation attempt",
+      );
+      res.status(403).json({ error: "Not authorized to feature a template" });
+      return;
+    }
+
+    // Gallery curation is not an ownership right. `featuredRank` decides what
+    // leads the convos.org homepage, and the guard above admits the template's
+    // owner — so without this an owner could weight their own template above
+    // the whole curated set. Only the dashboard (API-key) caller may write it.
+    if (parsedBody.data.featuredRank !== undefined && !isApiKeyListener) {
+      req.log.warn(
+        {
+          callerAccountId,
+          templateId: template.id,
+          action: "patch.featuredRank",
+        },
+        "Unauthorized agent-template curation attempt",
+      );
+      res
+        .status(403)
+        .json({ error: "Not authorized to set the featured gallery order" });
+      return;
+    }
+
     const data: Prisma.AgentTemplateUncheckedUpdateInput = {};
     applyContentFields(data, parsedBody.data);
+
+    // A curation weight IS a slot in the gallery, and the gallery renders
+    // exactly what is `featured` AND `published`. Anything else holds no slot,
+    // so it holds no weight: a template that drops out of the gallery — by
+    // being unfeatured or taken out of public view — gives its place up, and
+    // comes back at the end to be curated again like anything else.
+    //
+    // Without this a template inherits a slot nobody gave it: it keeps its
+    // weight while out of the gallery and silently reclaims its old position on
+    // the way back in, and a long-featured draft published for the first time
+    // lands wherever the weight it was seeded with happens to sit.
+    const nextStatus = parsedBody.data.status ?? template.status;
+    const nextFeatured = parsedBody.data.featured ?? template.featured;
+    const inGallery = nextFeatured && nextStatus === "published";
+    if (!inGallery) {
+      if (parsedBody.data.featuredRank !== undefined) {
+        sendBadRequest(res, {
+          code: "TEMPLATE_NOT_IN_GALLERY",
+          message:
+            "Only a featured, published template can hold a position in the featured gallery",
+        });
+        return;
+      }
+      if (template.featuredRank !== 0) {
+        data.featuredRank = 0;
+      }
+    }
 
     // PII redaction — scrub the content fields being written. Only the fields
     // present in this PATCH are scanned (partial update). Fails CLOSED: a scan
@@ -254,10 +331,14 @@ export async function patchHandler(req: Request, res: Response) {
     }
 
     // Pin the WHERE clause to the row state we just validated. A concurrent
-    // publish, slug rename, ownership transfer or status flip would
-    // invalidate our invariant checks above, so any such mutation drops us
-    // into the count === 0 branch and surfaces as a 409 (or 404 if the row
-    // was deleted).
+    // publish, slug rename, ownership transfer, status flip, or curation change
+    // (a `featured` toggle or a reorder weight) would invalidate our invariant
+    // checks above, so any such mutation drops us into the count === 0 branch
+    // and surfaces as a 409 (or 404 if the row was deleted). Pinning `featured`
+    // and `featuredRank` is what makes the gallery-weight decision above safe
+    // under concurrency: if a reorder weights this row after our read, our clear
+    // (or our leaving-it-alone) can't clobber that weight — the write simply
+    // doesn't match.
     const result = await prisma.agentTemplate.updateMany({
       where: {
         id: template.id,
@@ -265,6 +346,8 @@ export async function patchHandler(req: Request, res: Response) {
         slug: template.slug,
         status: template.status,
         firstPublishedAt: template.firstPublishedAt,
+        featured: template.featured,
+        featuredRank: template.featuredRank,
       },
       data,
     });

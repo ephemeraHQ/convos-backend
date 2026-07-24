@@ -25,6 +25,7 @@ import {
 import {
   forfeitSubscriptionPeriod,
   grantSubscriptionPeriod,
+  subGrantKey,
 } from "@/subscriptions/grants";
 import {
   LINEAGE_STATE_TOMBSTONED,
@@ -36,6 +37,7 @@ import { productMapping } from "@/subscriptions/product-mapping";
 import {
   effectiveSubscriptionStatus,
   ENTITLED_SUBSCRIPTION_STATUSES,
+  isEntitledSubscription,
   isEntitledSubscriptionStatus,
 } from "@/subscriptions/status";
 import { tierGrant } from "@/subscriptions/tier-config";
@@ -211,6 +213,36 @@ const providerSubscriptionId = (input: VerifyInput): string =>
   input.provider === BillingProvider.apple
     ? input.originalTransactionId
     : input.purchaseToken;
+
+type LockedSubscriptionPeriod = {
+  currentPeriodStart: Date;
+  currentPeriodEnd: Date;
+};
+
+/**
+ * Lock the Subscription row (FOR UPDATE) for the rest of the caller's
+ * transaction and return its CURRENT (pre-advance) period. Renewal decisions —
+ * staleness, whether the period advanced, and WHICH period to forfeit — must run
+ * against this serialized read, not a snapshot taken before the row lock: two
+ * concurrent renewals (A→B, A→C) would otherwise both read period A, and the
+ * second would forfeit A (a no-op replay) instead of the period the row actually
+ * advanced from, leaking a full period's credits. Locking here also fences the
+ * verify and S2S paths against each other on the same row. Lock order:
+ * Subscription then UserCredits (matching the forfeit/grant helpers) — no
+ * deadlock. Returns null only if the row vanished (never in practice).
+ */
+const lockSubscriptionPeriod = async (
+  tx: Prisma.TransactionClient,
+  id: string,
+): Promise<LockedSubscriptionPeriod | null> => {
+  const rows = await tx.$queryRaw<LockedSubscriptionPeriod[]>`
+    SELECT "currentPeriodStart", "currentPeriodEnd"
+    FROM "Subscription"
+    WHERE "id" = ${id}::uuid
+    FOR UPDATE
+  `;
+  return rows[0] ?? null;
+};
 
 const findExistingForVerify = async (
   tx: Prisma.TransactionClient,
@@ -471,29 +503,115 @@ export const upsertFromVerify = async (
         });
 
         if (existingReceipt) {
+          // Exact VERIFY replay — but do NOT return before the grant check.
+          // Subscribers who bought BEFORE the single-ledger deploy (#324) have a
+          // Subscription + BillingReceipt but no `sub_grant` ledger row for the
+          // period they are living in: their original verify predates the grant
+          // write. This short-circuit used to return here unconditionally, so a
+          // re-verify could never heal them — their wallet stayed unfunded (and
+          // could sit negative) until the next renewal. Instead, make re-verify a
+          // universal materializer: when the replayed subscription is entitled
+          // and this verify is not stale, backfill the CURRENT period's grant if
+          // its canonical `sub_grant` row is missing. `grantSubscriptionPeriod`
+          // is idempotent per (sub, periodStart) and lock-serialized, so a
+          // concurrent renewal/verify cannot double-grant; the pre-check below
+          // only avoids taking the wallet lock on the common already-granted
+          // replay. Replay semantics stay intact: receiptCreated stays false.
+          //
+          // The gate MUST be the TIME-AWARE `isEntitledSubscription` (the same
+          // helper credits-get uses), not the stored-status check: a replay can
+          // arrive long after the stored state went stale. Prod holds rows whose
+          // stored status is still `active`/`grace` because the terminal EXPIRED
+          // webhook was lost or delayed — their entitlement window has already
+          // elapsed, and effectiveSubscriptionStatus resolves them to `expired`.
+          // Backfilling a full period grant for such a LAPSED period would mint
+          // credits that credits-get simultaneously frames as free-tier state.
+          //
+          // The backfill passes the lineage context so the grant resolves the
+          // CANONICAL idempotency key (Google funds per provider order via
+          // subGrantKeyForEvent — the epoch-key pre-check below cannot see
+          // those rows) and stays global-once via the funding registry. The
+          // epoch-key pre-check only skips the wallet lock on the common
+          // pre-#324 already-granted replay; a false "missing" for a
+          // post-lineage Google replay is caught by the grant's own
+          // event-key/registry short-circuits, never double-minting.
+          const replayed = existingReceipt.subscription;
+          const isStaleReplay =
+            input.currentPeriodEnd < replayed.currentPeriodEnd;
+          if (!isStaleReplay && isEntitledSubscription(replayed)) {
+            const currentPeriodGrant = await tx.creditLedger.findUnique({
+              where: {
+                accountId_idempotencyKey: {
+                  accountId: replayed.accountId,
+                  idempotencyKey: subGrantKey(
+                    replayed.id,
+                    replayed.currentPeriodStart,
+                  ),
+                },
+              },
+            });
+            if (!currentPeriodGrant) {
+              await grantSubscriptionPeriod(tx, {
+                subscription: replayed,
+                periodStart: replayed.currentPeriodStart,
+                lineage: {
+                  ctx: lineageCtx,
+                  providerPeriodKey: verifyProviderPeriodKey(input),
+                  periodStart: effectiveCustodyPeriodStart({
+                    provider: input.provider,
+                    periodStart: replayed.currentPeriodStart,
+                    periodEnd: replayed.currentPeriodEnd,
+                    previousPeriodEnd: null,
+                  }),
+                  periodEnd: replayed.currentPeriodEnd,
+                },
+              });
+            }
+          }
           return {
-            subscription: existingReceipt.subscription,
+            subscription: replayed,
             receiptCreated: false,
           };
         }
+
+        // Lock the row for the rest of the tx and read its TRUE current
+        // period, so staleness / advance / forfeit-target all judge against
+        // the serialized state — not the pre-lock `existing` snapshot a
+        // concurrent renewal may have already superseded. Only the update
+        // path (existing !== null) needs it; a first-time create has no
+        // prior period to lock. (Under the lineage-first lock protocol the
+        // row lock is belt-and-braces, but it keeps the FOR UPDATE ahead of
+        // the receipt insert's KEY SHARE FK lock.)
+        const locked =
+          existing !== null
+            ? await lockSubscriptionPeriod(tx, existing.id)
+            : null;
 
         // A valid but old transaction can arrive after a later renewal/webhook.
         // Keep the audit row, but do not roll the subscription's entitlement
         // window or status backwards.
         const isStaleVerify =
-          existing !== null &&
-          input.currentPeriodEnd < existing.currentPeriodEnd;
+          locked !== null && input.currentPeriodEnd < locked.currentPeriodEnd;
 
-        const subscription = existing
-          ? isStaleVerify
-            ? existing
-            : await tx.subscription.update({
-                where: { id: existing.id },
-                data: { ...subscriptionUpdateData(input), lineageId },
-              })
-          : await tx.subscription.create({
-              data: { ...subscriptionCreateData(input), lineageId },
-            });
+        let subscription: Subscription;
+        if (existing === null) {
+          subscription = await tx.subscription.create({
+            data: { ...subscriptionCreateData(input), lineageId },
+          });
+        } else if (isStaleVerify) {
+          // Stale/out-of-order verify: don't roll the row back, but return its
+          // CURRENT committed state — a concurrent renewal may have advanced it
+          // since the pre-lock `existing` read.
+          subscription =
+            (await tx.subscription.findUnique({
+              where: { id: existing.id },
+            })) ?? existing;
+        } else {
+          subscription = await tx.subscription.update({
+            where: { id: existing.id },
+            data: { ...subscriptionUpdateData(input), lineageId },
+          });
+        }
 
         await tx.billingReceipt.create({
           data: {
@@ -515,6 +633,28 @@ export const upsertFromVerify = async (
           !isStaleVerify &&
           isEntitledSubscriptionStatus(subscription.status)
         ) {
+          // Renewal observed via verify: if the period start advanced past
+          // the LOCKED current one, forfeit the ending period's unused
+          // allotment (no carryover) before granting the new period.
+          // Comparing against `locked` (read under the row lock) rather than
+          // the pre-lock snapshot means a concurrent renewal that already
+          // advanced the row is seen — we forfeit the period the row
+          // actually advanced FROM, and a same-period re-verify (identical
+          // stable provider start) does not trip the guard. `consumesUntil`
+          // bounds the clawed period's consumes to spends made before the
+          // new period began. Google never trips this: its reported start is
+          // the lifetime startTime and never advances.
+          if (
+            locked !== null &&
+            input.currentPeriodStart.getTime() >
+              locked.currentPeriodStart.getTime()
+          ) {
+            await forfeitSubscriptionPeriod(tx, {
+              subscription,
+              periodStart: locked.currentPeriodStart,
+              consumesUntil: input.currentPeriodStart,
+            });
+          }
           // Periods funded before the lineage tables leave no custody row, so
           // the new-period gate would miss them; bootstrap custody for the
           // pre-update window (no-op when a row already covers it) so a
@@ -560,6 +700,10 @@ export const upsertFromVerify = async (
     //   - Subscription provider-unique → the documented cold-start race (two
     //     concurrent creates of the same provider sub). Benign idempotent
     //     replay: re-read the committed row.
+    //     - EXCEPT the Apple appAccountToken unique: the colliding row holds a
+    //       DIFFERENT originalTransactionId, so the OTX re-read below finds
+    //       nothing. That case gets its own (provider, appAccountToken)
+    //       re-read further down instead of falling through to the rethrow.
     //   - BillingReceipt idempotencyKey → two concurrent /verify calls for the
     //     same transaction raced past the `existingReceipt` pre-check above and
     //     both reached `billingReceipt.create`. The loser must ALSO resolve
@@ -587,6 +731,43 @@ export const upsertFromVerify = async (
           );
         }
         return { subscription: current, receiptCreated: false };
+      }
+
+      // reReadAfterRace resolves by OTX/purchaseToken only, so an
+      // appAccountToken-unique conflict re-read null here and used to fall
+      // through to the rethrow — a raw 500 to the user. That is the
+      // account-recreation path: iOS generates the appAccountToken per
+      // INSTALL, so it survives account deletion + recreation, and the
+      // recreated account's fresh purchase (NEW originalTransactionId)
+      // collides on the AAT unique with the OLD account's row. Resolve the
+      // conflict by the index that actually fired: re-read by
+      // (provider, appAccountToken) and surface the truthful outcome — the
+      // standard account-mismatch 409 when the holder is another account, or
+      // an idempotent replay when the caller already holds the row (mirrors
+      // the same-account branch above). Mismatch semantics are unchanged;
+      // only the crash becomes an honest 409.
+      if (
+        input.provider === BillingProvider.apple &&
+        isAppleAppAccountTokenConflict(err)
+      ) {
+        const holder = await prisma.subscription.findUnique({
+          where: {
+            subscription_apple_aat_unique: {
+              provider: BillingProvider.apple,
+              appAccountToken: input.appAccountToken,
+            },
+          },
+        });
+        if (holder) {
+          if (holder.accountId !== input.accountId) {
+            throw new SubscriptionAccountMismatchError(
+              holder.accountId,
+              input.accountId,
+              externalId,
+            );
+          }
+          return { subscription: holder, receiptCreated: false };
+        }
       }
     }
     throw err;
@@ -629,6 +810,31 @@ const isSubscriptionProviderUniqueConflict = (
     (t) =>
       SUBSCRIPTION_PROVIDER_UNIQUE_FIELDS.has(t) ||
       SUBSCRIPTION_PROVIDER_UNIQUE_INDEX_NAMES.has(t),
+  );
+};
+
+// The Apple (provider, appAccountToken) unique specifically — a SUBSET of the
+// provider-unique set above, needed because reReadAfterRace cannot resolve this
+// conflict: it re-reads by originalTransactionId, and the colliding row holds a
+// DIFFERENT one (account recreation reuses the per-install AAT with a fresh
+// purchase). Same target-shape tolerance as its siblings: the Postgres driver
+// surfaces the conflicting FIELD names in `err.meta.target`; some adapters
+// surface the index NAME instead.
+const isAppleAppAccountTokenConflict = (
+  err: Prisma.PrismaClientKnownRequestError,
+): boolean => {
+  if (err.meta?.modelName && err.meta.modelName !== "Subscription") {
+    return false;
+  }
+  const target = err.meta?.target;
+  const tokens =
+    typeof target === "string"
+      ? [target]
+      : Array.isArray(target)
+        ? target.map(String)
+        : [];
+  return tokens.some(
+    (t) => t === "appAccountToken" || t === "subscription_apple_aat_unique",
   );
 };
 
@@ -1079,7 +1285,13 @@ const applyNotificationOnce = async (
                 ],
               ));
             if (!custody) {
-              await forfeitSubscriptionPeriod(tx, { subscription: updated });
+              // Forfeit the LOCKED (lineage-serialized) current period — the
+              // one the sub is actually in. Terminal events have no
+              // successor period, so consumesUntil stays open-ended.
+              await forfeitSubscriptionPeriod(tx, {
+                subscription: updated,
+                periodStart: current.currentPeriodStart,
+              });
             } else if (custody.state === CUSTODY_STATE_HELD) {
               // Prefer the legacy per-subscription forfeit shape when it
               // applies — it only does when the holder carries the original
@@ -1087,6 +1299,7 @@ const applyNotificationOnce = async (
               // row, so custody performs the compensation instead.
               const forfeited = await forfeitSubscriptionPeriod(tx, {
                 subscription: updated,
+                periodStart: current.currentPeriodStart,
               });
               if (
                 forfeited.kind === "forfeited" ||
@@ -1121,6 +1334,25 @@ const applyNotificationOnce = async (
             // never moves (gating on it suppressed every renewal after the
             // first). A grace/billing-retry transition that keeps the same
             // window does not re-grant either way.
+            //
+            // No carryover: forfeit the period the row advanced FROM before
+            // granting the new one, bounding its consumes to spends made
+            // before the new period began. Gated on the START advancing —
+            // Google's static lifetime start never trips it, and its
+            // ending-period remainder stays bounded by custody conservation
+            // instead. The per-period forfeit key + the lineage lock make a
+            // racing verify for the same advance resolve to exactly one
+            // forfeit and one grant.
+            if (
+              updated.currentPeriodStart.getTime() >
+              current.currentPeriodStart.getTime()
+            ) {
+              await forfeitSubscriptionPeriod(tx, {
+                subscription: updated,
+                periodStart: current.currentPeriodStart,
+                consumesUntil: updated.currentPeriodStart,
+              });
+            }
             if (input.provider === BillingProvider.googlePlay) {
               await bootstrapLegacyCustody(tx, lineageCtx, {
                 subscriptionId: current.id,

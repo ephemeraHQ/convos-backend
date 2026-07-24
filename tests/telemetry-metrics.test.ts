@@ -1,6 +1,8 @@
 import express from "express";
 import request from "supertest";
 import { beforeEach, describe, expect, test, vi } from "vitest";
+import type * as DedupModule from "@/api/v2/telemetry/services/dedup";
+import { releaseBatch } from "@/api/v2/telemetry/services/dedup";
 import { forwardMetrics } from "@/api/v2/telemetry/services/forwarder";
 import { telemetryRouter } from "@/api/v2/telemetry/telemetry.router";
 import { appCheckOnlyMiddleware } from "@/middleware/auth";
@@ -21,6 +23,12 @@ vi.mock("@/api/v2/telemetry/services/forwarder", () => ({
 vi.mock("@/utils/metrics", () => ({
   countTelemetryBatch: vi.fn(),
 }));
+// Real claim/release against the DB; releaseBatch is wrapped so a test can make
+// one call fail and assert the handler retries it.
+vi.mock("@/api/v2/telemetry/services/dedup", async (importOriginal) => {
+  const actual = await importOriginal<typeof DedupModule>();
+  return { ...actual, releaseBatch: vi.fn(actual.releaseBatch) };
+});
 
 function makeApp() {
   const app = express();
@@ -79,6 +87,7 @@ describe("POST /telemetry/metrics", () => {
     vi.mocked(forwardMetrics).mockClear();
     vi.mocked(forwardMetrics).mockResolvedValue(true);
     vi.mocked(countTelemetryBatch).mockClear();
+    vi.mocked(releaseBatch).mockClear();
   });
 
   test("happy path → 202, forwarded, batch recorded", async () => {
@@ -219,6 +228,25 @@ describe("POST /telemetry/metrics", () => {
     const retry = await post(app).send(makeBody());
     expect(retry.status).toBe(202);
     expect(retry.body).toEqual({ status: "accepted" });
+  });
+
+  test("a failed release is retried, so a claim never strands until the TTL sweep", async () => {
+    vi.mocked(forwardMetrics).mockResolvedValue(false);
+
+    // The explicit release throws once, then the real delete runs. The finally
+    // must retry it: if the handler counted the claim as released the moment it
+    // *attempted* the delete, the row would survive and every retry of this
+    // Idempotency-Key would be dropped as a duplicate until the 48h TTL sweep.
+    vi.mocked(releaseBatch).mockRejectedValueOnce(
+      new Error("transient db failure"),
+    );
+
+    await post(makeApp()).send(makeBody());
+
+    expect(releaseBatch).toHaveBeenCalledTimes(2);
+    expect(
+      await prisma.telemetryBatch.findUnique({ where: { batchId: BATCH_ID } }),
+    ).toBeNull();
   });
 
   test("forward failure → 502 and batch NOT recorded (retry stays possible)", async () => {

@@ -193,6 +193,10 @@ model AgentTemplate {
   firstPublishedAt DateTime?
   status           PublishStatus @default(draft)
   featured         Boolean       @default(false)
+  // Curation weight for the featured gallery, sorted descending: the heaviest
+  // template leads. 0 means unranked, so anything featured without an explicit
+  // weight sits below every curated row instead of displacing the lead slot.
+  featuredRank     Int           @default(0)
   createdAt        DateTime      @default(now())
   updatedAt        DateTime      @updatedAt
 
@@ -205,6 +209,7 @@ model AgentTemplate {
   @@index([status, createdAt, id])
   @@index([status, category, createdAt, id])
   @@index([status, featured, createdAt, id])
+  @@index([status, featured, featuredRank, id])
   @@index([forkedFromId])
 }
 
@@ -420,6 +425,8 @@ model UserCredits {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
   account   Account  @relation(fields: [accountId], references: [id])
+
+  @@index([balance])
 }
 
 model GrantKind {
@@ -454,7 +461,8 @@ model CreditLedger {
   @@unique([accountId, idempotencyKey])
   @@index([accountId, createdAt])
   @@index([requestId])
-  @@index([grantKindId])
+  @@index([grantKindId, createdAt])
+  @@index([reason, accountId, createdAt])
 }
 
 enum SubscriptionPeriod {
@@ -761,6 +769,7 @@ model AdminAudit {
   @@unique([accountId, idempotencyKey])
   @@index([accountId, createdAt])
   @@index([actorEmail, createdAt])
+  @@index([createdAt, id])
 }
 
 /// Per-PR agent variant (dev XMTP network only). A named bundle pinning an

@@ -51,6 +51,12 @@ import {
 
 const MAX_CONTENT_LENGTH = 10_000;
 
+/** Longest prose around a link that still reads as an instruction about it
+ *  ("build me an agent from this"). Past this the submission is a paste that
+ *  merely cites a link, and the paste is itself the source material — fetching
+ *  the citation would throw away what the user actually sent. */
+const URL_INTENT_MAX_RESIDUAL = 300;
+
 /** The only tool values a generated template may use. Mirrors the SUPERPOWERS
  *  table + field requirements in `data/template-generator-prompt.txt`; the
  *  json_schema enum on the generate call enforces it at decode time so a custom
@@ -346,7 +352,8 @@ export const DEFAULT_TEST_METRICS: GenerationMetrics = {
  *  transcribed to text upstream and folded into `text`. */
 export type ResolvedAttachment =
   | { kind: "image"; mimeType: string; dataUri: string }
-  | { kind: "pdf"; filename: string; dataUri: string };
+  | { kind: "pdf"; filename: string; dataUri: string }
+  | { kind: "text"; filename: string; text: string };
 
 export interface GenerateTemplateInput {
   /** What the user typed in the composer, plus any transcribed voice notes the
@@ -357,8 +364,9 @@ export interface GenerateTemplateInput {
    *  legacy `idea` / `content` / `url` fields into this single field at the API
    *  boundary. */
   text?: string;
-  /** Image / PDF attachments, resolved to data URIs. Images become `image_url`
-   *  vision blocks; PDFs become native `file` blocks. */
+  /** Resolved attachments. Images become `image_url` vision blocks, PDFs native
+   *  `file` blocks, and text files inlined `text` blocks labelled with their
+   *  filename — so the model can tell a CSV of FAQs from the user's directive. */
   attachments?: ResolvedAttachment[];
 }
 
@@ -432,19 +440,36 @@ function buildCapabilitiesDirective(connections?: string[] | null): string {
   );
 }
 
+/** Wrap a text attachment in a labelled fence. The filename is the point: it tells
+ *  the model this is an attached file rather than more of the user's directive, and
+ *  the name itself is signal ("support-faq.csv" says more than its rows do).
+ *
+ *  Shared with the distill stage: the two stages describe the same file to the same
+ *  model, so the fence is a contract between them, not a local formatting choice. */
+export function fenceTextAttachment(
+  attachment: Extract<ResolvedAttachment, { kind: "text" }>,
+): string {
+  return `--- ${attachment.filename} ---\n${attachment.text}\n--- end ${attachment.filename} ---`;
+}
+
 /** Lead instruction for the multimodal path, phrased for the actual mix of
  *  attached files so the model knows whether it's looking at images, reading
- *  documents, or both. */
-function describeAttachments(imageCount: number, pdfCount: number): string {
+ *  documents, or both. A text file counts as a document: to the model it reads
+ *  the same as a PDF, only inlined rather than sent as bytes. */
+function describeAttachments(attachments: ResolvedAttachment[]): string {
+  const images = attachments.filter((a) => a.kind === "image").length;
+  const docs = attachments.filter(
+    (a) => a.kind === "pdf" || a.kind === "text",
+  ).length;
   const noun = (n: number, singular: string) =>
     `${n} ${singular}${n === 1 ? "" : "s"}`;
-  if (imageCount > 0 && pdfCount > 0) {
-    return `Create an assistant based on the attached files (${noun(imageCount, "image")} and ${noun(pdfCount, "document")}). Use all of them together to infer the topic, purpose, and audience.`;
+  if (images > 0 && docs > 0) {
+    return `Create an assistant based on the attached files (${noun(images, "image")} and ${noun(docs, "document")}). Use all of them together to infer the topic, purpose, and audience.`;
   }
-  if (pdfCount > 0) {
-    return `Create an assistant based on the content of the attached ${pdfCount === 1 ? "document" : `${pdfCount} documents`}.`;
+  if (docs > 0) {
+    return `Create an assistant based on the content of the attached ${docs === 1 ? "document" : `${docs} documents`}.`;
   }
-  return `Create an assistant based on what you see in the attached ${imageCount === 1 ? "image" : `${imageCount} images`}. Infer the topic, purpose, and audience from the visual content.`;
+  return `Create an assistant based on what you see in the attached ${images === 1 ? "image" : `${images} images`}. Infer the topic, purpose, and audience from the visual content.`;
 }
 
 // ---------------------------------------------------------------------------
@@ -469,6 +494,52 @@ export function appendBrevityRail(
  *  to be tolerant of pasted content. Exported for tests. */
 export function looksLikeUrl(text: string): boolean {
   return /^https?:\/\//i.test(text.trim());
+}
+
+/** A link found in a submission, plus whatever the user typed around it. */
+export interface SubmittedUrl {
+  url: string;
+  /** The submission with the link removed — the user's instruction, if any. */
+  residual: string;
+}
+
+// A link stops at whitespace, and at the delimiters that wrap one in prose rather
+// than belong to it: angle brackets (`<https://…>`), quotes, backticks, and the
+// bracket pairs a link gets parenthesised or markdown-linked with. All of these
+// are legal inside a URL but overwhelmingly appear around one, and a link that
+// genuinely needs them can percent-encode them.
+//
+// Trailing sentence punctuation is stripped separately rather than excluded from
+// the token, because `.` `?` and `!` are common *inside* a URL and only ambiguous
+// at the very end ("see https://x.com/a." — the period ends the sentence).
+const URL_TOKEN_RE = /https?:\/\/[^\s<>"'`()[\]{}]+/i;
+const URL_TRAILING_PUNCT_RE = /[.,;:!?]+$/;
+
+/** First usable link anywhere in the text, with the surrounding prose split out.
+ *  Null when the text holds no parseable link.
+ *
+ *  Only the FIRST link is returned. A build is generated from one source, so a
+ *  submission carrying several links is read as being about the first one; any
+ *  others stay in `residual` and reach the model as part of the user's intent
+ *  rather than being fetched. Exported for tests. */
+export function extractFirstUrl(text: string): SubmittedUrl | null {
+  const match = URL_TOKEN_RE.exec(text);
+  if (!match) return null;
+
+  const url = match[0].replace(URL_TRAILING_PUNCT_RE, "");
+  try {
+    new URL(url);
+  } catch {
+    return null;
+  }
+
+  const residual = (
+    text.slice(0, match.index) + text.slice(match.index + match[0].length)
+  )
+    .replace(/\s+/g, " ")
+    .trim();
+
+  return { url, residual };
 }
 
 // ---------------------------------------------------------------------------
@@ -1441,52 +1512,47 @@ export async function generateTemplate(
   const attachments = opts.attachments ?? [];
 
   if (attachments.length > 0) {
-    // Multimodal path: text directive + N image/PDF blocks. Images go to the
-    // vision model as `image_url`; PDFs as native `file` blocks. The executor
-    // already fetched the bytes and built each data URI, so this just lays out
-    // the blocks. The URL/GitHub/passthrough logic below is text-only and
-    // doesn't apply when files are attached.
-    const images = attachments.filter(
-      (a): a is Extract<ResolvedAttachment, { kind: "image" }> =>
-        a.kind === "image",
-    );
-    const pdfs = attachments.filter(
-      (a): a is Extract<ResolvedAttachment, { kind: "pdf" }> =>
-        a.kind === "pdf",
-    );
+    // Multimodal path: a text directive + one block per file. Images go to the
+    // vision model as `image_url`, PDFs as native `file` blocks, text files as
+    // inline `text` blocks. The executor already fetched the bytes and built each
+    // data URI, so this just lays out the blocks. The URL/GitHub/passthrough logic
+    // below is text-only and doesn't apply when files are attached.
     userContent = [
       {
         type: "text",
-        text: `${describeAttachments(images.length, pdfs.length)}${intentNote}`,
+        text: `${describeAttachments(attachments)}${intentNote}`,
       },
       // Map the original `attachments` array (not the filtered ones) so a mixed
-      // image/PDF order from the caller is preserved in the content blocks.
-      ...attachments.map((attachment) =>
-        attachment.kind === "image"
-          ? {
-              type: "image_url",
-              image_url: { url: attachment.dataUri },
-            }
-          : {
-              type: "file",
-              file: {
-                filename: attachment.filename,
-                file_data: attachment.dataUri,
-              },
-            },
-      ),
+      // order from the caller is preserved in the content blocks.
+      ...attachments.map((attachment) => {
+        if (attachment.kind === "image") {
+          return { type: "image_url", image_url: { url: attachment.dataUri } };
+        }
+        if (attachment.kind === "text") {
+          return { type: "text", text: fenceTextAttachment(attachment) };
+        }
+        return {
+          type: "file",
+          file: {
+            filename: attachment.filename,
+            file_data: attachment.dataUri,
+          },
+        };
+      }),
     ];
   } else {
     // Text path: idea, content, or URL
     let extracted = intentText;
+    // Fetched content replaces the submission, so an instruction the user wrapped
+    // around the link ("make this summarize every morning") is the only part of
+    // what they typed that survives. Carry it into the prompt. A bare link has none.
+    let urlIntent = "";
 
-    if (intentText && looksLikeUrl(intentText)) {
-      const url = intentText.trim();
-      try {
-        new URL(url);
-      } catch {
-        throw new AppError(400, "Invalid URL");
-      }
+    const submitted = intentText ? extractFirstUrl(intentText) : null;
+
+    if (submitted && submitted.residual.length <= URL_INTENT_MAX_RESIDUAL) {
+      const { url, residual } = submitted;
+      urlIntent = residual;
 
       // For GitHub URLs, try to short-circuit:
       //  - `passthrough`: the repo/file IS an agent prompt → return verbatim.
@@ -1516,6 +1582,11 @@ export async function generateTemplate(
         githubResult?.kind === "rawContent"
           ? githubResult.content
           : await extractUrl(url, trace);
+    } else if (!submitted && looksLikeUrl(intentText)) {
+      // URL-shaped submission with no parseable link in it. The user meant to
+      // send a link, so say the link is broken rather than quietly building an
+      // agent out of the malformed string.
+      throw new AppError(400, "Invalid URL");
     }
 
     if (!extracted.trim()) {
@@ -1545,7 +1616,8 @@ export async function generateTemplate(
       extracted = extracted.slice(0, MAX_CONTENT_LENGTH);
     }
 
-    userContent = `Create an assistant based on the following content:\n\n---\n${extracted}\n---`;
+    const urlIntentNote = urlIntent ? `\n\nUser's intent: ${urlIntent}` : "";
+    userContent = `Create an assistant based on the following content:\n\n---\n${extracted}\n---${urlIntentNote}`;
   }
 
   // Fold two user-message addenda into the directive text:

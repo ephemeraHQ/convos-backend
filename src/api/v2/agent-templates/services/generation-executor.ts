@@ -247,7 +247,9 @@ function summarizeInputType(
   }
   if (kinds.size === 0) return "text";
   if (kinds.size === 1) {
-    return [...kinds][0] as "image" | "pdf" | "audio";
+    // An attached text file meters as "text", same as a typed directive — the
+    // metering axis is modality, and both are characters in the prompt.
+    return [...kinds][0] as "text" | "image" | "pdf" | "audio";
   }
   return "mixed";
 }
