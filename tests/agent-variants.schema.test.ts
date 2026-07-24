@@ -41,12 +41,27 @@ describe("AgentVariantUpsertSchema", () => {
     expect(parsed.status).toBeUndefined();
     expect(parsed.assistantWorkerUrl).toBeUndefined();
     expect(parsed.builderPromptSlug).toBeUndefined();
+    expect(parsed.skipCredits).toBeUndefined();
     expect(parsed.expiresAt).toBeUndefined();
   });
 
   test("rejects an unknown key (strict; server-to-server route)", () => {
     expect(() =>
       AgentVariantUpsertSchema.parse({ ...valid, bogus: 1 }),
+    ).toThrow();
+  });
+
+  test("accepts a boolean skipCredits and rejects other types", () => {
+    expect(
+      AgentVariantUpsertSchema.parse({ ...valid, skipCredits: false })
+        .skipCredits,
+    ).toBe(false);
+    expect(
+      AgentVariantUpsertSchema.parse({ ...valid, skipCredits: true })
+        .skipCredits,
+    ).toBe(true);
+    expect(() =>
+      AgentVariantUpsertSchema.parse({ ...valid, skipCredits: "false" }),
     ).toThrow();
   });
 
@@ -89,6 +104,7 @@ describe("serializeAgentVariant", () => {
       status: "building",
       assistantWorkerUrl: null,
       builderPromptSlug: null,
+      skipCredits: true,
       prUrl: "https://github.com/x/y/pull/9",
       branch: "b",
       commit: "c",
@@ -96,6 +112,7 @@ describe("serializeAgentVariant", () => {
       createdAt: new Date("2026-06-24T12:00:00.000Z"),
       updatedAt: new Date("2026-06-24T12:00:00.000Z"),
     });
+    expect(out.skipCredits).toBe(true);
     expect(out.assistantWorkerUrl).toBeNull();
     expect(out.expiresAt).toBeNull();
     expect(out.createdAt).toBe("2026-06-24T12:00:00.000Z");

@@ -40,6 +40,9 @@ export const AgentVariantUpsertSchema = z
     assistantWorkerUrl: z.string().url().nullable().optional(),
     // A bench/Braintrust prompt slug, or null for the canonical generator.
     builderPromptSlug: z.string().trim().min(1).nullable().optional(),
+    // Agents created from this variant skip the credit path. Same optionality
+    // contract as the fields above; the column defaults to true on create.
+    skipCredits: z.boolean().optional(),
     prUrl: z.string().url(),
     branch: z.string().trim().min(1).max(255),
     commit: z.string().trim().min(1).max(64),
