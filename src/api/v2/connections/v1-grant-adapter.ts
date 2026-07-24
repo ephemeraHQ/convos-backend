@@ -75,35 +75,47 @@ export async function issueConnectionGrant(
   const expiresAt = input.expiresAt ?? null;
 
   return prisma.$transaction(async (tx) => {
-    const grant = await tx.connectionGrant.upsert({
+    // The legacy row is resolved case-insensitively, not via the composite
+    // unique key: legacy toolkits keep the client's casing, so a reissue that
+    // spells the toolkit differently must update the SAME semantic grant
+    // instead of creating a second one (which would also collide with the
+    // shared-id extension). The stored casing stays as first issued; every
+    // reader matches it case-insensitively.
+    const resolved = await tx.connectionGrant.findFirst({
       where: {
-        ownerAccountId_granteeInboxId_conversationId_toolkit: {
-          ownerAccountId: input.accountId,
-          granteeInboxId: input.granteeInboxId,
-          conversationId: input.conversationId,
-          toolkit: input.toolkit,
-        },
-      },
-      create: {
         ownerAccountId: input.accountId,
-        ownerInboxId: input.ownerInboxId,
         granteeInboxId: input.granteeInboxId,
         conversationId: input.conversationId,
-        toolkit: input.toolkit,
-        actions,
-        bundleIds,
-        serviceVersion,
-        expiresAt,
+        toolkit: { equals: input.toolkit, mode: "insensitive" },
       },
-      update: {
-        ownerInboxId: input.ownerInboxId,
-        actions,
-        bundleIds,
-        serviceVersion,
-        expiresAt,
-        revokedAt: null,
-      },
+      orderBy: { createdAt: "asc" },
+      select: { id: true },
     });
+    const grant = resolved
+      ? await tx.connectionGrant.update({
+          where: { id: resolved.id },
+          data: {
+            ownerInboxId: input.ownerInboxId,
+            actions,
+            bundleIds,
+            serviceVersion,
+            expiresAt,
+            revokedAt: null,
+          },
+        })
+      : await tx.connectionGrant.create({
+          data: {
+            ownerAccountId: input.accountId,
+            ownerInboxId: input.ownerInboxId,
+            granteeInboxId: input.granteeInboxId,
+            conversationId: input.conversationId,
+            toolkit: input.toolkit,
+            actions,
+            bundleIds,
+            serviceVersion,
+            expiresAt,
+          },
+        });
 
     const entitlement = await ensureEntitlementForV1Issue(tx, {
       accountId: input.accountId,
@@ -193,31 +205,40 @@ export type UpsertConversationAbilityInput = {
  * shared id.
  *
  * The shared identifier is reconciled by the normalized natural key: the
- * legacy row for (account, agent, conversation, ability) is resolved FIRST,
- * and a newly created extension takes that row's id (a pre-existing
- * legacy-only row — e.g. written by an old replica before the backfill
- * carried it — must not end up paired under two different ids). Without a
- * legacy row, the extension's generated id becomes the pair's id via the
- * mirror create. A later V1 re-issue of the same natural key updates the
- * same pair. When the caller did not provide its inbox id, the mirror's
+ * legacy rows for (account, agent, conversation, ability) are resolved FIRST
+ * — case-insensitively, because legacy toolkits keep the client's casing (a
+ * backfilled "GoogleCalendar" grant already shares its id with the extension;
+ * an exact-key miss would try to recreate that id and hit the primary key) —
+ * and a newly created extension takes the oldest such row's id (a
+ * pre-existing legacy-only row, e.g. written by an old replica before the
+ * backfill carried it, must not end up paired under two different ids).
+ * Without a legacy row, the extension's generated id becomes the pair's id
+ * via the mirror create. A later V1 re-issue of the same natural key updates
+ * the same pair. When the caller did not provide its inbox id, the mirror's
  * ownerInboxId is empty — V1 responses (which require it) skip such rows,
  * and onBehalfOf selection simply never matches them.
+ *
+ * A V2 PUT REPLACES the consent scope: `actions` is cleared in both stores.
+ * Backfilled extensions carry the legacy grant's raw action slugs, and the
+ * check unions actions with bundle-resolved scope — leaving stale slugs
+ * behind would let a narrowing PUT (say, down to a read-only bundle) keep
+ * authorizing the broader legacy scope.
  */
 export async function upsertConversationAbilityExtension(
   input: UpsertConversationAbilityInput,
 ): Promise<ConversationAbility> {
   return prisma.$transaction(async (tx) => {
-    const legacy = await tx.connectionGrant.findUnique({
+    const legacyRows = await tx.connectionGrant.findMany({
       where: {
-        ownerAccountId_granteeInboxId_conversationId_toolkit: {
-          ownerAccountId: input.accountId,
-          granteeInboxId: input.agentInboxId,
-          conversationId: input.conversationId,
-          toolkit: input.abilityId,
-        },
+        ownerAccountId: input.accountId,
+        granteeInboxId: input.agentInboxId,
+        conversationId: input.conversationId,
+        toolkit: { equals: input.abilityId, mode: "insensitive" },
       },
+      orderBy: { createdAt: "asc" },
       select: { id: true },
     });
+    const legacy = legacyRows.length > 0 ? legacyRows[0] : null;
     const existing = await tx.conversationAbility.findUnique({
       where: {
         entitlementId_conversationId_agentInboxId: {
@@ -229,11 +250,23 @@ export async function upsertConversationAbilityExtension(
       select: { id: true },
     });
 
+    // Adopt the legacy id only while no extension row holds it yet: an
+    // unmerged case-variant entitlement's extension can still carry it
+    // mid-window, and a by-id create would hit the primary key.
+    let adoptableId: string | null = null;
+    if (!existing && legacy) {
+      const taken = await tx.conversationAbility.findUnique({
+        where: { id: legacy.id },
+        select: { id: true },
+      });
+      adoptableId = taken ? null : legacy.id;
+    }
     const extension = existing
       ? await tx.conversationAbility.update({
           where: { id: existing.id },
           data: {
             bundleIds: input.bundleIds,
+            actions: [],
             ...(input.extendedByInboxId !== undefined
               ? { extendedByInboxId: input.extendedByInboxId }
               : {}),
@@ -241,7 +274,7 @@ export async function upsertConversationAbilityExtension(
         })
       : await tx.conversationAbility.create({
           data: {
-            ...(legacy ? { id: legacy.id } : {}),
+            ...(adoptableId ? { id: adoptableId } : {}),
             entitlementId: input.entitlementId,
             conversationId: input.conversationId,
             agentInboxId: input.agentInboxId,
@@ -250,33 +283,36 @@ export async function upsertConversationAbilityExtension(
           },
         });
 
-    await tx.connectionGrant.upsert({
-      where: {
-        ownerAccountId_granteeInboxId_conversationId_toolkit: {
+    if (legacyRows.length > 0) {
+      // Every case-variant sibling gets the replaced scope too: the legacy
+      // matcher (old replicas, pre-readiness fallback) matches toolkit
+      // case-insensitively, so a variant left with stale actions would keep
+      // authorizing them.
+      await tx.connectionGrant.updateMany({
+        where: { id: { in: legacyRows.map((row) => row.id) } },
+        data: {
+          bundleIds: input.bundleIds,
+          actions: [],
+          revokedAt: null,
+          ...(input.extendedByInboxId !== undefined
+            ? { ownerInboxId: input.extendedByInboxId }
+            : {}),
+        },
+      });
+    } else {
+      await tx.connectionGrant.create({
+        data: {
+          id: extension.id,
           ownerAccountId: input.accountId,
+          ownerInboxId: input.extendedByInboxId ?? "",
           granteeInboxId: input.agentInboxId,
           conversationId: input.conversationId,
           toolkit: input.abilityId,
+          actions: [],
+          bundleIds: input.bundleIds,
         },
-      },
-      create: {
-        id: extension.id,
-        ownerAccountId: input.accountId,
-        ownerInboxId: input.extendedByInboxId ?? "",
-        granteeInboxId: input.agentInboxId,
-        conversationId: input.conversationId,
-        toolkit: input.abilityId,
-        actions: [],
-        bundleIds: input.bundleIds,
-      },
-      update: {
-        bundleIds: input.bundleIds,
-        revokedAt: null,
-        ...(input.extendedByInboxId !== undefined
-          ? { ownerInboxId: input.extendedByInboxId }
-          : {}),
-      },
-    });
+      });
+    }
 
     return extension;
   });

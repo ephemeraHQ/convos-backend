@@ -216,10 +216,15 @@ function candidateKey(accountId: string, abilityId: string): string {
  * so one (account, ability) never splits across rows the lifecycle routes
  * cannot all address. Variant rows are rare (old V1-adapter writes stored the
  * toolkit as sent), so this works row by row:
- *   - no canonical row yet: rename the variant in place (id and extensions
- *     kept);
- *   - canonical row exists and is a revocation tombstone: the tombstone wins
- *     — the variant row and its extensions are deleted (never resurrect);
+ *   - no canonical row yet: rename the variant in place (id, extensions, and
+ *     any tombstone kept);
+ *   - a revocation tombstone on EITHER equivalent row dominates: the merged
+ *     canonical row ends up revoked with no extensions. This pass is derived
+ *     state and cannot prove which row's state is newer, so it must never
+ *     turn an explicit revocation back into live access — a live variant dies
+ *     under a canonical tombstone, and a revoked variant tombstones a live
+ *     canonical row (extensions removed, revokedAt carried over). Only an
+ *     explicit user action (bind, V1 reissue) resurrects the merged row;
  *   - both live: re-parent the variant's extensions onto the canonical row
  *     (duplicate (conversation, agent) opt-ins are dropped — the canonical
  *     row's version wins), then delete the variant row.
@@ -250,7 +255,24 @@ async function mergeCaseVariantEntitlements(
       counts.entitlementsCaseMerged += 1;
       continue;
     }
-    if (!canonical.revokedAt) {
+    if (canonical.revokedAt || variant.revokedAt) {
+      // Revocation dominates the merge (see the doc comment). The surviving
+      // canonical row must be a tombstone before the variant — and whichever
+      // tombstone it carried — is folded away.
+      if (!canonical.revokedAt) {
+        await db.conversationAbility.deleteMany({
+          where: { entitlementId: canonical.id },
+        });
+        await db.abilityEntitlement.update({
+          where: { id: canonical.id },
+          data: {
+            status: "revoked",
+            revokedAt: variant.revokedAt ?? new Date(),
+            externalConnectionId: null,
+          },
+        });
+      }
+    } else {
       const extensions = await db.conversationAbility.findMany({
         where: { entitlementId: variant.id },
         select: { id: true, conversationId: true, agentInboxId: true },
@@ -274,7 +296,7 @@ async function mergeCaseVariantEntitlements(
       }
     }
     // Deleting the variant row cascades whatever extensions were not
-    // re-parented (all of them when the canonical row is a tombstone).
+    // re-parented (all of them when revocation dominated the merge).
     await db.abilityEntitlement.delete({ where: { id: variant.id } });
     counts.entitlementsCaseMerged += 1;
     log.info(

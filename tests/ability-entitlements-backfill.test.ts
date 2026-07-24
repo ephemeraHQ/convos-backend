@@ -514,6 +514,84 @@ describe("backfillAbilityEntitlements — reconciliation sweep (DB)", () => {
     expect(gone).toBeNull();
   });
 
+  test("a revoked case-variant tombstones a live canonical row (revocation dominates the merge)", async () => {
+    // The inverse ordering of the test above — the resurrection trace: a live
+    // canonical row next to a REVOKED variant. The merge must not reparent
+    // the canonical row's way to staying live: the tombstone is the user's
+    // explicit revocation, and even a still-ACTIVE Composio credential in the
+    // same pass must not resurrect it.
+    const accountId = await makeAccount();
+    const revokedAt = new Date();
+    const canonical = await prisma.abilityEntitlement.create({
+      data: {
+        accountId,
+        abilityId: "googlecalendar",
+        status: "active",
+        externalConnectionId: "conn_live",
+      },
+    });
+    const liveOptIn = await prisma.conversationAbility.create({
+      data: {
+        entitlementId: canonical.id,
+        conversationId: "conv-canonical-live",
+        agentInboxId: "agent-1",
+        bundleIds: ["calendar.events"],
+      },
+    });
+    const variant = await prisma.abilityEntitlement.create({
+      data: {
+        accountId,
+        abilityId: "GOOGLECALENDAR",
+        status: "revoked",
+        revokedAt,
+      },
+    });
+
+    const counts = await run([
+      {
+        id: "conn_live",
+        userId: accountId,
+        toolkitSlug: "googlecalendar",
+        status: "ACTIVE",
+      },
+    ]);
+    expect(counts.entitlementsCaseMerged).toBeGreaterThanOrEqual(1);
+
+    // The surviving canonical row is a tombstone carrying the variant's
+    // revokedAt; its extensions are gone; the inventory pass skipped it.
+    const kept = await prisma.abilityEntitlement.findUniqueOrThrow({
+      where: { id: canonical.id },
+      include: { extensions: true },
+    });
+    expect(kept.status).toBe("revoked");
+    expect(kept.revokedAt).toEqual(revokedAt);
+    expect(kept.externalConnectionId).toBeNull();
+    expect(kept.extensions).toHaveLength(0);
+    expect(
+      await prisma.conversationAbility.findUnique({
+        where: { id: liveOptIn.id },
+      }),
+    ).toBeNull();
+    expect(
+      await prisma.abilityEntitlement.findUnique({ where: { id: variant.id } }),
+    ).toBeNull();
+
+    // A re-run stays converged (idempotent; still never resurrects).
+    await run([
+      {
+        id: "conn_live",
+        userId: accountId,
+        toolkitSlug: "googlecalendar",
+        status: "ACTIVE",
+      },
+    ]);
+    const still = await prisma.abilityEntitlement.findUniqueOrThrow({
+      where: { id: canonical.id },
+    });
+    expect(still.status).toBe("revoked");
+    expect(still.revokedAt).toEqual(revokedAt);
+  });
+
   test("the post-drain sweep converges late legacy writes without touching entitlement status", async () => {
     const accountId = await makeAccount();
     const entitlement = await prisma.abilityEntitlement.create({

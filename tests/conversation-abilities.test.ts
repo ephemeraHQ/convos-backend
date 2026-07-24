@@ -1,6 +1,15 @@
 import express from "express";
 import request from "supertest";
-import { afterEach, beforeAll, describe, expect, test, vi } from "vitest";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  describe,
+  expect,
+  test,
+  vi,
+} from "vitest";
+import { __setEntitlementReadReadinessForTests } from "@/api/v2/abilities/read-readiness";
 import { issueConnectionGrant } from "@/api/v2/connections/v1-grant-adapter";
 import { conversationsRouter } from "@/api/v2/conversations/conversations.router";
 import { authMiddleware, requireAccount } from "@/middleware/auth";
@@ -63,6 +72,14 @@ async function putAbility(
 
 beforeAll(async () => {
   await validateJWTKeys();
+  // Pin the endpoints onto the entitlement tables: the real gate reads the
+  // shared database's migration ledgers, whose state this suite must not
+  // depend on. The boot-window behaviors have their own tests below.
+  __setEntitlementReadReadinessForTests(true);
+});
+
+afterAll(() => {
+  __setEntitlementReadReadinessForTests(null);
 });
 
 afterEach(async () => {
@@ -269,6 +286,98 @@ describe("PUT /v2/conversations/:conversationId/abilities/:abilityId", () => {
       expect(res.body).toEqual({ code: "unknown_ability" });
     }
   });
+
+  test("boot window (ledgers unconfirmed): PUT answers a retryable 503, never a false needs_entitlement", async () => {
+    const accountId = await makeAccount();
+    await makeActiveEntitlement(accountId);
+    __setEntitlementReadReadinessForTests(false);
+    try {
+      const res = await putAbility(accountId, {
+        agentInboxId: "agent-1",
+        bundleIds: ["calendar.events"],
+      });
+      expect(res.status).toBe(503);
+      expect(res.body).toEqual({ code: "entitlements_unavailable" });
+      // Nothing was written on either store.
+      const extensions = await prisma.conversationAbility.findMany({
+        where: { conversationId: CONVERSATION },
+      });
+      expect(extensions).toHaveLength(0);
+    } finally {
+      __setEntitlementReadReadinessForTests(true);
+    }
+  });
+
+  test("canonical PUT over a backfilled mixed-case pair updates in place (no id collision 500)", async () => {
+    const accountId = await makeAccount();
+    // A V1 client issued with mixed casing: the legacy row keeps
+    // "GoogleCalendar", the extension shares its id, the entitlement is
+    // canonical — exactly what the backfill produces for such rows.
+    const grant = await issueConnectionGrant({
+      accountId,
+      ownerInboxId: "owner-inbox-1",
+      granteeInboxId: "agent-1",
+      conversationId: CONVERSATION,
+      toolkit: "GoogleCalendar",
+      actions: ["GOOGLECALENDAR_DELETE_EVENT"],
+    });
+
+    const res = await putAbility(accountId, {
+      agentInboxId: "agent-1",
+      bundleIds: ["calendar.events.read"],
+      extendedByInboxId: "owner-inbox-1",
+    });
+    expect(res.status).toBe(200);
+
+    // One pair, still under the shared id, with the replaced (narrowed)
+    // scope in both stores — the inherited legacy action is gone.
+    const legacyRows = await prisma.connectionGrant.findMany({
+      where: { ownerAccountId: accountId },
+    });
+    expect(legacyRows).toHaveLength(1);
+    expect(legacyRows[0].id).toBe(grant.id);
+    expect(legacyRows[0].bundleIds).toEqual(["calendar.events.read"]);
+    expect(legacyRows[0].actions).toEqual([]);
+    const extension = await prisma.conversationAbility.findUniqueOrThrow({
+      where: { id: grant.id },
+    });
+    expect(extension.bundleIds).toEqual(["calendar.events.read"]);
+    expect(extension.actions).toEqual([]);
+  });
+
+  test("canonical PUT adopts a legacy-only mixed-case row's id (case-insensitive reconciliation)", async () => {
+    const accountId = await makeAccount();
+    await makeActiveEntitlement(accountId);
+    // An old replica's legacy-only write with client casing, never carried
+    // to the new tables.
+    const legacy = await prisma.connectionGrant.create({
+      data: {
+        ownerAccountId: accountId,
+        ownerInboxId: "owner-inbox-1",
+        granteeInboxId: "agent-1",
+        conversationId: CONVERSATION,
+        toolkit: "GoogleCalendar",
+        actions: ["GOOGLECALENDAR_DELETE_EVENT"],
+      },
+    });
+
+    const res = await putAbility(accountId, {
+      agentInboxId: "agent-1",
+      bundleIds: ["calendar.events.read"],
+      extendedByInboxId: "owner-inbox-1",
+    });
+    expect(res.status).toBe(200);
+
+    const extension = await prisma.conversationAbility.findUniqueOrThrow({
+      where: { id: legacy.id },
+    });
+    expect(extension.bundleIds).toEqual(["calendar.events.read"]);
+    const healed = await prisma.connectionGrant.findUniqueOrThrow({
+      where: { id: legacy.id },
+    });
+    expect(healed.actions).toEqual([]);
+    expect(healed.bundleIds).toEqual(["calendar.events.read"]);
+  });
 });
 
 describe("DELETE /v2/conversations/:conversationId/abilities/:abilityId", () => {
@@ -451,5 +560,81 @@ describe("GET /v2/conversations/:conversationId/abilities", () => {
       .set("X-Convos-AuthToken", await token(accountId));
     expect(res.status).toBe(200);
     expect(res.body).toEqual({ abilities: [] });
+  });
+
+  test("boot window (ledgers unconfirmed): the view derives from live legacy rows, not the incomplete tables", async () => {
+    const caller = await makeAccount();
+    const member = await makeAccount();
+    // Legacy-only state an old replica wrote; the new tables know nothing.
+    await prisma.connectionGrant.create({
+      data: {
+        ownerAccountId: caller,
+        ownerInboxId: "caller-inbox",
+        granteeInboxId: "agent-1",
+        conversationId: CONVERSATION,
+        toolkit: "GoogleCalendar",
+        bundleIds: ["calendar.events"],
+      },
+    });
+    await prisma.connectionGrant.create({
+      data: {
+        ownerAccountId: member,
+        ownerInboxId: "member-inbox",
+        granteeInboxId: "agent-1",
+        conversationId: CONVERSATION,
+        toolkit: "googlecalendar",
+        bundleIds: ["calendar.events.read"],
+      },
+    });
+    // Revoked rows are withdrawn opt-ins — never served.
+    await prisma.connectionGrant.create({
+      data: {
+        ownerAccountId: member,
+        ownerInboxId: "member-inbox",
+        granteeInboxId: "agent-2",
+        conversationId: CONVERSATION,
+        toolkit: "googlecalendar",
+        revokedAt: new Date(),
+      },
+    });
+
+    __setEntitlementReadReadinessForTests(false);
+    try {
+      const res = await request(makeApp())
+        .get(`/conversations/${CONVERSATION}/abilities`)
+        .set("X-Convos-AuthToken", await token(caller));
+      expect(res.status).toBe(200);
+      const { abilities } = res.body as {
+        abilities: Array<Record<string, unknown>>;
+      };
+      expect(abilities).toHaveLength(2);
+      const mine = abilities.find(
+        (a) => a.extendedByInboxId === "caller-inbox",
+      );
+      const theirs = abilities.find(
+        (a) => a.extendedByInboxId === "member-inbox",
+      );
+      // Legacy toolkit casing folds onto the canonical wire ability id, and
+      // a live legacy grant reads as usable consent (status active).
+      expect(mine).toMatchObject({
+        abilityId: "googlecalendar",
+        agentInboxId: "agent-1",
+        bundleIds: ["calendar.events"],
+        extendedByMe: true,
+        status: "active",
+      });
+      expect(theirs).toMatchObject({
+        abilityId: "googlecalendar",
+        bundleIds: ["calendar.events.read"],
+        extendedByMe: false,
+        status: "active",
+      });
+      // The payload stays bounded on this path too.
+      const payload = JSON.stringify(res.body);
+      expect(payload).not.toContain(caller);
+      expect(payload).not.toContain(member);
+    } finally {
+      __setEntitlementReadReadinessForTests(true);
+    }
   });
 });

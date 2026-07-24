@@ -49,11 +49,13 @@ export async function completeHandler(req: Request, res: Response) {
       return;
     }
     // Mirror into the entitlement tables (best-effort; never changes the V1
-    // wire): the verified credential makes the entitlement active.
+    // wire): the entitlement status derives from the connection's own status
+    // — only a verified ACTIVE credential activates it.
     await noteV1ConnectionCompleted({
       accountId,
       connectionId: owned.id,
       toolkitSlug: owned.toolkit.slug,
+      connectionStatus: owned.status,
     });
     res.status(200).json(mapComposioToResponse(owned, accountId));
     return;
