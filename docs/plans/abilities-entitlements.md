@@ -381,6 +381,37 @@ From the 2026-07-23 review:
   candidates from the trusted pair plus the optional `onBehalfOf` selector and keeps
   exec's denial vocabulary verbatim.
 
+## Implementation determinations (B2 build)
+
+Decisions made while building the entitlements core, recorded here because they
+refine (not change) the contracts above:
+
+- **The extension row carries `actions`, `extendedByInboxId`, and `expiresAt`** beyond
+  the spec's column floor. Live V1 grants set per-grant action scopes, an extender
+  inbox ID (`onBehalfOf` matching, "extended by" display), and per-grant expiry that
+  exec enforces; without these fields a 1:1 grant map would either widen scoped grants
+  to whole-toolkit or break them. All three drain with the V1 adapters.
+- **Exec authorization stays extension-row-based during migration.** The conversation
+  check is byte-faithful to V1 exec and deliberately does not consult entitlement
+  lifecycle status; lifecycle gating arrives with the revalidation phase. Until then
+  an `active` entitlement never self-expires - only user action or a sweep touches it.
+- **Extension PUT requires non-empty `bundleIds`.** An empty V2 scope would alias the
+  legacy whole-toolkit transition default in the check - a fail-open trap. Withdrawal
+  is DELETE, not an empty PUT.
+- **Entitlement DELETE is teardown-first.** External credentials are revoked at
+  Composio before any local write: a Composio outage answers 502 and an unconfigured
+  service answers 503, both with the row untouched, so revocation is retryable and no
+  external credential is ever stranded behind a local tombstone.
+- **Cutover is triple-gated and re-runnable.** Reads flip to the new tables only when
+  three ledgers agree: user-id migration done, backfill at the current epoch, and a
+  post-drain cutover marker written after a delayed drain sweep converges anything old
+  replicas wrote. The reconciliation sweep is epoch-keyed (bump the constant to re-run
+  once per environment), and the Composio inventory scan holds an owner-token lease
+  (TTL with renewal, CAS release) so a fleet restart scans from at most one replica.
+- **Catalog guard for unusable abilities.** A visible OAuth ability that resolves to
+  zero public bundles is excluded from the served catalog (and its version hash) and
+  logged; bind and extend then 404 it, while entitlement DELETE still works.
+
 ## Open questions
 
 1. **Icon delivery**: manifest URLs (S3/CDN, per Notion) vs V1's inline base64. URLs
