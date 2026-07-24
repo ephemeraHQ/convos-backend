@@ -163,7 +163,13 @@ tables directly — see `src/payments/AGENTS.md`):
 
 ```ts
 import { grant } from "@/payments";
-await grant({ accountId, credits: 1_000_000, idempotencyKey: `local-${accountId}`, kind: "manual" });
+
+await grant({
+  accountId,
+  credits: 1_000_000,
+  idempotencyKey: `local-${accountId}`,
+  kind: "manual",
+});
 ```
 
 `pnpm typecheck` fails on a fresh clone until the generated code exists. Run
