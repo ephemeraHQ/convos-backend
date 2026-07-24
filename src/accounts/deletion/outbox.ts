@@ -220,7 +220,9 @@ export const __drainDeletionTasksWithoutLeaseForTests =
  */
 export const drainDeletionTasks = async (): Promise<DrainCounts> => {
   let counts: DrainCounts = { done: 0, retried: 0, failed: 0 };
-  let drainCompleted = false;
+  // Explicitly widened: assigned inside the transaction closure, which
+  // TS's flow analysis cannot see from the catch block.
+  let drainCompleted: boolean = false;
   try {
     await prisma.$transaction(
       async (tx) => {
