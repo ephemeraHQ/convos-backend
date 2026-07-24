@@ -243,6 +243,7 @@ export const drainDeletionTasks = async (): Promise<DrainCounts> => {
       { timeout: OUTBOX_LEASE_TIMEOUT_MS, maxWait: 5_000 },
     );
   } catch (err) {
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- assigned inside the transaction closure, which flow analysis cannot see from this catch block
     if (!drainCompleted) throw err;
     // The drain ran to completion and its work is durable on the pooled
     // client; only the advisory-lock transaction's close failed (e.g. the
