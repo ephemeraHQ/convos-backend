@@ -339,11 +339,17 @@ the V1 adapters are removed last.
    of truth; rolling-deploy note in the data model).
 3. iOS: Track A screens land dark behind the abilities feature flag (debug-menu toggle
    on dev builds); Track B wires them up.
-4. Backend: worker-authenticated per-conversation/per-agent enumerate endpoint;
-   agent-runtime workstream moves to the dual read (backend first, XMTP fallback).
-5. Client excision (Track B item 2) once backfill coverage is verified and the runtime
+4. Local end-to-end milestone: local backend + local assistants stack with the
+   runtime-internal MCP server + a Track B client build against the local backend,
+   proving grant -> discovery -> exec -> typed denial in one loop before anything
+   ships to the dev environment.
+5. Backend + runtime, dev environment: `GET /v2/composio/entitlements` (the
+   worker-authenticated per-conversation/per-agent enumerate endpoint) with
+   MCP-native discovery in the agent runtime; the XMTP metadata read is demoted
+   to the flag-controlled fallback (default off in the V2 flow).
+6. Client excision (Track B item 2) once backfill coverage is verified and the runtime
    reads backend-first.
-6. Remove V1 endpoints + adapters and the runtime's XMTP fallback when shipped-client
+7. Remove V1 endpoints + adapters and the runtime's XMTP fallback when shipped-client
    traffic drains.
 
 ## Determinations
@@ -411,6 +417,44 @@ refine (not change) the contracts above:
 - **Catalog guard for unusable abilities.** A visible OAuth ability that resolves to
   zero public bundles is excluded from the served catalog (and its version hash) and
   logged; bind and extend then 404 it, while entitlement DELETE still works.
+
+## MCP integration determinations (2026-07-28)
+
+Recorded after recon of the assistants runtime's internal MCP server. These
+determinations connect the entitlements core to the agent runtime and refine the
+"gateway later" language above into a concrete phase.
+
+- **The runtime-internal MCP server exists (local/dev), with a concrete consumer.**
+  The assistants worker serves an internal MCP endpoint that the Hermes harness
+  consumes; the harness connection is enabled for local and dev environments and
+  off (fail-closed) in production. This realizes the step the check section
+  deferred ("exposure as a standalone RPC for the MCP gateway ships when the
+  gateway contract is real"): the gateway contract is now real, so the thin
+  wrapper over `checkEntitlement` enumeration ships in this phase.
+- **New worker-facing endpoint: `GET /v2/composio/entitlements`.** Auth mirrors
+  exec exactly: the worker secret plus the trusted
+  `x-convos-conversation-id` / `x-convos-agent-inbox-id` headers, behind the
+  same auth gate as `POST /v2/composio/exec`. It returns the calling agent's
+  entitled abilities for its conversation, with per-owner resolved actions.
+  Action slugs are allowed on this wire - the caller is a trusted worker, the
+  same trust class as exec - which is explicitly different from client-facing
+  surfaces, where slugs never appear.
+- **Listing vs enforcement split, forced by transport.** The MCP client lists
+  tools once per container boot and the single-response HTTP transport cannot
+  deliver list-changed pushes. So ability tools are seeded per instance at boot
+  (an instance maps to exactly one conversation), and every call is enforced
+  backend-side at execution time; typed denials guide the model to prompt the
+  user for a grant. Mid-conversation grants therefore work without re-listing -
+  the tool is already visible and the next call succeeds. Listing freshness
+  matters only for tool visibility and refreshes on container recycle.
+- **Agent awareness goes MCP-native.** Discovery of what an agent may use
+  migrates from reading `ProfileUpdate.metadata["connections"]` to MCP-native
+  discovery backed by the enumerate endpoint. The iOS metadata shim is demoted
+  from a required leg to a flag-controlled fallback, default off in the V2 flow.
+  The consent-request flow (the user-facing picker) is unchanged and stays
+  outside MCP for now.
+- **Out of scope for this phase:** the Agent Action Queue, webhook ingress, and
+  escalation meta-tools.
 
 ## Open questions
 
