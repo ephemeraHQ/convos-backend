@@ -343,7 +343,7 @@ the V1 adapters are removed last.
    runtime-internal MCP server + a Track B client build against the local backend,
    proving grant -> discovery -> exec -> typed denial in one loop before anything
    ships to the dev environment.
-5. Backend + runtime, dev environment: `GET /v2/composio/entitlements` (the
+5. Backend + runtime, dev environment: `GET /v2/abilities/entitlements` (the
    worker-authenticated per-conversation/per-agent enumerate endpoint) with
    MCP-native discovery in the agent runtime; the XMTP metadata read is demoted
    to the flag-controlled fallback (default off in the V2 flow).
@@ -431,11 +431,13 @@ determinations connect the entitlements core to the agent runtime and refine the
   deferred ("exposure as a standalone RPC for the MCP gateway ships when the
   gateway contract is real"): the gateway contract is now real, so the thin
   wrapper over `checkEntitlement` enumeration ships in this phase.
-- **New worker-facing endpoint: `GET /v2/composio/entitlements`.** Auth mirrors
+- **New worker-facing endpoint: `GET /v2/abilities/entitlements`.** Auth mirrors
   exec exactly: the worker secret plus the trusted
   `x-convos-conversation-id` / `x-convos-agent-inbox-id` headers, behind the
   same auth gate as `POST /v2/composio/exec`. It returns the calling agent's
   entitled abilities for its conversation, with per-owner resolved actions.
+  The path is deliberately vendor-neutral: new surfaces keep vendor names out,
+  while the legacy `/v2/composio/exec` path is unchanged.
   Action slugs are allowed on this wire - the caller is a trusted worker, the
   same trust class as exec - which is explicitly different from client-facing
   surfaces, where slugs never appear.
