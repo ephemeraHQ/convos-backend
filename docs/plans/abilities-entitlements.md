@@ -455,8 +455,37 @@ determinations connect the entitlements core to the agent runtime and refine the
   from a required leg to a flag-controlled fallback, default off in the V2 flow.
   The consent-request flow (the user-facing picker) is unchanged and stays
   outside MCP for now.
-- **Out of scope for this phase:** the Agent Action Queue, webhook ingress, and
-  escalation meta-tools.
+- **Out of scope for this phase:** the Agent Action Queue (deferred) and
+  escalation meta-tools. Webhook ingress left this list in the 1:1 review
+  below: an exposed webhook bridges inbound events until the queue lands.
+
+## Architecture determinations (1:1 review, 2026-07-28)
+
+- **Agent execution routes through the MCP gateway exclusively.** The legacy
+  skill-driven direct exec path is scheduled for removal; migrating existing
+  connections onto the MCP middleware is committed work, not an option.
+- **Abilities are hosted in the backend and register themselves with the MCP on
+  boot.** The backend serves ability schemas - the manifest's `tools[]` era -
+  and the MCP extracts and publishes them to agents dynamically. The current
+  hand-written runtime tool definitions are an interim implementation of this
+  contract, to be replaced by schema-driven registration.
+- **Ability schemas carry typed properties** (for example account- or
+  user-level visibility, contact fields) so the runtime can interpret usage
+  generically, without bespoke per-ability code.
+- **The agent action queue is deferred; a webhook bridges inbound events.** An
+  exposed webhook carries inbound events until the queue lands; its design is
+  pending an in-person session. Webhook ingress thereby moves from out of
+  scope to interim bridge; the queue itself and escalation meta-tools stay out
+  of this phase.
+- **Long-term direction: exit Composio.** Composio offers no ephemeral-token or
+  secret-management story. Until the exit, no new coupling to Composio-specific
+  shapes in schemas or wires beyond the existing execution adapter; new
+  surfaces stay vendor-neutral, as the enumerate endpoint path already does.
+- **Capability requests become backend state.** Folding in the earlier chat
+  determination: V2 capability/permission requests are backend-recorded state
+  speaking ability and bundle ids; chat carries at most a content-free anchor;
+  the V1 `capability_request:1.0` payload retires at drain. This resolves the
+  escalation-transport open question.
 
 ## Open questions
 
@@ -467,9 +496,11 @@ determinations connect the entitlements core to the agent runtime and refine the
 3. **Bundles in the manifest**: confirmed as the user-facing permission unit? (Notion
    manifest lists `tools[]`/`actions[]` only; this doc keeps bundles - exec and both
    UIs already speak them.)
-4. **Escalation transport**: how the "request user permission" meta tool and the
-   new-agent opt-in prompt reach the client (push? in-conversation message? poll) -
-   gateway/action-queue dependency; UI is mocked meanwhile.
+4. **Escalation transport** - resolved (1:1 review, 2026-07-28): requests are
+   backend-recorded state speaking ability/bundle ids; chat carries at most a
+   content-free anchor; the V1 `capability_request:1.0` payload retires at
+   drain. Remaining detail only: client notification mechanics (poll vs push),
+   settled alongside the interim webhook design.
 5. **Google Drive**: the hardcoded iOS catalog offered Google Drive, but the backend
    never served it. Register it as a hidden manifest (existing credentials keep
    meaning; the ability can launch later) or drop it and delete any stray grants
