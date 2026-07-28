@@ -20,6 +20,7 @@ import {
   telemetryLimiter,
 } from "@/middleware/rateLimit";
 import { abilitiesRouter } from "./abilities/abilities.router";
+import { entitlementsWorkerHandler } from "./abilities/handlers/entitlements-worker";
 import { accountsByIdRouter } from "./accounts/accountsByIdRouter";
 import { accountsMeRouter } from "./accounts/accountsMeRouter";
 import { meGuard } from "./accounts/middleware/meGuard";
@@ -150,6 +151,20 @@ v2Router.use("/agents", authMiddleware, agentsRouter);
 // themselves.
 v2Router.use("/conversations", authMiddleware, conversationsRouter);
 v2Router.use("/attachments", authMiddleware, attachmentsRouter);
+// Worker-facing enumerate: the abilities usable by one agent in one
+// conversation, with resolved action slugs. Auth MIRRORS /v2/composio/exec
+// (composioExecAuth + the worker-stamped trusted identity headers): the agent
+// runtime reaches the backend through the trusted worker using the exec
+// credential, not a per-user JWT — a JWT gate here would 401 the very caller
+// that needs it. The key name (X-Composio-Exec-Key) is legacy-scoped to its
+// first consumer; the route is vendor-neutral. Declared BEFORE the JWT-gated
+// /abilities mount so this more specific path is matched first (the
+// /connections/services precedent).
+v2Router.get(
+  "/abilities/entitlements",
+  composioExecAuth,
+  entitlementsWorkerHandler,
+);
 // The Connections V2 ability catalog (docs/plans/abilities-entitlements.md).
 // JWT-only, deliberately without requireAccount: device-only tokens can browse
 // the catalog; entitlement state appears only when the JWT carries an account.
