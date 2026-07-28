@@ -321,6 +321,7 @@ describe("GET /v2/abilities/entitlements — enumeration (DB)", () => {
                 "GOOGLECALENDAR_CREATE_EVENT",
                 "GOOGLECALENDAR_DELETE_EVENT",
                 "GOOGLECALENDAR_EVENTS_LIST",
+                "GOOGLECALENDAR_PATCH_EVENT",
                 "GOOGLECALENDAR_UPDATE_EVENT",
               ],
             },

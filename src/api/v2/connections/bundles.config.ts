@@ -64,7 +64,13 @@ export const SERVICE_CONFIGS: ServiceConfig[] = [
     // v5: copy aligned with the Figma design — row title "Events", subtitle
     // "View and edit events on all calendars". Copy-only, but the contract is
     // bump on ANY change (copy included).
-    version: 5,
+    // v6: added GOOGLECALENDAR_PATCH_EVENT to calendar.events — the runtime's
+    // update tool moved to patch semantics (chosen over full-replacement
+    // UPDATE_EVENT, which stays granted for existing grants/tools). Verified
+    // against the live Composio catalog (2026-07-28, full 49-slug list via
+    // getRawComposioTools with an explicit limit): PATCH_EVENT is served;
+    // independently verified by the runtime lane.
+    version: 6,
     displayName: { en: "Google Calendar" },
     bundles: [
       {
@@ -78,6 +84,7 @@ export const SERVICE_CONFIGS: ServiceConfig[] = [
           "GOOGLECALENDAR_EVENTS_LIST",
           "GOOGLECALENDAR_CREATE_EVENT",
           "GOOGLECALENDAR_UPDATE_EVENT",
+          "GOOGLECALENDAR_PATCH_EVENT",
           "GOOGLECALENDAR_DELETE_EVENT",
         ],
       },
