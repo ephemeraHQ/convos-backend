@@ -181,6 +181,46 @@ async function checkForConversation(
   return decideForConversation(args, caller, abilityId, rows);
 }
 
+/**
+ * Exec's per-row applicability rule, extracted so the exec decision and the
+ * worker enumerate share one implementation and cannot drift: selector match
+ * on the extender's inbox id, the whole-toolkit transition default, the
+ * scope-less probe (scoped rows grant SOMETHING; a probe only asks for
+ * access), and the action-scope union with its fail-closed treatment of
+ * unresolvable bundles. `log` is optional so enumerate's repeated per-action
+ * replays do not duplicate exec's per-request diagnostics.
+ */
+function rowAppliesToAction(
+  abilityId: string,
+  row: MatchableRow,
+  action: string | undefined,
+  onBehalfOf: string | undefined,
+  log?: Logger,
+): boolean {
+  if (onBehalfOf !== undefined && row.extendedByInboxId !== onBehalfOf) {
+    return false;
+  }
+  if (row.actions.length === 0 && row.bundleIds.length === 0) {
+    log?.warn(
+      { extensionId: row.id, abilityId, action },
+      "[Abilities] check: extension has no actions/bundleIds — whole-toolkit (transition default)",
+    );
+    return true;
+  }
+  if (action === undefined) {
+    return true;
+  }
+  const resolved = resolveBundleActions(abilityId, row.bundleIds);
+  if (row.bundleIds.length > 0 && resolved.length === 0) {
+    log?.warn(
+      { extensionId: row.id, abilityId, bundleIds: row.bundleIds },
+      "[Abilities] check: extension bundleIds resolve to no actions (unknown/stale) — fail closed",
+    );
+  }
+  const allowed = new Set<string>([...row.actions, ...resolved]);
+  return allowed.has(action);
+}
+
 /** The store-independent V1 exec decision tree (see checkForConversation). */
 async function decideForConversation(
   args: CheckEntitlementArgs,
@@ -190,31 +230,9 @@ async function decideForConversation(
 ): Promise<CheckEntitlementResult> {
   const { action, onBehalfOf, log } = args;
 
-  const applicable = rows.filter((row) => {
-    if (onBehalfOf !== undefined && row.extendedByInboxId !== onBehalfOf) {
-      return false;
-    }
-    if (row.actions.length === 0 && row.bundleIds.length === 0) {
-      log.warn(
-        { extensionId: row.id, abilityId, action },
-        "[Abilities] check: extension has no actions/bundleIds — whole-toolkit (transition default)",
-      );
-      return true;
-    }
-    if (action === undefined) {
-      // Scoped rows grant SOMETHING; a scope-less probe only asks for access.
-      return true;
-    }
-    const resolved = resolveBundleActions(abilityId, row.bundleIds);
-    if (row.bundleIds.length > 0 && resolved.length === 0) {
-      log.warn(
-        { extensionId: row.id, abilityId, bundleIds: row.bundleIds },
-        "[Abilities] check: extension bundleIds resolve to no actions (unknown/stale) — fail closed",
-      );
-    }
-    const allowed = new Set<string>([...row.actions, ...resolved]);
-    return allowed.has(action);
-  });
+  const applicable = rows.filter((row) =>
+    rowAppliesToAction(abilityId, row, action, onBehalfOf, log),
+  );
 
   if (applicable.length === 0) {
     // Backstop (authoritative): distinguish a bad slug from a real consent
@@ -323,4 +341,204 @@ function resolvedActions(
       ...resolveBundleActions(abilityId, row.bundleIds),
     ]),
   ].sort();
+}
+
+/**
+ * One owner of an ability within a conversation, as served by the
+ * worker-facing enumerate (GET /v2/abilities/entitlements).
+ */
+export type ConversationAbilityOwner = {
+  /**
+   * The member whose connection this entry represents, as that member's
+   * conversation-visible inbox id (the extension's extendedByInboxId) — the
+   * value exec's onBehalfOf selector matches. Null when a V2 write did not
+   * record the extender: no onBehalfOf value can name such an owner, so its
+   * entry is advertised only for actions exec resolves to it uniquely
+   * without a selector.
+   */
+  ownerInboxId: string | null;
+  /**
+   * The resolved allowed-action union for this owner — the same resolution
+   * the exec matcher enforces (legacy explicit actions plus bundle-resolved
+   * against the current catalog), sorted. Every listed action is executable
+   * by exec as-is for this owner (onBehalfOf = ownerInboxId, or no selector
+   * when null); actions exec would deny as ambiguous_grant under that call
+   * are excluded (see advertisableOwner). Empty means the whole-toolkit
+   * transition default (a true legacy grant with neither actions nor
+   * bundleIds): every action of the ability is allowed.
+   */
+  actions: string[];
+};
+
+/** One ability usable by the calling agent in the calling conversation. */
+export type ConversationEntitlement = {
+  abilityId: string;
+  /**
+   * Owner accounts with at least one cleanly executable action here.
+   * Ambiguity is per action, exactly as exec counts it: owners whose scopes
+   * overlap under distinct extender inbox ids are all advertised (onBehalfOf
+   * isolates each); an action overlapping owners make ambiguous under an
+   * entry's own selector is excluded from the affected entries.
+   */
+  owners: ConversationAbilityOwner[];
+};
+
+export type EnumerateConversationEntitlementsResult =
+  | { ready: false }
+  | { ready: true; abilities: ConversationEntitlement[] };
+
+/**
+ * The enumerate companion to checkForConversation: every ability the trusted
+ * (conversation, agent) pair may use, per owner, with the same live-extension
+ * predicate (expiry) and the same per-row applicability rule the exec matcher
+ * applies (rowAppliesToAction — one shared implementation), including its
+ * fail-closed treatment of unresolvable bundle scopes and its per-action
+ * unique-owner ambiguity rule (see advertisableOwner: an advertised
+ * (owner, action) pair is always executable by exec as-is).
+ *
+ * Unlike the check, this reads the entitlement tables ONLY. Before the
+ * migration ledgers confirm the tables converged, rows may still be missing —
+ * a partial enumerate would make the agent silently drop abilities — so this
+ * answers not-ready and the endpoint fails closed with a retryable 503. Exec
+ * keeps its legacy fallback on purpose: it must preserve V1 behavior for an
+ * explicitly named action; enumerate has no V1 predecessor to preserve.
+ */
+export async function enumerateConversationEntitlements(args: {
+  caller: { conversationId: string; agentInboxId: string };
+  log: Logger;
+}): Promise<EnumerateConversationEntitlementsResult> {
+  if (!(await isEntitlementReadModelReady())) {
+    return { ready: false };
+  }
+
+  const now = new Date();
+  const extensions = await prisma.conversationAbility.findMany({
+    where: {
+      conversationId: args.caller.conversationId,
+      agentInboxId: args.caller.agentInboxId,
+      OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
+    },
+    include: {
+      entitlement: { select: { id: true, accountId: true, abilityId: true } },
+    },
+  });
+
+  // Bucket per ability: ambiguity is decided among one ability's rows. The
+  // unique constraints (one entitlement per (account, ability), one extension
+  // per (entitlement, conversation, agent)) make each (ability, owner
+  // account) single-row, so a row IS an owner candidate.
+  const rowsByAbility = new Map<string, MatchableRow[]>();
+  for (const row of extensions) {
+    const abilityId = row.entitlement.abilityId;
+    const bucket = rowsByAbility.get(abilityId) ?? [];
+    bucket.push({
+      id: row.id,
+      actions: row.actions,
+      bundleIds: row.bundleIds,
+      extendedByInboxId: row.extendedByInboxId,
+      ownerAccountId: row.entitlement.accountId,
+      entitlementId: row.entitlement.id,
+    });
+    rowsByAbility.set(abilityId, bucket);
+  }
+
+  const abilities: ConversationEntitlement[] = [];
+  for (const [abilityId, rows] of [...rowsByAbility.entries()].sort(
+    ([a], [b]) => a.localeCompare(b),
+  )) {
+    const owners: ConversationAbilityOwner[] = [];
+    for (const row of rows) {
+      const owner = advertisableOwner(abilityId, row, rows, args.log);
+      if (owner) owners.push(owner);
+    }
+    if (owners.length > 0) {
+      abilities.push({
+        abilityId,
+        owners: owners.sort((a, b) =>
+          (a.ownerInboxId ?? "").localeCompare(b.ownerInboxId ?? ""),
+        ),
+      });
+    }
+  }
+
+  return { ready: true, abilities };
+}
+
+/**
+ * The advertisement rule: an owner entry is served only with the actions the
+ * runtime can actually execute for that owner, decided by replaying exec's
+ * own applicability + unique-owner rule (rowAppliesToAction) for the exact
+ * call the runtime would make — onBehalfOf = the entry's ownerInboxId, or no
+ * selector at all when the extender was never recorded (null), since no
+ * onBehalfOf value can name such an owner.
+ *
+ * Where overlapping grants would make exec answer ambiguous_grant for that
+ * call — two owner accounts behind the same extender inbox id, or a
+ * null-extender owner overlapping any other owner — the action is dropped
+ * from the affected entry, and an entry left with nothing is withheld: fail
+ * closed, enumerate must never advertise an (owner, action) pair exec would
+ * deny. Owners whose scopes overlap under distinct selectors are all
+ * advertised in full: onBehalfOf isolates each.
+ *
+ * A whole-toolkit row (the legacy transition default) advertises as an empty
+ * actions array meaning "everything", which cannot express "everything
+ * except the overlap" — so a whole-toolkit entry is withheld entirely when
+ * any co-selectable rival grants anything at all. Fail closed again: exec
+ * would still allow the non-overlapping remainder, and stays the authority
+ * if the runtime tries it anyway.
+ */
+function advertisableOwner(
+  abilityId: string,
+  row: MatchableRow,
+  siblingRows: MatchableRow[],
+  log: Logger,
+): ConversationAbilityOwner | null {
+  const selector = row.extendedByInboxId ?? undefined;
+  const wholeToolkit = row.actions.length === 0 && row.bundleIds.length === 0;
+  const scope = resolvedActions(abilityId, row);
+
+  if (!wholeToolkit && scope.length === 0) {
+    log.warn(
+      { extensionId: row.id, abilityId, bundleIds: row.bundleIds },
+      "[Abilities] enumerate: extension scope resolves to no actions (unknown/stale bundles) — not advertised",
+    );
+    return null;
+  }
+
+  // The rows exec could co-select with this one on the call described above.
+  const rivals = siblingRows.filter(
+    (sibling) =>
+      sibling.ownerAccountId !== row.ownerAccountId &&
+      rowAppliesToAction(abilityId, sibling, undefined, selector),
+  );
+
+  if (wholeToolkit) {
+    const overlapped = rivals.some(
+      (rival) =>
+        (rival.actions.length === 0 && rival.bundleIds.length === 0) ||
+        resolvedActions(abilityId, rival).length > 0,
+    );
+    if (overlapped) {
+      log.warn(
+        { extensionId: row.id, abilityId },
+        "[Abilities] enumerate: whole-toolkit entry overlaps another owner's grant — withheld (fail closed)",
+      );
+      return null;
+    }
+    return { ownerInboxId: row.extendedByInboxId, actions: [] };
+  }
+
+  const executable = scope.filter((action) =>
+    rivals.every(
+      (rival) => !rowAppliesToAction(abilityId, rival, action, selector),
+    ),
+  );
+  if (executable.length === 0) {
+    log.warn(
+      { extensionId: row.id, abilityId },
+      "[Abilities] enumerate: every action is ambiguous under this owner's selector — not advertised",
+    );
+    return null;
+  }
+  return { ownerInboxId: row.extendedByInboxId, actions: executable };
 }
