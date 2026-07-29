@@ -2,6 +2,7 @@ import express from "express";
 import request from "supertest";
 import { describe, expect, test, vi } from "vitest";
 import { requireAccount } from "@/middleware/auth";
+import { prisma } from "@/utils/prisma";
 
 vi.mock("firebase-admin/app");
 vi.mock("firebase-admin/app-check");
@@ -38,12 +39,26 @@ describe("requireAccount middleware", () => {
     expect(res.body).toEqual({ error: "Account required" });
   });
 
-  test("200 when accountId is a uuid", async () => {
+  test("200 when accountId is a uuid and the account row exists", async () => {
+    const account = await prisma.account.create({ data: {} });
+    try {
+      const res = await request(makeApp(account.id)).get("/gated");
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({ ok: true });
+    } finally {
+      await prisma.account.delete({ where: { id: account.id } });
+    }
+  });
+
+  test("fail-closed: 401 generic when the account row does not exist", async () => {
+    // A well-formed claim for a deleted (or never-created) account must get a
+    // generic 401 — never a deletion-specific signal; the mint-path 410 is
+    // the only confirmation channel.
     const res = await request(
       makeApp("11111111-1111-4111-8111-111111111111"),
     ).get("/gated");
-    expect(res.status).toBe(200);
-    expect(res.body).toEqual({ ok: true });
+    expect(res.status).toBe(401);
+    expect(res.body).toEqual({ error: "Unauthorized" });
   });
 
   test("warn log carries presence flag only, never the value", async () => {

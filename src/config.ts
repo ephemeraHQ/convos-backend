@@ -131,6 +131,22 @@ export const SIWE_URI = process.env.SIWE_URI;
 export const SIWE_ALLOWED_CHAIN_IDS: readonly number[] = parsedChainIds;
 export const NONCE_HMAC_SECRET = process.env.NONCE_HMAC_SECRET;
 
+// Account-deletion hashing secret (required). Keys the HMAC that produces the
+// deletion-barrier identity hashes and the pseudonymous account refs on
+// retained deletion records. Deliberately distinct from NONCE_HMAC_SECRET:
+// nonce secrets must stay freely rotatable (nonces live minutes), while
+// rotating this secret would orphan every DeletedIdentity barrier row and
+// silently lift the bar. Treat as permanent once set.
+if (
+  !process.env.DELETION_HASH_SECRET ||
+  process.env.DELETION_HASH_SECRET.length < 64
+) {
+  throw new Error(
+    "DELETION_HASH_SECRET is not configured or too short (need >= 64 chars / 32 bytes hex)",
+  );
+}
+export const DELETION_HASH_SECRET = process.env.DELETION_HASH_SECRET;
+
 // Builder / template-gen + moderation (optional — services fail open / no-op
 // when these are unset; cached at module-load to avoid call-time process.env
 // reads on every generation).
