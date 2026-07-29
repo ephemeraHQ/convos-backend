@@ -284,6 +284,13 @@ async function pollAssistantStatus<Outcome>(args: {
             { issues: parsed.error.issues, instanceId },
             "Assistant status poll returned malformed body",
           );
+        } else if (parsed.data.instanceId !== instanceId) {
+          // A status row about a different instance must not drive this
+          // join's outcome (or the identity facts recorded from it).
+          log.warn(
+            { instanceId, upstreamInstanceId: parsed.data.instanceId },
+            "Assistant status poll returned a different instance — ignoring",
+          );
         } else {
           const outcome = check(parsed.data);
           if (outcome !== null) return outcome;

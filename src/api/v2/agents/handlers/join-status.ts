@@ -1,9 +1,6 @@
 import type { Request, Response } from "express";
 import { z } from "zod";
-import {
-  getAgentPowerDepleted,
-  recordAgentInstanceStatus,
-} from "@/api/v2/agents/lib/agent-instances";
+import { recordStatusAndGetAgentPower } from "@/api/v2/agents/lib/agent-instances";
 import { resolveVariantWorkerOrigin } from "@/api/v2/agents/lib/variant-routing";
 import { XMTP_ENV } from "@/config";
 import {
@@ -152,14 +149,27 @@ export async function joinStatusHandler(req: Request, res: Response) {
     // land asynchronously after dispatch) and compute the owner-funded power
     // state for the payload. Additive + advisory: any failure here degrades
     // to the legacy payload shape rather than failing the status read.
+    // Guard: only trust identity facts from a status row that is actually
+    // about the polled instance — a confused upstream must not poison one
+    // instance's row with another's inbox/conversation.
     let agentPowerDepleted: boolean | null = null;
-    try {
-      await recordAgentInstanceStatus({ instanceId, inboxId, conversationId });
-      agentPowerDepleted = await getAgentPowerDepleted(instanceId);
-    } catch (error) {
-      req.log.error(
-        { error, instanceId },
-        "Agent power enrichment failed for join status",
+    if (result.data.instanceId === instanceId) {
+      try {
+        agentPowerDepleted = await recordStatusAndGetAgentPower({
+          instanceId,
+          inboxId,
+          conversationId,
+        });
+      } catch (error) {
+        req.log.error(
+          { error, instanceId },
+          "Agent power enrichment failed for join status",
+        );
+      }
+    } else {
+      req.log.warn(
+        { instanceId, upstreamInstanceId: result.data.instanceId },
+        "Assistant status row is for a different instance — skipping bookkeeping",
       );
     }
 

@@ -1,3 +1,4 @@
+import { Prisma } from "@prisma/client";
 import { getBalance, getBalances, isAllowedFromBalance } from "@/payments";
 import { prisma } from "@/utils/prisma";
 
@@ -33,15 +34,21 @@ export type ConversationAgentPower = {
 
 /**
  * Record a dispatched agent. Called from the join handler right after the
- * control plane hands back an instanceId. Upsert: an idempotent join retry
+ * control plane hands back an instanceId. An idempotent join retry
  * re-dispatches the same instanceId (the client idempotencyKey becomes the
- * Workflow instance id upstream).
+ * Workflow instance id upstream), so the row may already exist.
  *
- * First writer wins on ownership: the update arm deliberately does NOT touch
- * ownerAccountId, so a later dispatch reusing the same idempotencyKey (and
- * therefore adopting the same upstream instance) can never reassign who pays.
- * It also never overwrites an already-learned conversationId with null — a
- * retry that omits it must not erase what a status poll filled in.
+ * EVERY identity fact is write-once — first writer wins:
+ * - ownerAccountId is never updated after creation, so a later dispatch that
+ *   adopts the same upstream instance (idempotencyKey replay) can never
+ *   reassign who pays. Keys are client-minted UUIDs, so a cross-account
+ *   replay requires stealing an in-flight key; even then, only this advisory
+ *   display bit could be mislabeled — the control plane recorded its own
+ *   ownerAccountId at first dispatch and the runtime spends against THAT,
+ *   never against this row.
+ * - conversationId only fills a null, so a replayed dispatch declaring a
+ *   different conversation cannot relocate the agent's entry into another
+ *   conversation's participation payload.
  */
 export async function recordAgentInstanceDispatched(args: {
   instanceId: string;
@@ -49,11 +56,24 @@ export async function recordAgentInstanceDispatched(args: {
   conversationId: string | null;
 }): Promise<void> {
   const { instanceId, ownerAccountId, conversationId } = args;
-  await prisma.agentInstance.upsert({
-    where: { instanceId },
-    create: { instanceId, ownerAccountId, conversationId },
-    update: conversationId !== null ? { conversationId } : {},
-  });
+  try {
+    await prisma.agentInstance.create({
+      data: { instanceId, ownerAccountId, conversationId },
+    });
+  } catch (error) {
+    const isExistingRow =
+      error instanceof Prisma.PrismaClientKnownRequestError &&
+      error.code === "P2002";
+    if (!isExistingRow) throw error;
+    // Replay of a known instance: fill a still-null conversationId, touch
+    // nothing else.
+    if (conversationId !== null) {
+      await prisma.agentInstance.updateMany({
+        where: { instanceId, conversationId: null },
+        data: { conversationId },
+      });
+    }
+  }
 }
 
 /**
@@ -121,17 +141,35 @@ export async function listConversationAgentPower(
 }
 
 /**
- * Owner-computed power state for a single instance (the join-status payload).
- * Returns null when the instance is unknown to the backend — callers omit the
- * field rather than guessing.
+ * Join-status enrichment in one read: load the row once, fill any null
+ * identity facts (a write happens only when a null actually transitions —
+ * polling a settled row costs one SELECT and zero UPDATEs, so the polling
+ * endpoint cannot amplify write load), and return the owner-computed power
+ * state. Returns null when the instance is unknown to the backend — callers
+ * omit the field rather than guessing.
  */
-export async function getAgentPowerDepleted(
-  instanceId: string,
-): Promise<boolean | null> {
+export async function recordStatusAndGetAgentPower(args: {
+  instanceId: string;
+  inboxId: string | null;
+  conversationId: string | null;
+}): Promise<boolean | null> {
+  const { instanceId, inboxId, conversationId } = args;
   const row = await prisma.agentInstance.findUnique({
     where: { instanceId },
-    select: { ownerAccountId: true },
+    select: { ownerAccountId: true, inboxId: true, conversationId: true },
   });
   if (!row) return null;
+  if (inboxId !== null && row.inboxId === null) {
+    await prisma.agentInstance.updateMany({
+      where: { instanceId, inboxId: null },
+      data: { inboxId },
+    });
+  }
+  if (conversationId !== null && row.conversationId === null) {
+    await prisma.agentInstance.updateMany({
+      where: { instanceId, conversationId: null },
+      data: { conversationId },
+    });
+  }
   return !isAllowedFromBalance(await getBalance(row.ownerAccountId));
 }

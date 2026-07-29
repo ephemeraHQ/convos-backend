@@ -460,7 +460,7 @@ describe("agentPowerDepleted (owner-computed agent power)", () => {
       expect(row?.inboxId).toBe("inbox-invite");
     });
 
-    test("ownership is first-writer-wins: a re-dispatch for the same instance cannot reassign who pays", async () => {
+    test("identity facts are write-once: a re-dispatch can fill a null conversationId but can never reassign the payer or relocate the agent", async () => {
       const owner = await newAccount();
       const other = await newAccount();
       const instanceId = `pwr-${randomUUID()}`;
@@ -471,10 +471,19 @@ describe("agentPowerDepleted (owner-computed agent power)", () => {
         ownerAccountId: owner,
         conversationId: null,
       });
+      // Replay from another account: may fill the still-null conversation,
+      // must not touch ownership.
       await recordAgentInstanceDispatched({
         instanceId,
         ownerAccountId: other,
         conversationId: "abc123def4567890",
+      });
+      // A further replay declaring a DIFFERENT conversation must not move
+      // the agent's entry into another conversation's payload.
+      await recordAgentInstanceDispatched({
+        instanceId,
+        ownerAccountId: other,
+        conversationId: "9999999999999999",
       });
 
       const row = await prisma.agentInstance.findUnique({
@@ -522,6 +531,41 @@ describe("agentPowerDepleted (owner-computed agent power)", () => {
       });
       expect(row?.inboxId).toBe("inbox-heal");
       expect(row?.conversationId).toBe("abc123def4567890");
+    });
+
+    test("upstream status about a DIFFERENT instance cannot poison the polled row", async () => {
+      const owner = await newAccount();
+      const viewer = await newAccount();
+
+      const instanceId = await seedAgent({
+        ownerAccountId: owner,
+        conversationId: null,
+        inboxId: null,
+      });
+
+      // Upstream answers with another instance's identity facts.
+      mockFetchImpl = () =>
+        Promise.resolve(
+          jsonResponse(200, {
+            instanceId: "some-other-instance",
+            joinStatus: "joined",
+            inboxId: "inbox-foreign",
+            conversationId: "abc123def4567890",
+          }),
+        );
+
+      const res = await getJoinStatus(instanceId, viewer);
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as Record<string, unknown>;
+      // Legacy shape still served; enrichment skipped entirely.
+      expect(body.success).toBe(true);
+      expect(body).not.toHaveProperty("agentPowerDepleted");
+
+      const row = await prisma.agentInstance.findUnique({
+        where: { instanceId },
+      });
+      expect(row?.inboxId).toBeNull();
+      expect(row?.conversationId).toBeNull();
     });
 
     test("unknown instance (pre-bookkeeping dispatch) → field omitted, legacy shape intact", async () => {
