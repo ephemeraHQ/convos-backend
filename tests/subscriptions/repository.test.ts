@@ -747,6 +747,53 @@ describe("applyNotification", () => {
     expect(rows).toHaveLength(1);
   });
 
+  test("drop receipt adoption: retry after verify creates the row applies the update and links the receipt", async () => {
+    dropNotificationIds.push("notif-adopt");
+    const input = {
+      provider: BillingProvider.apple,
+      originalTransactionId: "otid-adopt",
+      transactionId: "tx-adopt",
+      notificationUUID: "notif-adopt",
+      notificationType: "DID_FAIL_TO_RENEW",
+      notificationSubtype: "GRACE_PERIOD",
+      signedPayload: "stub-adopt",
+      update: {
+        status: SubscriptionStatus.grace,
+        gracePeriodEnd: new Date("2026-06-20T00:00:00.000Z"),
+      },
+    } as const;
+
+    // 1. Notification arrives before verify → dropped + drop receipt.
+    const dropped = await applyNotification(input);
+    expect(dropped.kind).toBe("unknown_subscription");
+
+    // 2. /verify bootstraps the Subscription row.
+    const accountId = await newAccount();
+    const { subscription } = await upsertFromVerify(
+      verifyInput({
+        accountId,
+        originalTransactionId: "otid-adopt",
+        transactionId: "tx-adopt-verify",
+      }),
+    );
+
+    // 3. Provider retry of the SAME notificationUUID must now APPLY (not be
+    //    swallowed as a replay of the drop) and claim the drop receipt.
+    const retried = await applyNotification(input);
+    expect(retried.kind).toBe("applied");
+    if (retried.kind === "applied") {
+      expect(retried.subscription.status).toBe(SubscriptionStatus.grace);
+    }
+    const receipt = await prisma.billingReceipt.findUnique({
+      where: { idempotencyKey: "apple-ssn:notif-adopt" },
+    });
+    expect(receipt?.subscriptionId).toBe(subscription.id);
+
+    // 4. A further retry is now a plain replay — state applied exactly once.
+    const replay = await applyNotification(input);
+    expect(replay.kind).toBe("replayed");
+  });
+
   test("unknown Play purchaseToken: drop receipt keyed on messageId, carries the token", async () => {
     dropNotificationIds.push("msg-missing");
     const result = await applyNotification({

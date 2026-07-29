@@ -72,6 +72,11 @@ provider-side identity in `providerSubscriptionId` (Apple
 existing `idempotencyKey` unique (`apple-ssn:{notificationUUID}` /
 `play-rtdn:{messageId}`), and keep the raw JWS in `signedPayload` for replay.
 
+Adoption: if the provider retries the same notification after `/verify` has
+created the Subscription row, the apply path claims the drop receipt (sets its
+`subscriptionId`) and applies the state change — so a receipt stays
+`subscriptionId IS NULL` only while the subscription is still unknown.
+
 ```sql
 -- SSNs arriving for subscriptions we don't know (newest first)
 SELECT "receivedAt", "provider", "providerSubscriptionId",

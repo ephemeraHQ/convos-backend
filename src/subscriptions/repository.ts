@@ -829,11 +829,10 @@ const notificationProviderSubscriptionId = (
  * externalNotificationId — both derive from the same provider id) means this
  * delivery was already recorded → receiptRecorded: false.
  *
- * Note: because the drop receipt claims the notification's idempotencyKey, a
- * provider retry of the SAME notification arriving after /verify has created
- * the Subscription row resolves as "replayed" (receipt exists) rather than
- * re-applying state. That matches the ack semantics: the original delivery
- * was 200-acked, and /verify bootstraps current state from its own JWS.
+ * A provider retry of the SAME notification arriving after /verify has
+ * created the Subscription row is NOT lost: the apply path claims the drop
+ * receipt (guarded update from subscriptionId NULL) and applies the state
+ * change — see the adoption step in applyNotification.
  */
 const recordDroppedNotification = async (
   input: ApplyNotificationInput,
@@ -888,129 +887,169 @@ export const applyNotification = async (
 
   const receiptShape = notificationReceiptShape(input);
 
-  try {
-    return await prisma.$transaction(async (tx) => {
-      // Lock the row FIRST — before the receipt insert, whose Subscription FK
-      // takes a KEY SHARE lock. Requesting FOR UPDATE ahead of that avoids a
-      // KEY-SHARE→FOR-UPDATE upgrade deadlock between two concurrent
-      // notifications for the same subscription, and gives the staleness guard +
-      // renewal forfeit a serialized read of the TRUE current period rather than
-      // the pre-tx `subscription` snapshot a concurrent renewal may have
-      // superseded.
-      const locked = await lockSubscriptionPeriod(tx, subscription.id);
+  // Attempt 0 + at most one retry: the retry fires only when a P2002 exposes
+  // a concurrently-committed DROP receipt for this notification (see the
+  // catch below) — the second attempt's adoption claim then wins.
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await prisma.$transaction(async (tx) => {
+        // Lock the row FIRST — before the receipt insert, whose Subscription FK
+        // takes a KEY SHARE lock. Requesting FOR UPDATE ahead of that avoids a
+        // KEY-SHARE→FOR-UPDATE upgrade deadlock between two concurrent
+        // notifications for the same subscription, and gives the staleness guard +
+        // renewal forfeit a serialized read of the TRUE current period rather than
+        // the pre-tx `subscription` snapshot a concurrent renewal may have
+        // superseded.
+        const locked = await lockSubscriptionPeriod(tx, subscription.id);
 
-      await tx.billingReceipt.create({
-        data: {
-          subscriptionId: subscription.id,
-          provider: input.provider,
-          idempotencyKey: receiptShape.idempotencyKey,
-          externalNotificationId: receiptShape.externalNotificationId,
-          transactionId: receiptShape.transactionId,
-          notificationType: input.notificationType,
-          notificationSubtype: input.notificationSubtype ?? null,
-          signedPayload: input.signedPayload,
-        },
-      });
+        // ADOPTION of drop receipts: if this same notification previously
+        // arrived while the Subscription row didn't exist yet, it was persisted
+        // as a drop receipt (subscriptionId NULL) and 200-acked. A provider
+        // retry landing AFTER /verify created the row must APPLY, not resolve
+        // as "replayed" — otherwise the state change is swallowed forever. The
+        // guarded updateMany claims the drop receipt atomically (row lock +
+        // re-checked WHERE make exactly one concurrent claimer win; losers fall
+        // through to create → P2002 → outer catch → adoption retry or replayed).
+        const claimed = await tx.billingReceipt.updateMany({
+          where: {
+            idempotencyKey: receiptShape.idempotencyKey,
+            subscriptionId: null,
+          },
+          data: { subscriptionId: subscription.id },
+        });
+        if (claimed.count === 0) {
+          await tx.billingReceipt.create({
+            data: {
+              subscriptionId: subscription.id,
+              provider: input.provider,
+              idempotencyKey: receiptShape.idempotencyKey,
+              externalNotificationId: receiptShape.externalNotificationId,
+              transactionId: receiptShape.transactionId,
+              notificationType: input.notificationType,
+              notificationSubtype: input.notificationSubtype ?? null,
+              signedPayload: input.signedPayload,
+            },
+          });
+        }
 
-      // STALENESS GUARD (mirrors verify's `isStaleVerify`, repository.ts ~388):
-      // a valid but OUT-OF-ORDER notification — e.g. an EXPIRED/REVOKE for a
-      // period a later renewal already superseded — must not roll the
-      // subscription's entitlement window/status backwards NOR forfeit the
-      // now-active period. Skipping only the forfeit is insufficient: the stale
-      // update would still write a terminal status over the renewed active row.
-      // So we skip the ENTIRE state-apply (update + grant + forfeit) when the
-      // notification's own period end predates the stored one. The receipt is
-      // already recorded above, preserving idempotency/audit. The terminal
-      // mapping cases now carry `currentPeriodEnd` (from the JWS transaction's
-      // expiresDate / the refreshed Play purchase) precisely so this guard has a
-      // period to compare; updates that omit it (no period drift possible) fall
-      // through and apply as before.
-      if (
-        locked !== null &&
-        input.update.currentPeriodEnd !== undefined &&
-        input.update.currentPeriodEnd.getTime() <
-          locked.currentPeriodEnd.getTime()
-      ) {
-        // Stale/out-of-order: skip the state-apply, but return the row's CURRENT
-        // committed state — a concurrent renewal may have advanced it since the
-        // pre-lock `notificationLookup` snapshot.
-        const current = await tx.subscription.findUnique({
-          where: { id: subscription.id },
-        });
-        return {
-          kind: "applied" as const,
-          subscription: current ?? subscription,
-        };
-      }
-
-      const updated = await tx.subscription.update({
-        where: { id: subscription.id },
-        data: input.update,
-      });
-
-      // Single-ledger money-in / money-out, transactional with the state update.
-      if (
-        updated.status === SubscriptionStatus.expired ||
-        updated.status === SubscriptionStatus.revoked
-      ) {
-        // Expiry / refund / revoke → bounded clawback of the unused
-        // subscription portion. Cancel-while-active never reaches here: it
-        // only flips willRenew (status stays active), so credits stay to the
-        // period end. Idempotent per (subscription, periodStart). Stale
-        // out-of-order terminal events were already short-circuited by the
-        // staleness guard above, so this only fires for the current period
-        // (natural expiry or a legitimate mid-period refund/revoke). Forfeit the
-        // LOCKED current period — the one the sub is actually in.
-        await forfeitSubscriptionPeriod(tx, {
-          subscription: updated,
-          periodStart: locked?.currentPeriodStart ?? updated.currentPeriodStart,
-        });
-      } else if (
-        isEntitledSubscriptionStatus(updated.status) &&
-        locked !== null &&
-        updated.currentPeriodStart.getTime() >
-          locked.currentPeriodStart.getTime()
-      ) {
-        // A renewal advanced the period start past the LOCKED current one →
-        // forfeit the period the row actually advanced FROM (read under the row
-        // lock, so a concurrent renewal that already advanced is seen), bounding
-        // its consumes to spends made before the new period began, then grant the
-        // new period. A grace/billing-retry that keeps the same period does not
-        // advance `locked`, so it neither forfeits nor re-grants. The per-period
-        // forfeit key + the row lock make a racing verify for the same advance
-        // resolve to exactly one forfeit and one grant.
-        await forfeitSubscriptionPeriod(tx, {
-          subscription: updated,
-          periodStart: locked.currentPeriodStart,
-          consumesUntil: updated.currentPeriodStart,
-        });
-        const grantResult = await grantSubscriptionPeriod(tx, {
-          subscription: updated,
-          periodStart: updated.currentPeriodStart,
-        });
-        if (grantResult.kind === "granted") {
+        // STALENESS GUARD (mirrors verify's `isStaleVerify`, repository.ts ~388):
+        // a valid but OUT-OF-ORDER notification — e.g. an EXPIRED/REVOKE for a
+        // period a later renewal already superseded — must not roll the
+        // subscription's entitlement window/status backwards NOR forfeit the
+        // now-active period. Skipping only the forfeit is insufficient: the stale
+        // update would still write a terminal status over the renewed active row.
+        // So we skip the ENTIRE state-apply (update + grant + forfeit) when the
+        // notification's own period end predates the stored one. The receipt is
+        // already recorded above, preserving idempotency/audit. The terminal
+        // mapping cases now carry `currentPeriodEnd` (from the JWS transaction's
+        // expiresDate / the refreshed Play purchase) precisely so this guard has a
+        // period to compare; updates that omit it (no period drift possible) fall
+        // through and apply as before.
+        if (
+          locked !== null &&
+          input.update.currentPeriodEnd !== undefined &&
+          input.update.currentPeriodEnd.getTime() <
+            locked.currentPeriodEnd.getTime()
+        ) {
+          // Stale/out-of-order: skip the state-apply, but return the row's CURRENT
+          // committed state — a concurrent renewal may have advanced it since the
+          // pre-lock `notificationLookup` snapshot.
+          const current = await tx.subscription.findUnique({
+            where: { id: subscription.id },
+          });
           return {
             kind: "applied" as const,
-            subscription: grantResult.subscription,
+            subscription: current ?? subscription,
           };
         }
-      }
 
-      return { kind: "applied" as const, subscription: updated };
-    });
-  } catch (err) {
-    if (
-      err instanceof Prisma.PrismaClientKnownRequestError &&
-      err.code === "P2002"
-    ) {
-      const current = await prisma.subscription.findUnique({
-        where: { id: subscription.id },
+        const updated = await tx.subscription.update({
+          where: { id: subscription.id },
+          data: input.update,
+        });
+
+        // Single-ledger money-in / money-out, transactional with the state update.
+        if (
+          updated.status === SubscriptionStatus.expired ||
+          updated.status === SubscriptionStatus.revoked
+        ) {
+          // Expiry / refund / revoke → bounded clawback of the unused
+          // subscription portion. Cancel-while-active never reaches here: it
+          // only flips willRenew (status stays active), so credits stay to the
+          // period end. Idempotent per (subscription, periodStart). Stale
+          // out-of-order terminal events were already short-circuited by the
+          // staleness guard above, so this only fires for the current period
+          // (natural expiry or a legitimate mid-period refund/revoke). Forfeit the
+          // LOCKED current period — the one the sub is actually in.
+          await forfeitSubscriptionPeriod(tx, {
+            subscription: updated,
+            periodStart:
+              locked?.currentPeriodStart ?? updated.currentPeriodStart,
+          });
+        } else if (
+          isEntitledSubscriptionStatus(updated.status) &&
+          locked !== null &&
+          updated.currentPeriodStart.getTime() >
+            locked.currentPeriodStart.getTime()
+        ) {
+          // A renewal advanced the period start past the LOCKED current one →
+          // forfeit the period the row actually advanced FROM (read under the row
+          // lock, so a concurrent renewal that already advanced is seen), bounding
+          // its consumes to spends made before the new period began, then grant the
+          // new period. A grace/billing-retry that keeps the same period does not
+          // advance `locked`, so it neither forfeits nor re-grants. The per-period
+          // forfeit key + the row lock make a racing verify for the same advance
+          // resolve to exactly one forfeit and one grant.
+          await forfeitSubscriptionPeriod(tx, {
+            subscription: updated,
+            periodStart: locked.currentPeriodStart,
+            consumesUntil: updated.currentPeriodStart,
+          });
+          const grantResult = await grantSubscriptionPeriod(tx, {
+            subscription: updated,
+            periodStart: updated.currentPeriodStart,
+          });
+          if (grantResult.kind === "granted") {
+            return {
+              kind: "applied" as const,
+              subscription: grantResult.subscription,
+            };
+          }
+        }
+
+        return { kind: "applied" as const, subscription: updated };
       });
-      if (current) {
-        return { kind: "replayed", subscription: current };
+    } catch (err) {
+      if (
+        err instanceof Prisma.PrismaClientKnownRequestError &&
+        err.code === "P2002"
+      ) {
+        // The conflict may come from a DROP receipt committed by a concurrent
+        // unknown-path delivery of this same notification AFTER our adoption
+        // claim ran (the uncommitted insert was invisible to updateMany, then
+        // our create lost the unique race). Re-read: if the receipt is still
+        // unmatched, retry once — the claim now sees the committed row and
+        // wins, so the state change is applied instead of being swallowed as
+        // a replay. Any other P2002 (receipt already matched) is a true
+        // provider replay.
+        if (attempt === 0) {
+          const conflicting = await prisma.billingReceipt.findUnique({
+            where: { idempotencyKey: receiptShape.idempotencyKey },
+            select: { subscriptionId: true },
+          });
+          if (conflicting !== null && conflicting.subscriptionId === null) {
+            continue;
+          }
+        }
+        const current = await prisma.subscription.findUnique({
+          where: { id: subscription.id },
+        });
+        if (current) {
+          return { kind: "replayed", subscription: current };
+        }
       }
+      throw err;
     }
-    throw err;
   }
 };
 
