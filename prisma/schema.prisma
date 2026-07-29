@@ -454,7 +454,11 @@ model Subscription {
 
 model BillingReceipt {
   id                     String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  subscriptionId         String          @db.Uuid
+  // Nullable: NULL marks an unmatched-drop receipt — a verified provider
+  // notification that matched no Subscription row at receipt time
+  // (applyNotification's unknown_subscription path). Matched receipts always
+  // carry the subscription id.
+  subscriptionId         String?         @db.Uuid
   provider               BillingProvider
   // Explicit dedupe key. Apple verify rows use `apple-verify:{transactionId}`;
   // Apple S2S rows use `apple-ssn:{notificationUUID}`; Google verify rows use
@@ -470,16 +474,26 @@ model BillingReceipt {
   transactionId          String
   notificationType       String
   notificationSubtype    String?
+  // Provider-side subscription identity for unmatched-drop receipts
+  // (subscriptionId IS NULL): Apple originalTransactionId / Google
+  // purchaseToken. NULL on matched receipts — their identity lives on the
+  // Subscription row. Makes "notifications arriving for subs we don't know"
+  // queryable and joinable back once the subscription appears.
+  providerSubscriptionId String?
   // Raw payload from the provider — Apple JWS or the Google purchase JSON /
   // RTDN envelope. Kept for audit + replay.
   signedPayload          String          @db.Text
   receivedAt             DateTime        @default(now())
 
-  subscription Subscription @relation(fields: [subscriptionId], references: [id])
+  // onDelete pinned to Restrict: the optional relation would otherwise default
+  // to SetNull, and the live constraint (from 20260515093120) is RESTRICT —
+  // receipts must keep blocking Subscription row deletion (audit anchor).
+  subscription Subscription? @relation(fields: [subscriptionId], references: [id], onDelete: Restrict)
 
   @@index([transactionId])
   @@index([provider, transactionId])
   @@index([subscriptionId, receivedAt])
+  @@index([providerSubscriptionId])
 }
 
 model TelemetryBatch {

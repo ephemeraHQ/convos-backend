@@ -218,11 +218,13 @@ export async function googlePlayRtdnHandler(req: Request, res: Response) {
     if (result.kind === "unknown_subscription") {
       // SUBSCRIPTION_PURCHASED before verify, or a notification whose
       // purchaseToken our row hasn't been linked to yet. Ack; /verify will
-      // create or refresh the row.
+      // create or refresh the row. A drop receipt (BillingReceipt with
+      // subscriptionId NULL) was persisted by applyNotification for audit.
       req.log.info(
         {
           messageId: message.messageId,
           notificationType: sub.notificationType,
+          receiptRecorded: result.receiptRecorded,
         },
         "play.rtdn.unknown_subscription — acking",
       );
