@@ -431,32 +431,40 @@ export const upsertFromVerify = async (
         // elapsed, and effectiveSubscriptionStatus resolves them to `expired`.
         // Backfilling a full period grant for such a LAPSED period would mint
         // credits that credits-get simultaneously frames as free-tier state.
+        // `subscription` is null only on drop receipts (`apple-ssn:*` /
+        // `play-rtdn:*` keys, subscriptionId NULL) — a verify idempotencyKey
+        // (`apple-verify:*` / `play-verify:*`) can never collide with those,
+        // so this narrows away an impossible state. If it ever DID happen,
+        // falling through to the create path is safe: the receipt insert
+        // below would P2002 and resolve via the outer conflict handler.
         const replayed = existingReceipt.subscription;
-        const isStaleReplay =
-          input.currentPeriodEnd < replayed.currentPeriodEnd;
-        if (!isStaleReplay && isEntitledSubscription(replayed)) {
-          const currentPeriodGrant = await tx.creditLedger.findUnique({
-            where: {
-              accountId_idempotencyKey: {
-                accountId: replayed.accountId,
-                idempotencyKey: subGrantKey(
-                  replayed.id,
-                  replayed.currentPeriodStart,
-                ),
+        if (replayed) {
+          const isStaleReplay =
+            input.currentPeriodEnd < replayed.currentPeriodEnd;
+          if (!isStaleReplay && isEntitledSubscription(replayed)) {
+            const currentPeriodGrant = await tx.creditLedger.findUnique({
+              where: {
+                accountId_idempotencyKey: {
+                  accountId: replayed.accountId,
+                  idempotencyKey: subGrantKey(
+                    replayed.id,
+                    replayed.currentPeriodStart,
+                  ),
+                },
               },
-            },
-          });
-          if (!currentPeriodGrant) {
-            await grantSubscriptionPeriod(tx, {
-              subscription: replayed,
-              periodStart: replayed.currentPeriodStart,
             });
+            if (!currentPeriodGrant) {
+              await grantSubscriptionPeriod(tx, {
+                subscription: replayed,
+                periodStart: replayed.currentPeriodStart,
+              });
+            }
           }
+          return {
+            subscription: replayed,
+            receiptCreated: false,
+          };
         }
-        return {
-          subscription: replayed,
-          receiptCreated: false,
-        };
       }
 
       // Lock the row for the rest of the tx and read its TRUE current period, so
@@ -771,7 +779,11 @@ export type ApplyNotificationInput =
 export type ApplyNotificationResult =
   | { kind: "replayed"; subscription: Subscription }
   | { kind: "applied"; subscription: Subscription }
-  | { kind: "unknown_subscription" };
+  // No Subscription row matched the provider identifier. A drop receipt
+  // (BillingReceipt with subscriptionId NULL) is persisted so the delivery is
+  // auditable from the DB; `receiptRecorded` is false when this notification
+  // was already recorded (provider retry of an already-acked delivery).
+  | { kind: "unknown_subscription"; receiptRecorded: boolean };
 
 const notificationLookup = (
   input: ApplyNotificationInput,
@@ -797,11 +809,68 @@ const notificationReceiptShape = (input: ApplyNotificationInput) => {
   };
 };
 
+// Provider-side subscription identity carried by a notification — what the
+// row WOULD have been looked up by (mirrors notificationLookup). Recorded on
+// drop receipts so unmatched deliveries can be grouped/joined later.
+const notificationProviderSubscriptionId = (
+  input: ApplyNotificationInput,
+): string =>
+  input.provider === BillingProvider.apple
+    ? input.originalTransactionId
+    : input.purchaseToken;
+
+/**
+ * Persist an unmatched provider notification as a drop receipt: a
+ * BillingReceipt with subscriptionId NULL, keyed by the same
+ * idempotencyKey/externalNotificationId a matched receipt would use. Makes
+ * "notifications arriving for subscriptions we don't know" queryable
+ * (`WHERE "subscriptionId" IS NULL`) instead of log-only. Idempotent on the
+ * notification identity: a P2002 on either unique (idempotencyKey or
+ * externalNotificationId — both derive from the same provider id) means this
+ * delivery was already recorded → receiptRecorded: false.
+ *
+ * Note: because the drop receipt claims the notification's idempotencyKey, a
+ * provider retry of the SAME notification arriving after /verify has created
+ * the Subscription row resolves as "replayed" (receipt exists) rather than
+ * re-applying state. That matches the ack semantics: the original delivery
+ * was 200-acked, and /verify bootstraps current state from its own JWS.
+ */
+const recordDroppedNotification = async (
+  input: ApplyNotificationInput,
+): Promise<{ receiptRecorded: boolean }> => {
+  const receiptShape = notificationReceiptShape(input);
+  try {
+    await prisma.billingReceipt.create({
+      data: {
+        subscriptionId: null,
+        provider: input.provider,
+        idempotencyKey: receiptShape.idempotencyKey,
+        externalNotificationId: receiptShape.externalNotificationId,
+        transactionId: receiptShape.transactionId,
+        notificationType: input.notificationType,
+        notificationSubtype: input.notificationSubtype ?? null,
+        providerSubscriptionId: notificationProviderSubscriptionId(input),
+        signedPayload: input.signedPayload,
+      },
+    });
+    return { receiptRecorded: true };
+  } catch (err) {
+    if (
+      err instanceof Prisma.PrismaClientKnownRequestError &&
+      err.code === "P2002"
+    ) {
+      return { receiptRecorded: false };
+    }
+    throw err;
+  }
+};
+
 /**
  * Apply a provider notification atomically:
  *   1. Look up the subscription by provider-specific identifier. If unknown,
- *      return "unknown_subscription" — the caller decides how to recover
- *      (typically ack and let /verify create the row).
+ *      persist a drop receipt (subscriptionId NULL) and return
+ *      "unknown_subscription" — the caller decides how to recover (typically
+ *      ack and let /verify create the row).
  *   2. Insert the BillingReceipt row keyed on the provider's external
  *      notification id. A P2002 unique violation means the provider retried
  *      the same notification — we return "replayed" with the current sub
@@ -813,7 +882,8 @@ export const applyNotification = async (
 ): Promise<ApplyNotificationResult> => {
   const subscription = await notificationLookup(input);
   if (!subscription) {
-    return { kind: "unknown_subscription" };
+    const { receiptRecorded } = await recordDroppedNotification(input);
+    return { kind: "unknown_subscription", receiptRecorded };
   }
 
   const receiptShape = notificationReceiptShape(input);

@@ -691,8 +691,20 @@ describe("findCurrentByAccountId", () => {
 });
 
 describe("applyNotification", () => {
-  test("returns unknown_subscription when originalTransactionId has no row", async () => {
-    const result = await applyNotification({
+  // Drop receipts have subscriptionId NULL, so the account-scoped wipe cannot
+  // reach them — clean up by the notification ids these tests use.
+  const dropNotificationIds: string[] = [];
+  afterEach(async () => {
+    if (dropNotificationIds.length === 0) return;
+    await prisma.billingReceipt.deleteMany({
+      where: { externalNotificationId: { in: dropNotificationIds } },
+    });
+    dropNotificationIds.length = 0;
+  });
+
+  test("unknown originalTransactionId: persists a drop receipt, idempotent on notificationUUID", async () => {
+    dropNotificationIds.push("notif-missing");
+    const input = {
       provider: BillingProvider.apple,
       originalTransactionId: "otid-missing",
       transactionId: "tx-missing",
@@ -700,8 +712,64 @@ describe("applyNotification", () => {
       notificationType: "DID_RENEW",
       signedPayload: "stub",
       update: { status: SubscriptionStatus.active },
+    } as const;
+
+    const result = await applyNotification(input);
+    expect(result).toEqual({
+      kind: "unknown_subscription",
+      receiptRecorded: true,
     });
-    expect(result.kind).toBe("unknown_subscription");
+
+    // The delivery is now auditable from the DB: an unmatched BillingReceipt
+    // carrying the provider-side subscription identity.
+    const receipt = await prisma.billingReceipt.findUnique({
+      where: { idempotencyKey: "apple-ssn:notif-missing" },
+    });
+    expect(receipt).not.toBeNull();
+    expect(receipt?.subscriptionId).toBeNull();
+    expect(receipt?.provider).toBe(BillingProvider.apple);
+    expect(receipt?.providerSubscriptionId).toBe("otid-missing");
+    expect(receipt?.externalNotificationId).toBe("notif-missing");
+    expect(receipt?.transactionId).toBe("tx-missing");
+    expect(receipt?.notificationType).toBe("DID_RENEW");
+    expect(receipt?.signedPayload).toBe("stub");
+
+    // Provider retry of the same notificationUUID: still unknown, no second
+    // row, receiptRecorded false.
+    const replay = await applyNotification(input);
+    expect(replay).toEqual({
+      kind: "unknown_subscription",
+      receiptRecorded: false,
+    });
+    const rows = await prisma.billingReceipt.findMany({
+      where: { externalNotificationId: "notif-missing" },
+    });
+    expect(rows).toHaveLength(1);
+  });
+
+  test("unknown Play purchaseToken: drop receipt keyed on messageId, carries the token", async () => {
+    dropNotificationIds.push("msg-missing");
+    const result = await applyNotification({
+      provider: BillingProvider.googlePlay,
+      purchaseToken: "token-missing",
+      playOrderId: "order-missing",
+      messageId: "msg-missing",
+      notificationType: "PLAY_2",
+      signedPayload: "stub-play",
+      update: { status: SubscriptionStatus.active },
+    });
+    expect(result).toEqual({
+      kind: "unknown_subscription",
+      receiptRecorded: true,
+    });
+
+    const receipt = await prisma.billingReceipt.findUnique({
+      where: { idempotencyKey: "play-rtdn:msg-missing" },
+    });
+    expect(receipt?.subscriptionId).toBeNull();
+    expect(receipt?.provider).toBe(BillingProvider.googlePlay);
+    expect(receipt?.providerSubscriptionId).toBe("token-missing");
+    expect(receipt?.transactionId).toBe("order-missing");
   });
 
   test("applies status update and records audit receipt", async () => {
