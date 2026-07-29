@@ -15,7 +15,7 @@
  *   APPLE_API_SIGNING_KEY
  *
  * Defaults to the PRODUCTION host. Pass --sandbox to query
- * api.storekit-sandbox.itunes.apple.com instead — TestFlight purchases live
+ * api.storekit-sandbox.apple.com instead — TestFlight purchases live
  * in the sandbox environment, so a 404/4040010 on production usually means
  * "retry with --sandbox".
  *
@@ -42,7 +42,7 @@ Checks App Store subscription status straight from Apple (read-only):
 GET /inApps/v1/subscriptions/{originalTransactionId}
 
 Options:
-  --sandbox   Query api.storekit-sandbox.itunes.apple.com instead of the
+  --sandbox   Query api.storekit-sandbox.apple.com instead of the
               production host (TestFlight purchases live in the sandbox
               environment).
   -h, --help  Show this help.
@@ -219,7 +219,7 @@ const main = async () => {
     sandbox ? Environment.SANDBOX : Environment.PRODUCTION,
   );
   console.log(
-    `Querying ${sandbox ? "SANDBOX (api.storekit-sandbox.itunes.apple.com)" : "PRODUCTION (api.storekit.itunes.apple.com)"} as bundle ${cfg.bundleId}`,
+    `Querying ${sandbox ? "SANDBOX (api.storekit-sandbox.apple.com)" : "PRODUCTION (api.storekit.apple.com)"} as bundle ${cfg.bundleId}`,
   );
 
   let failures = 0;
@@ -231,10 +231,13 @@ const main = async () => {
       failures += 1;
       console.error(`\n== ${otx} ==`);
       if (error instanceof APIException) {
+        const notFoundHint = sandbox
+          ? "4040010 = originalTransactionId not found on the sandbox host; " +
+            "check that the bundle ID, environment, and API key match"
+          : "4040010 = originalTransactionId not found on this host; " +
+            "TestFlight/sandbox purchases need --sandbox";
         console.error(
-          `  HTTP ${error.httpStatusCode} — apiError=${String(error.apiError ?? "none")}` +
-            ` (4040010 = originalTransactionId not found on this host; ` +
-            `TestFlight/sandbox purchases need --sandbox)`,
+          `  HTTP ${error.httpStatusCode} — apiError=${String(error.apiError ?? "none")} (${notFoundHint})`,
         );
       } else {
         console.error(

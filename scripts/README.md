@@ -79,8 +79,8 @@ strictly read-only against Apple.
 pnpm apple:sub-status <originalTransactionId...> [--sandbox]
 ```
 
-- Defaults to the production host (`api.storekit.itunes.apple.com`).
-- `--sandbox` switches to `api.storekit-sandbox.itunes.apple.com`.
+- Defaults to the production host (`api.storekit.apple.com`).
+- `--sandbox` switches to `api.storekit-sandbox.apple.com`.
 - Accepts one or more `originalTransactionId`s.
 - Exits non-zero if any lookup fails (HTTP status + Apple `apiError` shown).
 
@@ -123,7 +123,8 @@ available at renewal, `5` other.
 TestFlight purchases live in Apple's **sandbox** environment. A sandbox
 `originalTransactionId` returns HTTP 404 with `apiError=4040010`
 ("original transaction id not found") on the production host — retry the
-same id with `--sandbox`.
+same id with `--sandbox`. If it also 404s with `--sandbox`, check that the
+bundle ID, environment, and API key in `.env` match the app.
 
 ## Finding originalTransactionIds
 
