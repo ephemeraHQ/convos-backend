@@ -141,10 +141,15 @@ const appleStatusItemToUpdate = (
         status: isTrial ? SubscriptionStatus.trial : SubscriptionStatus.active,
         currentPeriodEnd: new Date(expiresMs),
         isInTrial: isTrial,
-        willRenew: true,
         // Recovered to active — any prior grace window is over.
         gracePeriodEnd: null,
       };
+      // Apple status=1 does NOT imply auto-renew is on (a cancelled sub stays
+      // active until the period ends). Derive willRenew from the verified
+      // renewal info when we have it; otherwise leave the stored flag alone.
+      if (renewalInfo?.autoRenewStatus !== undefined) {
+        update.willRenew = renewalInfo.autoRenewStatus === 1;
+      }
       const purchaseMs = dateMs(transaction.purchaseDate);
       if (purchaseMs !== null) {
         update.currentPeriodStart = new Date(purchaseMs);
@@ -181,19 +186,30 @@ const appleStatusItemToUpdate = (
         gracePeriodEnd: null,
       };
 
-    case AppleSubscriptionStatus.EXPIRED:
-      return {
+    case AppleSubscriptionStatus.EXPIRED: {
+      const update: NotificationStateUpdate = {
         status: SubscriptionStatus.expired,
         willRenew: false,
         gracePeriodEnd: null,
       };
+      // Carry the provider's final period end so the terminal staleness guard
+      // (mirrors applyNotification's) has a window to compare — an EXPIRED
+      // verdict whose window predates our stored one is refused wholesale.
+      const expiresMs = dateMs(transaction.expiresDate);
+      if (expiresMs !== null) update.currentPeriodEnd = new Date(expiresMs);
+      return update;
+    }
 
-    case AppleSubscriptionStatus.REVOKED:
-      return {
+    case AppleSubscriptionStatus.REVOKED: {
+      const update: NotificationStateUpdate = {
         status: SubscriptionStatus.revoked,
         willRenew: false,
         gracePeriodEnd: null,
       };
+      const expiresMs = dateMs(transaction.expiresDate);
+      if (expiresMs !== null) update.currentPeriodEnd = new Date(expiresMs);
+      return update;
+    }
 
     default:
       // Unknown / unset status → fail closed (leave the row for a later run).
@@ -278,6 +294,27 @@ const resolveAppleTruth = async (
       "subscription_reconcile.apple.jws_verify_failed",
     );
     return { kind: "unresolved", reason: "jws_verify_failed" };
+  }
+
+  // Product identity guard: an upgrade/downgrade changes the productId, and
+  // granting with the row's stored tier/period would mint the wrong
+  // allotment. The pilot does not remap SKUs — it fails safe and leaves the
+  // row for the operator (the fleet job will carry the productId→tier/period
+  // remap when it lands).
+  if (
+    transaction.productId !== undefined &&
+    transaction.productId !== sub.productId
+  ) {
+    logger.warn(
+      {
+        subscriptionId: sub.id,
+        storedProductId: sub.productId,
+        providerProductId: transaction.productId,
+        op: "subscription_reconcile",
+      },
+      "subscription_reconcile.apple.product_id_mismatch",
+    );
+    return { kind: "unresolved", reason: "product_id_mismatch" };
   }
 
   // Decode renewal info when present — it carries gracePeriodExpiresDate, the
@@ -417,6 +454,68 @@ const clampGracePeriodEnd = (
     : { ...update, gracePeriodEnd: prev };
 };
 
+/**
+ * Period-identity stabilizer: `currentPeriodStart` is the grant/forfeit
+ * idempotency-key anchor (`sub_grant_<id>_<startEpoch>`), so rewriting it
+ * WITHOUT a genuine period change would re-key the same real period — a
+ * drifting provider `purchaseDate` on an unchanged window could then mint a
+ * second grant for a period that was already granted under the stored start.
+ * Keep the stored start unless the window END strictly advances (a real
+ * renewal moves both) or a rescue takes provider truth verbatim.
+ */
+const stabilizePeriodIdentity = (
+  sub: Subscription,
+  update: NotificationStateUpdate,
+): NotificationStateUpdate => {
+  if (update.currentPeriodStart === undefined) return update;
+  if (isRescue(sub, update)) return update;
+  const newEnd = dateMs(update.currentPeriodEnd);
+  if (newEnd !== null && newEnd > sub.currentPeriodEnd.getTime()) return update;
+  const { currentPeriodStart: _drop, ...rest } = update;
+  return rest;
+};
+
+/**
+ * Terminal staleness guard (mirrors `applyNotification`'s): an EXPIRED/REVOKED
+ * verdict whose provider window predates the stored one describes an OLDER
+ * period than the row holds — refuse the entire update rather than terminalize
+ * (and forfeit) a newer local period on stale provider data.
+ */
+const isStaleTerminalUpdate = (
+  sub: Subscription,
+  update: NotificationStateUpdate,
+): boolean =>
+  update.status !== undefined &&
+  isTerminalStatus(update.status) &&
+  update.currentPeriodEnd !== undefined &&
+  update.currentPeriodEnd.getTime() < sub.currentPeriodEnd.getTime();
+
+/**
+ * Grant gate for the reconcile job. `isEntitledSubscription` is time-aware for
+ * active/trial/grace but passes `billingRetry` through unconditionally (the
+ * known no-TTL gap, status.ts) — under which a long-lapsed row Apple reports
+ * as status 3 would mint a full grant for a period whose paid window is over.
+ * The reconcile job targets exactly such stale rows, so it additionally
+ * requires a billingRetry row's paid window to still be live.
+ */
+const isEntitledForReconcileGrant = (
+  fields: {
+    status: SubscriptionStatus;
+    currentPeriodEnd: Date;
+    gracePeriodEnd: Date | null;
+  },
+  now: Date,
+): boolean => {
+  if (!isEntitledSubscription(fields, now)) return false;
+  if (
+    fields.status === SubscriptionStatus.billingRetry &&
+    fields.currentPeriodEnd.getTime() <= now.getTime()
+  ) {
+    return false;
+  }
+  return true;
+};
+
 export type ReconcileMoneyReport = {
   forfeit?: {
     periodStart: string;
@@ -542,14 +641,20 @@ const planMoney = async (
     safeUpdate.currentPeriodStart ?? sub.currentPeriodStart;
 
   if (isTerminalStatus(targetStatus)) {
-    money.forfeit = {
-      periodStart: sub.currentPeriodStart.toISOString(),
-      priorGrantExists: await hasPeriodGrant(
-        sub.accountId,
-        sub.id,
-        sub.currentPeriodStart,
-      ),
-    };
+    // Forfeit only on an actual TRANSITION into a terminal status. A row that
+    // is already terminal never gets a retroactive forfeit backfill from this
+    // job — clawing back long-kept credits is a policy call out of pilot
+    // scope.
+    if (!isTerminalStatus(sub.status)) {
+      money.forfeit = {
+        periodStart: sub.currentPeriodStart.toISOString(),
+        priorGrantExists: await hasPeriodGrant(
+          sub.accountId,
+          sub.id,
+          sub.currentPeriodStart,
+        ),
+      };
+    }
     return money;
   }
 
@@ -574,9 +679,10 @@ const planMoney = async (
           ? (safeUpdate.gracePeriodEnd ?? null)
           : sub.gracePeriodEnd,
     };
-    // Time-aware gate, mirroring verify's replay-materializer: never plan a
-    // grant for an effectively-expired window.
-    if (isEntitledSubscription(projected, now)) {
+    // Time-aware gate (verify's replay-materializer + the billingRetry
+    // paid-window requirement): never plan a grant for an effectively-expired
+    // window.
+    if (isEntitledForReconcileGrant(projected, now)) {
       money.grant = {
         periodStart: targetPeriodStart.toISOString(),
         alreadyGranted: await hasPeriodGrant(
@@ -604,17 +710,22 @@ type AppliedOutcome = {
  * on the `updatedAt` read at plan time (a fresher verify/webhook wins — skip);
  * money moves ONLY through the idempotent per-period helpers, in the same
  * transaction, mirroring `applyNotification`'s branches:
- *   - terminal status → forfeit the period the row was in (no-ops when that
- *     period was never granted);
+ *   - TRANSITION into a terminal status → forfeit the period the row was in
+ *     (no-ops when that period was never granted; already-terminal rows are
+ *     never retro-forfeited — pilot policy);
  *   - entitled + period advanced → forfeit the old period (consumes bounded to
  *     the new period start), then grant the new period;
  *   - entitled + time-aware live window → materialize a missing current-period
  *     grant (idempotent replay when it exists).
+ * The AdminAudit row commits in the SAME transaction, keyed on the guarded
+ * snapshot's `updatedAt` — unique per CAS-guarded apply, replay-stable on a
+ * retry of the same snapshot.
  */
 const applyReconcileUpdate = async (
   snapshot: Subscription,
   safeUpdate: NotificationStateUpdate,
   now: Date,
+  audit: { actorEmail: string; originalTransactionId: string },
 ): Promise<AppliedOutcome> =>
   prisma.$transaction(async (tx) => {
     const guarded = await tx.subscription.updateMany({
@@ -632,10 +743,12 @@ const applyReconcileUpdate = async (
     let forfeitResult: ForfeitSubscriptionPeriodResult | undefined;
 
     if (isTerminalStatus(updated.status)) {
-      forfeitResult = await forfeitSubscriptionPeriod(tx, {
-        subscription: updated,
-        periodStart: snapshot.currentPeriodStart,
-      });
+      if (!isTerminalStatus(snapshot.status)) {
+        forfeitResult = await forfeitSubscriptionPeriod(tx, {
+          subscription: updated,
+          periodStart: snapshot.currentPeriodStart,
+        });
+      }
     } else if (isEntitledSubscriptionStatus(updated.status)) {
       if (
         updated.currentPeriodStart.getTime() >
@@ -647,13 +760,29 @@ const applyReconcileUpdate = async (
           consumesUntil: updated.currentPeriodStart,
         });
       }
-      if (isEntitledSubscription(updated, now)) {
+      if (isEntitledForReconcileGrant(updated, now)) {
         grantResult = await grantSubscriptionPeriod(tx, {
           subscription: updated,
           periodStart: updated.currentPeriodStart,
         });
       }
     }
+
+    const granted =
+      grantResult?.kind === "granted" ? BigInt(grantResult.credits) : 0n;
+    const forfeited =
+      forfeitResult?.kind === "forfeited" ? BigInt(forfeitResult.credits) : 0n;
+    await writeAdminAudit(
+      {
+        accountId: updated.accountId,
+        actorEmail: audit.actorEmail,
+        action: "reconcile",
+        deltaCredits: granted - forfeited,
+        reason: `apple subscription reconcile ${audit.originalTransactionId}: ${snapshot.status} -> ${updated.status}`,
+        idempotencyKey: `sub_reconcile_${updated.id}_${snapshot.updatedAt.getTime()}`,
+      },
+      tx,
+    );
 
     return { outcome: "applied" as const, updated, grantResult, forfeitResult };
   });
@@ -715,18 +844,21 @@ export async function runAppleAllowlistReconcile(
         continue;
       }
 
+      // Terminal staleness guard runs on the RAW provider update, BEFORE the
+      // monotonic floor could strip the regressing window and let the bare
+      // terminal status through.
+      if (isStaleTerminalUpdate(sub, truth.update)) {
+        result.outcome = "provider_unresolved";
+        result.unresolvedReason = "stale_provider_terminal";
+        continue;
+      }
+
       const safeUpdate = clampGracePeriodEnd(
         sub,
-        monotonicUpdate(sub, truth.update),
+        monotonicUpdate(sub, stabilizePeriodIdentity(sub, truth.update)),
       );
       const rowChangeNeeded = shouldWrite(sub, safeUpdate);
       const money = await planMoney(sub, safeUpdate, now);
-      if (!rowChangeNeeded) {
-        // No state transition → no forfeit. Backfilling a MISSED forfeit for a
-        // row that is already terminal claws back credits the user has been
-        // sitting on — a policy decision deliberately out of pilot scope.
-        delete money.forfeit;
-      }
       // An entitled, time-aware-live row missing its current-period sub_grant
       // is money drift even when the row state itself is in sync — still
       // reconcile it (the grant helper is idempotent either way).
@@ -746,7 +878,10 @@ export async function runAppleAllowlistReconcile(
         continue;
       }
 
-      const applied = await applyReconcileUpdate(sub, safeUpdate, now);
+      const applied = await applyReconcileUpdate(sub, safeUpdate, now, {
+        actorEmail,
+        originalTransactionId,
+      });
       result.outcome = applied.outcome;
       if (applied.outcome !== "applied" || !applied.updated) continue;
 
@@ -764,36 +899,20 @@ export async function runAppleAllowlistReconcile(
         result.money.grant.result = applied.grantResult.kind;
       }
 
-      // Audit trail for the operator-run apply. Idempotent per resulting
-      // state, so a re-run that no-ops (shouldWrite=false) or re-applies the
-      // same transition never duplicates rows.
-      const granted =
-        applied.grantResult?.kind === "granted"
-          ? BigInt(applied.grantResult.credits)
-          : 0n;
-      const forfeited =
-        applied.forfeitResult?.kind === "forfeited"
-          ? BigInt(applied.forfeitResult.credits)
-          : 0n;
-      await writeAdminAudit({
-        accountId: updated.accountId,
-        actorEmail,
-        action: "reconcile",
-        deltaCredits: granted - forfeited,
-        reason: `apple subscription reconcile ${originalTransactionId}: ${sub.status} -> ${updated.status}`,
-        idempotencyKey: `sub_reconcile_${updated.id}_${Math.floor(
-          updated.currentPeriodEnd.getTime() / 1000,
-        )}_${updated.status}`,
-      });
-
       logger.info(
         {
           subscriptionId: updated.id,
           accountId: updated.accountId,
           statusBefore: sub.status,
           statusAfter: updated.status,
-          granted: granted.toString(),
-          forfeited: forfeited.toString(),
+          granted:
+            applied.grantResult?.kind === "granted"
+              ? applied.grantResult.credits
+              : 0,
+          forfeited:
+            applied.forfeitResult?.kind === "forfeited"
+              ? applied.forfeitResult.credits
+              : 0,
           op: "subscription_reconcile",
         },
         "subscription_reconcile.applied",

@@ -1,5 +1,9 @@
 import { randomUUID } from "node:crypto";
-import { BillingProvider, SubscriptionStatus } from "@prisma/client";
+import {
+  BillingProvider,
+  SubscriptionStatus,
+  type Subscription,
+} from "@prisma/client";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { subForfeitKey, subGrantKey } from "@/subscriptions/grants";
 import { runAppleAllowlistReconcile } from "@/subscriptions/reconcile/service";
@@ -29,6 +33,7 @@ vi.mock("@/subscriptions/jws-verifier", () => ({
 // Apple status enum (mirrors @apple/app-store-server-library Status).
 const APPLE_STATUS_ACTIVE = 1;
 const APPLE_STATUS_EXPIRED = 2;
+const APPLE_STATUS_BILLING_RETRY = 3;
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const NOW = new Date(Date.UTC(2026, 6, 29, 12, 0, 0));
@@ -94,13 +99,21 @@ const decodedTransaction = (opts: {
   originalTransactionId: string;
   expiresDate: number;
   purchaseDate?: number;
+  productId?: string;
 }) => ({
   originalTransactionId: opts.originalTransactionId,
   transactionId: `tx-${randomUUID()}`,
-  productId: "app.convos.subs.monthly",
+  productId: opts.productId ?? "app.convos.subs.monthly",
   purchaseDate: opts.purchaseDate ?? opts.expiresDate - 30 * DAY_MS,
   expiresDate: opts.expiresDate,
 });
+
+const seedGrantForPeriod = async (sub: Subscription, periodStart: Date) => {
+  await prisma.$transaction(async (tx) => {
+    const { grantSubscriptionPeriod } = await import("@/subscriptions/grants");
+    await grantSubscriptionPeriod(tx, { subscription: sub, periodStart });
+  });
+};
 
 const ledgerRows = (accountId: string) =>
   prisma.creditLedger.findMany({ where: { accountId } });
@@ -216,9 +229,13 @@ describe("runAppleAllowlistReconcile", () => {
     const otx = sub.originalTransactionId ?? "";
 
     // Provider agrees with the row state — the drift is purely the missing
-    // sub_grant for the live period.
+    // sub_grant for the live period. Auto-renew is OFF (cancelled-but-active):
+    // willRenew must come from the renewal info, not be assumed true.
     getSubscriptionStatusesWithEnvironmentFallback.mockResolvedValue(
-      appleStatusResponse(otx, { status: APPLE_STATUS_ACTIVE }),
+      appleStatusResponse(otx, {
+        status: APPLE_STATUS_ACTIVE,
+        renewalJws: "jws-renewal",
+      }),
     );
     verifyAndDecodeTransaction.mockResolvedValue(
       decodedTransaction({
@@ -227,6 +244,7 @@ describe("runAppleAllowlistReconcile", () => {
         purchaseDate: periodStart.getTime(),
       }),
     );
+    verifyAndDecodeRenewalInfo.mockResolvedValue({ autoRenewStatus: 0 });
 
     const summary = await runAppleAllowlistReconcile({
       originalTransactionIds: [otx],
@@ -238,6 +256,10 @@ describe("runAppleAllowlistReconcile", () => {
     expect(result.outcome).toBe("applied");
     expect(result.money.grant?.result).toBe("granted");
     expect(result.money.grant?.credits).toBe(monthlyCredits());
+    const afterRow = await prisma.subscription.findUniqueOrThrow({
+      where: { id: sub.id },
+    });
+    expect(afterRow.willRenew).toBe(false);
     expect(result.money.forfeit).toBeUndefined();
 
     const rows = await ledgerRows(accountId);
@@ -272,14 +294,7 @@ describe("runAppleAllowlistReconcile", () => {
     const otx = sub.originalTransactionId ?? "";
 
     // The old period WAS granted (normal verify flow) and never consumed.
-    await prisma.$transaction(async (tx) => {
-      const { grantSubscriptionPeriod } =
-        await import("@/subscriptions/grants");
-      await grantSubscriptionPeriod(tx, {
-        subscription: sub,
-        periodStart: oldStart,
-      });
-    });
+    await seedGrantForPeriod(sub, oldStart);
 
     // Provider truth: a renewal we never heard about (no SSN feed).
     const newStart = oldEnd;
@@ -403,5 +418,197 @@ describe("runAppleAllowlistReconcile", () => {
     });
     expect(after.status).toBe(SubscriptionStatus.active);
     expect(after.updatedAt.getTime()).toBe(sub.updatedAt.getTime());
+  });
+
+  test("billingRetry past the paid window: status flips, NO grant is minted (no-TTL gap closed for reconcile)", async () => {
+    const accountId = await newAccount();
+    const sub = await seedAppleSub({
+      accountId,
+      status: SubscriptionStatus.active,
+      currentPeriodStart: new Date(NOW.getTime() - 70 * DAY_MS),
+      currentPeriodEnd: new Date(NOW.getTime() - 40 * DAY_MS),
+    });
+    const otx = sub.originalTransactionId ?? "";
+
+    getSubscriptionStatusesWithEnvironmentFallback.mockResolvedValue(
+      appleStatusResponse(otx, { status: APPLE_STATUS_BILLING_RETRY }),
+    );
+    verifyAndDecodeTransaction.mockResolvedValue(
+      decodedTransaction({
+        originalTransactionId: otx,
+        expiresDate: NOW.getTime() - 40 * DAY_MS,
+      }),
+    );
+
+    const summary = await runAppleAllowlistReconcile({
+      originalTransactionIds: [otx],
+      apply: true,
+      now: NOW,
+    });
+
+    const result = summary.results[0];
+    expect(result.outcome).toBe("applied");
+    expect(result.after?.status).toBe(SubscriptionStatus.billingRetry);
+    // status.ts entitles billingRetry with no TTL — the reconcile grant gate
+    // must still refuse to mint for a paid window that is already over.
+    expect(result.money.grant).toBeUndefined();
+    expect(await ledgerRows(accountId)).toHaveLength(0);
+  });
+
+  test("drifting provider purchaseDate on an unchanged window does NOT re-key the period (no double mint)", async () => {
+    const accountId = await newAccount();
+    const periodStart = new Date(NOW.getTime() - 5 * DAY_MS);
+    const periodEnd = new Date(NOW.getTime() + 25 * DAY_MS);
+    const sub = await seedAppleSub({
+      accountId,
+      status: SubscriptionStatus.active,
+      currentPeriodStart: periodStart,
+      currentPeriodEnd: periodEnd,
+    });
+    const otx = sub.originalTransactionId ?? "";
+    // Current period already granted under the STORED period start.
+    await seedGrantForPeriod(sub, periodStart);
+
+    // Apple reports the same window end but a slightly different purchase
+    // date — same real period, different would-be grant key.
+    getSubscriptionStatusesWithEnvironmentFallback.mockResolvedValue(
+      appleStatusResponse(otx, { status: APPLE_STATUS_ACTIVE }),
+    );
+    verifyAndDecodeTransaction.mockResolvedValue(
+      decodedTransaction({
+        originalTransactionId: otx,
+        expiresDate: periodEnd.getTime(),
+        purchaseDate: periodStart.getTime() - DAY_MS,
+      }),
+    );
+
+    const summary = await runAppleAllowlistReconcile({
+      originalTransactionIds: [otx],
+      apply: true,
+      now: NOW,
+    });
+
+    expect(summary.results[0].outcome).toBe("noop");
+    expect(await ledgerRows(accountId)).toHaveLength(1);
+  });
+
+  test("stale terminal verdict (provider window older than stored) is refused wholesale", async () => {
+    const accountId = await newAccount();
+    const sub = await seedAppleSub({
+      accountId,
+      status: SubscriptionStatus.active,
+      currentPeriodStart: new Date(NOW.getTime() - 5 * DAY_MS),
+      currentPeriodEnd: new Date(NOW.getTime() + 25 * DAY_MS),
+    });
+    const otx = sub.originalTransactionId ?? "";
+    await seedGrantForPeriod(sub, sub.currentPeriodStart);
+
+    getSubscriptionStatusesWithEnvironmentFallback.mockResolvedValue(
+      appleStatusResponse(otx, { status: APPLE_STATUS_EXPIRED }),
+    );
+    verifyAndDecodeTransaction.mockResolvedValue(
+      decodedTransaction({
+        originalTransactionId: otx,
+        expiresDate: NOW.getTime() - 100 * DAY_MS,
+      }),
+    );
+
+    const summary = await runAppleAllowlistReconcile({
+      originalTransactionIds: [otx],
+      apply: true,
+      now: NOW,
+    });
+
+    const result = summary.results[0];
+    expect(result.outcome).toBe("provider_unresolved");
+    expect(result.unresolvedReason).toBe("stale_provider_terminal");
+    const after = await prisma.subscription.findUniqueOrThrow({
+      where: { id: sub.id },
+    });
+    expect(after.status).toBe(SubscriptionStatus.active);
+    // The granted live period was NOT forfeited.
+    expect(await ledgerRows(accountId)).toHaveLength(1);
+  });
+
+  test("already-terminal row: window backfill applies but NEVER retro-forfeits kept credits", async () => {
+    const accountId = await newAccount();
+    const periodStart = new Date(NOW.getTime() - 65 * DAY_MS);
+    const sub = await seedAppleSub({
+      accountId,
+      status: SubscriptionStatus.expired,
+      currentPeriodStart: periodStart,
+      currentPeriodEnd: new Date(NOW.getTime() - 35 * DAY_MS),
+    });
+    const otx = sub.originalTransactionId ?? "";
+    // The (now over) period had been granted and the credits were kept.
+    await seedGrantForPeriod(sub, periodStart);
+
+    // Apple's final transaction ends LATER than our stored window.
+    getSubscriptionStatusesWithEnvironmentFallback.mockResolvedValue(
+      appleStatusResponse(otx, { status: APPLE_STATUS_EXPIRED }),
+    );
+    verifyAndDecodeTransaction.mockResolvedValue(
+      decodedTransaction({
+        originalTransactionId: otx,
+        expiresDate: NOW.getTime() - 5 * DAY_MS,
+      }),
+    );
+
+    const summary = await runAppleAllowlistReconcile({
+      originalTransactionIds: [otx],
+      apply: true,
+      now: NOW,
+    });
+
+    const result = summary.results[0];
+    expect(result.outcome).toBe("applied");
+    expect(result.after?.currentPeriodEnd).toBe(
+      new Date(NOW.getTime() - 5 * DAY_MS).toISOString(),
+    );
+    // No forfeit was planned or executed — pilot policy: no retroactive
+    // clawback for rows that were already terminal.
+    expect(result.money.forfeit).toBeUndefined();
+    expect(await ledgerRows(accountId)).toHaveLength(1);
+    const wallet = await prisma.userCredits.findUniqueOrThrow({
+      where: { accountId },
+    });
+    expect(wallet.balance).toBe(BigInt(monthlyCredits()));
+  });
+
+  test("provider productId mismatch fails safe (no SKU remap in the pilot)", async () => {
+    const accountId = await newAccount();
+    const sub = await seedAppleSub({
+      accountId,
+      status: SubscriptionStatus.active,
+      currentPeriodStart: new Date(NOW.getTime() - 70 * DAY_MS),
+      currentPeriodEnd: new Date(NOW.getTime() - 40 * DAY_MS),
+    });
+    const otx = sub.originalTransactionId ?? "";
+
+    getSubscriptionStatusesWithEnvironmentFallback.mockResolvedValue(
+      appleStatusResponse(otx, { status: APPLE_STATUS_EXPIRED }),
+    );
+    verifyAndDecodeTransaction.mockResolvedValue(
+      decodedTransaction({
+        originalTransactionId: otx,
+        expiresDate: NOW.getTime() - 40 * DAY_MS,
+        productId: "app.convos.subs.annual",
+      }),
+    );
+
+    const summary = await runAppleAllowlistReconcile({
+      originalTransactionIds: [otx],
+      apply: true,
+      now: NOW,
+    });
+
+    const result = summary.results[0];
+    expect(result.outcome).toBe("provider_unresolved");
+    expect(result.unresolvedReason).toBe("product_id_mismatch");
+    const after = await prisma.subscription.findUniqueOrThrow({
+      where: { id: sub.id },
+    });
+    expect(after.status).toBe(SubscriptionStatus.active);
+    expect(await ledgerRows(accountId)).toHaveLength(0);
   });
 });
