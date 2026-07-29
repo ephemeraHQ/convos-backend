@@ -471,22 +471,34 @@ describe("agentPowerDepleted (owner-computed agent power)", () => {
         ownerAccountId: owner,
         conversationId: null,
       });
-      // Replay from another account: may fill the still-null conversation,
-      // must not touch ownership.
+      // Replay from ANOTHER account: must neither touch ownership nor claim
+      // the still-null conversation slot.
       await recordAgentInstanceDispatched({
         instanceId,
         ownerAccountId: other,
+        conversationId: "eeeeeeeeeeeeeeee",
+      });
+      let row = await prisma.agentInstance.findUnique({
+        where: { instanceId },
+      });
+      expect(row?.ownerAccountId).toBe(owner);
+      expect(row?.conversationId).toBeNull();
+
+      // Replay from the recorded payer: may fill the null conversation.
+      await recordAgentInstanceDispatched({
+        instanceId,
+        ownerAccountId: owner,
         conversationId: "abc123def4567890",
       });
       // A further replay declaring a DIFFERENT conversation must not move
       // the agent's entry into another conversation's payload.
       await recordAgentInstanceDispatched({
         instanceId,
-        ownerAccountId: other,
+        ownerAccountId: owner,
         conversationId: "9999999999999999",
       });
 
-      const row = await prisma.agentInstance.findUnique({
+      row = await prisma.agentInstance.findUnique({
         where: { instanceId },
       });
       expect(row?.ownerAccountId).toBe(owner);

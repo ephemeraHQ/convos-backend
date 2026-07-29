@@ -46,9 +46,12 @@ export type ConversationAgentPower = {
  *   display bit could be mislabeled — the control plane recorded its own
  *   ownerAccountId at first dispatch and the runtime spends against THAT,
  *   never against this row.
- * - conversationId only fills a null, so a replayed dispatch declaring a
- *   different conversation cannot relocate the agent's entry into another
- *   conversation's participation payload.
+ * - conversationId only fills a null, and from a dispatch only when the
+ *   caller IS the recorded payer — so a replayed dispatch can neither
+ *   relocate the agent's entry into another conversation's participation
+ *   payload nor pre-claim an invite-join's conversation from a foreign
+ *   account. The runtime's own status rows (matched by instanceId) remain
+ *   the canonical fill path for invite joins.
  */
 export async function recordAgentInstanceDispatched(args: {
   instanceId: string;
@@ -66,10 +69,11 @@ export async function recordAgentInstanceDispatched(args: {
       error.code === "P2002";
     if (!isExistingRow) throw error;
     // Replay of a known instance: fill a still-null conversationId, touch
-    // nothing else.
+    // nothing else — and only when the replaying caller is the recorded
+    // payer, so a foreign replay cannot claim the conversation slot.
     if (conversationId !== null) {
       await prisma.agentInstance.updateMany({
-        where: { instanceId, conversationId: null },
+        where: { instanceId, ownerAccountId, conversationId: null },
         data: { conversationId },
       });
     }
