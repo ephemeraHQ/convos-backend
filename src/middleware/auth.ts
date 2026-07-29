@@ -5,10 +5,64 @@ import { AppError } from "@/utils/errors";
 import { verifyAppCheckToken } from "@/utils/firebase";
 import { isNotificationExtensionOnlyToken, verifyJwtToken } from "@/utils/jwt";
 import logger from "@/utils/logger";
+import { prisma } from "@/utils/prisma";
 import { getRuntimeConfig } from "@/utils/runtimeConfig";
 
 export const AUTH_HEADER = "X-Convos-AuthToken";
 export const APPCHECK_HEADER = "X-Firebase-AppCheck";
+
+/**
+ * The single deleted-account carve-out: DELETE /v2/accounts/me accepts a
+ * validly-signed, unexpired token whose account is already gone, so an
+ * idempotent deletion retry can re-read its stored record. Every other
+ * accountId-bearing request is fenced below.
+ */
+const isDeleteReplayCarveOut = (req: Request): boolean => {
+  if (req.method !== "DELETE") return false;
+  const fullPath = `${req.baseUrl}${req.path}`.replace(/\/+$/, "");
+  return fullPath === "/api/v2/accounts/me";
+};
+
+/**
+ * Deletion fence, applied inside JWT authentication itself so no route
+ * registration can forget it: a JWT carrying an accountId claim is only
+ * accepted while the Account row still exists. A deleted account's
+ * unexpired token gets a generic 401 on every route (never a
+ * deletion-specific signal — the mint-path 410 is the only confirmation
+ * channel). No positive caching: fail-closed means every check hits the
+ * database. Returns false after writing the response when the request must
+ * not proceed.
+ */
+type VerifiedJwtPayload = Awaited<ReturnType<typeof verifyJwtToken>>;
+
+const enforceLiveAccountClaim = async (
+  req: Request,
+  res: Response,
+  payload: VerifiedJwtPayload,
+): Promise<boolean> => {
+  if (!payload.accountId || isDeleteReplayCarveOut(req)) return true;
+  if (!accountIdSchema.safeParse(payload.accountId).success) {
+    res.status(401).json({ error: "Unauthorized" });
+    return false;
+  }
+  let account: { id: string } | null;
+  try {
+    account = await prisma.account.findUnique({
+      where: { id: payload.accountId },
+      select: { id: true },
+    });
+  } catch (error) {
+    req.log.error({ error }, "auth.fence.account_lookup_failed");
+    res.status(500).json({ error: "Internal server error" });
+    return false;
+  }
+  if (!account) {
+    req.log.warn({ deviceId: payload.deviceId }, "auth.fence.account_not_live");
+    res.status(401).json({ error: "Unauthorized" });
+    return false;
+  }
+  return true;
+};
 
 export const appCheckOnlyMiddleware = async (
   req: Request,
@@ -95,6 +149,11 @@ export const authMiddleware = async (
       return;
     }
 
+    // Deletion fence: an accountId claim is only honored while the account
+    // row exists (fail-closed on every route, delete-replay carve-out
+    // excepted).
+    if (!(await enforceLiveAccountClaim(req, res, payload))) return;
+
     req.log.info({ deviceId: payload.deviceId }, "JWT verification successful");
     next();
   } catch (error) {
@@ -159,6 +218,11 @@ export const authMiddlewareAllowNSE = async (
       }
     }
 
+    // Deletion fence: same fail-closed rule as authMiddleware — a deleted
+    // account's unexpired token must not pass even the diagnostic
+    // auth-check.
+    if (!(await enforceLiveAccountClaim(req, res, payload))) return;
+
     req.log.info(
       {
         deviceId: payload.deviceId,
@@ -178,7 +242,7 @@ export const authMiddlewareAllowNSE = async (
   }
 };
 
-export const requireAccount = (
+export const requireAccount = async (
   req: Request,
   res: Response,
   next: NextFunction,
@@ -189,6 +253,31 @@ export const requireAccount = (
       "requireAccount rejected request",
     );
     res.status(403).json({ error: "Account required" });
+    return;
+  }
+  // Fail closed: the JWT claim alone is not enough — the account row must
+  // still exist. A deleted account holding an unexpired token gets a generic
+  // 401 (never a deletion-specific signal: the mint-path 410 is the only
+  // confirmation channel). Single indexed PK lookup per request.
+  try {
+    const account = await prisma.account.findUnique({
+      where: { id: res.locals.accountId as string },
+      select: { id: true },
+    });
+    if (!account) {
+      ((req as { log?: Request["log"] }).log ?? logger).warn(
+        { deviceId: res.locals.deviceId },
+        "auth.require_account.missing_account",
+      );
+      res.status(401).json({ error: "Unauthorized" });
+      return;
+    }
+  } catch (error) {
+    ((req as { log?: Request["log"] }).log ?? logger).error(
+      { error },
+      "auth.require_account.lookup_failed",
+    );
+    res.status(500).json({ error: "Internal server error" });
     return;
   }
   next();

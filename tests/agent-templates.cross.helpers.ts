@@ -7,6 +7,7 @@ import { noRouteMiddleware } from "@/middleware/noRoute";
 import { pinoMiddleware } from "@/middleware/pino";
 import { ADMIN_ACCOUNT_ID } from "@/utils/constants";
 import { createJwtToken } from "@/utils/jwt";
+import { prisma } from "@/utils/prisma";
 import { buildUrlSlug } from "@/utils/url-slug";
 
 /**
@@ -92,13 +93,22 @@ export const jwtHeaders = async () => ({
 // archived templates remain invisible in the listing.
 const READER_ACCOUNT_ID = "00000000-0000-4000-8000-cccccccc0001";
 
-export const readerHeaders = async (): Promise<Record<string, string>> => ({
-  "Content-Type": "application/json",
-  "X-Convos-AuthToken": await createJwtToken({
-    deviceId: "test-device-agent-templates-cross-reader",
-    accountId: READER_ACCOUNT_ID,
-  }),
-});
+export const readerHeaders = async (): Promise<Record<string, string>> => {
+  // Fail-closed auth: a JWT accountId claim must reference a live Account
+  // row, so the synthetic reader account has to exist.
+  await prisma.account.upsert({
+    where: { id: READER_ACCOUNT_ID },
+    update: {},
+    create: { id: READER_ACCOUNT_ID },
+  });
+  return {
+    "Content-Type": "application/json",
+    "X-Convos-AuthToken": await createJwtToken({
+      deviceId: "test-device-agent-templates-cross-reader",
+      accountId: READER_ACCOUNT_ID,
+    }),
+  };
+};
 
 export const agentKeyHeaders = () => ({
   "Content-Type": "application/json",

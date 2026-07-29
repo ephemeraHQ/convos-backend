@@ -25,6 +25,7 @@ import { authMiddleware, requireAccount } from "@/middleware/auth";
 import { jsonMiddleware } from "@/middleware/json";
 import { pinoMiddleware } from "@/middleware/pino";
 import { createJwtToken } from "@/utils/jwt";
+import { prisma } from "@/utils/prisma";
 
 vi.mock("firebase-admin/app");
 vi.mock("firebase-admin/app-check");
@@ -217,6 +218,12 @@ function installStub(stub: ComposioStub) {
 
 describe("Connections API", () => {
   beforeAll(async () => {
+    // requireAccount is fail-closed: the JWT's account row must exist.
+    await prisma.account.upsert({
+      where: { id: ACCOUNT_ID },
+      update: {},
+      create: { id: ACCOUNT_ID },
+    });
     await new Promise<void>((resolve) => {
       server = app.listen(4012, () => {
         resolve();
@@ -231,6 +238,7 @@ describe("Connections API", () => {
       });
     });
     __resetComposioServiceForTests(null);
+    await prisma.account.deleteMany({ where: { id: ACCOUNT_ID } });
   });
 
   beforeEach(() => {
