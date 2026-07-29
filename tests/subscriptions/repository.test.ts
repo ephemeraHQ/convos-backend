@@ -1,6 +1,7 @@
-import { afterEach, describe, expect, test } from "vitest";
+import { Prisma } from "@prisma/client";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import { getBalance } from "@/payments";
-import { subGrantKey } from "@/subscriptions/grants";
+import { grantSubscriptionPeriod, subGrantKey } from "@/subscriptions/grants";
 import {
   applyNotification,
   BillingProvider,
@@ -17,6 +18,11 @@ import {
 } from "@/subscriptions/repository";
 import { tierGrant } from "@/subscriptions/tier-config";
 import { prisma } from "@/utils/prisma";
+
+// Spy-wrap the grants module (call-through by default) so a single test can
+// inject a CreditLedger unique-violation INSIDE applyNotification's real
+// transaction (the organic race is reachable only under concurrency).
+vi.mock("@/subscriptions/grants", { spy: true });
 
 const perPeriod = () =>
   tierGrant(SUBSCRIPTION_TIER_PLUS, SubscriptionPeriod.monthly).perPeriod;
@@ -792,6 +798,64 @@ describe("applyNotification", () => {
     // 4. A further retry is now a plain replay — state applied exactly once.
     const replay = await applyNotification(input);
     expect(replay.kind).toBe("replayed");
+  });
+
+  test("CreditLedger P2002 inside the tx is rethrown — not acked as a replay, no receipt written", async () => {
+    const accountId = await newAccount();
+    await upsertFromVerify(
+      verifyInput({
+        accountId,
+        originalTransactionId: "otid-ledger-conflict",
+        transactionId: "tx-ledger-conflict-1",
+      }),
+    );
+
+    // Inject a CreditLedger (accountId, idempotencyKey) unique violation from
+    // grantSubscriptionPeriod inside the real transaction (grants.ts
+    // pre-checks make the organic conflict reachable only under a
+    // concurrent same-period race). The catch MUST rethrow: the tx rolled
+    // back receipt AND state update, so acking it as "replayed" would
+    // silently lose the notification (the provider stops retrying on 200).
+    const ledgerConflict = new Prisma.PrismaClientKnownRequestError(
+      "Unique constraint failed on the fields: (`accountId`,`idempotencyKey`)",
+      {
+        code: "P2002",
+        clientVersion: Prisma.prismaVersion.client,
+        meta: {
+          modelName: "CreditLedger",
+          target: ["accountId", "idempotencyKey"],
+        },
+      },
+    );
+    vi.mocked(grantSubscriptionPeriod).mockRejectedValueOnce(ledgerConflict);
+
+    // A real renewal (period advance) so the grant path actually runs.
+    await expect(
+      applyNotification({
+        provider: BillingProvider.apple,
+        originalTransactionId: "otid-ledger-conflict",
+        transactionId: "tx-ledger-conflict-2",
+        notificationUUID: "notif-ledger-conflict",
+        notificationType: "DID_RENEW",
+        signedPayload: "stub-ledger-conflict",
+        update: {
+          status: SubscriptionStatus.active,
+          currentPeriodStart: new Date("2026-06-01T00:00:00.000Z"),
+          currentPeriodEnd: new Date("2026-07-01T00:00:00.000Z"),
+        },
+      }),
+    ).rejects.toThrow(ledgerConflict);
+
+    // The aborted tx persisted nothing: no receipt row for this notification,
+    // and the subscription still sits in its pre-renewal period.
+    const receipt = await prisma.billingReceipt.findUnique({
+      where: { idempotencyKey: "apple-ssn:notif-ledger-conflict" },
+    });
+    expect(receipt).toBeNull();
+    const sub = await findAppleByOriginalTransactionId("otid-ledger-conflict");
+    expect(sub?.currentPeriodStart.toISOString()).toBe(
+      "2026-05-01T00:00:00.000Z",
+    );
   });
 
   test("unknown Play purchaseToken: drop receipt keyed on messageId, carries the token", async () => {

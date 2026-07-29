@@ -1020,9 +1020,18 @@ export const applyNotification = async (
         return { kind: "applied" as const, subscription: updated };
       });
     } catch (err) {
+      // Only a BillingReceipt idempotencyKey conflict may resolve to
+      // adoption-retry/replay. Any other P2002 — in particular CreditLedger's
+      // (accountId, idempotencyKey) from grantSubscriptionPeriod /
+      // forfeitSubscriptionPeriod racing inside this tx — MUST rethrow
+      // (mirrors the verify path's guard): the tx rolled back receipt AND
+      // state update, so acking it as "replayed" would silently lose the
+      // notification (the provider stops retrying on 200). Rethrowing 500s
+      // the webhook and the provider redelivers.
       if (
         err instanceof Prisma.PrismaClientKnownRequestError &&
-        err.code === "P2002"
+        err.code === "P2002" &&
+        isBillingReceiptIdempotencyConflict(err)
       ) {
         // The conflict may come from a DROP receipt committed by a concurrent
         // unknown-path delivery of this same notification AFTER our adoption
@@ -1030,7 +1039,7 @@ export const applyNotification = async (
         // our create lost the unique race). Re-read: if the receipt is still
         // unmatched, retry once — the claim now sees the committed row and
         // wins, so the state change is applied instead of being swallowed as
-        // a replay. Any other P2002 (receipt already matched) is a true
+        // a replay. A conflict on an already-matched receipt is a true
         // provider replay.
         if (attempt === 0) {
           const conflicting = await prisma.billingReceipt.findUnique({
