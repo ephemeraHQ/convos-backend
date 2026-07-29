@@ -455,7 +455,18 @@ export const upsertFromVerify = async (
                 },
               },
             });
-            if (!currentPeriodGrant) {
+            // Defense-in-depth against a READ COMMITTED cross-statement window:
+            // the ownership check above reads the row via findExistingForVerify,
+            // but `replayed` is a SEPARATE (later) read through the receipt
+            // include, so a concurrent auto-reclaim transfer committing between
+            // the two statements can leave `replayed.accountId` pointing at the
+            // NEW holder while the caller is the old one. Never materialize a
+            // grant onto a snapshot whose owner no longer matches the caller —
+            // that period is the new holder's to grant (guarded by the durable
+            // previous-holder check in grantSubscriptionPeriod). Under the
+            // normal (no-transfer) flow replayed.accountId === input.accountId
+            // always, so this is a no-op there.
+            if (!currentPeriodGrant && replayed.accountId === input.accountId) {
               await grantSubscriptionPeriod(tx, {
                 subscription: replayed,
                 periodStart: replayed.currentPeriodStart,

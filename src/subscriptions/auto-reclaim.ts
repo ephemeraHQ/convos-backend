@@ -47,6 +47,39 @@ const lockSubscriptionOwner = async (
   return rows[0] ?? null;
 };
 
+/**
+ * Guarded, audited, single-transaction transfer of an Apple Subscription row
+ * from a DORMANT holder to the verifying claimant, evaluated only at the
+ * verify account-mismatch 409. Every guard fails CLOSED to the existing 409.
+ *
+ * KNOWN RESIDUAL RISKS (why this is gated off by default via
+ * SUBSCRIPTION_AUTO_RECLAIM_ENABLED, and must stay off until the deeper fixes
+ * land):
+ *
+ *  - BEARER-JWS SCOPE (tracked to #377): possession of a fresh (<24h),
+ *    PURCHASED, entitled JWS is treated as sufficient proof to move the row off
+ *    a dormant holder. The claimant is NOT cryptographically bound to the
+ *    signed appAccountToken, so a leaked/stolen fresh JWS replayed by another
+ *    authenticated account CAN move the subscription — this is the same
+ *    session-stealing surface the plain 409 was designed to block, deliberately
+ *    pierced for the dormant-reinstall case. The dormancy signals here (VERIFY
+ *    receipts, consume ledger rows, device updates) do NOT include ordinary
+ *    authenticated reads, so an active-reader / non-writer holder can look
+ *    dormant. The real hardening is #377's per-request activity stamp
+ *    (Account.lastAuthAt) + a possession/contest step; do not enable this flag
+ *    in prod until that exists.
+ *  - STRANDED PERIOD CREDITS (tracked to #374 lineage custody): the transfer
+ *    moves ONLY Subscription.accountId. A period already granted to the old
+ *    holder stays in the old wallet, and a later forfeit (refund/expiry) runs
+ *    against the NEW owner and cannot claw the old one back
+ *    (skipped_nothing_to_forfeit). Bounded to at most one period's grant per
+ *    transfer; this mirrors the drift the interim/manual re-home path already
+ *    accepts. #374's LineagePeriodCustody is the correct escrow fix.
+ *
+ * The SEQUENTIAL client flow (the real ~15s iOS re-verify loop) is fully
+ * protected against double-minting a transferred period by the durable
+ * previous-holder guard in grantSubscriptionPeriod.
+ */
 export const attemptAutoReclaim = async (args: {
   input: VerifyInput;
   decoded: {
