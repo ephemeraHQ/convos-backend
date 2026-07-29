@@ -163,6 +163,7 @@ export class SubscriptionAccountMismatchError extends Error {
     public readonly existingAccountId: string,
     public readonly attemptedAccountId: string,
     public readonly providerSubscriptionId: string,
+    public readonly subscriptionId?: string,
   ) {
     super("Subscription belongs to a different account");
     this.name = "SubscriptionAccountMismatchError";
@@ -398,6 +399,7 @@ export const upsertFromVerify = async (
           existing.accountId,
           input.accountId,
           externalId,
+          existing.id,
         );
       }
 
@@ -598,6 +600,7 @@ export const upsertFromVerify = async (
             current.accountId,
             input.accountId,
             externalId,
+            current.id,
           );
         }
         return { subscription: current, receiptCreated: false };
@@ -634,6 +637,7 @@ export const upsertFromVerify = async (
               holder.accountId,
               input.accountId,
               externalId,
+              holder.id,
             );
           }
           return { subscription: holder, receiptCreated: false };

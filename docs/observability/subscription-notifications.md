@@ -192,3 +192,41 @@ log, and it is the primary detection signal for orphaned subscriptions (it
 names `existingAccountId`). Same shape as monitor 2:
 `env:convos-otr-prod @msg:"subscription.verify.account_mismatch"`, count `> 0`
 over `1h` ⇒ warn.
+
+### 4. Subscription auto-reclaim transfers
+
+The verify handler emits two stable events for the guarded Apple ownership
+transfer path:
+
+| Event                                   | Level | Meaning                                                                                                                                                                                                                                                    |
+| --------------------------------------- | ----- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `subscription.transfer.auto`            | info  | The dormant holder passed every guard, the existing Subscription row moved to the claimant, and the handler is retrying the normal verify upsert. Carries account/subscription/provider/product/tier/period/status/environment and Apple ownership fields. |
+| `subscription.transfer.auto_ineligible` | warn  | The mismatch stayed on the legacy 409 path. Carries claimant and holder account ids, OTX, ownership type, resolvable subscription id, and the guard `reason`.                                                                                              |
+| `subscription.transfer.auto_error`      | error | The eligibility/transfer attempt threw unexpectedly. The request still fails closed to the byte-identical legacy 409.                                                                                                                                      |
+
+`subscription.transfer.grant_skipped` is an internal money-safety event emitted
+when the transferred Apple period already has its canonical `sub_grant` on the
+previous holder. The retry skips that one period instead of funding it twice;
+later periods use different keys and grant normally.
+
+Successful transfers persist an `AdminAudit.idempotencyKey` in the format
+`auto_reclaim_apple_<OTX>_<previousHolderAccountId>_<timestampMs>`. The grant
+choke point uses the previous-holder segment to suppress re-materialization of
+an Apple period that was already funded before the transfer.
+
+Ineligibility reasons:
+
+| `reason`                  | Meaning                                                                         |
+| ------------------------- | ------------------------------------------------------------------------------- |
+| `disabled`                | `SUBSCRIPTION_AUTO_RECLAIM_ENABLED` is not exactly `"true"`.                    |
+| `provider_not_supported`  | The mismatch is not the supported Apple OTX flavor.                             |
+| `not_purchased_ownership` | The verified JWS is missing `PURCHASED` ownership (including Family Sharing).   |
+| `stale_jws`               | The verified JWS has no signed date or exceeds the configured maximum age.      |
+| `not_entitled`            | Provider status is not entitled or the verified period has ended.               |
+| `holder_active`           | A recent holder VERIFY receipt, consume ledger row, or device update was found. |
+| `cooldown`                | The same OTX was already auto-transferred inside the cooldown window.           |
+| `holder_changed`          | The OTX row was missing or its owner changed before/under the row lock.         |
+
+Auto-transfers should be rare. Suggested log monitor:
+`env:convos-otr-prod @msg:"subscription.transfer.auto"`, count `> 3` over `1h`
+⇒ alert, warn at `> 1`. A spike means someone may be farming the reclaim path.

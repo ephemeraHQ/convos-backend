@@ -1,9 +1,18 @@
-import { LedgerReason, type Prisma, type Subscription } from "@prisma/client";
+import {
+  BillingProvider,
+  LedgerReason,
+  type Prisma,
+  type Subscription,
+} from "@prisma/client";
 import { applyDeltaWithTx, lockUserCreditsBalance } from "@/payments/ledger";
 import { tierGrant } from "@/subscriptions/tier-config";
 import { requireSubscriptionTier } from "@/subscriptions/tiers";
+import logger from "@/utils/logger";
 
 type TxClient = Prisma.TransactionClient;
+
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**
  * Single-ledger subscription money-in / money-out.
@@ -103,6 +112,7 @@ const sumPeriodGrants = async (
 export type GrantSubscriptionPeriodResult =
   | { kind: "granted"; credits: number; subscription: Subscription }
   | { kind: "replayed" }
+  | { kind: "skipped_already_funded_to_previous_holder" }
   | { kind: "skipped_nonpositive" };
 
 /**
@@ -144,6 +154,53 @@ export const grantSubscriptionPeriod = async (
   const prior = await findLedgerRow(tx, subscription.accountId, idempotencyKey);
   if (prior) {
     return { kind: "replayed" };
+  }
+
+  if (
+    subscription.provider === BillingProvider.apple &&
+    subscription.originalTransactionId !== null
+  ) {
+    const transferAudits = await tx.adminAudit.findMany({
+      where: {
+        action: "auto_reclaim_transfer",
+        idempotencyKey: {
+          startsWith: `auto_reclaim_apple_${subscription.originalTransactionId}_`,
+        },
+      },
+      select: { idempotencyKey: true },
+    });
+    for (const audit of transferAudits) {
+      const previousAccountId = audit.idempotencyKey.split("_")[4];
+      if (!previousAccountId || !UUID_RE.test(previousAccountId)) {
+        logger.warn(
+          {
+            subscriptionId: subscription.id,
+            idempotencyKey: audit.idempotencyKey,
+          },
+          "subscription.transfer.invalid_audit_key",
+        );
+        continue;
+      }
+      if (previousAccountId === subscription.accountId) continue;
+      const previousHolderGrant = await findLedgerRow(
+        tx,
+        previousAccountId,
+        idempotencyKey,
+      );
+      if (previousHolderGrant) {
+        // This event is emitted inside the caller's transaction and may remain
+        // in logs even if a later operation causes that transaction to roll back.
+        logger.info(
+          {
+            subscriptionId: subscription.id,
+            periodStart,
+            previousAccountId,
+          },
+          "subscription.transfer.grant_skipped",
+        );
+        return { kind: "skipped_already_funded_to_previous_holder" };
+      }
+    }
   }
 
   await applyDeltaWithTx(tx, {
