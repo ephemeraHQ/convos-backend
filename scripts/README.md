@@ -126,6 +126,57 @@ TestFlight purchases live in Apple's **sandbox** environment. A sandbox
 same id with `--sandbox`. If it also 404s with `--sandbox`, check that the
 bundle ID, environment, and API key in `.env` match the app.
 
+---
+
+# Apple Subscription Reconcile — allowlist pilot (`subs:reconcile`)
+
+Reconciles local `Subscription` rows against Apple ground truth
+(`GET /inApps/v1/subscriptions/{originalTransactionId}`) for an EXPLICIT
+allowlist of `originalTransactionId`s. This is the write-capable sibling of
+`apple:sub-status`: it maps Apple's per-item `status` enum to our
+`SubscriptionStatus` (same mapping contract as verify/SSN), updates the row
+through the normal repository path, and moves money ONLY through the
+idempotent per-period helpers (`grantSubscriptionPeriod` /
+`forfeitSubscriptionPeriod` — see `src/payments/AGENTS.md`).
+
+```bash
+# DRY-RUN (default): prints the intended changes, writes NOTHING.
+pnpm subs:reconcile <originalTransactionId...>
+
+# Execute (row update + idempotent grant/forfeit + AdminAudit row):
+pnpm subs:reconcile <originalTransactionId...> --apply
+
+# Options:
+#   --env production|sandbox   pin the App Store Server API host (default:
+#                              configured env first, opposite host on a
+#                              4040010/4040005 not-found — TestFlight OTXs
+#                              live in sandbox)
+#   --actor <email>            actor recorded on AdminAudit rows (apply mode)
+```
+
+Key properties:
+
+- **Dry-run first, always.** The dry-run reports, per id: the current row,
+  what Apple answered (and from which host), the intended row update, and the
+  planned ledger movement — including a prediction of whether a terminal
+  forfeit will no-op because the period was never granted.
+- **Idempotent.** Grants/forfeits key on `(subscription, period)`; a re-run
+  no-ops. The row write is concurrency-guarded on `updatedAt` — a verify/SSN
+  landing mid-run wins and the job skips.
+- **Fail-safe.** Any Apple error or ambiguous response leaves the row
+  untouched (`provider_unresolved`).
+- **Pilot scope.** Allowlist input only — no fleet scan, no cron. The scan
+  machinery lives on the unmerged branch `louis/credits-reconcile-cron`
+  (commit `2b0b041`) and gets resurrected when this graduates to a recurring
+  safety net.
+
+Unlike `apple:sub-status`, this job imports the server source and therefore
+needs the FULL server env (`DATABASE_URL`, the `APPLE_API_*` block,
+`PAYMENTS_GRANT_PLUS_MONTHLY`, plus everything `src/config.ts` requires at
+load). Run it where that env already exists (the API container, or a shell
+with the server `.env`). It never prints env values. Exits non-zero when any
+allowlisted id could not be fully processed.
+
 ## Finding originalTransactionIds
 
 Read-only SQL against the backend database (placeholders — substitute real

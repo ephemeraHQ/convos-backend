@@ -1,7 +1,11 @@
 import type { AdminAudit, Prisma } from "@prisma/client";
 import { prisma } from "@/utils/prisma";
 
-export type AdminAuditAction = "grant" | "adjust";
+// "reconcile" rows are written by the subscription reconcile job
+// (src/subscriptions/reconcile/service.ts) in apply mode, not by an admin
+// endpoint; deltaCredits records the net credits it moved (often 0 for pure
+// status flips).
+export type AdminAuditAction = "grant" | "adjust" | "reconcile";
 
 export const writeAdminAudit = async (args: {
   accountId: string;

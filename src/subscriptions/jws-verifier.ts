@@ -6,6 +6,7 @@ import {
   SignedDataVerifier,
   VerificationException,
   VerificationStatus,
+  type JWSRenewalInfoDecodedPayload,
   type JWSTransactionDecodedPayload,
   type ResponseBodyV2DecodedPayload,
 } from "@apple/app-store-server-library";
@@ -228,4 +229,15 @@ export const verifyAndDecodeTransaction = (
 ): Promise<JWSTransactionDecodedPayload> =>
   verifyWithEnvironmentFallback((verifier) =>
     verifier.verifyAndDecodeTransaction(signedTransactionInfo),
+  );
+
+// Decode `signedRenewalInfo` (carries `gracePeriodExpiresDate`, the real Apple
+// grace-period access deadline). Used by the subscription reconcile job — the
+// `status` enum alone distinguishes billing-retry (status=3) from grace
+// (status=4), but only the renewal info carries the grace deadline.
+export const verifyAndDecodeRenewalInfo = (
+  signedRenewalInfo: string,
+): Promise<JWSRenewalInfoDecodedPayload> =>
+  verifyWithEnvironmentFallback((verifier) =>
+    verifier.verifyAndDecodeRenewalInfo(signedRenewalInfo),
   );
