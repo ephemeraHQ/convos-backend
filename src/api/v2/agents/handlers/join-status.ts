@@ -1,5 +1,9 @@
 import type { Request, Response } from "express";
 import { z } from "zod";
+import {
+  getAgentPowerDepleted,
+  recordAgentInstanceStatus,
+} from "@/api/v2/agents/lib/agent-instances";
 import { resolveVariantWorkerOrigin } from "@/api/v2/agents/lib/variant-routing";
 import { XMTP_ENV } from "@/config";
 import {
@@ -144,6 +148,21 @@ export async function joinStatusHandler(req: Request, res: Response) {
       joinFailureReason = null,
     } = result.data;
 
+    // Opportunistically fill the AgentInstance row (inboxId/conversationId
+    // land asynchronously after dispatch) and compute the owner-funded power
+    // state for the payload. Additive + advisory: any failure here degrades
+    // to the legacy payload shape rather than failing the status read.
+    let agentPowerDepleted: boolean | null = null;
+    try {
+      await recordAgentInstanceStatus({ instanceId, inboxId, conversationId });
+      agentPowerDepleted = await getAgentPowerDepleted(instanceId);
+    } catch (error) {
+      req.log.error(
+        { error, instanceId },
+        "Agent power enrichment failed for join status",
+      );
+    }
+
     res.status(200).json({
       success: true,
       instanceId: result.data.instanceId,
@@ -152,6 +171,10 @@ export async function joinStatusHandler(req: Request, res: Response) {
       inboxId,
       conversationId,
       joinFailureReason,
+      // Owner-computed (the agent PAYER's wallet vs the runtime spend floor),
+      // never the caller's balance. Omitted (absent) when the instance is
+      // unknown to the backend — old rows predating AgentInstance bookkeeping.
+      ...(agentPowerDepleted !== null ? { agentPowerDepleted } : {}),
     });
   } catch (error) {
     if (error instanceof DOMException && error.name === "TimeoutError") {
