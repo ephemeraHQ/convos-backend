@@ -171,8 +171,15 @@ const appleStatusItemToUpdate = (
       };
       // The lapsed paid-period end is the transaction expiresDate; record it
       // as the window so the monotonic guard reasons about the right value.
+      // Carry the purchase date too: the item is Apple's LATEST transaction,
+      // so a renewal we missed before the grace advances the period identity
+      // (subject to the same stabilizer coherence rules as ACTIVE).
       const expiresMs = dateMs(transaction.expiresDate);
       if (expiresMs !== null) update.currentPeriodEnd = new Date(expiresMs);
+      const purchaseMs = dateMs(transaction.purchaseDate);
+      if (purchaseMs !== null) {
+        update.currentPeriodStart = new Date(purchaseMs);
+      }
       return update;
     }
 
@@ -187,28 +194,29 @@ const appleStatusItemToUpdate = (
       };
 
     case AppleSubscriptionStatus.EXPIRED: {
-      const update: NotificationStateUpdate = {
+      // The provider's final period end is MANDATORY for a terminal verdict:
+      // the staleness guard (mirrors applyNotification's) compares it against
+      // the stored window, and a terminal write that would also forfeit must
+      // never run without that comparison. Missing/invalid → fail safe.
+      const expiresMs = dateMs(transaction.expiresDate);
+      if (expiresMs === null) return null;
+      return {
         status: SubscriptionStatus.expired,
         willRenew: false,
         gracePeriodEnd: null,
+        currentPeriodEnd: new Date(expiresMs),
       };
-      // Carry the provider's final period end so the terminal staleness guard
-      // (mirrors applyNotification's) has a window to compare — an EXPIRED
-      // verdict whose window predates our stored one is refused wholesale.
-      const expiresMs = dateMs(transaction.expiresDate);
-      if (expiresMs !== null) update.currentPeriodEnd = new Date(expiresMs);
-      return update;
     }
 
     case AppleSubscriptionStatus.REVOKED: {
-      const update: NotificationStateUpdate = {
+      const expiresMs = dateMs(transaction.expiresDate);
+      if (expiresMs === null) return null;
+      return {
         status: SubscriptionStatus.revoked,
         willRenew: false,
         gracePeriodEnd: null,
+        currentPeriodEnd: new Date(expiresMs),
       };
-      const expiresMs = dateMs(transaction.expiresDate);
-      if (expiresMs !== null) update.currentPeriodEnd = new Date(expiresMs);
-      return update;
     }
 
     default:
@@ -300,11 +308,9 @@ const resolveAppleTruth = async (
   // granting with the row's stored tier/period would mint the wrong
   // allotment. The pilot does not remap SKUs — it fails safe and leaves the
   // row for the operator (the fleet job will carry the productId→tier/period
-  // remap when it lands).
-  if (
-    transaction.productId !== undefined &&
-    transaction.productId !== sub.productId
-  ) {
+  // remap when it lands). A MISSING provider productId also fails safe:
+  // grant sizing cannot be authenticated without it.
+  if (transaction.productId !== sub.productId) {
     logger.warn(
       {
         subscriptionId: sub.id,
@@ -470,7 +476,19 @@ const stabilizePeriodIdentity = (
   if (update.currentPeriodStart === undefined) return update;
   if (isRescue(sub, update)) return update;
   const newEnd = dateMs(update.currentPeriodEnd);
-  if (newEnd !== null && newEnd > sub.currentPeriodEnd.getTime()) return update;
+  const newStart = update.currentPeriodStart.getTime();
+  // Accept a new period identity only when the window moves COHERENTLY
+  // forward: both end and start strictly advance (a real renewal). An
+  // advancing end with a non-advancing start would re-key money under an
+  // older/equal start while `planMoney` sees no period advance — a second
+  // grant key for an already-granted stretch. Keep the stored identity then.
+  if (
+    newEnd !== null &&
+    newEnd > sub.currentPeriodEnd.getTime() &&
+    newStart > sub.currentPeriodStart.getTime()
+  ) {
+    return update;
+  }
   const { currentPeriodStart: _drop, ...rest } = update;
   return rest;
 };
@@ -495,8 +513,12 @@ const isStaleTerminalUpdate = (
  * active/trial/grace but passes `billingRetry` through unconditionally (the
  * known no-TTL gap, status.ts) — under which a long-lapsed row Apple reports
  * as status 3 would mint a full grant for a period whose paid window is over.
- * The reconcile job targets exactly such stale rows, so it additionally
- * requires a billingRetry row's paid window to still be live.
+ * Worse, the row's own `currentPeriodEnd` cannot be trusted as the check
+ * (Apple status 3 carries no window we apply, so the gate would read a
+ * possibly-stale/fabricated local end). The reconcile job therefore
+ * categorically refuses to materialize grants for billingRetry targets: Apple
+ * status 3 means the paid window ENDED at `expiresDate`; if a genuine grant is
+ * missing, the user's next verify materializes it through the normal path.
  */
 const isEntitledForReconcileGrant = (
   fields: {
@@ -506,14 +528,8 @@ const isEntitledForReconcileGrant = (
   },
   now: Date,
 ): boolean => {
-  if (!isEntitledSubscription(fields, now)) return false;
-  if (
-    fields.status === SubscriptionStatus.billingRetry &&
-    fields.currentPeriodEnd.getTime() <= now.getTime()
-  ) {
-    return false;
-  }
-  return true;
+  if (fields.status === SubscriptionStatus.billingRetry) return false;
+  return isEntitledSubscription(fields, now);
 };
 
 export type ReconcileMoneyReport = {

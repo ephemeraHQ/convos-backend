@@ -449,10 +449,94 @@ describe("runAppleAllowlistReconcile", () => {
     const result = summary.results[0];
     expect(result.outcome).toBe("applied");
     expect(result.after?.status).toBe(SubscriptionStatus.billingRetry);
-    // status.ts entitles billingRetry with no TTL — the reconcile grant gate
-    // must still refuse to mint for a paid window that is already over.
+    // status.ts entitles billingRetry with no TTL and status 3 carries no
+    // trustworthy window — the reconcile grant gate categorically refuses to
+    // mint for billingRetry targets.
     expect(result.money.grant).toBeUndefined();
     expect(await ledgerRows(accountId)).toHaveLength(0);
+  });
+
+  test("advancing end with a NON-advancing provider start keeps the stored period key (no re-key)", async () => {
+    const accountId = await newAccount();
+    const periodStart = new Date(NOW.getTime() - 20 * DAY_MS);
+    const periodEnd = new Date(NOW.getTime() + 10 * DAY_MS);
+    const sub = await seedAppleSub({
+      accountId,
+      status: SubscriptionStatus.active,
+      currentPeriodStart: periodStart,
+      currentPeriodEnd: periodEnd,
+    });
+    const otx = sub.originalTransactionId ?? "";
+    await seedGrantForPeriod(sub, periodStart);
+
+    // Provider end extends, but the provider start is OLDER than stored —
+    // an incoherent period identity that must not re-key money.
+    getSubscriptionStatusesWithEnvironmentFallback.mockResolvedValue(
+      appleStatusResponse(otx, { status: APPLE_STATUS_ACTIVE }),
+    );
+    verifyAndDecodeTransaction.mockResolvedValue(
+      decodedTransaction({
+        originalTransactionId: otx,
+        expiresDate: periodEnd.getTime() + 5 * DAY_MS,
+        purchaseDate: periodStart.getTime() - 10 * DAY_MS,
+      }),
+    );
+
+    const summary = await runAppleAllowlistReconcile({
+      originalTransactionIds: [otx],
+      apply: true,
+      now: NOW,
+    });
+
+    const result = summary.results[0];
+    expect(result.outcome).toBe("applied");
+    const after = await prisma.subscription.findUniqueOrThrow({
+      where: { id: sub.id },
+    });
+    // Window extended, stored period identity kept, grant replayed under the
+    // stored key — exactly one ledger row, no forfeit.
+    expect(after.currentPeriodStart.getTime()).toBe(periodStart.getTime());
+    expect(after.currentPeriodEnd.getTime()).toBe(
+      periodEnd.getTime() + 5 * DAY_MS,
+    );
+    expect(await ledgerRows(accountId)).toHaveLength(1);
+  });
+
+  test("terminal verdict without a provider expiresDate fails safe (no blind terminalize+forfeit)", async () => {
+    const accountId = await newAccount();
+    const sub = await seedAppleSub({
+      accountId,
+      status: SubscriptionStatus.active,
+      currentPeriodStart: new Date(NOW.getTime() - 5 * DAY_MS),
+      currentPeriodEnd: new Date(NOW.getTime() + 25 * DAY_MS),
+    });
+    const otx = sub.originalTransactionId ?? "";
+    await seedGrantForPeriod(sub, sub.currentPeriodStart);
+
+    getSubscriptionStatusesWithEnvironmentFallback.mockResolvedValue(
+      appleStatusResponse(otx, { status: APPLE_STATUS_EXPIRED }),
+    );
+    // Decoded transaction lacks expiresDate entirely.
+    verifyAndDecodeTransaction.mockResolvedValue({
+      originalTransactionId: otx,
+      transactionId: `tx-${randomUUID()}`,
+      productId: "app.convos.subs.monthly",
+    });
+
+    const summary = await runAppleAllowlistReconcile({
+      originalTransactionIds: [otx],
+      apply: true,
+      now: NOW,
+    });
+
+    const result = summary.results[0];
+    expect(result.outcome).toBe("provider_unresolved");
+    expect(result.unresolvedReason).toBe("ambiguous_provider_state");
+    const after = await prisma.subscription.findUniqueOrThrow({
+      where: { id: sub.id },
+    });
+    expect(after.status).toBe(SubscriptionStatus.active);
+    expect(await ledgerRows(accountId)).toHaveLength(1);
   });
 
   test("drifting provider purchaseDate on an unchanged window does NOT re-key the period (no double mint)", async () => {
