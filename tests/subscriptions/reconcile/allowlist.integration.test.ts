@@ -7,6 +7,7 @@ import {
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { subForfeitKey, subGrantKey } from "@/subscriptions/grants";
 import { runAppleAllowlistReconcile } from "@/subscriptions/reconcile/service";
+import { isEntitledSubscription } from "@/subscriptions/status";
 import { tierGrant } from "@/subscriptions/tier-config";
 import { prisma } from "@/utils/prisma";
 
@@ -34,6 +35,7 @@ vi.mock("@/subscriptions/jws-verifier", () => ({
 const APPLE_STATUS_ACTIVE = 1;
 const APPLE_STATUS_EXPIRED = 2;
 const APPLE_STATUS_BILLING_RETRY = 3;
+const APPLE_STATUS_BILLING_GRACE = 4;
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const NOW = new Date(Date.UTC(2026, 6, 29, 12, 0, 0));
@@ -420,40 +422,133 @@ describe("runAppleAllowlistReconcile", () => {
     expect(after.updatedAt.getTime()).toBe(sub.updatedAt.getTime());
   });
 
-  test("billingRetry past the paid window: status flips, NO grant is minted (no-TTL gap closed for reconcile)", async () => {
-    const accountId = await newAccount();
-    const sub = await seedAppleSub({
-      accountId,
-      status: SubscriptionStatus.active,
+  test("billingRetry must not re-entitle nor extend period; grace entitles only until gracePeriodExpiresDate", async () => {
+    // --- Leg 1a: EXPIRED row + Apple status 3 → NOT re-entitled. Writing
+    // billingRetry would restore indefinite entitlement (status.ts no-TTL);
+    // the mapping must fail safe and leave the row untouched.
+    const accountA = await newAccount();
+    const expiredRow = await seedAppleSub({
+      accountId: accountA,
+      status: SubscriptionStatus.expired,
       currentPeriodStart: new Date(NOW.getTime() - 70 * DAY_MS),
       currentPeriodEnd: new Date(NOW.getTime() - 40 * DAY_MS),
     });
-    const otx = sub.originalTransactionId ?? "";
+    const otxA = expiredRow.originalTransactionId ?? "";
 
     getSubscriptionStatusesWithEnvironmentFallback.mockResolvedValue(
-      appleStatusResponse(otx, { status: APPLE_STATUS_BILLING_RETRY }),
+      appleStatusResponse(otxA, { status: APPLE_STATUS_BILLING_RETRY }),
     );
     verifyAndDecodeTransaction.mockResolvedValue(
       decodedTransaction({
-        originalTransactionId: otx,
+        originalTransactionId: otxA,
         expiresDate: NOW.getTime() - 40 * DAY_MS,
       }),
     );
 
-    const summary = await runAppleAllowlistReconcile({
-      originalTransactionIds: [otx],
+    let summary = await runAppleAllowlistReconcile({
+      originalTransactionIds: [otxA],
       apply: true,
       now: NOW,
     });
+    expect(summary.results[0].outcome).toBe("provider_unresolved");
+    let after = await prisma.subscription.findUniqueOrThrow({
+      where: { id: expiredRow.id },
+    });
+    expect(after.status).toBe(SubscriptionStatus.expired);
+    expect(after.currentPeriodEnd.getTime()).toBe(
+      expiredRow.currentPeriodEnd.getTime(),
+    );
+    expect(isEntitledSubscription(after, NOW)).toBe(false);
+    expect(await ledgerRows(accountA)).toHaveLength(0);
 
-    const result = summary.results[0];
-    expect(result.outcome).toBe("applied");
-    expect(result.after?.status).toBe(SubscriptionStatus.billingRetry);
-    // status.ts entitles billingRetry with no TTL and status 3 carries no
-    // trustworthy window — the reconcile grant gate categorically refuses to
-    // mint for billingRetry targets.
-    expect(result.money.grant).toBeUndefined();
-    expect(await ledgerRows(accountId)).toHaveLength(0);
+    // --- Leg 1b: stale-ACTIVE row (effectively expired) + status 3 → row
+    // untouched, period NOT extended, still not entitled.
+    const accountB = await newAccount();
+    const staleActive = await seedAppleSub({
+      accountId: accountB,
+      status: SubscriptionStatus.active,
+      currentPeriodStart: new Date(NOW.getTime() - 70 * DAY_MS),
+      currentPeriodEnd: new Date(NOW.getTime() - 40 * DAY_MS),
+    });
+    const otxB = staleActive.originalTransactionId ?? "";
+    getSubscriptionStatusesWithEnvironmentFallback.mockResolvedValue(
+      appleStatusResponse(otxB, { status: APPLE_STATUS_BILLING_RETRY }),
+    );
+    verifyAndDecodeTransaction.mockResolvedValue(
+      decodedTransaction({
+        originalTransactionId: otxB,
+        expiresDate: NOW.getTime() - 40 * DAY_MS,
+      }),
+    );
+
+    summary = await runAppleAllowlistReconcile({
+      originalTransactionIds: [otxB],
+      apply: true,
+      now: NOW,
+    });
+    expect(summary.results[0].outcome).toBe("provider_unresolved");
+    after = await prisma.subscription.findUniqueOrThrow({
+      where: { id: staleActive.id },
+    });
+    expect(after.status).toBe(SubscriptionStatus.active);
+    expect(after.updatedAt.getTime()).toBe(staleActive.updatedAt.getTime());
+    expect(isEntitledSubscription(after, NOW)).toBe(false);
+    expect(await ledgerRows(accountB)).toHaveLength(0);
+
+    // --- Leg 2: Apple status 4 (grace) DOES entitle, but ONLY until
+    // signedRenewalInfo.gracePeriodExpiresDate.
+    const accountC = await newAccount();
+    const periodStart = new Date(NOW.getTime() - 35 * DAY_MS);
+    const graceRow = await seedAppleSub({
+      accountId: accountC,
+      status: SubscriptionStatus.active,
+      currentPeriodStart: periodStart,
+      currentPeriodEnd: new Date(NOW.getTime() - 5 * DAY_MS),
+    });
+    const otxC = graceRow.originalTransactionId ?? "";
+    // Period was granted normally; grace must not re-mint.
+    await seedGrantForPeriod(graceRow, periodStart);
+
+    const graceDeadline = NOW.getTime() + 10 * DAY_MS;
+    getSubscriptionStatusesWithEnvironmentFallback.mockResolvedValue(
+      appleStatusResponse(otxC, {
+        status: APPLE_STATUS_BILLING_GRACE,
+        renewalJws: "jws-renewal-grace",
+      }),
+    );
+    verifyAndDecodeTransaction.mockResolvedValue(
+      decodedTransaction({
+        originalTransactionId: otxC,
+        expiresDate: NOW.getTime() - 5 * DAY_MS,
+        purchaseDate: periodStart.getTime(),
+      }),
+    );
+    verifyAndDecodeRenewalInfo.mockResolvedValue({
+      gracePeriodExpiresDate: graceDeadline,
+    });
+
+    summary = await runAppleAllowlistReconcile({
+      originalTransactionIds: [otxC],
+      apply: true,
+      now: NOW,
+    });
+    expect(summary.results[0].outcome).toBe("applied");
+    after = await prisma.subscription.findUniqueOrThrow({
+      where: { id: graceRow.id },
+    });
+    expect(after.status).toBe(SubscriptionStatus.grace);
+    // Entitlement is bounded EXACTLY by the provider grace deadline.
+    expect(after.gracePeriodEnd?.getTime()).toBe(graceDeadline);
+    expect(isEntitledSubscription(after, NOW)).toBe(true);
+    expect(isEntitledSubscription(after, new Date(graceDeadline - 1000))).toBe(
+      true,
+    );
+    expect(isEntitledSubscription(after, new Date(graceDeadline))).toBe(false);
+    expect(isEntitledSubscription(after, new Date(graceDeadline + 1000))).toBe(
+      false,
+    );
+    // No re-mint: still exactly the one grant row.
+    expect(await ledgerRows(accountC)).toHaveLength(1);
   });
 
   test("advancing end with a NON-advancing provider start keeps the stored period key (no re-key)", async () => {

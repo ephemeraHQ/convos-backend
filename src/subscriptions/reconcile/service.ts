@@ -106,15 +106,19 @@ type ResolvedTruth = NotificationStateUpdate | null;
 /**
  * Build the entitlement update from an Apple status item — the per-item
  * `status` enum plus the decoded transaction and (optional) renewal info.
- * Ported verbatim from 2b0b041 (see the module doc for the mapping contract).
+ * Ported from 2b0b041, with the status-3 leg adapted to THIS branch's
+ * status.ts semantics (see the case comment).
  *
  *   1 ACTIVE   → active (or trial), window = expiresDate; clear gracePeriodEnd.
  *   4 GRACE    → grace, gracePeriodEnd = renewalInfo.gracePeriodExpiresDate
- *                (the real access deadline). ABSENT deadline → fail safe (null).
- *   3 RETRY    → billingRetry WITHOUT a window and gracePeriodEnd cleared;
- *                status.ts governs the row by currentPeriodEnd.
- *   2 EXPIRED  → expired; clear gracePeriodEnd.
- *   5 REVOKED  → revoked; clear gracePeriodEnd.
+ *                (the real access deadline — entitlement is bounded by it).
+ *                ABSENT deadline → fail safe (null).
+ *   3 RETRY    → null (fail safe): the paid period LAPSED and Apple is
+ *                retrying billing — never re-entitle, never extend. Writing
+ *                billingRetry would re-entitle indefinitely on this branch
+ *                (status.ts no-TTL).
+ *   2 EXPIRED  → expired; clear gracePeriodEnd; provider window REQUIRED.
+ *   5 REVOKED  → revoked; clear gracePeriodEnd; provider window REQUIRED.
  *   unknown    → null (fail closed; leave the row for a later run).
  */
 const appleStatusItemToUpdate = (
@@ -184,14 +188,18 @@ const appleStatusItemToUpdate = (
     }
 
     case AppleSubscriptionStatus.BILLING_RETRY:
-      // NOT entitled per Apple contract (access ended at expiresDate), but we
-      // must NOT write `expired` from the past expiresDate either (that would
-      // revoke a sub Apple is still retrying). billingRetry with NO window and
-      // grace cleared: status.ts governs the row by currentPeriodEnd.
-      return {
-        status: SubscriptionStatus.billingRetry,
-        gracePeriodEnd: null,
-      };
+      // NOT entitled per Apple contract: status 3 means the paid period
+      // LAPSED and Apple is retrying billing — the user must NOT be
+      // re-entitled and the period must NOT be extended. On THIS branch,
+      // writing `billingRetry` would do exactly that: status.ts entitles
+      // billingRetry unconditionally (the no-TTL gap, status.ts:76-84), so an
+      // expired/revoked/effectively-expired row would read fully entitled
+      // forever. (2b0b041 could safely write billingRetry because ITS
+      // status.ts governed the status by currentPeriodEnd; this branch does
+      // not.) We must not write `expired` either — Apple may still recover
+      // the sub (rescue on a later run). Fail safe: leave the row untouched;
+      // its entitlement stays governed by the existing time-aware read.
+      return null;
 
     case AppleSubscriptionStatus.EXPIRED: {
       // The provider's final period end is MANDATORY for a terminal verdict:
@@ -511,14 +519,13 @@ const isStaleTerminalUpdate = (
 /**
  * Grant gate for the reconcile job. `isEntitledSubscription` is time-aware for
  * active/trial/grace but passes `billingRetry` through unconditionally (the
- * known no-TTL gap, status.ts) — under which a long-lapsed row Apple reports
- * as status 3 would mint a full grant for a period whose paid window is over.
- * Worse, the row's own `currentPeriodEnd` cannot be trusted as the check
- * (Apple status 3 carries no window we apply, so the gate would read a
- * possibly-stale/fabricated local end). The reconcile job therefore
- * categorically refuses to materialize grants for billingRetry targets: Apple
- * status 3 means the paid window ENDED at `expiresDate`; if a genuine grant is
- * missing, the user's next verify materializes it through the normal path.
+ * known no-TTL gap, status.ts). The Apple mapping above never WRITES
+ * billingRetry (status 3 fails safe), but a row can already HOLD that status
+ * from the SSN path — and its local `currentPeriodEnd` cannot be trusted as a
+ * check. The reconcile job therefore categorically refuses to materialize
+ * grants for billingRetry rows: Apple status 3 means the paid window ENDED at
+ * `expiresDate`; if a genuine grant is missing, the user's next verify
+ * materializes it through the normal path.
  */
 const isEntitledForReconcileGrant = (
   fields: {
