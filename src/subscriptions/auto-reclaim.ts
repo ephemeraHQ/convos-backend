@@ -1,5 +1,8 @@
 import { BillingProvider, LedgerReason, type Prisma } from "@prisma/client";
-import type { Logger } from "pino";
+import {
+  autoReclaimAuditKey,
+  autoReclaimAuditKeyPrefix,
+} from "@/subscriptions/grants";
 import type { VerifyInput } from "@/subscriptions/repository";
 import { isEntitledSubscriptionStatus } from "@/subscriptions/status";
 import { prisma } from "@/utils/prisma";
@@ -27,11 +30,20 @@ type LockedSubscriptionOwner = {
   accountId: string;
 };
 
+// Cap on any numeric knob (units are hours or days). Prevents an absurd or
+// fat-fingered env value from overflowing downstream ms arithmetic past
+// Number.MAX_SAFE_INTEGER — which would make the freshness comparison always
+// false and silently DISABLE the stale-JWS guard. Out-of-range falls back to
+// the safe default instead.
+const NUMERIC_ENV_MAX = 1_000_000;
+
 const numericEnv = (name: string, fallback: number): number => {
   const raw = process.env[name];
   if (raw === undefined || raw.trim() === "") return fallback;
   const parsed = Number(raw);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+  return Number.isFinite(parsed) && parsed > 0 && parsed <= NUMERIC_ENV_MAX
+    ? parsed
+    : fallback;
 };
 
 const lockSubscriptionOwner = async (
@@ -45,6 +57,59 @@ const lockSubscriptionOwner = async (
     FOR UPDATE
   `;
   return rows[0] ?? null;
+};
+
+/**
+ * The Apple ownership evidence extracted from the VERIFIED JWS (never from the
+ * request body). Shared with the verify handler so the shape is declared once.
+ */
+export type AppleOwnershipProof = {
+  inAppOwnershipType?: string;
+  signedDate?: number;
+};
+
+/**
+ * True when the holder shows ANY of the three dormancy signals inside the
+ * window. Runs twice per eligible attempt: once pre-transaction as a cheap
+ * early exit (avoids taking the row lock for plainly active holders), and once
+ * more INSIDE the transfer transaction after the subscription row lock, so a
+ * holder write committing between the first sampling and the row lock is seen
+ * and aborts the transfer (TOCTOU hardening; a holder re-verify serializes on
+ * the same subscription row lock, so that signal is fully race-free).
+ */
+export const holderShowsActivity = async (
+  client: Prisma.TransactionClient,
+  holderAccountId: string,
+  dormancyCutoff: Date,
+): Promise<boolean> => {
+  const [recentVerify, recentConsume, recentDevice] = await Promise.all([
+    client.billingReceipt.findFirst({
+      where: {
+        notificationType: "VERIFY",
+        receivedAt: { gt: dormancyCutoff },
+        subscription: { accountId: holderAccountId },
+      },
+      select: { id: true },
+    }),
+    client.creditLedger.findFirst({
+      where: {
+        accountId: holderAccountId,
+        reason: LedgerReason.consume,
+        createdAt: { gt: dormancyCutoff },
+      },
+      select: { id: true },
+    }),
+    client.deviceRegistration.findFirst({
+      where: {
+        accountId: holderAccountId,
+        updatedAt: { gt: dormancyCutoff },
+      },
+      select: { deviceId: true },
+    }),
+  ]);
+  return (
+    recentVerify !== null || recentConsume !== null || recentDevice !== null
+  );
 };
 
 /**
@@ -82,12 +147,8 @@ const lockSubscriptionOwner = async (
  */
 export const attemptAutoReclaim = async (args: {
   input: VerifyInput;
-  decoded: {
-    inAppOwnershipType?: string;
-    signedDate?: number;
-  };
+  decoded: AppleOwnershipProof;
   expectedHolderAccountId: string;
-  log: Logger;
 }): Promise<AutoReclaimResult> => {
   const { input, decoded, expectedHolderAccountId } = args;
 
@@ -130,32 +191,11 @@ export const attemptAutoReclaim = async (args: {
         60 *
         1000,
   );
-  const [recentVerify, recentConsume, recentDevice] = await Promise.all([
-    prisma.billingReceipt.findFirst({
-      where: {
-        notificationType: "VERIFY",
-        receivedAt: { gt: dormancyCutoff },
-        subscription: { accountId: expectedHolderAccountId },
-      },
-      select: { id: true },
-    }),
-    prisma.creditLedger.findFirst({
-      where: {
-        accountId: expectedHolderAccountId,
-        reason: LedgerReason.consume,
-        createdAt: { gt: dormancyCutoff },
-      },
-      select: { id: true },
-    }),
-    prisma.deviceRegistration.findFirst({
-      where: {
-        accountId: expectedHolderAccountId,
-        updatedAt: { gt: dormancyCutoff },
-      },
-      select: { deviceId: true },
-    }),
-  ]);
-  if (recentVerify || recentConsume || recentDevice) {
+  // Pre-transaction sampling: cheap early exit before taking any lock. The
+  // authoritative re-check runs again inside the transaction below.
+  if (
+    await holderShowsActivity(prisma, expectedHolderAccountId, dormancyCutoff)
+  ) {
     return { eligible: false, reason: "holder_active" };
   }
 
@@ -178,6 +218,16 @@ export const attemptAutoReclaim = async (args: {
       return { eligible: false, reason: "holder_changed" };
     }
 
+    // Authoritative dormancy re-check UNDER the row lock: a holder VERIFY,
+    // consume, or device write committing between the pre-transaction sampling
+    // and this point is now visible and aborts the transfer. Closes the TOCTOU
+    // window on the active-holder guard (review finding on PR #399).
+    if (
+      await holderShowsActivity(tx, expectedHolderAccountId, dormancyCutoff)
+    ) {
+      return { eligible: false, reason: "holder_active" };
+    }
+
     const cooldownCutoff = new Date(
       now.getTime() -
         numericEnv("SUBSCRIPTION_AUTO_RECLAIM_COOLDOWN_DAYS", 7) *
@@ -190,7 +240,7 @@ export const attemptAutoReclaim = async (args: {
       where: {
         action: "auto_reclaim_transfer",
         idempotencyKey: {
-          startsWith: `auto_reclaim_apple_${input.originalTransactionId}_`,
+          startsWith: autoReclaimAuditKeyPrefix(input.originalTransactionId),
         },
         createdAt: { gte: cooldownCutoff },
       },
@@ -224,9 +274,11 @@ export const attemptAutoReclaim = async (args: {
           `Auto-reclaimed Apple subscription otx=${input.originalTransactionId} ` +
           `subscriptionId=${locked.id} from=${expectedHolderAccountId} ` +
           `to=${input.accountId} jwsSignedAt=${signedAt.toISOString()}`,
-        idempotencyKey:
-          `auto_reclaim_apple_${input.originalTransactionId}_` +
-          `${expectedHolderAccountId}_${now.getTime()}`,
+        idempotencyKey: autoReclaimAuditKey(
+          input.originalTransactionId,
+          expectedHolderAccountId,
+          now.getTime(),
+        ),
       },
     });
 

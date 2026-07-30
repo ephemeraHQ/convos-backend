@@ -441,6 +441,24 @@ export const upsertFromVerify = async (
         // below would P2002 and resolve via the outer conflict handler.
         const replayed = existingReceipt.subscription;
         if (replayed) {
+          // Defense-in-depth against a READ COMMITTED cross-statement window:
+          // the ownership check above reads the row via findExistingForVerify,
+          // but `replayed` is a SEPARATE (later) read through the receipt
+          // include — and, in the account-recreation shape, can even resolve a
+          // row the OTX lookup never saw. If the snapshot's owner is not the
+          // caller, surface the SAME mismatch the pre-check throws (409): never
+          // materialize a grant onto another account's row, and never hand the
+          // old holder a 200 for a row that just moved (auto-reclaim race).
+          // Under the normal no-transfer flow replayed.accountId always equals
+          // input.accountId here, so this never fires.
+          if (replayed.accountId !== input.accountId) {
+            throw new SubscriptionAccountMismatchError(
+              replayed.accountId,
+              input.accountId,
+              externalId,
+              replayed.id,
+            );
+          }
           const isStaleReplay =
             input.currentPeriodEnd < replayed.currentPeriodEnd;
           if (!isStaleReplay && isEntitledSubscription(replayed)) {
@@ -455,18 +473,7 @@ export const upsertFromVerify = async (
                 },
               },
             });
-            // Defense-in-depth against a READ COMMITTED cross-statement window:
-            // the ownership check above reads the row via findExistingForVerify,
-            // but `replayed` is a SEPARATE (later) read through the receipt
-            // include, so a concurrent auto-reclaim transfer committing between
-            // the two statements can leave `replayed.accountId` pointing at the
-            // NEW holder while the caller is the old one. Never materialize a
-            // grant onto a snapshot whose owner no longer matches the caller —
-            // that period is the new holder's to grant (guarded by the durable
-            // previous-holder check in grantSubscriptionPeriod). Under the
-            // normal (no-transfer) flow replayed.accountId === input.accountId
-            // always, so this is a no-op there.
-            if (!currentPeriodGrant && replayed.accountId === input.accountId) {
+            if (!currentPeriodGrant) {
               await grantSubscriptionPeriod(tx, {
                 subscription: replayed,
                 periodStart: replayed.currentPeriodStart,

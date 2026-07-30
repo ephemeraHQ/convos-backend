@@ -4,7 +4,10 @@ import {
 } from "@apple/app-store-server-library";
 import type { Request, Response } from "express";
 import { z } from "zod";
-import { attemptAutoReclaim } from "@/subscriptions/auto-reclaim";
+import {
+  attemptAutoReclaim,
+  type AppleOwnershipProof,
+} from "@/subscriptions/auto-reclaim";
 import {
   acknowledgePurchase,
   fetchSubscriptionPurchaseV2,
@@ -200,10 +203,7 @@ const handleAppleBranch = async (
   body: z.infer<typeof appleBodySchema>,
 ): Promise<{
   input: AppleVerifyInput;
-  ownership: {
-    inAppOwnershipType?: string;
-    signedDate?: number;
-  };
+  ownership: AppleOwnershipProof;
 } | null> => {
   let decoded: JWSTransactionDecodedPayload;
   try {
@@ -391,10 +391,7 @@ export async function subscriptionVerifyHandler(req: Request, res: Response) {
 
   let input: VerifyInput;
   let playPurchase: SubscriptionPurchaseV2 | null = null;
-  let appleOwnership: {
-    inAppOwnershipType?: string;
-    signedDate?: number;
-  } | null = null;
+  let appleOwnership: AppleOwnershipProof | null = null;
 
   if (parsed.data.platform === "apple") {
     const built = await handleAppleBranch(req, res, accountId, parsed.data);
@@ -468,7 +465,6 @@ export async function subscriptionVerifyHandler(req: Request, res: Response) {
             input,
             decoded: appleOwnership,
             expectedHolderAccountId: error.existingAccountId,
-            log: req.log,
           });
         } catch (reclaimError) {
           req.log.error(

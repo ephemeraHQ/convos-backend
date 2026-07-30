@@ -25,7 +25,10 @@ import { accountsMeRouter } from "@/api/v2/accounts/accountsMeRouter";
 import { authMiddleware } from "@/middleware/auth";
 import { pinoMiddleware } from "@/middleware/pino";
 import { consume, getBalance } from "@/payments";
-import { attemptAutoReclaim } from "@/subscriptions/auto-reclaim";
+import {
+  attemptAutoReclaim,
+  holderShowsActivity,
+} from "@/subscriptions/auto-reclaim";
 import { grantSubscriptionPeriod, subGrantKey } from "@/subscriptions/grants";
 import {
   resetVerifierForTests,
@@ -33,11 +36,12 @@ import {
 } from "@/subscriptions/jws-verifier";
 import {
   SUBSCRIPTION_TIER_PLUS,
+  SubscriptionAccountMismatchError,
+  upsertFromVerify,
   type AppleVerifyInput,
 } from "@/subscriptions/repository";
 import { tierGrant } from "@/subscriptions/tier-config";
 import { createJwtToken, validateJWTKeys } from "@/utils/jwt";
-import logger from "@/utils/logger";
 import { prisma } from "@/utils/prisma";
 
 vi.mock("firebase-admin/app");
@@ -272,6 +276,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
+  vi.restoreAllMocks();
   await wipe();
   resetVerifierForTests();
   delete process.env.SUBSCRIPTION_AUTO_RECLAIM_ENABLED;
@@ -489,7 +494,6 @@ describe("subscription verify auto-reclaim", () => {
         signedDate: Date.now(),
       },
       expectedHolderAccountId: CLAIMANT_ID,
-      log: logger,
     });
 
     expect(result).toEqual({ eligible: false, reason: "holder_changed" });
@@ -594,6 +598,84 @@ describe("subscription verify auto-reclaim", () => {
     expect(response.status).toBe(409);
     expect(response.body).toEqual(legacyMismatchBody);
     expect(await countTransferAudits()).toBe(0);
+    expect(
+      (
+        await prisma.subscription.findUniqueOrThrow({
+          where: { id: SUBSCRIPTION_ID },
+        })
+      ).accountId,
+    ).toBe(HOLDER_ID);
+  });
+
+  // The TOCTOU fix re-runs the dormancy check with the transaction client AFTER
+  // the row lock. This exercises exactly that in-transaction code path (the
+  // same `holderShowsActivity` the transfer body calls post-lock) against a
+  // real `tx` client, proving each signal is seen under the transaction. The
+  // pre-lock active-holder rejection is covered by the dormancy-gate test
+  // above; together they pin both samplings. (Prisma's client is a Proxy that
+  // vitest cannot spy without corrupting sibling delegates, so a mock-injected
+  // mid-flight write is not viable here — this white-box check is the robust
+  // equivalent.)
+  test("in-transaction dormancy re-check sees each holder-activity signal via the tx client", async () => {
+    await seedAccounts();
+    await seedSubscription();
+    const cutoff = new Date(Date.now() - 7 * DAY_MS);
+
+    const dormant = await prisma.$transaction((tx) =>
+      holderShowsActivity(tx, HOLDER_ID, cutoff),
+    );
+    expect(dormant).toBe(false);
+
+    await prisma.deviceRegistration.create({
+      data: { deviceId: "auto-reclaim-holder-toctou", accountId: HOLDER_ID },
+    });
+    const afterDevice = await prisma.$transaction((tx) =>
+      holderShowsActivity(tx, HOLDER_ID, cutoff),
+    );
+    expect(afterDevice).toBe(true);
+
+    await prisma.deviceRegistration.deleteMany({
+      where: { accountId: HOLDER_ID },
+    });
+    await seedVerifyReceipt("auto-reclaim-test-toctou-verify", new Date());
+    const afterVerify = await prisma.$transaction((tx) =>
+      holderShowsActivity(tx, HOLDER_ID, cutoff),
+    );
+    expect(afterVerify).toBe(true);
+  });
+
+  test("replay materializer surfaces the mismatch 409 (never a 200) when the snapshot belongs to another account", async () => {
+    await seedAccounts();
+    await seedSubscription();
+    await seedCurrentPeriodGrant();
+    // A VERIFY receipt whose subscription is the HOLDER's row.
+    const sharedTransactionId = "auto-reclaim-test-replay-snapshot";
+    await seedVerifyReceipt(sharedTransactionId);
+
+    // Reach the replay branch WITHOUT tripping the up-front ownership check:
+    // a novel OTX makes findExistingForVerify (Apple resolves by OTX only)
+    // return null, while the matching transactionId resolves the receipt whose
+    // subscription is owned by the holder — the cross-statement race shape.
+    const input: AppleVerifyInput = {
+      ...directInput(),
+      accountId: CLAIMANT_ID,
+      originalTransactionId: `${OTX}999`,
+      transactionId: sharedTransactionId,
+    };
+
+    await expect(upsertFromVerify(input)).rejects.toBeInstanceOf(
+      SubscriptionAccountMismatchError,
+    );
+    // No grant materialized onto the claimant for that period.
+    const claimantGrant = await prisma.creditLedger.findUnique({
+      where: {
+        accountId_idempotencyKey: {
+          accountId: CLAIMANT_ID,
+          idempotencyKey: subGrantKey(SUBSCRIPTION_ID, PERIOD_START),
+        },
+      },
+    });
+    expect(claimantGrant).toBeNull();
     expect(
       (
         await prisma.subscription.findUniqueOrThrow({

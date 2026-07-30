@@ -195,7 +195,7 @@ over `1h` ⇒ warn.
 
 ### 4. Subscription auto-reclaim transfers
 
-The verify handler emits two stable events for the guarded Apple ownership
+The verify handler emits three stable events for the guarded Apple ownership
 transfer path:
 
 | Event                                   | Level | Meaning                                                                                                                                                                                                                                                    |
