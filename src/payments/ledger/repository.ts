@@ -40,6 +40,26 @@ export const getBalance = async (accountId: string): Promise<bigint> => {
   return row?.balance ?? 0n;
 };
 
+/**
+ * Batch counterpart of `getBalance` — the same source of truth
+ * (`UserCredits.balance`), for callers that need many accounts in one read
+ * (e.g. per-conversation agent power) without an N+1. Accounts with no
+ * `UserCredits` row read as 0n, exactly like `getBalance`.
+ */
+export const getBalances = async (
+  accountIds: readonly string[],
+): Promise<Map<string, bigint>> => {
+  const balances = new Map<string, bigint>();
+  if (accountIds.length === 0) return balances;
+  for (const accountId of accountIds) balances.set(accountId, 0n);
+  const rows = await prisma.userCredits.findMany({
+    where: { accountId: { in: [...accountIds] } },
+    select: { accountId: true, balance: true },
+  });
+  for (const row of rows) balances.set(row.accountId, row.balance);
+  return balances;
+};
+
 export const findLedgerByIdempotencyKey = async (args: {
   accountId: string;
   idempotencyKey: string;

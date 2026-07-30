@@ -4,6 +4,10 @@ import {
   getAssistantApiKey,
   getAssistantApiUrl,
 } from "@/api/v2/agents/handlers/assistant-config";
+import {
+  listConversationAgentPower,
+  type ConversationAgentPower,
+} from "@/api/v2/agents/lib/agent-instances";
 import { resolveVariantWorkerOrigin } from "@/api/v2/agents/lib/variant-routing";
 import { XMTP_ENV } from "@/config";
 
@@ -161,10 +165,27 @@ export async function getParticipationHandler(req: Request, res: Response) {
       return;
     }
 
+    // Owner-computed power state for this conversation's agents (CON-807).
+    // Viewer-independent: computed from each agent OWNER's wallet against the
+    // same floor the runtime spend gate applies — never from the caller's own
+    // balance, so every member sees the same value. Additive, response-side
+    // only; enrichment failure degrades to the legacy shape (field omitted)
+    // rather than failing the mode read old clients depend on.
+    let agents: ConversationAgentPower[] | undefined;
+    try {
+      agents = await listConversationAgentPower(conversationId);
+    } catch (error) {
+      req.log.error(
+        { error, conversationId },
+        "Agent power enrichment failed for participation read",
+      );
+    }
+
     res.status(200).json({
       success: true,
       conversationId,
       mode: parsedUpstream.data.mode,
+      ...(agents !== undefined ? { agents } : {}),
     });
   } catch (error) {
     if (error instanceof DOMException && error.name === "TimeoutError") {

@@ -3,6 +3,7 @@ export {
   applyDeltaWithTx,
   findLedgerByIdempotencyKey,
   getBalance,
+  getBalances,
   getBucketedConsumption,
   getHistory,
   LedgerFloorBreachError,
