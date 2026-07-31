@@ -104,7 +104,7 @@ describe("serializeAgentVariant", () => {
       status: "building",
       assistantWorkerUrl: null,
       builderPromptSlug: null,
-      skipCredits: true,
+      skipCredits: false,
       prUrl: "https://github.com/x/y/pull/9",
       branch: "b",
       commit: "c",
@@ -112,7 +112,7 @@ describe("serializeAgentVariant", () => {
       createdAt: new Date("2026-06-24T12:00:00.000Z"),
       updatedAt: new Date("2026-06-24T12:00:00.000Z"),
     });
-    expect(out.skipCredits).toBe(true);
+    expect(out.skipCredits).toBe(false);
     expect(out.assistantWorkerUrl).toBeNull();
     expect(out.expiresAt).toBeNull();
     expect(out.createdAt).toBe("2026-06-24T12:00:00.000Z");
