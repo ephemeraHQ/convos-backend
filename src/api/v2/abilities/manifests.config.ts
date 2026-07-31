@@ -67,7 +67,7 @@ export type AbilityManifest = {
 };
 
 // The first-round abilities are all registered up front so each launch is a
-// flag flip. Only googlecalendar is live: it is the one ability with a
+// flag flip. googlecalendar and gmail are live: they are the abilities with a
 // working auth path and a service entry in bundles.config.ts.
 export const ABILITY_MANIFESTS: AbilityManifest[] = [
   {
@@ -111,11 +111,13 @@ export const ABILITY_MANIFESTS: AbilityManifest[] = [
   },
   {
     id: "gmail",
-    version: 1,
+    // v2: launched read-only — unhidden alongside the mail.read service
+    // bundle; subtitle narrowed to the read-only scope (no send until a write
+    // bundle ships).
+    version: 2,
     displayName: { en: "Gmail" },
-    subtitle: { en: "Read and send email" },
+    subtitle: { en: "Read and search email" },
     auth: { type: "oauth" },
-    hidden: true,
   },
 ];
 

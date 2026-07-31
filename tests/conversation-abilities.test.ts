@@ -47,9 +47,12 @@ async function makeAccount(): Promise<string> {
   return account.id;
 }
 
-async function makeActiveEntitlement(accountId: string) {
+async function makeActiveEntitlement(
+  accountId: string,
+  abilityId = "googlecalendar",
+) {
   return prisma.abilityEntitlement.create({
-    data: { accountId, abilityId: "googlecalendar", status: "active" },
+    data: { accountId, abilityId, status: "active" },
   });
 }
 
@@ -276,7 +279,7 @@ describe("PUT /v2/conversations/:conversationId/abilities/:abilityId", () => {
 
   test("404 unknown_ability for unknown and hidden abilities", async () => {
     const accountId = await makeAccount();
-    for (const abilityId of ["notarealability", "gmail"]) {
+    for (const abilityId of ["notarealability", "shopify"]) {
       const res = await putAbility(
         accountId,
         { agentInboxId: "agent-1", bundleIds: ["calendar.events"] },
@@ -285,6 +288,34 @@ describe("PUT /v2/conversations/:conversationId/abilities/:abilityId", () => {
       expect(res.status).toBe(404);
       expect(res.body).toEqual({ code: "unknown_ability" });
     }
+  });
+
+  test("launched gmail: PUT extends an active entitlement with mail.read", async () => {
+    const accountId = await makeAccount();
+    const entitlement = await makeActiveEntitlement(accountId, "gmail");
+    const res = await putAbility(
+      accountId,
+      {
+        agentInboxId: "agent-1",
+        bundleIds: ["mail.read"],
+        extendedByInboxId: "owner-inbox-1",
+      },
+      { abilityId: "gmail" },
+    );
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({
+      abilityId: "gmail",
+      conversationId: CONVERSATION,
+      agentInboxId: "agent-1",
+      bundleIds: ["mail.read"],
+      status: "active",
+    });
+
+    const rows = await prisma.conversationAbility.findMany({
+      where: { entitlementId: entitlement.id },
+    });
+    expect(rows).toHaveLength(1);
+    expect(rows[0].bundleIds).toEqual(["mail.read"]);
   });
 
   test("boot window (ledgers unconfirmed): PUT answers a retryable 503, never a false needs_entitlement", async () => {

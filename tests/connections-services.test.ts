@@ -86,6 +86,7 @@ describe("GET /v2/connections/services (no DB)", () => {
 
     // No Composio action slug may leak into the served payload.
     expect(JSON.stringify(body)).not.toMatch(/GOOGLECALENDAR_/);
+    expect(JSON.stringify(body)).not.toMatch(/GMAIL_/);
     expect(JSON.stringify(body)).not.toMatch(/composioActions/);
   });
 

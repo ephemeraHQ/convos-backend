@@ -140,7 +140,7 @@ describe("POST /v2/abilities/:abilityId/entitlement", () => {
 
   test("404 unknown_ability for unknown and for hidden (unlaunched) abilities", async () => {
     const accountId = await makeAccount();
-    for (const abilityId of ["notarealability", "gmail"]) {
+    for (const abilityId of ["notarealability", "shopify"]) {
       const res = await request(makeApp())
         .post(`/abilities/${abilityId}/entitlement`)
         .set("X-Convos-AuthToken", await token(accountId))

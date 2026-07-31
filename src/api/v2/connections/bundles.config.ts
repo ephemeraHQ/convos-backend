@@ -103,6 +103,31 @@ export const SERVICE_CONFIGS: ServiceConfig[] = [
       },
     ],
   },
+  {
+    id: "gmail",
+    composioSlug: "gmail",
+    // v1: read-only launch — one mail.read bundle, fetch-only slugs. No
+    // send/draft/label/delete slug ships until a write bundle is added
+    // deliberately. Slugs verified against the live Composio v3 tool catalog
+    // (2026-07-31, full 63-slug list via getRawComposioTools with an explicit
+    // limit): GMAIL_FETCH_EMAILS, GMAIL_FETCH_MESSAGE_BY_MESSAGE_ID and
+    // GMAIL_FETCH_MESSAGE_BY_THREAD_ID are all served.
+    version: 1,
+    displayName: { en: "Gmail" },
+    bundles: [
+      {
+        id: "mail.read",
+        title: { en: "Emails" },
+        description: { en: "Read and search emails in your inbox" },
+        defaultEnabled: true,
+        composioActions: [
+          "GMAIL_FETCH_EMAILS",
+          "GMAIL_FETCH_MESSAGE_BY_MESSAGE_ID",
+          "GMAIL_FETCH_MESSAGE_BY_THREAD_ID",
+        ],
+      },
+    ],
+  },
 ];
 
 const BY_SERVICE = new Map<string, ServiceConfig>(

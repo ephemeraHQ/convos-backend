@@ -202,11 +202,19 @@ export class ComposioService {
 
     const slugs = new Set<string>();
     try {
+      // The pinned SDK silently applies important=true (a featured subset)
+      // to a toolkits-only query with no limit — that would make this gate
+      // reject real slugs outside the featured slice. Ask for the full
+      // catalog explicitly: important: false plus the API's maximum limit.
       const tools = await withComposioTimeout(
         "tools.getRawComposioTools",
         COMPOSIO_CALL_TIMEOUT_MS,
         () =>
-          this.composio.tools.getRawComposioTools({ toolkits: [normalized] }),
+          this.composio.tools.getRawComposioTools({
+            toolkits: [normalized],
+            limit: 1000,
+            important: false,
+          }),
       );
       for (const tool of tools) {
         if (tool.slug) slugs.add(tool.slug);

@@ -121,10 +121,19 @@ export async function execHandler(req: Request, res: Response) {
       return;
     }
 
+    // Gmail actions address a target mailbox through a user_id argument
+    // ("me" or a delegated address the OAuth principal can reach). Consent
+    // covers the connected member's own mailbox only, so a caller-supplied
+    // user_id is never honored: it is overwritten with "me" before the
+    // Composio call. Enforced here because raw exec is the one path every
+    // agent-supplied argument must pass through.
+    const pinnedArgs: Record<string, unknown> =
+      toolkit.toLowerCase() === "gmail" ? { ...args, user_id: "me" } : args;
+
     const result = await service.execute({
       action,
       userId: check.ownerAccountId,
-      arguments: args,
+      arguments: pinnedArgs,
       connectedAccountId,
       version,
     });
