@@ -83,6 +83,26 @@ describe("participation variant fallback", () => {
     },
   );
 
+  test("the discarded variant response is cancelled, not leaked", async () => {
+    // Every call from a device pinned to a dead variant abandons one response.
+    // Left unread, undici holds that connection until GC; cancelling returns it
+    // now, so the fallback path cannot exhaust the pool.
+    const abandoned = new Response("body the fallback never reads", {
+      status: 404,
+    });
+    stubFetch((url) =>
+      url.startsWith(VARIANT_BASE)
+        ? abandoned
+        : new Response(null, { status: 200 }),
+    );
+
+    await fetchParticipation(req, target(VARIANT_BASE), CONVERSATION, {
+      method: "GET",
+    });
+
+    expect(abandoned.bodyUsed).toBe(true);
+  });
+
   test("a variant's 500 is reported, not retried: the worker is there and broken", async () => {
     const calls = stubFetch(() => new Response(null, { status: 500 }));
 

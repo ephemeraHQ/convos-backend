@@ -156,6 +156,12 @@ export async function fetchParticipation(
   }
 
   if (VARIANT_UNUSABLE_STATUSES.has(response.status)) {
+    // Hand the socket back before opening the second one. Dropping a response
+    // without reading it leaves undici holding the connection until GC gets to
+    // it, and every call from a device pinned to a dead variant takes this
+    // path, so the leak would compound. A cancel on an already-errored body is
+    // not worth surfacing: the response is being discarded either way.
+    await response.body?.cancel().catch(() => {});
     req.log.warn(
       { variantOrigin: target.baseUrl, status: response.status },
       "Variant worker cannot serve participation; falling back to the default assistant worker",
