@@ -541,6 +541,10 @@ model AgentVariant {
   assistantWorkerUrl String?
   /// A bench/Braintrust prompt slug, or null for the canonical generator.
   builderPromptSlug  String?
+  /// Agents created from this variant skip the credit path (server-side admin
+  /// signal via the join's variant descriptor). False opts the variant's
+  /// agents back into real credits.
+  skipCredits        Boolean   @default(true)
   prUrl              String
   branch             String
   commit             String

@@ -31,6 +31,7 @@ type VariantDescriptor = {
   label: string;
   whatToTest: string;
   prUrl: string;
+  skipCredits: boolean;
   assistantWorkerUrl: string | null;
 };
 
@@ -501,6 +502,7 @@ export async function joinHandler(req: Request, res: Response) {
           label: true,
           whatToTest: true,
           prUrl: true,
+          skipCredits: true,
           assistantWorkerUrl: true,
         },
       });
@@ -736,6 +738,7 @@ export async function joinHandler(req: Request, res: Response) {
           label: variant.label,
           whatToTest: variant.whatToTest,
           prUrl: variant.prUrl,
+          skipCredits: variant.skipCredits,
         }),
       };
     }
