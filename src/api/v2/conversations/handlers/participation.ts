@@ -64,13 +64,14 @@ const ERRORS = {
  */
 async function resolveAssistantTarget(
   req: Request,
-): Promise<{ baseUrl: string; headers: Record<string, string> } | null> {
+): Promise<AssistantTarget | null> {
   const assistantApiUrl = getAssistantApiUrl();
   if (!assistantApiUrl) return null;
 
   // Dev-only variant routing, same as the join poller: an assistant
   // provisioned on a variant worker does not exist on the default one.
-  let baseUrl = assistantApiUrl.replace(/\/+$/, "");
+  const defaultBaseUrl = assistantApiUrl.replace(/\/+$/, "");
+  let baseUrl = defaultBaseUrl;
   const variantId = querySchema.safeParse(req.query).data?.variantId;
   if (variantId && XMTP_ENV !== "production") {
     const origin = await resolveVariantWorkerOrigin(variantId);
@@ -84,7 +85,84 @@ async function resolveAssistantTarget(
   if (assistantApiKey) {
     headers.Authorization = `Bearer ${assistantApiKey}`;
   }
-  return { baseUrl, headers };
+  return { baseUrl, defaultBaseUrl, headers };
+}
+
+export type AssistantTarget = {
+  baseUrl: string;
+  defaultBaseUrl: string;
+  headers: Record<string, string>;
+};
+
+/**
+ * A variant answer that means "this worker cannot serve this conversation",
+ * as opposed to a real upstream failure worth reporting.
+ *
+ * 404 is a variant deployed from a branch that predates the participation
+ * route. 401/403 is a variant whose worker holds a different key than the one
+ * we authenticate with — its secret set can legitimately diverge from the
+ * default worker's. Neither says anything about the conversation, and both are
+ * answerable by the default worker.
+ */
+const VARIANT_UNUSABLE_STATUSES = new Set([401, 403, 404]);
+
+/**
+ * Send a participation request, falling back to the default worker when the
+ * pinned variant cannot answer it.
+ *
+ * A device keeps sending the variant it has selected in the debug menu long
+ * after that variant's worker is gone — the registry row outlives the
+ * deployment, so `resolveVariantWorkerOrigin` still hands back an origin whose
+ * hostname no longer resolves. Without this, every participation call from that
+ * device fails: the write surfaces "Participation not updated" and the read
+ * fails silently, leaving the control on a level the conversation is not in.
+ *
+ * The variant is a routing preference, never a correctness requirement — the
+ * conversation's level lives on the default control plane either way — so an
+ * unreachable variant degrades to the default worker instead of failing the
+ * member's request. A failure from the default worker is reported as-is.
+ */
+export async function fetchParticipation(
+  req: Pick<Request, "log">,
+  target: AssistantTarget,
+  conversationId: string,
+  init: RequestInit,
+  // `Response` in this file is express's; this one is the fetch response.
+): Promise<globalThis.Response> {
+  const request = (baseUrl: string) =>
+    fetch(upstreamUrl(baseUrl, conversationId), {
+      ...init,
+      headers: target.headers,
+      signal: AbortSignal.timeout(PARTICIPATION_FETCH_TIMEOUT_MS),
+    });
+
+  const onVariant = target.baseUrl !== target.defaultBaseUrl;
+  if (!onVariant) return request(target.defaultBaseUrl);
+
+  let response: globalThis.Response;
+  try {
+    response = await request(target.baseUrl);
+  } catch (error) {
+    // A timeout is a live-but-slow worker and stays the caller's problem; any
+    // other transport error (DNS, refused, reset) means the variant is simply
+    // not there.
+    if (error instanceof DOMException && error.name === "TimeoutError")
+      throw error;
+    req.log.warn(
+      { variantOrigin: target.baseUrl },
+      "Variant worker unreachable; falling back to the default assistant worker",
+    );
+    return request(target.defaultBaseUrl);
+  }
+
+  if (VARIANT_UNUSABLE_STATUSES.has(response.status)) {
+    req.log.warn(
+      { variantOrigin: target.baseUrl, status: response.status },
+      "Variant worker cannot serve participation; falling back to the default assistant worker",
+    );
+    return request(target.defaultBaseUrl);
+  }
+  return response;
 }
 
 function upstreamUrl(baseUrl: string, conversationId: string): string {
@@ -133,10 +211,8 @@ export async function getParticipationHandler(req: Request, res: Response) {
   const { conversationId } = parsedParams.data;
 
   try {
-    const upstream = await fetch(upstreamUrl(target.baseUrl, conversationId), {
+    const upstream = await fetchParticipation(req, target, conversationId, {
       method: "GET",
-      headers: target.headers,
-      signal: AbortSignal.timeout(PARTICIPATION_FETCH_TIMEOUT_MS),
     });
 
     if (!upstream.ok) {
@@ -216,11 +292,9 @@ export async function participationHandler(req: Request, res: Response) {
   const { mode } = parsedBody.data;
 
   try {
-    const upstream = await fetch(upstreamUrl(target.baseUrl, conversationId), {
+    const upstream = await fetchParticipation(req, target, conversationId, {
       method: "PATCH",
-      headers: target.headers,
       body: JSON.stringify({ mode }),
-      signal: AbortSignal.timeout(PARTICIPATION_FETCH_TIMEOUT_MS),
     });
 
     if (!upstream.ok) {
