@@ -47,14 +47,14 @@ contract is real - a thin wrapper, not a phase.
 
 ## Nomenclature
 
-| Term | Meaning | Backed by |
-| --- | --- | --- |
-| **Ability** | One integration (Google Calendar, Spotify...) described by a manifest | Code config (versioned TS module), per bundles-doc decision |
-| **Manifest** | An ability's public contract: id, name, icons, auth type, bundles; later tools[]/actions[] | Code config, served over HTTP |
-| **Bundle** | The user-facing permission unit inside an ability ("Events") | Existing bundles model, unchanged |
-| **Composio grant** | The external credential at the provider (Composio connected account / OAuth token) | Composio, keyed by `accountId` |
-| **Entitlement** | Account <-> ability binding with a backend-owned lifecycle status | New `AbilityEntitlement` row |
-| **Conversation ability** | An entitlement extended to an agent within one conversation | New `ConversationAbility` row (reshaped `ConnectionGrant`) |
+| Term                     | Meaning                                                                                    | Backed by                                                   |
+| ------------------------ | ------------------------------------------------------------------------------------------ | ----------------------------------------------------------- |
+| **Ability**              | One integration (Google Calendar, Spotify...) described by a manifest                      | Code config (versioned TS module), per bundles-doc decision |
+| **Manifest**             | An ability's public contract: id, name, icons, auth type, bundles; later tools[]/actions[] | Code config, served over HTTP                               |
+| **Bundle**               | The user-facing permission unit inside an ability ("Events")                               | Existing bundles model, unchanged                           |
+| **Composio grant**       | The external credential at the provider (Composio connected account / OAuth token)         | Composio, keyed by `accountId`                              |
+| **Entitlement**          | Account <-> ability binding with a backend-owned lifecycle status                          | New `AbilityEntitlement` row                                |
+| **Conversation ability** | An entitlement extended to an agent within one conversation                                | New `ConversationAbility` row (reshaped `ConnectionGrant`)  |
 
 Review discussion deliberately used generic language to keep naming honest: a
 "binding" is the account <-> service credential + privileges (our entitlement), and the
@@ -115,33 +115,34 @@ yet) get the catalog with `entitlement: null` - browsable, not entitleable.
 
 ```jsonc
 {
-  "catalogVersion": 3,            // bump on any served-catalog change (manifests and bundles)
+  "catalogVersion": 3, // bump on any served-catalog change (manifests and bundles)
   // "entitlementsUnavailable": true  -- present only when entitlement state could not
   //                                     be derived (upstream outage); abilities then
   //                                     carry no entitlement key at all - see below
   "abilities": [
     {
       "id": "googlecalendar",
-      "version": 2,               // per-ability version (staleness handling)
+      "version": 2, // per-ability version (staleness handling)
       "displayName": { "en": "Google Calendar" },
       "subtitle": { "en": "Read and edit events" },
-      "icon": { "iosUrl": "https://...", "androidUrl": "https://..." },  // optional until the asset story lands (open question 1)
-      "auth": { "type": "oauth" },     // "oauth" | "none"; callback specifics stay backend-side
+      "icon": { "iosUrl": "https://...", "androidUrl": "https://..." }, // optional until the asset story lands (open question 1)
+      "auth": { "type": "oauth" }, // "oauth" | "none"; callback specifics stay backend-side
       "bundles": [
         {
           "id": "calendar.events",
           "title": { "en": "Events" },
           "description": { "en": "View and edit events on all calendars" },
-          "defaultEnabled": true
-        }
+          "defaultEnabled": true,
+        },
       ],
-      "entitlement": {                 // object or null when authoritative; omitted under entitlementsUnavailable
-        "status": "active",            // pending_auth | active | needs_reauth | expired | revoked
+      "entitlement": {
+        // object or null when authoritative; omitted under entitlementsUnavailable
+        "status": "active", // pending_auth | active | needs_reauth | expired | revoked
         "expiresAt": "2026-09-01T00:00:00Z",
-        "extensionCount": 2            // distinct conversations this entitlement is extended to
-      }
-    }
-  ]
+        "extensionCount": 2, // distinct conversations this entitlement is extended to
+      },
+    },
+  ],
 }
 ```
 
