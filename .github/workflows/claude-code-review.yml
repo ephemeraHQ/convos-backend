@@ -40,7 +40,7 @@ jobs:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
 
           # Allow bot-authored PRs (e.g. Devin) to trigger Claude review
-          allowed_bots: devin-ai-integration[bot], convos-os[bot]
+          allowed_bots: devin-ai-integration[bot], convos-os
 
           # Optional: Specify model (defaults to Claude Sonnet)
           model: ${{ vars.CLAUDE_MODEL || 'claude-sonnet-4-5-20250929' }}
