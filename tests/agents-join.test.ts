@@ -1013,6 +1013,132 @@ describe("agents join (assistant API)", () => {
       expect(capturedBody!.ownerAccountId).toBe(DEFAULT_TEST_ACCOUNT_ID);
     });
 
+    test("a bare join composes the agent name from ownerProfileName", async () => {
+      let capturedBody: Record<string, unknown> | null = null;
+      mockFetchImpl = (_url, init) => {
+        if (init?.method === "POST") {
+          capturedBody = JSON.parse(init.body as string) as Record<
+            string,
+            unknown
+          >;
+          return Promise.resolve(
+            jsonResponse(200, { instanceId: "inst-owner-name" }),
+          );
+        }
+        return Promise.resolve(
+          jsonResponse(200, {
+            instanceId: "inst-owner-name",
+            joinStatus: "pending_acceptance",
+            inboxId: "inbox-owner-name",
+          }),
+        );
+      };
+
+      const res = await post({
+        conversationId: "abcdef1234567890",
+        ownerProfileName: "Saul",
+      });
+      expect(res.status).toBe(200);
+      expect(capturedBody).not.toBeNull();
+      expect(capturedBody!.name).toBe("Saul's agent");
+      expect(capturedBody!.template).toBeNull();
+    });
+
+    test("an explicit name wins over ownerProfileName on a bare join", async () => {
+      let capturedBody: Record<string, unknown> | null = null;
+      mockFetchImpl = (_url, init) => {
+        if (init?.method === "POST") {
+          capturedBody = JSON.parse(init.body as string) as Record<
+            string,
+            unknown
+          >;
+          return Promise.resolve(
+            jsonResponse(200, { instanceId: "inst-explicit-name" }),
+          );
+        }
+        return Promise.resolve(
+          jsonResponse(200, {
+            instanceId: "inst-explicit-name",
+            joinStatus: "pending_acceptance",
+            inboxId: "inbox-explicit-name",
+          }),
+        );
+      };
+
+      const res = await post({
+        conversationId: "abcdef1234567890",
+        name: "Custom Bot",
+        ownerProfileName: "Saul",
+      });
+      expect(res.status).toBe(200);
+      expect(capturedBody!.name).toBe("Custom Bot");
+    });
+
+    test("blank ownerProfileName is treated as absent on a bare join", async () => {
+      let capturedBody: Record<string, unknown> | null = null;
+      mockFetchImpl = (_url, init) => {
+        if (init?.method === "POST") {
+          capturedBody = JSON.parse(init.body as string) as Record<
+            string,
+            unknown
+          >;
+          return Promise.resolve(
+            jsonResponse(200, { instanceId: "inst-blank-name" }),
+          );
+        }
+        return Promise.resolve(
+          jsonResponse(200, {
+            instanceId: "inst-blank-name",
+            joinStatus: "pending_acceptance",
+            inboxId: "inbox-blank-name",
+          }),
+        );
+      };
+
+      const res = await post({
+        conversationId: "abcdef1234567890",
+        ownerProfileName: "   ",
+      });
+      expect(res.status).toBe(200);
+      expect(capturedBody).not.toBeNull();
+      expect(capturedBody!).not.toHaveProperty("name");
+    });
+
+    test("a template join carries the name inside the template, never top-level", async () => {
+      __setTemplateFinderForTests(() => Promise.resolve(baseTemplate()));
+      let capturedBody: Record<string, unknown> | null = null;
+      mockFetchImpl = (_url, init) => {
+        if (init?.method === "POST") {
+          capturedBody = JSON.parse(init.body as string) as Record<
+            string,
+            unknown
+          >;
+          return Promise.resolve(
+            jsonResponse(200, { instanceId: "inst-tpl-name" }),
+          );
+        }
+        return Promise.resolve(
+          jsonResponse(200, {
+            instanceId: "inst-tpl-name",
+            joinStatus: "pending_acceptance",
+            inboxId: "inbox-tpl-name",
+          }),
+        );
+      };
+
+      const res = await post({
+        conversationId: "abcdef1234567890",
+        templateId: "22222222-2222-4222-8222-222222222222",
+        ownerProfileName: "Saul",
+      });
+      expect(res.status).toBe(200);
+      expect(capturedBody).not.toBeNull();
+      expect(capturedBody!).not.toHaveProperty("name");
+      expect((capturedBody!.template as { agentName?: string }).agentName).toBe(
+        "Brewski",
+      );
+    });
+
     test("idempotencyKey is forwarded to the dispatch body, lowercased", async () => {
       let capturedBody: Record<string, unknown> | null = null;
       mockFetchImpl = (url, init) => {

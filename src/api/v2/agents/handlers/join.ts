@@ -119,6 +119,19 @@ export const bodySchema = z
       .transform((v) => v.toLowerCase())
       .optional(),
     name: z.string().min(1).max(256).optional(),
+    // Raw profile name of the joining user, sent by clients that auto-attach
+    // a default agent at conversation creation. The server composes the
+    // agent's possessive display name from it ("Saul's agent") so the copy
+    // can change without a client release. Blank-after-trim collapses to
+    // absent rather than rejecting.
+    ownerProfileName: z
+      .string()
+      .max(64)
+      .optional()
+      .transform((v) => {
+        const trimmed = v?.trim();
+        return trimmed ? trimmed : undefined;
+      }),
     profileImage: z.string().min(1).max(2048).optional(),
     options: optionsSchema.optional(),
     timezone: timezoneSchema.optional(),
@@ -165,6 +178,12 @@ function buildInviteUrl(slug: string): string {
   return `https://${domain}/v2?i=${encodeURIComponent(slug)}`;
 }
 
+// The default display name for an auto-attached bare agent. Always "'s",
+// including names that end in s ("Jules's agent").
+function composeOwnerAgentName(ownerProfileName: string): string {
+  return `${ownerProfileName}'s agent`;
+}
+
 const assistantDispatchSchema = z.object({
   instanceId: z.string().min(1),
 });
@@ -188,6 +207,10 @@ const dispatchBodySchema = z
       .max(128)
       .optional(),
     template: z.record(z.string(), z.unknown()).nullable(),
+    // Agent display name for bare joins (template null): the worker resolves
+    // it as `template.agentName ?? name`. Template joins carry the name
+    // inside the template instead.
+    name: z.string().min(1).max(256).optional(),
     ownerAccountId: accountIdSchema,
     options: optionsSchema.optional(),
     timezone: timezoneSchema.optional(),
@@ -466,6 +489,7 @@ export async function joinHandler(req: Request, res: Response) {
     templateId,
     idempotencyKey,
     name,
+    ownerProfileName,
     profileImage,
     options,
     timezone,
@@ -719,6 +743,19 @@ export async function joinHandler(req: Request, res: Response) {
       template: joinPayload?.template ?? null,
       ownerAccountId: joiningUserAccountId,
     };
+    // Bare joins have no template row to carry a display name, so it rides as
+    // a top-level field the worker resolves as `template.agentName ?? name`.
+    // An explicit caller `name` wins; otherwise `ownerProfileName` composes
+    // the possessive default for auto-attached agents ("Saul's agent") —
+    // composition lives here so the copy can change without a client release.
+    const bareAgentName =
+      name ??
+      (ownerProfileName !== undefined
+        ? composeOwnerAgentName(ownerProfileName)
+        : undefined);
+    if (templateWithOverrides === null && bareAgentName !== undefined) {
+      dispatchBody.name = bareAgentName;
+    }
     if (Object.keys(upstreamOptions).length > 0) {
       dispatchBody.options = upstreamOptions;
     }
