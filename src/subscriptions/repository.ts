@@ -13,7 +13,7 @@ import {
   subGrantKey,
 } from "@/subscriptions/grants";
 import {
-  effectiveSubscriptionStatus,
+  effectiveSubscriptionStatusForDisplay,
   ENTITLED_SUBSCRIPTION_STATUSES,
   isEntitledSubscription,
   isEntitledSubscriptionStatus,
@@ -1076,7 +1076,11 @@ export type UserSubscriptionDto = {
 export const serializeUserSubscription = (
   subscription: Subscription,
 ): UserSubscriptionDto => {
-  const status = effectiveSubscriptionStatus(subscription);
+  // Display-facing status so the iOS plan badge (backend-authoritative) keeps
+  // showing the tier for an auto-renewing subscriber whose renewal webhook is
+  // late/dropped, instead of dropping to "Basic" (CON-799). A genuinely
+  // cancelled-and-lapsed or provider-expired sub still serializes as expired.
+  const status = effectiveSubscriptionStatusForDisplay(subscription);
   return {
     provider: subscription.provider,
     tier: requireSubscriptionTier(subscription.tier),
