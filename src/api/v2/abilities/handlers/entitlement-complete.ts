@@ -97,6 +97,9 @@ export async function entitlementCompleteHandler(req: Request, res: Response) {
       return;
     }
 
+    const prior = await prisma.abilityEntitlement.findUnique({
+      where: { accountId_abilityId: { accountId, abilityId } },
+    });
     await prisma.abilityEntitlement.upsert({
       where: { accountId_abilityId: { accountId, abilityId } },
       create: {
@@ -112,6 +115,40 @@ export async function entitlementCompleteHandler(req: Request, res: Response) {
         revokedAt: null,
       },
     });
+
+    // A DELETE racing this complete can tear the verified connection down
+    // (and tombstone the row) between getIfOwned and the upsert — the write
+    // above would then resurrect an active row backed by a deleted
+    // credential. Re-verify after persisting; on failure, a guarded restore
+    // (matching exactly what this handler wrote, so a delete that already
+    // re-tombstoned is never clobbered) puts the prior state back.
+    const still = await service.getIfOwned({
+      connectionId: parsed.data.connectionRequestId,
+      userId: accountId,
+    });
+    if (!still || toEntitlementStatus(still.status, req.log) !== "active") {
+      await prisma.abilityEntitlement.updateMany({
+        where: {
+          accountId,
+          abilityId,
+          status: "active",
+          externalConnectionId: owned.id,
+        },
+        data: prior
+          ? {
+              status: prior.status,
+              revokedAt: prior.revokedAt,
+              externalConnectionId: prior.externalConnectionId,
+            }
+          : { status: "expired", externalConnectionId: null },
+      });
+      req.log.warn(
+        { accountId, abilityId },
+        "[Abilities] complete: connection gone after persist (concurrent revoke) — restored prior state",
+      );
+      res.status(403).json({ code: "connection_not_owned" });
+      return;
+    }
 
     req.log.info(
       { accountId, abilityId },

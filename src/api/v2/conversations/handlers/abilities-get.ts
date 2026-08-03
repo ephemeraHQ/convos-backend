@@ -49,9 +49,17 @@ export async function conversationAbilitiesGetHandler(
   }
   const conversationId = params.data.conversationId;
 
+  // Both read paths serve only what can actually execute: the check's live
+  // predicate excludes expired rows, so an expired opt-in must not be
+  // advertised as `active` here.
+  const now = new Date();
   if (!(await isEntitlementReadModelReady())) {
     const grants = await prisma.connectionGrant.findMany({
-      where: { conversationId, revokedAt: null },
+      where: {
+        conversationId,
+        revokedAt: null,
+        OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
+      },
       orderBy: { createdAt: "desc" },
     });
     res.status(200).json({
@@ -72,7 +80,10 @@ export async function conversationAbilitiesGetHandler(
   }
 
   const rows = await prisma.conversationAbility.findMany({
-    where: { conversationId },
+    where: {
+      conversationId,
+      OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
+    },
     orderBy: { createdAt: "desc" },
     include: {
       entitlement: {

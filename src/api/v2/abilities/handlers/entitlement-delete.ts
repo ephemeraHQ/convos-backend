@@ -67,6 +67,7 @@ export async function entitlementDeleteHandler(req: Request, res: Response) {
     res.status(503).json({ error: "Connections not configured" });
     return;
   }
+  const deletedConnectionIds = new Set<string>();
   if (service) {
     try {
       const { items } = await service.listForUser(accountId);
@@ -75,6 +76,7 @@ export async function entitlementDeleteHandler(req: Request, res: Response) {
       );
       for (const item of matching) {
         await service.delete(item.id);
+        deletedConnectionIds.add(item.id);
       }
       if (matching.length > 0) {
         req.log.info(
@@ -93,8 +95,21 @@ export async function entitlementDeleteHandler(req: Request, res: Response) {
   }
 
   // Local teardown in one transaction: extensions, legacy mirror, tombstone
-  // move together or not at all — no divergent half-revoked state.
+  // move together or not at all — no divergent half-revoked state. The
+  // tombstone runs first because its row update takes the entitlement's row
+  // lock: a concurrent extend PUT locks the same row before writing, so the
+  // two serialize instead of racing (a PUT that wins commits first and its
+  // fresh extension dies in the deleteMany below; one that loses re-reads a
+  // tombstone and answers 409).
   await prisma.$transaction(async (tx) => {
+    await tx.abilityEntitlement.update({
+      where: { id: entitlement.id },
+      data: {
+        status: "revoked",
+        revokedAt: entitlement.revokedAt ?? new Date(),
+        externalConnectionId: null,
+      },
+    });
     await tx.conversationAbility.deleteMany({
       where: { entitlementId: entitlement.id },
     });
@@ -106,15 +121,41 @@ export async function entitlementDeleteHandler(req: Request, res: Response) {
       },
       data: { revokedAt: new Date() },
     });
-    await tx.abilityEntitlement.update({
-      where: { id: entitlement.id },
-      data: {
-        status: "revoked",
-        revokedAt: entitlement.revokedAt ?? new Date(),
-        externalConnectionId: null,
-      },
-    });
   });
+
+  // A bind/complete racing this revoke can create a credential after the
+  // teardown listed the account's connections but before the tombstone
+  // landed — invisible to the loop above, live after the 204. One re-list
+  // closes that window; a failure here only logs (the row is already
+  // tombstoned, and a retried DELETE converges).
+  if (service) {
+    try {
+      const { items } = await service.listForUser(accountId);
+      // Ids already deleted above are skipped: only a connection created
+      // since the first list (a concurrent bind) is a straggler — an
+      // eventually-consistent list echoing a deleted id must not be
+      // re-deleted.
+      const stragglers = items.filter(
+        (item) =>
+          item.toolkit.slug.toLowerCase() === abilityId &&
+          !deletedConnectionIds.has(item.id),
+      );
+      for (const item of stragglers) {
+        await service.delete(item.id);
+      }
+      if (stragglers.length > 0) {
+        req.log.info(
+          { accountId, abilityId, deleted: stragglers.length },
+          "[Abilities] revoke: straggler connections from a concurrent bind deleted",
+        );
+      }
+    } catch (error) {
+      req.log.error(
+        { error, accountId, abilityId },
+        "[Abilities] revoke: straggler re-check failed — a concurrently bound credential may survive; a retried DELETE converges",
+      );
+    }
+  }
 
   req.log.info({ accountId, abilityId }, "[Abilities] entitlement revoked");
   res.status(204).end();

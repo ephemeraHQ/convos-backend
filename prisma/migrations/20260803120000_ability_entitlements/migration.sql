@@ -32,7 +32,7 @@
 --     constraints are invisible to Prisma's diff either way.
 --   - an environment that applied this file manually (psql) and LATER adopts
 --     migrate deploy must record it first:
---       prisma migrate resolve --applied 20260723170000_ability_entitlements
+--       prisma migrate resolve --applied 20260803120000_ability_entitlements
 --     otherwise migrate deploy re-runs the unguarded CREATEs and fails.
 --
 -- Array nullability note: `TEXT[] DEFAULT ARRAY[]::TEXT[]` without NOT NULL

@@ -123,9 +123,15 @@ export async function abilitiesListHandler(req: Request, res: Response) {
 
   // Extension counts mirror the check's live predicate: non-expired, so the
   // catalog never counts a conversation the check would deny. Revocation
-  // deletes extensions, so tombstones naturally count 0.
+  // deletes extensions, so tombstones naturally count 0. Case-variant rows
+  // folding onto one wire id keep the most usable status but UNION their
+  // conversation sets — mid-reconciliation, each variant's live extensions
+  // authorize, so the folded count must cover all of them.
   const now = new Date();
-  const entitlementByAbility = new Map<string, ServedEntitlement>();
+  const foldedByAbility = new Map<
+    string,
+    { status: EntitlementStatus; conversations: Set<string> }
+  >();
   for (const row of rows) {
     const id = normalizeAbilityId(row.abilityId);
     const status = row.status as EntitlementStatus;
@@ -135,13 +141,23 @@ export async function abilitiesListHandler(req: Request, res: Response) {
         conversations.add(extension.conversationId);
       }
     }
-    const prev = entitlementByAbility.get(id);
-    if (prev && WIRE_STATUS_RANK[prev.status] <= WIRE_STATUS_RANK[status]) {
+    const prev = foldedByAbility.get(id);
+    if (!prev) {
+      foldedByAbility.set(id, { status, conversations });
       continue;
     }
+    for (const conversationId of conversations) {
+      prev.conversations.add(conversationId);
+    }
+    if (WIRE_STATUS_RANK[status] < WIRE_STATUS_RANK[prev.status]) {
+      prev.status = status;
+    }
+  }
+  const entitlementByAbility = new Map<string, ServedEntitlement>();
+  for (const [id, folded] of foldedByAbility) {
     entitlementByAbility.set(id, {
-      status,
-      extensionCount: conversations.size,
+      status: folded.status,
+      extensionCount: folded.conversations.size,
     });
   }
 

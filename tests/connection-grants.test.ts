@@ -470,13 +470,21 @@ describe("Connection grants API", () => {
       method: "DELETE",
       headers: { "X-Convos-AuthToken": await token(accountId) },
     });
-    // The wire keeps the V1 contract (already-revoked reads as not found),
-    // but the retry converges the stores: the extension is gone.
-    expect(res.status).toBe(404);
+    // The heal did real work (the extension died), so the wire reports
+    // success — a 404 for a revoke that took effect would read as failure
+    // and invite pointless retries. A retry against fully-revoked state
+    // (no surviving extension either) still answers 404.
+    expect(res.status).toBe(204);
     const after = await prisma.conversationAbility.findUnique({
       where: { id },
     });
     expect(after).toBeNull();
+
+    const again = await fetch(`${baseURL}/api/v2/connections/grants/${id}`, {
+      method: "DELETE",
+      headers: { "X-Convos-AuthToken": await token(accountId) },
+    });
+    expect(again.status).toBe(404);
   });
 
   async function postRevoke(

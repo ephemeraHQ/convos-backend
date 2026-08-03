@@ -1,7 +1,7 @@
-import type {
-  ConnectionGrant,
-  ConversationAbility,
+import {
   Prisma,
+  type ConnectionGrant,
+  type ConversationAbility,
 } from "@prisma/client";
 import { normalizeAbilityId } from "@/api/v2/abilities/ability-id";
 import { getServedAbilityVersion } from "@/api/v2/abilities/manifests.config";
@@ -40,6 +40,41 @@ import { prisma } from "@/utils/prisma";
 // that need V1-shaped state in the new tables seed through them ("the
 // V1-adapter path") instead of writing ConnectionGrant rows directly.
 
+/**
+ * Thrown by the extend write when the backing entitlement is no longer
+ * active at commit time (a concurrent revoke won the race). Handlers map it
+ * to the same 409 needs_entitlement their precondition read would have
+ * produced.
+ */
+export class EntitlementNotActiveError extends Error {
+  constructor() {
+    super("entitlement not active");
+    this.name = "EntitlementNotActiveError";
+  }
+}
+
+function isUniqueViolation(error: unknown): boolean {
+  return (
+    error instanceof Prisma.PrismaClientKnownRequestError &&
+    error.code === "P2002"
+  );
+}
+
+/**
+ * Postgres aborts the whole transaction on a unique-constraint violation, so
+ * a find-then-create race between two concurrent writers cannot be retried
+ * inside the transaction — the loser's transaction is rerun once instead,
+ * and the second attempt sees the winner's row and takes the update path.
+ */
+async function retryOnUniqueViolation<T>(run: () => Promise<T>): Promise<T> {
+  try {
+    return await run();
+  } catch (error) {
+    if (!isUniqueViolation(error)) throw error;
+    return run();
+  }
+}
+
 export type IssueConnectionGrantInput = {
   /** The owner — from the authenticated JWT, never a body field. */
   accountId: string;
@@ -74,83 +109,95 @@ export async function issueConnectionGrant(
   const serviceVersion = input.serviceVersion ?? null;
   const expiresAt = input.expiresAt ?? null;
 
-  return prisma.$transaction(async (tx) => {
-    // The legacy row is resolved case-insensitively, not via the composite
-    // unique key: legacy toolkits keep the client's casing, so a reissue that
-    // spells the toolkit differently must update the SAME semantic grant
-    // instead of creating a second one (which would also collide with the
-    // shared-id extension). The stored casing stays as first issued; every
-    // reader matches it case-insensitively.
-    const resolved = await tx.connectionGrant.findFirst({
-      where: {
-        ownerAccountId: input.accountId,
-        granteeInboxId: input.granteeInboxId,
-        conversationId: input.conversationId,
-        toolkit: { equals: input.toolkit, mode: "insensitive" },
-      },
-      orderBy: { createdAt: "asc" },
-      select: { id: true },
-    });
-    const grant = resolved
-      ? await tx.connectionGrant.update({
-          where: { id: resolved.id },
-          data: {
-            ownerInboxId: input.ownerInboxId,
-            actions,
-            bundleIds,
-            serviceVersion,
-            expiresAt,
-            revokedAt: null,
-          },
-        })
-      : await tx.connectionGrant.create({
-          data: {
-            ownerAccountId: input.accountId,
-            ownerInboxId: input.ownerInboxId,
-            granteeInboxId: input.granteeInboxId,
+  const run = (): Promise<ConnectionGrant> =>
+    prisma.$transaction(async (tx) => {
+      // The legacy row is resolved case-insensitively, not via the composite
+      // unique key: legacy toolkits keep the client's casing, so a reissue that
+      // spells the toolkit differently must update the SAME semantic grant
+      // instead of creating a second one (which would also collide with the
+      // shared-id extension). The stored casing stays as first issued; every
+      // reader matches it case-insensitively.
+      const resolved = await tx.connectionGrant.findFirst({
+        where: {
+          ownerAccountId: input.accountId,
+          granteeInboxId: input.granteeInboxId,
+          conversationId: input.conversationId,
+          toolkit: { equals: input.toolkit, mode: "insensitive" },
+        },
+        orderBy: { createdAt: "asc" },
+        select: { id: true },
+      });
+      const grant = resolved
+        ? await tx.connectionGrant.update({
+            where: { id: resolved.id },
+            data: {
+              ownerInboxId: input.ownerInboxId,
+              actions,
+              bundleIds,
+              serviceVersion,
+              expiresAt,
+              revokedAt: null,
+            },
+          })
+        : await tx.connectionGrant.create({
+            data: {
+              ownerAccountId: input.accountId,
+              ownerInboxId: input.ownerInboxId,
+              granteeInboxId: input.granteeInboxId,
+              conversationId: input.conversationId,
+              toolkit: input.toolkit,
+              actions,
+              bundleIds,
+              serviceVersion,
+              expiresAt,
+            },
+          });
+
+      const entitlement = await ensureEntitlementForV1Issue(tx, {
+        accountId: input.accountId,
+        abilityId: normalizeAbilityId(input.toolkit),
+      });
+
+      // Adopt the legacy id only while no extension row holds it yet: an
+      // unmerged case-variant entitlement's extension can still carry it
+      // mid-window, and a by-id create would hit the primary key. (Same guard
+      // as upsertConversationAbilityExtension's adoptableId.)
+      const idTaken = await tx.conversationAbility.findUnique({
+        where: { id: grant.id },
+        select: { id: true },
+      });
+
+      await tx.conversationAbility.upsert({
+        where: {
+          entitlementId_conversationId_agentInboxId: {
+            entitlementId: entitlement.id,
             conversationId: input.conversationId,
-            toolkit: input.toolkit,
-            actions,
-            bundleIds,
-            serviceVersion,
-            expiresAt,
+            agentInboxId: input.granteeInboxId,
           },
-        });
-
-    const entitlement = await ensureEntitlementForV1Issue(tx, {
-      accountId: input.accountId,
-      abilityId: normalizeAbilityId(input.toolkit),
-    });
-
-    await tx.conversationAbility.upsert({
-      where: {
-        entitlementId_conversationId_agentInboxId: {
+        },
+        create: {
+          ...(idTaken ? {} : { id: grant.id }),
           entitlementId: entitlement.id,
           conversationId: input.conversationId,
           agentInboxId: input.granteeInboxId,
+          bundleIds,
+          actions,
+          extendedByInboxId: input.ownerInboxId,
+          expiresAt,
+          createdAt: grant.createdAt,
         },
-      },
-      create: {
-        id: grant.id,
-        entitlementId: entitlement.id,
-        conversationId: input.conversationId,
-        agentInboxId: input.granteeInboxId,
-        bundleIds,
-        actions,
-        extendedByInboxId: input.ownerInboxId,
-        expiresAt,
-        createdAt: grant.createdAt,
-      },
-      update: {
-        bundleIds,
-        actions,
-        extendedByInboxId: input.ownerInboxId,
-        expiresAt,
-      },
+        update: {
+          bundleIds,
+          actions,
+          extendedByInboxId: input.ownerInboxId,
+          expiresAt,
+        },
+      });
+
+      return grant;
     });
 
-    return grant;
-  });
+  return retryOnUniqueViolation(run);
 }
 
 async function ensureEntitlementForV1Issue(
@@ -227,95 +274,117 @@ export type UpsertConversationAbilityInput = {
 export async function upsertConversationAbilityExtension(
   input: UpsertConversationAbilityInput,
 ): Promise<ConversationAbility> {
-  return prisma.$transaction(async (tx) => {
-    const legacyRows = await tx.connectionGrant.findMany({
-      where: {
-        ownerAccountId: input.accountId,
-        granteeInboxId: input.agentInboxId,
-        conversationId: input.conversationId,
-        toolkit: { equals: input.abilityId, mode: "insensitive" },
-      },
-      orderBy: { createdAt: "asc" },
-      select: { id: true },
-    });
-    const legacy = legacyRows.length > 0 ? legacyRows[0] : null;
-    const existing = await tx.conversationAbility.findUnique({
-      where: {
-        entitlementId_conversationId_agentInboxId: {
-          entitlementId: input.entitlementId,
-          conversationId: input.conversationId,
-          agentInboxId: input.agentInboxId,
-        },
-      },
-      select: { id: true },
-    });
+  const run = (): Promise<ConversationAbility> =>
+    prisma.$transaction(async (tx) => {
+      // Re-read and row-lock the entitlement inside this transaction: the
+      // handler's precondition read happened outside it, and a revoke that
+      // commits in between would otherwise be resurrected by this write (the
+      // extension recreated and the legacy mirror re-issued from a stale
+      // `active` snapshot). The lock also serializes against an in-flight
+      // revoke transaction, whose tombstone update takes the same row lock
+      // first and whose extension delete then runs after this write commits.
+      const locked = await tx.$queryRaw<
+        Array<{ status: string; revokedAt: Date | null }>
+      >`SELECT "status", "revokedAt" FROM "AbilityEntitlement" WHERE "id" = ${input.entitlementId}::uuid FOR UPDATE`;
+      const entitlement = locked.length > 0 ? locked[0] : null;
+      if (
+        !entitlement ||
+        entitlement.revokedAt !== null ||
+        entitlement.status !== "active"
+      ) {
+        throw new EntitlementNotActiveError();
+      }
 
-    // Adopt the legacy id only while no extension row holds it yet: an
-    // unmerged case-variant entitlement's extension can still carry it
-    // mid-window, and a by-id create would hit the primary key.
-    let adoptableId: string | null = null;
-    if (!existing && legacy) {
-      const taken = await tx.conversationAbility.findUnique({
-        where: { id: legacy.id },
+      const legacyRows = await tx.connectionGrant.findMany({
+        where: {
+          ownerAccountId: input.accountId,
+          granteeInboxId: input.agentInboxId,
+          conversationId: input.conversationId,
+          toolkit: { equals: input.abilityId, mode: "insensitive" },
+        },
+        orderBy: { createdAt: "asc" },
         select: { id: true },
       });
-      adoptableId = taken ? null : legacy.id;
-    }
-    const extension = existing
-      ? await tx.conversationAbility.update({
-          where: { id: existing.id },
-          data: {
-            bundleIds: input.bundleIds,
-            actions: [],
-            ...(input.extendedByInboxId !== undefined
-              ? { extendedByInboxId: input.extendedByInboxId }
-              : {}),
-          },
-        })
-      : await tx.conversationAbility.create({
-          data: {
-            ...(adoptableId ? { id: adoptableId } : {}),
+      const legacy = legacyRows.length > 0 ? legacyRows[0] : null;
+      const existing = await tx.conversationAbility.findUnique({
+        where: {
+          entitlementId_conversationId_agentInboxId: {
             entitlementId: input.entitlementId,
             conversationId: input.conversationId,
             agentInboxId: input.agentInboxId,
+          },
+        },
+        select: { id: true },
+      });
+
+      // Adopt the legacy id only while no extension row holds it yet: an
+      // unmerged case-variant entitlement's extension can still carry it
+      // mid-window, and a by-id create would hit the primary key.
+      let adoptableId: string | null = null;
+      if (!existing && legacy) {
+        const taken = await tx.conversationAbility.findUnique({
+          where: { id: legacy.id },
+          select: { id: true },
+        });
+        adoptableId = taken ? null : legacy.id;
+      }
+      const extension = existing
+        ? await tx.conversationAbility.update({
+            where: { id: existing.id },
+            data: {
+              bundleIds: input.bundleIds,
+              actions: [],
+              ...(input.extendedByInboxId !== undefined
+                ? { extendedByInboxId: input.extendedByInboxId }
+                : {}),
+            },
+          })
+        : await tx.conversationAbility.create({
+            data: {
+              ...(adoptableId ? { id: adoptableId } : {}),
+              entitlementId: input.entitlementId,
+              conversationId: input.conversationId,
+              agentInboxId: input.agentInboxId,
+              bundleIds: input.bundleIds,
+              extendedByInboxId: input.extendedByInboxId ?? null,
+            },
+          });
+
+      if (legacyRows.length > 0) {
+        // Every case-variant sibling gets the replaced scope too: the legacy
+        // matcher (old replicas, pre-readiness fallback) matches toolkit
+        // case-insensitively, so a variant left with stale actions would keep
+        // authorizing them.
+        await tx.connectionGrant.updateMany({
+          where: { id: { in: legacyRows.map((row) => row.id) } },
+          data: {
             bundleIds: input.bundleIds,
-            extendedByInboxId: input.extendedByInboxId ?? null,
+            actions: [],
+            revokedAt: null,
+            ...(input.extendedByInboxId !== undefined
+              ? { ownerInboxId: input.extendedByInboxId }
+              : {}),
           },
         });
+      } else {
+        await tx.connectionGrant.create({
+          data: {
+            id: extension.id,
+            ownerAccountId: input.accountId,
+            ownerInboxId: input.extendedByInboxId ?? "",
+            granteeInboxId: input.agentInboxId,
+            conversationId: input.conversationId,
+            toolkit: input.abilityId,
+            actions: [],
+            bundleIds: input.bundleIds,
+          },
+        });
+      }
 
-    if (legacyRows.length > 0) {
-      // Every case-variant sibling gets the replaced scope too: the legacy
-      // matcher (old replicas, pre-readiness fallback) matches toolkit
-      // case-insensitively, so a variant left with stale actions would keep
-      // authorizing them.
-      await tx.connectionGrant.updateMany({
-        where: { id: { in: legacyRows.map((row) => row.id) } },
-        data: {
-          bundleIds: input.bundleIds,
-          actions: [],
-          revokedAt: null,
-          ...(input.extendedByInboxId !== undefined
-            ? { ownerInboxId: input.extendedByInboxId }
-            : {}),
-        },
-      });
-    } else {
-      await tx.connectionGrant.create({
-        data: {
-          id: extension.id,
-          ownerAccountId: input.accountId,
-          ownerInboxId: input.extendedByInboxId ?? "",
-          granteeInboxId: input.agentInboxId,
-          conversationId: input.conversationId,
-          toolkit: input.abilityId,
-          actions: [],
-          bundleIds: input.bundleIds,
-        },
-      });
-    }
+      return extension;
+    });
 
-    return extension;
-  });
+  return retryOnUniqueViolation(run);
 }
 
 /**
@@ -346,15 +415,21 @@ export async function revokeConnectionGrantsByNaturalKey(args: {
       data: { revokedAt: new Date() },
     });
 
-    const entitlement = await tx.abilityEntitlement.findUnique({
+    // Every entitlement parent whose ability id matches case-insensitively:
+    // historical case-variant rows can exist mid-reconciliation, and their
+    // extensions must die with the revoke too — a canonical-only lookup would
+    // leave them authorizing the entitlement read path.
+    const entitlements = await tx.abilityEntitlement.findMany({
       where: {
-        accountId_abilityId: { accountId: args.accountId, abilityId },
+        accountId: args.accountId,
+        abilityId: { equals: abilityId, mode: "insensitive" },
       },
+      select: { id: true },
     });
-    if (entitlement) {
+    if (entitlements.length > 0) {
       await tx.conversationAbility.deleteMany({
         where: {
-          entitlementId: entitlement.id,
+          entitlementId: { in: entitlements.map((row) => row.id) },
           ...(args.conversationId
             ? { conversationId: args.conversationId }
             : {}),
@@ -369,7 +444,8 @@ export async function revokeConnectionGrantsByNaturalKey(args: {
 
 /**
  * Revoke one grant by id, scoped to the caller's account — the V1
- * DELETE /grants/:id semantics. Returns the legacy revoked count (0 means
+ * DELETE /grants/:id semantics. Returns the number of grants revoked: the
+ * legacy revoked count, or 1 when only extension rows were removed (0 means
  * not found / not owned / already revoked, indistinguishable on purpose).
  *
  * The write paths keep the pair's ids shared, but revocation must not TRUST
@@ -425,28 +501,42 @@ export async function revokeConnectionGrantById(args: {
       data: { revokedAt: new Date() },
     });
 
-    const entitlement = await tx.abilityEntitlement.findUnique({
+    // Every entitlement parent whose ability id matches case-insensitively
+    // (see revokeConnectionGrantsByNaturalKey): case-variant parents'
+    // extensions must not survive the revoke.
+    let extensionsRemoved = 0;
+    const entitlements = await tx.abilityEntitlement.findMany({
       where: {
-        accountId_abilityId: {
-          accountId: args.accountId,
-          abilityId: normalizeAbilityId(toolkit),
+        accountId: args.accountId,
+        abilityId: {
+          equals: normalizeAbilityId(toolkit),
+          mode: "insensitive",
         },
       },
       select: { id: true },
     });
-    if (entitlement) {
-      await tx.conversationAbility.deleteMany({
-        where: { entitlementId: entitlement.id, conversationId, agentInboxId },
+    if (entitlements.length > 0) {
+      const removed = await tx.conversationAbility.deleteMany({
+        where: {
+          entitlementId: { in: entitlements.map((row) => row.id) },
+          conversationId,
+          agentInboxId,
+        },
       });
+      extensionsRemoved += removed.count;
     }
-    // Belt-and-braces for a case-variant entitlement parent the normalized
-    // lookup missed mid-sweep: any owned row still carrying the id goes too.
-    await tx.conversationAbility.deleteMany({
+    // Belt-and-braces for an entitlement parent both lookups missed
+    // mid-sweep: any owned row still carrying the id goes too.
+    const beltRemoved = await tx.conversationAbility.deleteMany({
       where: {
         id: args.grantId,
         entitlement: { is: { accountId: args.accountId } },
       },
     });
-    return result.count;
+    extensionsRemoved += beltRemoved.count;
+    // The wire-visible number stays the legacy revoked count, but a revoke
+    // that only found extension rows (no live legacy row — divergent or
+    // V2-native state) still succeeded and must not read as not-found.
+    return result.count > 0 ? result.count : extensionsRemoved > 0 ? 1 : 0;
   });
 }

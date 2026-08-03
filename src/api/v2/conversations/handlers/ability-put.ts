@@ -4,7 +4,10 @@ import { normalizeAbilityId } from "@/api/v2/abilities/ability-id";
 import { getPublicAbilities } from "@/api/v2/abilities/manifests.config";
 import { isEntitlementReadModelReady } from "@/api/v2/abilities/read-readiness";
 import { getServiceConfig } from "@/api/v2/connections/bundles.config";
-import { upsertConversationAbilityExtension } from "@/api/v2/connections/v1-grant-adapter";
+import {
+  EntitlementNotActiveError,
+  upsertConversationAbilityExtension,
+} from "@/api/v2/connections/v1-grant-adapter";
 import { prisma } from "@/utils/prisma";
 
 // PUT /v2/conversations/{conversationId}/abilities/{abilityId} — extend (or
@@ -110,16 +113,28 @@ export async function conversationAbilityPutHandler(
   // The shared cross-store write service (see v1-grant-adapter.ts): upserts
   // the opt-in and mirrors a legacy ConnectionGrant row in one transaction,
   // so old exec replicas and V1 read/delete surfaces stay coherent with
-  // V2-written state during the compatibility window.
-  const extension = await upsertConversationAbilityExtension({
-    accountId,
-    entitlementId: entitlement.id,
-    abilityId,
-    conversationId,
-    agentInboxId,
-    bundleIds,
-    extendedByInboxId,
-  });
+  // V2-written state during the compatibility window. The adapter re-checks
+  // the entitlement under a row lock inside that transaction — a revoke that
+  // committed after the precondition read above surfaces here as the same
+  // 409 instead of being silently resurrected.
+  let extension;
+  try {
+    extension = await upsertConversationAbilityExtension({
+      accountId,
+      entitlementId: entitlement.id,
+      abilityId,
+      conversationId,
+      agentInboxId,
+      bundleIds,
+      extendedByInboxId,
+    });
+  } catch (error) {
+    if (error instanceof EntitlementNotActiveError) {
+      res.status(409).json({ code: "needs_entitlement" });
+      return;
+    }
+    throw error;
+  }
 
   req.log.info(
     { accountId, abilityId, conversationId, agentInboxId },

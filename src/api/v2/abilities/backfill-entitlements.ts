@@ -211,6 +211,15 @@ function candidateKey(accountId: string, abilityId: string): string {
   return `${accountId}\u0000${abilityId}`;
 }
 
+function extensionKey(
+  accountId: string,
+  abilityId: string,
+  conversationId: string,
+  agentInboxId: string,
+): string {
+  return [accountId, abilityId, conversationId, agentInboxId].join("\u0000");
+}
+
 /**
  * Fold case-variant entitlement rows onto the canonical lowercase ability id
  * so one (account, ability) never splits across rows the lifecycle routes
@@ -404,6 +413,25 @@ export async function backfillAbilityEntitlements(opts: {
     }
   }
 
+  // Third source: existing non-revoked entitlement rows. A row in neither
+  // set above is an orphan whose credential vanished from Composio (and has
+  // no live grant left); without seeding it, the loop below never visits it
+  // and it keeps advertising `active` with a stale credential ref. Seeded,
+  // it falls to the no-candidate default (`expired`, credential cleared) —
+  // status refresh is still gated on refreshEntitlementStatus, so the
+  // DB-only sweep leaves these untouched as documented.
+  const existingEntitlements = await db.abilityEntitlement.findMany({
+    where: { revokedAt: null },
+    select: { accountId: true, abilityId: true },
+  });
+  for (const row of existingEntitlements) {
+    const abilityId = normalizeAbilityId(row.abilityId);
+    const key = candidateKey(row.accountId, abilityId);
+    if (!wanted.has(key)) {
+      wanted.set(key, { accountId: row.accountId, abilityId });
+    }
+  }
+
   // Upsert entitlements; remember ids for the extension pass.
   const entitlementIdByKey = new Map<string, string>();
   for (const [key, { accountId, abilityId }] of wanted) {
@@ -502,12 +530,48 @@ export async function backfillAbilityEntitlements(opts: {
     },
     select: { id: true },
   });
+  // Case-variant siblings can share one extension: the extension carries ONE
+  // grant's id, and that grant dying must not delete an opt-in a surviving
+  // sibling still backs. So an extension whose id matches a dead grant is
+  // kept whenever a live grant covers the same natural key.
+  const liveGrantKeys = new Set<string>(
+    liveGrants.map((grant: (typeof liveGrants)[number]): string =>
+      extensionKey(
+        grant.ownerAccountId,
+        normalizeAbilityId(grant.toolkit),
+        grant.conversationId,
+        grant.granteeInboxId,
+      ),
+    ),
+  );
   for (let i = 0; i < deadGrants.length; i += DELETE_CHUNK_SIZE) {
     const chunk = deadGrants
       .slice(i, i + DELETE_CHUNK_SIZE)
       .map((grant) => grant.id);
-    const removed = await db.conversationAbility.deleteMany({
+    const candidateRows = await db.conversationAbility.findMany({
       where: { id: { in: chunk } },
+      select: {
+        id: true,
+        conversationId: true,
+        agentInboxId: true,
+        entitlement: { select: { accountId: true, abilityId: true } },
+      },
+    });
+    const doomed: string[] = [];
+    for (const row of candidateRows) {
+      const key = extensionKey(
+        row.entitlement.accountId,
+        normalizeAbilityId(row.entitlement.abilityId),
+        row.conversationId,
+        row.agentInboxId,
+      );
+      if (!liveGrantKeys.has(key)) {
+        doomed.push(row.id);
+      }
+    }
+    if (doomed.length === 0) continue;
+    const removed = await db.conversationAbility.deleteMany({
+      where: { id: { in: doomed } },
     });
     counts.extensionsRemovedForDeadGrants += removed.count;
   }
