@@ -118,7 +118,18 @@ export const bodySchema = z
       .uuid()
       .transform((v) => v.toLowerCase())
       .optional(),
-    name: z.string().min(1).max(256).optional(),
+    // Trimmed, with blank-after-trim collapsing to absent (not rejected, which
+    // would tighten the contract for shipped clients): a whitespace-only name
+    // must never shadow the composed ownerProfileName default or land as a
+    // blank display name.
+    name: z
+      .string()
+      .max(256)
+      .optional()
+      .transform((v) => {
+        const trimmed = v?.trim();
+        return trimmed ? trimmed : undefined;
+      }),
     // Raw profile name of the joining user, sent by clients that auto-attach
     // a default agent at conversation creation. The server composes the
     // agent's possessive display name from it ("Saul's agent") so the copy
