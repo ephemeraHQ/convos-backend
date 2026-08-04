@@ -122,23 +122,33 @@ type SubscriptionDisplayEntitlementFields = SubscriptionEntitlementFields &
  * subscriber must keep tier framing at zero remaining instead of dropping to
  * Basic / the free-tier daily cap.
  *
- * Missed-terminal-webhook risk (an auto-renewing sub Apple actually terminated
- * without us hearing stays entitled past its period) mirrors the already-
- * accepted, documented tradeoff for `billingRetry` above; the reconciliation
- * worker is the intended backstop.
+ * The deferral is BOUNDED by `DISPLAY_RENEWAL_GRACE_MS`: a real webhook gap
+ * resolves within Apple/Google's delivery-and-retry window (hours, not weeks),
+ * so past the bound a stale `willRenew=true` row is treated as lapsed rather
+ * than renewal-pending. Unbounded deferral would let rows whose terminal
+ * webhook we permanently missed (e.g. every cancellation/expiry event fired
+ * before 2026-07-29, when the prod App Store Server Notifications URL was
+ * first configured — Apple does not resend those) display the paid tier
+ * forever. The residual in-window risk mirrors the already-accepted,
+ * documented tradeoff for `billingRetry` above.
  */
+export const DISPLAY_RENEWAL_GRACE_MS = 7 * 24 * 60 * 60 * 1000;
+
 export const effectiveSubscriptionStatusForDisplay = (
   subscription: SubscriptionDisplayEntitlementFields,
   now: Date = new Date(),
 ): SubscriptionStatus => {
+  const periodEndMs = subscription.currentPeriodEnd.getTime();
   if (
     (subscription.status === SubscriptionStatus.active ||
       subscription.status === SubscriptionStatus.trial) &&
     subscription.willRenew &&
-    subscription.currentPeriodEnd.getTime() <= now.getTime()
+    periodEndMs <= now.getTime() &&
+    now.getTime() < periodEndMs + DISPLAY_RENEWAL_GRACE_MS
   ) {
     // Renewal pending — keep the stored (entitled) status rather than
-    // time-expiring it. A terminal provider webhook is the only downgrade.
+    // time-expiring it. A terminal provider webhook (or the grace bound
+    // above elapsing) is the only downgrade.
     return subscription.status;
   }
   return effectiveSubscriptionStatus(subscription, now);
