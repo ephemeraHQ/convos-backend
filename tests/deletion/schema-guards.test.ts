@@ -43,6 +43,9 @@ describe("deletion schema guards", () => {
       "ConnectionGrant",
       "DeviceRegistration",
       "ClientIdentifier",
+      // ownerAccountId → Account is onDelete: Cascade, so the teardown's
+      // Account delete removes these rows in the same transaction.
+      "AgentInstance",
     ]);
     // Retained by design, pseudonymized or bounded-lifetime (see
     // docs/plans/delete-my-account.md retention regime).

@@ -28,7 +28,9 @@ becomes a lie.
 | Function                                           | Purpose                                                                                                              |
 | -------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
 | `getBalance(accountId)`                            | Spendable balance — the source of truth.                                                                             |
+| `getBalances(accountIds)`                          | Batch `getBalance` — one query for many accounts (missing rows read as 0n). Use it instead of per-account loops.     |
 | `isAllowed(accountId)`                             | Advisory UX gate (`balance >= reservedMaxTurnCredits`). NOT authorization — `consume` enforces the floor atomically. |
+| `isAllowedFromBalance(balance)`                    | Pure form of the advisory gate, for balances already in hand (e.g. from `getBalances`).                              |
 | `getHistory(accountId, limit?, cursor?)`           | Ledger rows, descending, cursor-paginated.                                                                           |
 | `getBucketedConsumption(accountId, since, bucket)` | Consume sums per UTC day/week/month.                                                                                 |
 

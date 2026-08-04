@@ -27,10 +27,24 @@ const bodySchema = z
  * (duplicate Apple notificationUUID) and unknown_subscription both ack 200 —
  * Apple has no need to retry; either the dupe was harmless or our verify
  * endpoint will eventually create the Subscription row.
+ *
+ * Observability — stable log events (log-explorer / monitor contract; see
+ * docs/observability/subscription-notifications.md before renaming):
+ *   - `subscription.ssn.received`: a signature-verified delivery arrived
+ *     (fires after the outer JWS verifies, so unverifiable garbage on this
+ *     unauthenticated endpoint doesn't count as feed traffic).
+ *   - `subscription.ssn.applied`: a state change was applied (or replayed).
+ *   - `subscription.ssn.dropped`: the delivery produced no state change;
+ *     carries `reason` plus every identifier available at the drop point
+ *     (notificationType/notificationSubtype/notificationUUID/
+ *     originalTransactionId). reason=unknown_subscription drops are also
+ *     persisted as BillingReceipt rows with subscriptionId NULL.
+ * The 500 path is neither applied nor dropped — Apple retries it.
  */
 export async function appleSsnHandler(req: Request, res: Response) {
   const parsed = bodySchema.safeParse(req.body);
   if (!parsed.success) {
+    req.log.warn({ reason: "invalid_body" }, "subscription.ssn.dropped");
     res.status(400).json({ error: "Invalid request body" });
     return;
   }
@@ -49,6 +63,7 @@ export async function appleSsnHandler(req: Request, res: Response) {
     // signature failure (1).
     req.log.warn(
       {
+        reason: "invalid_notification_signature",
         errName: err instanceof Error ? err.constructor.name : undefined,
         errStatus: (err as { status?: number } | undefined)?.status,
         errMessage: err instanceof Error ? err.message : String(err),
@@ -61,17 +76,33 @@ export async function appleSsnHandler(req: Request, res: Response) {
             ? err.cause.message
             : undefined,
       },
-      "Apple S2S notification JWS verification failed",
+      "subscription.ssn.dropped",
     );
     res.status(400).json({ error: "Invalid signed notification" });
     return;
   }
 
+  // Feed-liveness marker: one per signature-verified delivery, regardless of
+  // what processing decides below (received = applied + dropped-after-verify).
+  req.log.info(
+    {
+      notificationType: notification.notificationType,
+      notificationSubtype: notification.subtype,
+      notificationUUID: notification.notificationUUID,
+      environment: notification.data?.environment,
+    },
+    "subscription.ssn.received",
+  );
+
   const notificationUUID = notification.notificationUUID;
   if (!notificationUUID) {
     req.log.warn(
-      { notificationType: notification.notificationType },
-      "Apple S2S notification missing notificationUUID",
+      {
+        reason: "missing_notification_uuid",
+        notificationType: notification.notificationType,
+        notificationSubtype: notification.subtype,
+      },
+      "subscription.ssn.dropped",
     );
     res.status(400).json({ error: "Malformed notification payload" });
     return;
@@ -83,10 +114,12 @@ export async function appleSsnHandler(req: Request, res: Response) {
     // We don't act on those today; ack so Apple stops retrying.
     req.log.info(
       {
+        reason: "no_transaction",
         notificationType: notification.notificationType,
-        notificationUUID: notification.notificationUUID,
+        notificationSubtype: notification.subtype,
+        notificationUUID,
       },
-      "Apple S2S notification has no transaction — skipping",
+      "subscription.ssn.dropped",
     );
     res.status(200).json({ ok: true, skipped: "no_transaction" });
     return;
@@ -98,6 +131,7 @@ export async function appleSsnHandler(req: Request, res: Response) {
   } catch (err) {
     req.log.warn(
       {
+        reason: "invalid_transaction_signature",
         errName: err instanceof Error ? err.constructor.name : undefined,
         errStatus: (err as { status?: number } | undefined)?.status,
         errMessage: err instanceof Error ? err.message : String(err),
@@ -109,9 +143,11 @@ export async function appleSsnHandler(req: Request, res: Response) {
           err instanceof Error && err.cause instanceof Error
             ? err.cause.message
             : undefined,
-        notificationUUID: notification.notificationUUID,
+        notificationType: notification.notificationType,
+        notificationSubtype: notification.subtype,
+        notificationUUID,
       },
-      "Apple S2S inner transaction JWS verification failed",
+      "subscription.ssn.dropped",
     );
     res.status(400).json({ error: "Invalid signed transaction" });
     return;
@@ -121,8 +157,15 @@ export async function appleSsnHandler(req: Request, res: Response) {
   const transactionId = transaction.transactionId;
   if (!originalTransactionId || !transactionId) {
     req.log.warn(
-      { notificationUUID: notification.notificationUUID },
-      "Apple S2S transaction missing originalTransactionId/transactionId",
+      {
+        reason: "missing_transaction_ids",
+        notificationType: notification.notificationType,
+        notificationSubtype: notification.subtype,
+        notificationUUID,
+        originalTransactionId,
+        transactionId,
+      },
+      "subscription.ssn.dropped",
     );
     res.status(400).json({ error: "Malformed transaction payload" });
     return;
@@ -135,12 +178,17 @@ export async function appleSsnHandler(req: Request, res: Response) {
   });
 
   if (!update) {
+    // TEST / CONSUMPTION_REQUEST / unknown types — no state change implied.
     req.log.info(
       {
+        reason: "no_actionable_update",
         notificationType: notification.notificationType,
-        notificationUUID: notification.notificationUUID,
+        notificationSubtype: notification.subtype,
+        notificationUUID,
+        originalTransactionId,
+        transactionId,
       },
-      "Apple S2S notification has no actionable state change — acking",
+      "subscription.ssn.dropped",
     );
     res.status(200).json({ ok: true, applied: false });
     return;
@@ -159,14 +207,23 @@ export async function appleSsnHandler(req: Request, res: Response) {
     });
 
     if (result.kind === "unknown_subscription") {
-      // SUBSCRIBED before verify? verify hasn't run yet — drop. The client
-      // will hit /verify shortly and bootstrap the row from its own JWS.
-      req.log.info(
+      // SUBSCRIBED before verify? verify hasn't run yet — drop and ack; the
+      // client will hit /verify shortly and bootstrap the row from its own
+      // JWS. A drop receipt (BillingReceipt, subscriptionId NULL) was
+      // persisted by applyNotification so the delivery stays auditable —
+      // this is the primary DB signal for "SSNs arriving for subs we don't
+      // know" (orphaned/never-verified subscriptions).
+      req.log.warn(
         {
-          originalTransactionId,
+          reason: "unknown_subscription",
           notificationType: notification.notificationType,
+          notificationSubtype: notification.subtype,
+          notificationUUID,
+          originalTransactionId,
+          transactionId,
+          receiptRecorded: result.receiptRecorded,
         },
-        "Apple S2S notification for unknown subscription — acking (verify will create)",
+        "subscription.ssn.dropped",
       );
       res.status(200).json({ ok: true, applied: false });
       return;
@@ -202,6 +259,7 @@ export async function appleSsnHandler(req: Request, res: Response) {
         notificationUUID,
         originalTransactionId,
         transactionId,
+        environment: notification.data?.environment,
         accountId: result.subscription.accountId,
         subscriptionStatus: result.subscription.status,
         replayed: result.kind === "replayed",

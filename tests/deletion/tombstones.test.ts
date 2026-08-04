@@ -281,7 +281,12 @@ describe("webhooks against deletion tombstones", () => {
       signedPayload: "jws",
       update: { status: SubscriptionStatus.active },
     });
-    expect(result).toEqual({ kind: "unknown_subscription" });
+    // Unmatched deliveries persist a drop receipt (subscriptionId NULL);
+    // first sighting of this notification, so receiptRecorded is true.
+    expect(result).toEqual({
+      kind: "unknown_subscription",
+      receiptRecorded: true,
+    });
   });
 });
 

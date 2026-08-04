@@ -1,6 +1,7 @@
-import { afterEach, describe, expect, test } from "vitest";
+import { Prisma } from "@prisma/client";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import { getBalance } from "@/payments";
-import { subGrantKey } from "@/subscriptions/grants";
+import { grantSubscriptionPeriod, subGrantKey } from "@/subscriptions/grants";
 import {
   applyNotification,
   BillingProvider,
@@ -17,6 +18,11 @@ import {
 } from "@/subscriptions/repository";
 import { tierGrant } from "@/subscriptions/tier-config";
 import { prisma } from "@/utils/prisma";
+
+// Spy-wrap the grants module (call-through by default) so a single test can
+// inject a CreditLedger unique-violation INSIDE applyNotification's real
+// transaction (the organic race is reachable only under concurrency).
+vi.mock("@/subscriptions/grants", { spy: true });
 
 const perPeriod = () =>
   tierGrant(SUBSCRIPTION_TIER_PLUS, SubscriptionPeriod.monthly).perPeriod;
@@ -708,8 +714,20 @@ describe("findCurrentByAccountId", () => {
 });
 
 describe("applyNotification", () => {
-  test("returns unknown_subscription when originalTransactionId has no row", async () => {
-    const result = await applyNotification({
+  // Drop receipts have subscriptionId NULL, so the account-scoped wipe cannot
+  // reach them — clean up by the notification ids these tests use.
+  const dropNotificationIds: string[] = [];
+  afterEach(async () => {
+    if (dropNotificationIds.length === 0) return;
+    await prisma.billingReceipt.deleteMany({
+      where: { externalNotificationId: { in: dropNotificationIds } },
+    });
+    dropNotificationIds.length = 0;
+  });
+
+  test("unknown originalTransactionId: persists a drop receipt, idempotent on notificationUUID", async () => {
+    dropNotificationIds.push("notif-missing");
+    const input = {
       provider: BillingProvider.apple,
       originalTransactionId: "otid-missing",
       transactionId: "tx-missing",
@@ -717,8 +735,169 @@ describe("applyNotification", () => {
       notificationType: "DID_RENEW",
       signedPayload: "stub",
       update: { status: SubscriptionStatus.active },
+    } as const;
+
+    const result = await applyNotification(input);
+    expect(result).toEqual({
+      kind: "unknown_subscription",
+      receiptRecorded: true,
     });
-    expect(result.kind).toBe("unknown_subscription");
+
+    // The delivery is now auditable from the DB: an unmatched BillingReceipt
+    // carrying the provider-side subscription identity.
+    const receipt = await prisma.billingReceipt.findUnique({
+      where: { idempotencyKey: "apple-ssn:notif-missing" },
+    });
+    expect(receipt).not.toBeNull();
+    expect(receipt?.subscriptionId).toBeNull();
+    expect(receipt?.provider).toBe(BillingProvider.apple);
+    expect(receipt?.providerSubscriptionId).toBe("otid-missing");
+    expect(receipt?.externalNotificationId).toBe("notif-missing");
+    expect(receipt?.transactionId).toBe("tx-missing");
+    expect(receipt?.notificationType).toBe("DID_RENEW");
+    expect(receipt?.signedPayload).toBe("stub");
+
+    // Provider retry of the same notificationUUID: still unknown, no second
+    // row, receiptRecorded false.
+    const replay = await applyNotification(input);
+    expect(replay).toEqual({
+      kind: "unknown_subscription",
+      receiptRecorded: false,
+    });
+    const rows = await prisma.billingReceipt.findMany({
+      where: { externalNotificationId: "notif-missing" },
+    });
+    expect(rows).toHaveLength(1);
+  });
+
+  test("drop receipt adoption: retry after verify creates the row applies the update and links the receipt", async () => {
+    dropNotificationIds.push("notif-adopt");
+    const input = {
+      provider: BillingProvider.apple,
+      originalTransactionId: "otid-adopt",
+      transactionId: "tx-adopt",
+      notificationUUID: "notif-adopt",
+      notificationType: "DID_FAIL_TO_RENEW",
+      notificationSubtype: "GRACE_PERIOD",
+      signedPayload: "stub-adopt",
+      update: {
+        status: SubscriptionStatus.grace,
+        gracePeriodEnd: new Date("2026-06-20T00:00:00.000Z"),
+      },
+    } as const;
+
+    // 1. Notification arrives before verify → dropped + drop receipt.
+    const dropped = await applyNotification(input);
+    expect(dropped.kind).toBe("unknown_subscription");
+
+    // 2. /verify bootstraps the Subscription row.
+    const accountId = await newAccount();
+    const { subscription } = await upsertFromVerify(
+      verifyInput({
+        accountId,
+        originalTransactionId: "otid-adopt",
+        transactionId: "tx-adopt-verify",
+      }),
+    );
+
+    // 3. Provider retry of the SAME notificationUUID must now APPLY (not be
+    //    swallowed as a replay of the drop) and claim the drop receipt.
+    const retried = await applyNotification(input);
+    expect(retried.kind).toBe("applied");
+    if (retried.kind === "applied") {
+      expect(retried.subscription.status).toBe(SubscriptionStatus.grace);
+    }
+    const receipt = await prisma.billingReceipt.findUnique({
+      where: { idempotencyKey: "apple-ssn:notif-adopt" },
+    });
+    expect(receipt?.subscriptionId).toBe(subscription.id);
+
+    // 4. A further retry is now a plain replay — state applied exactly once.
+    const replay = await applyNotification(input);
+    expect(replay.kind).toBe("replayed");
+  });
+
+  test("CreditLedger P2002 inside the tx is rethrown — not acked as a replay, no receipt written", async () => {
+    const accountId = await newAccount();
+    await upsertFromVerify(
+      verifyInput({
+        accountId,
+        originalTransactionId: "otid-ledger-conflict",
+        transactionId: "tx-ledger-conflict-1",
+      }),
+    );
+
+    // Inject a CreditLedger (accountId, idempotencyKey) unique violation from
+    // grantSubscriptionPeriod inside the real transaction (grants.ts
+    // pre-checks make the organic conflict reachable only under a
+    // concurrent same-period race). The catch MUST rethrow: the tx rolled
+    // back receipt AND state update, so acking it as "replayed" would
+    // silently lose the notification (the provider stops retrying on 200).
+    const ledgerConflict = new Prisma.PrismaClientKnownRequestError(
+      "Unique constraint failed on the fields: (`accountId`,`idempotencyKey`)",
+      {
+        code: "P2002",
+        clientVersion: Prisma.prismaVersion.client,
+        meta: {
+          modelName: "CreditLedger",
+          target: ["accountId", "idempotencyKey"],
+        },
+      },
+    );
+    vi.mocked(grantSubscriptionPeriod).mockRejectedValueOnce(ledgerConflict);
+
+    // A real renewal (period advance) so the grant path actually runs.
+    await expect(
+      applyNotification({
+        provider: BillingProvider.apple,
+        originalTransactionId: "otid-ledger-conflict",
+        transactionId: "tx-ledger-conflict-2",
+        notificationUUID: "notif-ledger-conflict",
+        notificationType: "DID_RENEW",
+        signedPayload: "stub-ledger-conflict",
+        update: {
+          status: SubscriptionStatus.active,
+          currentPeriodStart: new Date("2026-06-01T00:00:00.000Z"),
+          currentPeriodEnd: new Date("2026-07-01T00:00:00.000Z"),
+        },
+      }),
+    ).rejects.toThrow(ledgerConflict);
+
+    // The aborted tx persisted nothing: no receipt row for this notification,
+    // and the subscription still sits in its pre-renewal period.
+    const receipt = await prisma.billingReceipt.findUnique({
+      where: { idempotencyKey: "apple-ssn:notif-ledger-conflict" },
+    });
+    expect(receipt).toBeNull();
+    const sub = await findAppleByOriginalTransactionId("otid-ledger-conflict");
+    expect(sub?.currentPeriodStart.toISOString()).toBe(
+      "2026-05-01T00:00:00.000Z",
+    );
+  });
+
+  test("unknown Play purchaseToken: drop receipt keyed on messageId, carries the token", async () => {
+    dropNotificationIds.push("msg-missing");
+    const result = await applyNotification({
+      provider: BillingProvider.googlePlay,
+      purchaseToken: "token-missing",
+      playOrderId: "order-missing",
+      messageId: "msg-missing",
+      notificationType: "PLAY_2",
+      signedPayload: "stub-play",
+      update: { status: SubscriptionStatus.active },
+    });
+    expect(result).toEqual({
+      kind: "unknown_subscription",
+      receiptRecorded: true,
+    });
+
+    const receipt = await prisma.billingReceipt.findUnique({
+      where: { idempotencyKey: "play-rtdn:msg-missing" },
+    });
+    expect(receipt?.subscriptionId).toBeNull();
+    expect(receipt?.provider).toBe(BillingProvider.googlePlay);
+    expect(receipt?.providerSubscriptionId).toBe("token-missing");
+    expect(receipt?.transactionId).toBe("order-missing");
   });
 
   test("applies status update and records audit receipt", async () => {

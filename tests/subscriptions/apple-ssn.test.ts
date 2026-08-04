@@ -38,6 +38,41 @@ const makeApp = () => {
   return app;
 };
 
+type LogRecord = {
+  level: "info" | "warn" | "error";
+  fields: Record<string, unknown>;
+  msg: string;
+};
+
+/**
+ * Same app, but req.log records every call so tests can assert the stable
+ * lifecycle events (subscription.ssn.received / applied / dropped) and their
+ * fields — they are a log-explorer/monitor contract.
+ */
+const makeAppWithLogCapture = (records: LogRecord[]) => {
+  const app = express();
+  app.use(pinoMiddleware);
+  app.use((req, _res, next) => {
+    const capture =
+      (level: LogRecord["level"]) => (fields: unknown, msg?: string) => {
+        records.push({
+          level,
+          fields: (fields ?? {}) as Record<string, unknown>,
+          msg: msg ?? "",
+        });
+      };
+    req.log = {
+      info: capture("info"),
+      warn: capture("warn"),
+      error: capture("error"),
+    } as unknown as typeof req.log;
+    next();
+  });
+  app.use(json());
+  app.use("/v2/webhooks/apple", appleWebhookRouter);
+  return app;
+};
+
 const installLocalTestingVerifier = () => {
   const verifier = new SignedDataVerifier(
     [],
@@ -58,7 +93,18 @@ const newAccount = async () => {
   return account.id;
 };
 
+// Drop receipts (unknown-subscription notifications) have subscriptionId
+// NULL, so the account-scoped receipt wipe below can't reach them. Tests that
+// exercise the drop path register their notificationUUIDs here.
+const dropNotificationUUIDs: string[] = [];
+
 const wipe = async () => {
+  if (dropNotificationUUIDs.length > 0) {
+    await prisma.billingReceipt.deleteMany({
+      where: { externalNotificationId: { in: dropNotificationUUIDs } },
+    });
+    dropNotificationUUIDs.length = 0;
+  }
   if (createdAccountIds.length === 0) return;
   await prisma.billingReceipt.deleteMany({
     where: { subscription: { accountId: { in: createdAccountIds } } },
@@ -479,10 +525,13 @@ describe("POST /v2/webhooks/apple/ssn", () => {
     );
   });
 
-  test("unknown subscription: acks 200, no row created", async () => {
+  test("unknown subscription: acks 200, no Subscription row, drop receipt persisted", async () => {
     installLocalTestingVerifier();
+    const uuid = "aaaaaaaa-0000-0000-0000-000000000080";
+    dropNotificationUUIDs.push(uuid);
     const signedPayload = await signNotification({
       notificationType: "DID_RENEW",
+      notificationUUID: uuid,
       signedTransactionInfo: await signTransaction({
         originalTransactionId: "9999999999999999",
         transactionId: "3000000000000080",
@@ -499,6 +548,176 @@ describe("POST /v2/webhooks/apple/ssn", () => {
       where: { originalTransactionId: "9999999999999999" },
     });
     expect(rows).toHaveLength(0);
+
+    // The dropped delivery is auditable from the DB: an unmatched
+    // BillingReceipt (subscriptionId NULL) carrying the OTX.
+    const receipt = await prisma.billingReceipt.findUnique({
+      where: { idempotencyKey: `apple-ssn:${uuid}` },
+    });
+    expect(receipt).not.toBeNull();
+    expect(receipt?.subscriptionId).toBeNull();
+    expect(receipt?.provider).toBe(BillingProvider.apple);
+    expect(receipt?.providerSubscriptionId).toBe("9999999999999999");
+    expect(receipt?.transactionId).toBe("3000000000000080");
+    expect(receipt?.notificationType).toBe("DID_RENEW");
+    expect(receipt?.externalNotificationId).toBe(uuid);
+  });
+
+  test("unknown subscription replay (same notificationUUID): acks 200, exactly one drop receipt", async () => {
+    installLocalTestingVerifier();
+    const uuid = "aaaaaaaa-0000-0000-0000-000000000081";
+    dropNotificationUUIDs.push(uuid);
+    const signedPayload = await signNotification({
+      notificationType: "DID_RENEW",
+      notificationUUID: uuid,
+      signedTransactionInfo: await signTransaction({
+        originalTransactionId: "9999999999999998",
+        transactionId: "3000000000000081",
+      }),
+    });
+
+    const first = await request(makeApp())
+      .post("/v2/webhooks/apple/ssn")
+      .send({ signedPayload });
+    expect(first.status).toBe(200);
+
+    const replay = await request(makeApp())
+      .post("/v2/webhooks/apple/ssn")
+      .send({ signedPayload });
+    expect(replay.status).toBe(200);
+    expect((replay.body as AckBody).applied).toBe(false);
+
+    const receipts = await prisma.billingReceipt.findMany({
+      where: { externalNotificationId: uuid },
+    });
+    expect(receipts).toHaveLength(1);
+  });
+
+  test("log lifecycle: DID_RENEW emits ssn.received then ssn.applied with identifiers", async () => {
+    installLocalTestingVerifier();
+    const otid = "1000000000000110";
+    await seedSubscription(otid);
+
+    const purchaseDate = new Date();
+    const expiresDate = new Date(
+      purchaseDate.getTime() + 30 * 24 * 60 * 60 * 1000,
+    );
+    const uuid = "aaaaaaaa-0000-0000-0000-000000000110";
+    const signedPayload = await signNotification({
+      notificationType: "DID_RENEW",
+      notificationUUID: uuid,
+      signedTransactionInfo: await signTransaction({
+        originalTransactionId: otid,
+        transactionId: "3000000000000110",
+        purchaseDate: purchaseDate.getTime(),
+        expiresDate: expiresDate.getTime(),
+      }),
+    });
+
+    const records: LogRecord[] = [];
+    const res = await request(makeAppWithLogCapture(records))
+      .post("/v2/webhooks/apple/ssn")
+      .send({ signedPayload });
+    expect(res.status).toBe(200);
+
+    const received = records.find((r) => r.msg === "subscription.ssn.received");
+    expect(received).toBeDefined();
+    expect(received?.fields.notificationType).toBe("DID_RENEW");
+    expect(received?.fields.notificationUUID).toBe(uuid);
+
+    const applied = records.find((r) => r.msg === "subscription.ssn.applied");
+    expect(applied).toBeDefined();
+    expect(applied?.fields.originalTransactionId).toBe(otid);
+    expect(applied?.fields.transactionId).toBe("3000000000000110");
+    expect(applied?.fields.notificationUUID).toBe(uuid);
+    expect(applied?.fields.replayed).toBe(false);
+    expect(records.some((r) => r.msg === "subscription.ssn.dropped")).toBe(
+      false,
+    );
+  });
+
+  test("log lifecycle: unknown subscription emits ssn.dropped with reason + full identifiers", async () => {
+    installLocalTestingVerifier();
+    const uuid = "aaaaaaaa-0000-0000-0000-000000000120";
+    dropNotificationUUIDs.push(uuid);
+    const signedPayload = await signNotification({
+      notificationType: "DID_RENEW",
+      subtype: "BILLING_RECOVERY",
+      notificationUUID: uuid,
+      signedTransactionInfo: await signTransaction({
+        originalTransactionId: "9999999999999997",
+        transactionId: "3000000000000120",
+      }),
+    });
+
+    const records: LogRecord[] = [];
+    const res = await request(makeAppWithLogCapture(records))
+      .post("/v2/webhooks/apple/ssn")
+      .send({ signedPayload });
+    expect(res.status).toBe(200);
+
+    expect(records.some((r) => r.msg === "subscription.ssn.received")).toBe(
+      true,
+    );
+    const dropped = records.find((r) => r.msg === "subscription.ssn.dropped");
+    expect(dropped).toBeDefined();
+    expect(dropped?.level).toBe("warn");
+    expect(dropped?.fields.reason).toBe("unknown_subscription");
+    expect(dropped?.fields.notificationType).toBe("DID_RENEW");
+    expect(dropped?.fields.notificationSubtype).toBe("BILLING_RECOVERY");
+    expect(dropped?.fields.notificationUUID).toBe(uuid);
+    expect(dropped?.fields.originalTransactionId).toBe("9999999999999997");
+    expect(dropped?.fields.receiptRecorded).toBe(true);
+    expect(records.some((r) => r.msg === "subscription.ssn.applied")).toBe(
+      false,
+    );
+  });
+
+  test("log lifecycle: actionless TEST notification emits ssn.dropped reason=no_actionable_update, no receipt", async () => {
+    installLocalTestingVerifier();
+    const otid = "1000000000000130";
+    await seedSubscription(otid);
+    const uuid = "aaaaaaaa-0000-0000-0000-000000000130";
+    const signedPayload = await signNotification({
+      notificationType: "TEST",
+      notificationUUID: uuid,
+      signedTransactionInfo: await signTransaction({
+        originalTransactionId: otid,
+        transactionId: "3000000000000130",
+      }),
+    });
+
+    const records: LogRecord[] = [];
+    const res = await request(makeAppWithLogCapture(records))
+      .post("/v2/webhooks/apple/ssn")
+      .send({ signedPayload });
+    expect(res.status).toBe(200);
+
+    const dropped = records.find((r) => r.msg === "subscription.ssn.dropped");
+    expect(dropped?.fields.reason).toBe("no_actionable_update");
+    expect(dropped?.fields.originalTransactionId).toBe(otid);
+    // Actionless types are log-only: no drop receipt (the sub is known — only
+    // unknown_subscription drops are persisted).
+    const receipts = await prisma.billingReceipt.findMany({
+      where: { externalNotificationId: uuid },
+    });
+    expect(receipts).toHaveLength(0);
+  });
+
+  test("log lifecycle: unverifiable payload emits ssn.dropped reason=invalid_notification_signature, no received", async () => {
+    installLocalTestingVerifier();
+    const records: LogRecord[] = [];
+    const res = await request(makeAppWithLogCapture(records))
+      .post("/v2/webhooks/apple/ssn")
+      .send({ signedPayload: "not.a.jws" });
+    expect(res.status).toBe(400);
+
+    const dropped = records.find((r) => r.msg === "subscription.ssn.dropped");
+    expect(dropped?.fields.reason).toBe("invalid_notification_signature");
+    // received fires only for signature-verified deliveries.
+    expect(records.some((r) => r.msg === "subscription.ssn.received")).toBe(
+      false,
+    );
   });
 
   test("replay (same notificationUUID) does not re-apply state — second flip is ignored", async () => {

@@ -125,6 +125,62 @@ curl http://localhost:4000/healthcheck/details
 }
 ```
 
+## Driving the iOS app against this backend
+
+The app cannot reach the assistant control plane directly (that route holds the
+shared assistant key), so agent features route app -> here -> assistants worker.
+To exercise that whole chain locally:
+
+1. `./dev/up` for Postgres, then `pnpm exec prisma migrate deploy`.
+2. Start the assistants worker and point `ASSISTANT_API_URL` at it
+   (`http://localhost:8787`, the default here); set `ASSISTANT_API_KEY` to that
+   worker's `CONVOS_API_KEY`. The worker lives in the `convos-assistants` repo
+   (`pnpm dev` in `workers/assistant/`) — nothing here starts it for you.
+3. Expose this backend over HTTPS — `ngrok http 4000`. The app will not talk to
+   plain HTTP, and a deployed backend cannot reach a worker on your laptop, so
+   the tunnel has to front the local backend rather than the other way round.
+4. In the app repo, set `CONVOS_API_BASE_URL=https://<tunnel-host>/api` and
+   rebuild. Its build phase regenerates `Secrets.swift`, so a `.env` edit alone
+   changes nothing until you build.
+
+Four settings here fail somewhere other than where they are set, so they are
+worth knowing in advance:
+
+- **SIWE domain mismatch.** See the note on `SIWE_DOMAIN` in `.env.example`.
+  Local app builds sign `dev.convos.org`.
+- **App Check.** An empty `FIREBASE_SERVICE_ACCOUNT` does not disable it; see
+  that variable's note for the runtime-config switch.
+- **A cached JWT.** The app holds a token minted by whichever backend it last
+  talked to. This one signs with different keys, so authenticated calls 401 and
+  the app does not re-authenticate, because the token has not expired.
+  Reinstalling clears it, and forces the SIWE handshake you want to watch.
+- **Process lifecycle.** `pkill -f "tsx watch"` kills the watcher but leaves the
+  node child holding port 4000, so a restarted backend can keep serving the
+  previous environment. Confirm with `lsof -nP -iTCP:4000 -sTCP:LISTEN` before
+  drawing conclusions about a config change.
+
+A fresh database also means a zero credit balance, which the app surfaces as the
+agent having "lost power". Grant through the ledger (never write the credit
+tables directly — see `src/payments/AGENTS.md`):
+
+```ts
+import { grant } from "@/payments";
+
+// Your account id — copy it from the app (Settings) or query the local DB.
+const accountId = "<your-account-id>";
+
+await grant({
+  accountId,
+  credits: 1_000_000,
+  idempotencyKey: `local-${accountId}`,
+  kind: "manual",
+});
+```
+
+`pnpm typecheck` fails on a fresh clone until the generated code exists. Run
+`pnpm exec prisma generate` and `pnpm buf:generate` before believing any type
+error you did not write.
+
 ## Additional Resources
 
 - [XMTP Push Notifications Guide](https://docs.xmtp.org/inboxes/push-notifs/pn-server)

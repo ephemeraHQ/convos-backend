@@ -10,6 +10,7 @@ export function serializeAgentVariant(variant: AgentVariant) {
     status: variant.status,
     assistantWorkerUrl: variant.assistantWorkerUrl,
     builderPromptSlug: variant.builderPromptSlug,
+    skipCredits: variant.skipCredits,
     prUrl: variant.prUrl,
     branch: variant.branch,
     commit: variant.commit,

@@ -135,6 +135,9 @@ beforeAll(async () => {
         status: "ready",
         assistantWorkerUrl: VARIANT_URL,
         builderPromptSlug: "qa-flow-v2",
+        // Explicit opt-out into the real credit path: proves the stored value
+        // (not the column default) is what rides the descriptor stamp.
+        skipCredits: false,
         prUrl: "https://github.com/x/y/pull/1",
         branch: "b",
         commit: "c",
@@ -249,6 +252,7 @@ describe("POST /agents/join — agent variant runtime routing", () => {
       slug: VARIANT_SLUG,
       label: "Q+A",
       prUrl: "https://github.com/x/y/pull/1",
+      skipCredits: false,
     });
     // (3) variantId is NOT forwarded to the runtime; skipGreeting still is
     const opts = (dispatch.body?.options ?? {}) as Record<string, unknown>;
