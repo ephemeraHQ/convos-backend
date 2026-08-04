@@ -218,7 +218,7 @@ describe("GET /v2/abilities", () => {
     const gmail = body.abilities.find((a) => a.id === "gmail");
     expect(gmail).toBeDefined();
     expect(gmail!.displayName.en).toBe("Gmail");
-    expect(typeof gmail!.subtitle.en).toBe("string");
+    expect(gmail!.subtitle.en).toBe("Read and search email");
     expect(gmail!.auth.type).toBe("oauth");
     expect(gmail!.bundles.map((b) => b.id)).toEqual(["mail.read"]);
     expect(gmail!.bundles[0].defaultEnabled).toBe(true);
