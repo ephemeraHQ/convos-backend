@@ -205,15 +205,29 @@ describe("GET /v2/abilities", () => {
     const res = await getAbilities(token);
     const body = res.body as AbilitiesResponse;
     const ids = body.abilities.map((a) => a.id);
-    for (const hidden of [
-      "coinbase",
-      "shopify",
-      "spotify",
-      "youtube",
-      "gmail",
-    ]) {
+    for (const hidden of ["coinbase", "shopify", "spotify", "youtube"]) {
       expect(ids).not.toContain(hidden);
     }
+  });
+
+  test("gmail is served with its read-only mail.read bundle", async () => {
+    const token = await createJwtToken({ deviceId: "device-abilities" });
+    const res = await getAbilities(token);
+    const body = res.body as AbilitiesResponse;
+
+    const gmail = body.abilities.find((a) => a.id === "gmail");
+    expect(gmail).toBeDefined();
+    expect(gmail!.displayName.en).toBe("Gmail");
+    expect(gmail!.subtitle.en).toBe("Read and search email");
+    expect(gmail!.auth.type).toBe("oauth");
+    expect(gmail!.bundles.map((b) => b.id)).toEqual(["mail.read"]);
+    expect(gmail!.bundles[0].defaultEnabled).toBe(true);
+
+    // Composite version: manifest version + linked service version.
+    const manifest = ABILITY_MANIFESTS.find((m) => m.id === "gmail");
+    const svc = getServiceConfig("gmail");
+    expect(svc).toBeDefined();
+    expect(gmail!.version).toBe(manifest!.version + svc!.version);
   });
 
   test("a visible OAuth ability without a usable service entry is excluded, not served empty", async () => {
@@ -238,10 +252,10 @@ describe("GET /v2/abilities", () => {
   });
 
   test("an entitlement for a hidden ability does not unhide it", async () => {
-    await seedEntitlement("active", { abilityId: "gmail" });
+    await seedEntitlement("active", { abilityId: "spotify" });
     const res = await getAbilities(await accountToken());
     const body = res.body as AbilitiesResponse;
-    expect(body.abilities.map((a) => a.id)).not.toContain("gmail");
+    expect(body.abilities.map((a) => a.id)).not.toContain("spotify");
   });
 
   test("no Composio action slug, credential id, or deprecated bundle leaks", async () => {
@@ -251,6 +265,7 @@ describe("GET /v2/abilities", () => {
     expect(res.status).toBe(200);
     const payload = JSON.stringify(res.body);
     expect(payload).not.toMatch(/GOOGLECALENDAR_/);
+    expect(payload).not.toMatch(/GMAIL_/);
     expect(payload).not.toMatch(/composioActions/);
     // The Composio connection id is a bearer capability and stays backend-side.
     expect(payload).not.toContain("conn-1");

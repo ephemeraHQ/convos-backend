@@ -331,6 +331,38 @@ describe("GET /v2/abilities/entitlements — enumeration (DB)", () => {
     });
   });
 
+  test("gmail: mail.read resolves to the three fetch slugs, slugs on the wire", async () => {
+    const ownerAccountId = await makeAccount();
+    await seedGrant({
+      ownerAccountId,
+      ownerInboxId: "owner-inbox",
+      toolkit: "gmail",
+      bundleIds: ["mail.read"],
+      serviceVersion: 1,
+    });
+
+    const res = await enumerate({ headers: workerHeaders() });
+    expect(res.status).toBe(200);
+    expect(await asJson<EnumerateResponse>(res)).toEqual({
+      abilities: [
+        {
+          abilityId: "gmail",
+          owners: [
+            {
+              ownerInboxId: "owner-inbox",
+              // The same resolution exec enforces for mail.read, sorted.
+              actions: [
+                "GMAIL_FETCH_EMAILS",
+                "GMAIL_FETCH_MESSAGE_BY_MESSAGE_ID",
+                "GMAIL_FETCH_MESSAGE_BY_THREAD_ID",
+              ],
+            },
+          ],
+        },
+      ],
+    });
+  });
+
   test("legacy explicit actions union with the bundle-resolved set", async () => {
     const ownerAccountId = await makeAccount();
     await seedGrant({

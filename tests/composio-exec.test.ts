@@ -66,6 +66,16 @@ const STUB_GOOGLECALENDAR_CATALOG_SLUGS = [
   "GOOGLECALENDAR_FIND_FREE_SLOTS",
 ];
 
+// The gmail vocabulary: the three mail.read slugs plus a real-but-UNBUNDLED
+// mutator (send), so the suite can prove exec denies it as no_grant, never
+// invalid_action.
+const STUB_GMAIL_CATALOG_SLUGS = [
+  "GMAIL_FETCH_EMAILS",
+  "GMAIL_FETCH_MESSAGE_BY_MESSAGE_ID",
+  "GMAIL_FETCH_MESSAGE_BY_THREAD_ID",
+  "GMAIL_SEND_EMAIL",
+];
+
 // Minimal Composio stub: exec touches tools.execute, tools.getRawComposioTools
 // (slug-validity catalog), toolkits.get (version pinning) and (when a grant
 // pins no connection) connectedAccounts.list.
@@ -75,6 +85,7 @@ function installComposioStub(
       slug: string,
       body: {
         userId: string;
+        arguments?: Record<string, unknown>;
         connectedAccountId?: string;
         version?: string;
       },
@@ -98,10 +109,14 @@ function installComposioStub(
           return Promise.reject(new Error("Composio catalog unavailable"));
         }
         const toolkit = (query.toolkits ?? [])[0]?.toLowerCase();
-        const slugs =
-          toolkit === "googlecalendar"
-            ? (opts.catalogSlugs ?? STUB_GOOGLECALENDAR_CATALOG_SLUGS)
-            : (opts.catalogSlugs ?? []);
+        let fallback: string[] = [];
+        if (toolkit === "googlecalendar") {
+          fallback = STUB_GOOGLECALENDAR_CATALOG_SLUGS;
+        }
+        if (toolkit === "gmail") {
+          fallback = STUB_GMAIL_CATALOG_SLUGS;
+        }
+        const slugs = opts.catalogSlugs ?? fallback;
         return Promise.resolve(slugs.map((slug) => ({ slug })));
       },
     },
@@ -821,6 +836,87 @@ describe("POST /v2/composio/exec — grant authorization (DB)", () => {
       expect(res.status).toBe(403);
       expect((await asJson<{ code: string }>(res)).code).toBe("no_grant");
     }
+  });
+
+  test("gmail mail.read: every fetch slug is allowed; send is no_grant (exec as oracle)", async () => {
+    const ownerAccountId = await makeAccount();
+    await seedGrant({
+      ownerAccountId,
+      ownerInboxId: "owner-inbox",
+      granteeInboxId: AGENT_INBOX,
+      conversationId: CONVERSATION,
+      toolkit: "gmail",
+      actions: [],
+      bundleIds: ["mail.read"],
+      serviceVersion: 1,
+    });
+    installComposioStub({
+      connections: [
+        { id: "conn_gmail", userId: ownerAccountId, slug: "gmail" },
+      ],
+    });
+
+    for (const action of [
+      "GMAIL_FETCH_EMAILS",
+      "GMAIL_FETCH_MESSAGE_BY_MESSAGE_ID",
+      "GMAIL_FETCH_MESSAGE_BY_THREAD_ID",
+    ]) {
+      const res = await exec(
+        { toolkit: "gmail", action, args: {} },
+        { headers: workerHeaders() },
+      );
+      expect(res.status).toBe(200);
+    }
+
+    // A real Composio slug deliberately outside mail.read: a consent gap
+    // (no_grant), never invalid_action — the read-only launch guarantee.
+    const send = await exec(
+      { toolkit: "gmail", action: "GMAIL_SEND_EMAIL", args: {} },
+      { headers: workerHeaders() },
+    );
+    expect(send.status).toBe(403);
+    expect((await asJson<{ code: string }>(send)).code).toBe("no_grant");
+  });
+
+  test("gmail: a caller-supplied user_id reaches Composio as 'me'", async () => {
+    // Composio's Gmail actions take a user_id mailbox selector ("me" or a
+    // delegated address). Consent covers the member's own mailbox only, so
+    // exec must overwrite the caller's value — a delegated mailbox never
+    // rides in on the raw exec path.
+    const ownerAccountId = await makeAccount();
+    await seedGrant({
+      ownerAccountId,
+      ownerInboxId: "owner-inbox",
+      granteeInboxId: AGENT_INBOX,
+      conversationId: CONVERSATION,
+      toolkit: "gmail",
+      actions: [],
+      bundleIds: ["mail.read"],
+      serviceVersion: 1,
+    });
+    const executed: Array<Record<string, unknown> | undefined> = [];
+    installComposioStub({
+      connections: [
+        { id: "conn_gmail", userId: ownerAccountId, slug: "gmail" },
+      ],
+      execute: (_slug, body) => {
+        executed.push(body.arguments);
+        return Promise.resolve({ data: { ok: true } });
+      },
+    });
+
+    const res = await exec(
+      {
+        toolkit: "gmail",
+        action: "GMAIL_FETCH_EMAILS",
+        args: { user_id: "someone@else.com", max_results: 5 },
+      },
+      { headers: workerHeaders() },
+    );
+    expect(res.status).toBe(200);
+    expect(executed).toHaveLength(1);
+    // The override replaces the mailbox selector and keeps the other args.
+    expect(executed[0]).toEqual({ user_id: "me", max_results: 5 });
   });
 
   test("legacy transition: no actions AND no bundleIds still means whole-toolkit", async () => {

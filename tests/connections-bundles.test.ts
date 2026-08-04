@@ -67,6 +67,18 @@ describe("bundles catalog — resolveBundleActions (no DB)", () => {
     }
   });
 
+  test("mail.read resolves to exactly the three fetch slugs — read-only", () => {
+    // The read-only launch invariant, pinned as an exact allow-list (a verb
+    // heuristic would miss mutators like MARK or ARCHIVE and would not catch
+    // a dropped fetch slug).
+    const actions = [...resolveBundleActions("gmail", ["mail.read"])].sort();
+    expect(actions).toEqual([
+      "GMAIL_FETCH_EMAILS",
+      "GMAIL_FETCH_MESSAGE_BY_MESSAGE_ID",
+      "GMAIL_FETCH_MESSAGE_BY_THREAD_ID",
+    ]);
+  });
+
   test("DEPRECATED bundles still resolve — legacy grants must keep working", () => {
     // calendar.events.read was retired from the public catalog in v4 but
     // real grants persist it; deprecation must never break exec resolution.
@@ -123,6 +135,7 @@ describe("bundles catalog — public view strips slugs (no DB)", () => {
     const json = JSON.stringify(getPublicServiceConfigs());
     // No Composio action slug should survive into the public payload.
     expect(json).not.toMatch(/GOOGLECALENDAR_/);
+    expect(json).not.toMatch(/GMAIL_/);
     expect(json).not.toMatch(/composioActions/);
   });
 
@@ -153,6 +166,21 @@ describe("bundles catalog — public view strips slugs (no DB)", () => {
     expect(gcal!.bundles[0].description.en).toBe(
       "View and edit events on all calendars",
     );
+  });
+
+  test("gmail serves exactly ONE bundle: the read-only 'Emails'", () => {
+    // Read-only launch: one on-by-default toggle covering fetch actions only;
+    // a write bundle is a deliberate later addition.
+    const gmail = getPublicServiceConfigs().find((s) => s.id === "gmail");
+    expect(gmail).toBeDefined();
+    expect(gmail!.composioSlug).toBe("gmail");
+    expect(gmail!.bundles).toHaveLength(1);
+    expect(gmail!.bundles[0].id).toBe("mail.read");
+    expect(gmail!.bundles[0].title.en).toBe("Emails");
+    expect(gmail!.bundles[0].description.en).toBe(
+      "Read and search emails in your inbox",
+    );
+    expect(gmail!.bundles[0].defaultEnabled).toBe(true);
   });
 
   test("deprecated bundles are excluded from the public view, and the flag never leaks", () => {

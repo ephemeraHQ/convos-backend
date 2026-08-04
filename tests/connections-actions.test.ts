@@ -38,12 +38,36 @@ const STUB_GOOGLECALENDAR_CATALOG_SLUGS = [
   "GOOGLECALENDAR_CALENDARS_DELETE",
 ];
 
+// The gmail vocabulary: the three mail.read slugs plus a real-but-unbundled
+// mutator (send) that stays part of the served catalog vocabulary.
+const STUB_GMAIL_CATALOG_SLUGS = [
+  "GMAIL_FETCH_EMAILS",
+  "GMAIL_FETCH_MESSAGE_BY_MESSAGE_ID",
+  "GMAIL_FETCH_MESSAGE_BY_THREAD_ID",
+  "GMAIL_SEND_EMAIL",
+];
+
+type CatalogQuery = {
+  toolkits?: string[];
+  limit?: number;
+  important?: boolean;
+};
+
+// The exact query the service last sent to the SDK — pinned below because the
+// SDK turns a toolkits-only query with no limit into a featured-only
+// (important=true) fetch, which would silently shrink the vocabulary.
+let lastCatalogQuery: CatalogQuery | null = null;
+
 function installComposioStub(catalogSlugs = STUB_GOOGLECALENDAR_CATALOG_SLUGS) {
+  lastCatalogQuery = null;
   const stub = {
     tools: {
-      getRawComposioTools: (query: { toolkits?: string[] }) => {
+      getRawComposioTools: (query: CatalogQuery) => {
+        lastCatalogQuery = query;
         const toolkit = (query.toolkits ?? [])[0]?.toLowerCase();
-        const slugs = toolkit === "googlecalendar" ? catalogSlugs : [];
+        let slugs: string[] = [];
+        if (toolkit === "googlecalendar") slugs = catalogSlugs;
+        if (toolkit === "gmail") slugs = STUB_GMAIL_CATALOG_SLUGS;
         return Promise.resolve(slugs.map((slug) => ({ slug })));
       },
     },
@@ -144,6 +168,40 @@ describe("GET /v2/connections/services/:toolkit/actions (no DB)", () => {
     expect(body.actions).not.toContain("GOOGLECALENDAR_LIST_EVENTS");
     expect(body.actions).not.toContain("listEvents");
     expect(body.actions).not.toContain("calendar.events.list");
+  });
+
+  test("requests the FULL catalog: explicit limit and important:false", async () => {
+    // The pinned SDK auto-applies important=true (featured subset) to a
+    // toolkits-only query with no limit; the service must opt out so real
+    // slugs outside the featured slice are never rejected as invalid.
+    installComposioStub();
+    const res = await getActions("gmail");
+    expect(res.status).toBe(200);
+    expect(lastCatalogQuery).toEqual({
+      toolkits: ["gmail"],
+      limit: 1000,
+      important: false,
+    });
+  });
+
+  test("gmail: every mail.read slug passes the catalog gate", async () => {
+    installComposioStub();
+    const res = await getActions("gmail");
+    expect(res.status).toBe(200);
+
+    const body = res.body as ActionsResponse;
+    expect(body.toolkit).toBe("gmail");
+    expect(body.composioSlug).toBe("gmail");
+    expect(body.actions).toEqual(
+      expect.arrayContaining([
+        "GMAIL_FETCH_EMAILS",
+        "GMAIL_FETCH_MESSAGE_BY_MESSAGE_ID",
+        "GMAIL_FETCH_MESSAGE_BY_THREAD_ID",
+      ]),
+    );
+    // A real-but-unbundled mutator stays vocabulary (validity is sourced
+    // from Composio, not our consent bundles) — exec denies it as no_grant.
+    expect(body.actions).toContain("GMAIL_SEND_EMAIL");
   });
 
   test("case-insensitive toolkit match", async () => {
