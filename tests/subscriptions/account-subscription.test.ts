@@ -14,6 +14,14 @@ import {
   resetVerifierForTests,
   setVerifierForTests,
 } from "@/subscriptions/jws-verifier";
+import {
+  AppleEnv,
+  BillingProvider,
+  SUBSCRIPTION_TIER_PLUS,
+  SubscriptionPeriod,
+  SubscriptionStatus,
+  upsertFromVerify,
+} from "@/subscriptions/repository";
 import { createJwtToken, validateJWTKeys } from "@/utils/jwt";
 import { prisma } from "@/utils/prisma";
 
@@ -179,6 +187,71 @@ describe("GET /v2/accounts/me/subscription", () => {
       willRenew: true,
       isInTrial: false,
     });
+  });
+
+  // CON-799: the iOS plan badge is backend-authoritative and derived from the
+  // serialized `status`. An auto-renewing (`willRenew`) subscriber whose period
+  // has elapsed (late/dropped renewal webhook) must keep serializing as
+  // `active` — NOT `expired` — so the badge stays "Plus", not "Basic".
+  const seedPastEndedActive = async (
+    accountId: string,
+    willRenew: boolean,
+    otidSuffix: string,
+  ) => {
+    const periodStart = new Date(Date.now() - 31 * DAY_MS);
+    const periodEnd = new Date(Date.now() - 1 * DAY_MS);
+    periodStart.setUTCMilliseconds(0);
+    periodEnd.setUTCMilliseconds(0);
+    await upsertFromVerify({
+      provider: BillingProvider.apple,
+      accountId,
+      appAccountToken: `${accountId.slice(0, 8)}-2222-3333-4444-555555555555`,
+      productId: "app.convos.subs.plus.monthly",
+      tier: SUBSCRIPTION_TIER_PLUS,
+      period: SubscriptionPeriod.monthly,
+      status: SubscriptionStatus.active,
+      originalTransactionId: `otid-${otidSuffix}-${accountId}`,
+      transactionId: `tx-${otidSuffix}-${accountId}`,
+      startedAt: periodStart,
+      currentPeriodStart: periodStart,
+      currentPeriodEnd: periodEnd,
+      willRenew,
+      isInTrial: false,
+      environment: AppleEnv.sandbox,
+      signedPayload: "stub.jws",
+    });
+    return periodEnd;
+  };
+
+  test("past-ended auto-renewing active sub still serializes as active (badge stays Plus)", async () => {
+    const accountId = await newAccount();
+    const periodEnd = await seedPastEndedActive(accountId, true, "renew");
+    const token = await tokenFor(accountId);
+    const res = await request(makeApp())
+      .get("/v2/accounts/me/subscription")
+      .set("X-Convos-AuthToken", token);
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({
+      provider: "apple",
+      tier: "plus",
+      period: "monthly",
+      status: "active",
+      productId: "app.convos.subs.plus.monthly",
+      currentPeriodEnd: periodEnd.toISOString(),
+      willRenew: true,
+      isInTrial: false,
+    });
+  });
+
+  test("past-ended CANCELLED (willRenew=false) active sub serializes as expired", async () => {
+    const accountId = await newAccount();
+    await seedPastEndedActive(accountId, false, "cancel");
+    const token = await tokenFor(accountId);
+    const res = await request(makeApp())
+      .get("/v2/accounts/me/subscription")
+      .set("X-Convos-AuthToken", token);
+    expect(res.status).toBe(200);
+    expect((res.body as VerifyBody["subscription"]).status).toBe("expired");
   });
 });
 

@@ -4,6 +4,7 @@ import { sumPeriodConsumes } from "@/payments/spendable";
 import { findCurrentByAccountId } from "@/subscriptions/repository";
 import {
   effectiveSubscriptionStatus,
+  effectiveSubscriptionStatusForDisplay,
   ENTITLED_SUBSCRIPTION_STATUSES,
 } from "@/subscriptions/status";
 import { tierGrant } from "@/subscriptions/tier-config";
@@ -39,6 +40,12 @@ export const accountViewGetHandler = async (
     storedStatus: string;
     effectiveStatus: string;
     isEntitled: boolean;
+    // Display/framing entitlement (what GET /credits and the iOS plan badge
+    // use): keeps an auto-renewing sub entitled while a late/dropped renewal
+    // webhook leaves `currentPeriodEnd` in the recent past (CON-799). Superset
+    // of the strict money `isEntitled` above, which gates the grant backfill.
+    displayEffectiveStatus: string;
+    displayIsEntitled: boolean;
     currentPeriodStart: string;
     currentPeriodEnd: string;
     environment: string | null;
@@ -51,7 +58,16 @@ export const accountViewGetHandler = async (
   if (subscription) {
     const effectiveStatus = effectiveSubscriptionStatus(subscription, now);
     const isEntitled = ENTITLED_SUBSCRIPTION_STATUSES.includes(effectiveStatus);
-    if (isEntitled) {
+    const displayEffectiveStatus = effectiveSubscriptionStatusForDisplay(
+      subscription,
+      now,
+    );
+    const displayIsEntitled = ENTITLED_SUBSCRIPTION_STATUSES.includes(
+      displayEffectiveStatus,
+    );
+    // Show period usage whenever the account is framed as entitled to anyone
+    // (display superset) so the admin figures match what the user sees.
+    if (displayIsEntitled) {
       periodConsumesCredits = await sumPeriodConsumes(
         accountId,
         subscription.currentPeriodStart,
@@ -62,6 +78,8 @@ export const accountViewGetHandler = async (
       storedStatus: subscription.status,
       effectiveStatus,
       isEntitled,
+      displayEffectiveStatus,
+      displayIsEntitled,
       currentPeriodStart: subscription.currentPeriodStart.toISOString(),
       currentPeriodEnd: subscription.currentPeriodEnd.toISOString(),
       environment: subscription.environment ?? null,

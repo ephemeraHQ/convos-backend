@@ -217,19 +217,22 @@ describe("GET /v2/accounts/me/credits", () => {
     expect(body.periodLabel).toBe("Daily");
   });
 
-  // Single-ledger: a still-`active` subscription whose period window has
-  // elapsed (no EXPIRED webhook yet) is time-expired for *display* — the
-  // credits endpoint frames it as the free-tier daily branch (cap 100,
-  // periodLabel "Daily"). But the per-period `sub_grant` that `upsertFromVerify`
-  // materialized on subscribe stays in the one wallet until an
-  // expiry/refund/revoke webhook forfeits it (covered by grants.integration).
-  // So the wallet still shows the granted balance, and `monthlyGrantUsed`
-  // (= max(0, cap − balance)) clamps to 0, NOT the cap. The old assertion
-  // (used = cap, balance = 0) encoded the pre-single-ledger derived-balance
-  // model where lapsing instantly zeroed the wallet.
-  test("past-ended active subscription: daily-cap framing, wallet credits persist until forfeit", async () => {
+  // CON-799: a still-`active`, auto-renewing (`willRenew`) subscription whose
+  // period window has elapsed is an entitled subscriber whose renewal webhook
+  // is late/dropped — NOT a lapsed user. The credits endpoint must keep tier
+  // framing (monthlyGrant = the Plus grant, periodLabel = the month), never the
+  // free-tier daily branch. The `sub_grant` materialized on subscribe still
+  // sits in the one wallet (no consumes here), so balance stays at the grant.
+  // (Before the fix this asserted daily-cap framing — the exact CON-799 bug.)
+  test("past-ended auto-renewing active subscription: keeps Plus tier framing (renewal pending)", async () => {
     const accountId = await newAccount();
-    const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000);
+    const periodStart = flooredToSecond(NOW_MS - 31 * DAY_MS);
+    const periodEnd = flooredToSecond(NOW_MS - 1 * DAY_MS);
+    const label = new Intl.DateTimeFormat("en-US", {
+      month: "long",
+      year: "numeric",
+      timeZone: "UTC",
+    }).format(periodStart);
     await upsertFromVerify({
       provider: BillingProvider.apple,
       accountId,
@@ -240,11 +243,9 @@ describe("GET /v2/accounts/me/credits", () => {
       status: SubscriptionStatus.active,
       originalTransactionId: `otid-past-active-${accountId}`,
       transactionId: `tx-past-active-${accountId}`,
-      startedAt: new Date(yesterday.getTime() - 30 * 24 * 60 * 60 * 1000),
-      currentPeriodStart: new Date(
-        yesterday.getTime() - 30 * 24 * 60 * 60 * 1000,
-      ),
-      currentPeriodEnd: yesterday,
+      startedAt: periodStart,
+      currentPeriodStart: periodStart,
+      currentPeriodEnd: periodEnd,
       willRenew: true,
       isInTrial: false,
       environment: AppleEnv.sandbox,
@@ -255,10 +256,61 @@ describe("GET /v2/accounts/me/credits", () => {
       .get("/v2/accounts/me/credits")
       .set("X-Convos-AuthToken", token);
     const body = res.body as BalanceBody;
-    expect(body.monthlyGrant).toBe(100);
+    expect(body.monthlyGrant).toBe(2500);
     expect(body.monthlyGrantUsed).toBe(0);
     expect(body.balance).toBe(2500);
-    expect(body.periodLabel).toBe("Daily");
+    expect(body.nextRefreshAt).toBe(periodEnd.toISOString());
+    expect(body.periodLabel).toBe(label);
+  });
+
+  // CON-799 core regression: an entitled Plus subscriber who has fully drained
+  // (and overrun) their monthly grant, on an auto-renewing sub whose period has
+  // elapsed (late/dropped renewal webhook). This is exactly the reported
+  // account: still Plus, negative wallet. The endpoint must frame it as Plus at
+  // ZERO remaining (monthlyGrant = the grant, monthlyGrantUsed = grant, balance
+  // clamped to 0, month label), NEVER the free-tier daily cap.
+  test("entitled auto-renewing subscriber with exhausted/negative balance: Plus tier framing at zero remaining", async () => {
+    const accountId = await newAccount();
+    const periodStart = flooredToSecond(NOW_MS - 31 * DAY_MS);
+    const periodEnd = flooredToSecond(NOW_MS - 1 * DAY_MS);
+    const withinPeriod = flooredToSecond(periodStart.getTime() + 2 * DAY_MS);
+    const label = new Intl.DateTimeFormat("en-US", {
+      month: "long",
+      year: "numeric",
+      timeZone: "UTC",
+    }).format(periodStart);
+    await upsertFromVerify({
+      provider: BillingProvider.apple,
+      accountId,
+      appAccountToken: "77777777-2222-3333-4444-555555555555",
+      productId: "app.convos.subs.plus.monthly",
+      tier: SUBSCRIPTION_TIER_PLUS,
+      period: SubscriptionPeriod.monthly,
+      status: SubscriptionStatus.active,
+      originalTransactionId: `otid-exhausted-${accountId}`,
+      transactionId: `tx-exhausted-${accountId}`,
+      startedAt: periodStart,
+      currentPeriodStart: periodStart,
+      currentPeriodEnd: periodEnd,
+      willRenew: true,
+      isInTrial: false,
+      environment: AppleEnv.sandbox,
+      signedPayload: "stub.jws",
+    });
+    // Overrun the 2500 grant within the period → wallet goes negative.
+    await writeConsume(accountId, 3000, withinPeriod, `burn-${accountId}`);
+    expect(await getSpendableBalance(accountId)).toBeLessThan(0n);
+
+    const token = await tokenFor(accountId);
+    const res = await request(makeApp())
+      .get("/v2/accounts/me/credits")
+      .set("X-Convos-AuthToken", token);
+    const body = res.body as BalanceBody;
+    expect(body.monthlyGrant).toBe(2500);
+    expect(body.monthlyGrantUsed).toBe(2500); // min(3000, 2500)
+    expect(body.balance).toBe(0); // negative wallet clamps to 0 for display
+    expect(body.nextRefreshAt).toBe(periodEnd.toISOString());
+    expect(body.periodLabel).toBe(label);
   });
 
   test("consumes within current period count against monthlyGrantUsed", async () => {
