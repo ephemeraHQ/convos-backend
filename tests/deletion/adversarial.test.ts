@@ -3,13 +3,16 @@ import { BillingProvider } from "@prisma/client";
 import { describe, expect, test, vi } from "vitest";
 import { deleteAccount } from "@/accounts/deletion/service";
 import { __setClaimAppCheckVerifierForTests } from "@/api/v2/accounts/handlers/subscription-claim";
-import { getBalance } from "@/payments";
+import { consume, getBalance } from "@/payments";
 import {
   LineageUnresolvedError,
   resolveOrCreateGoogleLineage,
 } from "@/subscriptions/lineage";
 import {
+  applyNotification,
   compensateVoidedPurchase,
+  SUBSCRIPTION_TIER_PLUS,
+  SubscriptionStatus,
   upsertFromVerify,
   type GooglePlayVerifyInput,
 } from "@/subscriptions/repository";
@@ -17,12 +20,15 @@ import { prisma } from "@/utils/prisma";
 import {
   appleClaimRequest,
   appleInput,
+  DAY_MS,
   installAppleStatuses as installAppleStatusesFixture,
   installLocalTestingVerifier,
   installReclaimHooks,
   playInput as makePlayInput,
   newAccount,
   PERIOD_CREDITS,
+  PERIOD_END,
+  PRODUCT_ID,
   signTransaction as signReclaimTransaction,
 } from "./reclaim-fixtures";
 
@@ -73,6 +79,204 @@ describe("App Check hardening", () => {
     const replay = await claimRequest(accountId, jws);
     expect(replay.status).toBe(403);
     expect((replay.body as ClaimBody).code).toBe("app_check_required");
+  });
+});
+
+describe("replay against two targets", () => {
+  test("same JWS claimed for B and C: exactly one transfer commits", async () => {
+    process.env.SUBSCRIPTION_CLAIM_LIVE_TRANSFER_ENABLED = "true";
+    process.env.CLAIM_CONTEST_WINDOW_HOURS = "0";
+    installLocalTestingVerifier();
+    __setClaimAppCheckVerifierForTests(() => Promise.resolve());
+    const owner = await newAccount();
+    const otx = "8000000000000001";
+    await upsertFromVerify(appleInput(owner, otx));
+    const jws = await signTransaction();
+    installAppleStatuses({ otx, signedLatest: jws });
+
+    const b = await newAccount();
+    const c = await newAccount();
+    const [resB, resC] = await Promise.all([
+      claimRequest(b, jws),
+      claimRequest(c, jws),
+    ]);
+
+    const statuses = [resB.status, resC.status].sort();
+    // One 200 (winner), one 409 (cooldown after the winner's transfer).
+    expect(statuses).toEqual([200, 409]);
+    const row = await prisma.subscription.findFirst({
+      where: { originalTransactionId: otx },
+    });
+    expect([b, c]).toContain(row?.accountId);
+    // Exactly one committed transfer; total credits conserved (one period).
+    expect(
+      await prisma.subscriptionTransfer.count({
+        where: { kind: "transfer", status: "committed" },
+      }),
+    ).toBe(1);
+    const balances = await Promise.all([
+      getBalance(owner),
+      getBalance(b),
+      getBalance(c),
+    ]);
+    expect(balances.reduce((a, x) => a + x, 0n)).toBe(PERIOD_CREDITS);
+  });
+});
+
+describe("conservation under spend", () => {
+  test("undo after attacker spend returns only what remains", async () => {
+    process.env.SUBSCRIPTION_CLAIM_LIVE_TRANSFER_ENABLED = "true";
+    process.env.CLAIM_CONTEST_WINDOW_HOURS = "0";
+    installLocalTestingVerifier();
+    __setClaimAppCheckVerifierForTests(() => Promise.resolve());
+    const owner = await newAccount();
+    const attacker = await newAccount();
+    const otx = "8000000000000001";
+    await upsertFromVerify(appleInput(owner, otx));
+    const jws = await signTransaction();
+    installAppleStatuses({ otx, signedLatest: jws });
+
+    expect((await claimRequest(attacker, jws)).status).toBe(200);
+    // Attacker burns 1000 credits (test env: 1000 credits = $1 => 500_000
+    // usd micros at 2.0 markup).
+    await consume({
+      accountId: attacker,
+      usdCostMicros: 500_000n,
+      idempotencyKey: `burn_${attacker}`,
+      requestId: "burn",
+    });
+    expect(await getBalance(attacker)).toBe(PERIOD_CREDITS - 1000n);
+
+    // Victim's undo recovers exactly the unspent remainder.
+    expect((await claimRequest(owner, jws)).status).toBe(200);
+    expect(await getBalance(owner)).toBe(PERIOD_CREDITS - 1000n);
+    expect(await getBalance(attacker)).toBe(0n);
+  });
+
+  test("undo is one-shot: a consumed transfer rejects with undo_consumed", async () => {
+    process.env.SUBSCRIPTION_CLAIM_LIVE_TRANSFER_ENABLED = "true";
+    process.env.CLAIM_CONTEST_WINDOW_HOURS = "0";
+    installLocalTestingVerifier();
+    __setClaimAppCheckVerifierForTests(() => Promise.resolve());
+    const owner = await newAccount();
+    const claimer = await newAccount();
+    const otx = "8000000000000001";
+    await upsertFromVerify(appleInput(owner, otx));
+    const jws = await signTransaction();
+    installAppleStatuses({ otx, signedLatest: jws });
+    expect((await claimRequest(claimer, jws)).status).toBe(200);
+
+    // Mark the transfer's undo as already consumed (a raced undo).
+    await prisma.subscriptionTransfer.updateMany({
+      where: { kind: "transfer", status: "committed" },
+      data: { undoneByTransferId: randomUUID() },
+    });
+    const res = await claimRequest(owner, jws);
+    expect(res.status).toBe(409);
+    expect((res.body as ClaimBody).reason).toBe("undo_consumed");
+  });
+});
+
+describe("post-transfer provider events", () => {
+  test("refund after A->B compensates B (custody), not A", async () => {
+    process.env.SUBSCRIPTION_CLAIM_LIVE_TRANSFER_ENABLED = "true";
+    process.env.CLAIM_CONTEST_WINDOW_HOURS = "0";
+    installLocalTestingVerifier();
+    __setClaimAppCheckVerifierForTests(() => Promise.resolve());
+    const owner = await newAccount();
+    const claimer = await newAccount();
+    const otx = "8000000000000001";
+    await upsertFromVerify(appleInput(owner, otx));
+    const jws = await signTransaction();
+    installAppleStatuses({ otx, signedLatest: jws });
+    expect((await claimRequest(claimer, jws)).status).toBe(200);
+    expect(await getBalance(claimer)).toBe(PERIOD_CREDITS);
+
+    const result = await applyNotification({
+      provider: BillingProvider.apple,
+      originalTransactionId: otx,
+      transactionId: `tx-refund-${otx}`,
+      notificationUUID: randomUUID(),
+      notificationType: "REVOKE",
+      signedPayload: "jws",
+      update: {
+        status: SubscriptionStatus.revoked,
+        willRenew: false,
+        cancelledAt: new Date(),
+        currentPeriodEnd: PERIOD_END,
+      },
+    });
+    expect(result.kind).toBe("applied");
+    // The clawback landed on the current holder.
+    expect(await getBalance(claimer)).toBe(0n);
+    expect(await getBalance(owner)).toBe(0n);
+  });
+
+  test("renewal while tombstoned funds escrow; restoration releases it once", async () => {
+    installLocalTestingVerifier();
+    __setClaimAppCheckVerifierForTests(() => Promise.resolve());
+    const owner = await newAccount();
+    const otx = "8000000000000001";
+    await upsertFromVerify(appleInput(owner, otx));
+    await deleteAccount({ accountId: owner, operationId: randomUUID() });
+
+    // Renewal arrives for the deleted owner's subscription: escrow-funded.
+    const nextStart = PERIOD_END;
+    const nextEnd = new Date(PERIOD_END.getTime() + 30 * DAY_MS);
+    const result = await applyNotification({
+      provider: BillingProvider.apple,
+      originalTransactionId: otx,
+      transactionId: "renewal-tx-1",
+      notificationUUID: randomUUID(),
+      notificationType: "DID_RENEW",
+      signedPayload: "jws",
+      update: {
+        status: SubscriptionStatus.active,
+        productId: PRODUCT_ID,
+        tier: SUBSCRIPTION_TIER_PLUS,
+        currentPeriodStart: nextStart,
+        currentPeriodEnd: nextEnd,
+        willRenew: true,
+      },
+    });
+    expect(result.kind).toBe("tombstoned");
+    const escrows = await prisma.lineagePeriodCustody.findMany({
+      where: { state: "escrow" },
+    });
+    // The deletion escrow (current period) plus the renewal escrow.
+    expect(escrows.length).toBe(2);
+    expect(await prisma.lineagePeriodGrant.count()).toBe(2);
+
+    // The stated Apple refund of that renewal arrives while still
+    // tombstoned: the renewal's escrow is invalidated (cap 0) so no later
+    // restoration can release refunded value; nothing moves (the value
+    // already left a wallet at deletion time).
+    const refund = await applyNotification({
+      provider: BillingProvider.apple,
+      originalTransactionId: otx,
+      transactionId: "renewal-tx-1",
+      notificationUUID: randomUUID(),
+      notificationType: "REVOKE",
+      signedPayload: "jws",
+      update: {
+        status: SubscriptionStatus.revoked,
+        willRenew: false,
+        cancelledAt: new Date(),
+        currentPeriodEnd: nextEnd,
+      },
+    });
+    expect(refund.kind).toBe("tombstoned");
+    const renewalEscrow = await prisma.lineagePeriodCustody.findFirst({
+      where: { providerPeriodKey: "apple_txn_renewal-tx-1" },
+    });
+    expect(renewalEscrow?.state).toBe("invalidated");
+    expect(renewalEscrow?.remainderCap).toBe(0n);
+    // Late-event isolation: the deletion escrow for the earlier period is
+    // untouched, and the registry still records exactly one row per event.
+    expect(
+      await prisma.lineagePeriodCustody.count({ where: { state: "escrow" } }),
+    ).toBe(1);
+    expect(await prisma.lineagePeriodGrant.count()).toBe(2);
   });
 });
 

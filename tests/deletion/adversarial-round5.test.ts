@@ -4,12 +4,18 @@ import { BillingProvider } from "@prisma/client";
 import express, { json } from "express";
 import request from "supertest";
 import { describe, expect, test, vi } from "vitest";
+import { __setAuthActivityStampFailureForTests } from "@/accounts/auth-activity";
 import { deleteAccount } from "@/accounts/deletion/service";
-import { __setClaimAppCheckVerifierForTests } from "@/api/v2/accounts/handlers/subscription-claim";
+import {
+  __setClaimAppCheckVerifierForTests,
+  __setPendingTransferNotifierForTests,
+} from "@/api/v2/accounts/handlers/subscription-claim";
 import { googlePlayWebhookRouter } from "@/api/v2/subscriptions/google-play-webhook.router";
+import { authMiddleware } from "@/middleware/auth";
 import { pinoMiddleware } from "@/middleware/pino";
 import { getBalance } from "@/payments";
 import { setAppleApiClientForTests } from "@/subscriptions/apple-server-api";
+import { settlePendingTransfers } from "@/subscriptions/claim";
 import { setPlayApiFixtureForTests } from "@/subscriptions/google-play/play-api";
 import { PlaySubscriptionState } from "@/subscriptions/google-play/status";
 import { setPubsubVerifierForTests } from "@/subscriptions/google-play/verifier";
@@ -40,6 +46,7 @@ import {
   playPurchase,
   PRODUCT_ID,
   signTransaction as signReclaimTransaction,
+  tokenFor,
 } from "./reclaim-fixtures";
 
 vi.mock("firebase-admin/app");
@@ -101,6 +108,36 @@ const createRestoredSubscription = async () => {
   return { owner, claimer, jws };
 };
 
+const probeApp = () => {
+  const app = express();
+  app.use(pinoMiddleware);
+  app.use(json());
+  app.get("/probe", authMiddleware, (_req, res) => {
+    res.json({ ok: true });
+  });
+  return app;
+};
+
+/** Live 72h Apple claim: owner + claimer + one pending transfer row. */
+const createPendingTransfer = async () => {
+  process.env.SUBSCRIPTION_CLAIM_LIVE_TRANSFER_ENABLED = "true";
+  process.env.CLAIM_CONTEST_WINDOW_HOURS = "72";
+  installLocalTestingVerifier();
+  __setClaimAppCheckVerifierForTests(() => Promise.resolve());
+  __setPendingTransferNotifierForTests(() => Promise.resolve());
+  const owner = await newAccount();
+  const claimer = await newAccount();
+  await upsertFromVerify(appleInput(owner));
+  const jws = await signTransaction();
+  installAppleStatuses({ status: 1, signedLatest: jws });
+  const res = await appleClaimRequest(claimer, jws);
+  expect(res.status, JSON.stringify(res.body)).toBe(202);
+  const pendingRow = await prisma.subscriptionTransfer.findFirstOrThrow({
+    where: { status: "pending" },
+  });
+  return { owner, claimer, jws, pendingRow };
+};
+
 /** Minimal live Apple lineage + subscription for cursor-only drift tests. */
 const createDriftFixture = async (
   accountId: string,
@@ -129,6 +166,99 @@ const createDriftFixture = async (
   });
   return lineage.id;
 };
+
+describe("activity stamp fails closed", () => {
+  test("a stamp DB failure during a contest window fails the request; the retry still vetoes", async () => {
+    const { owner, pendingRow } = await createPendingTransfer();
+    // The owner authenticated an hour ago (outside the throttle window), so
+    // the probe below must attempt the stamp write - which we make fail.
+    const before = await prisma.account.findUniqueOrThrow({
+      where: { id: owner },
+    });
+    __setAuthActivityStampFailureForTests(new Error("transient stamp failure"));
+
+    const failed = await request(probeApp())
+      .get("/probe")
+      .set("X-Convos-AuthToken", await tokenFor(owner));
+    // Fail closed: the act must not succeed unstamped - a swallowed error
+    // here would let settlement read the stale timestamp and execute the
+    // transfer despite real owner activity.
+    expect(failed.status).toBe(500);
+    const unchanged = await prisma.account.findUniqueOrThrow({
+      where: { id: owner },
+    });
+    expect(unchanged.lastAuthAt?.getTime()).toBe(before.lastAuthAt?.getTime());
+    __setAuthActivityStampFailureForTests(null);
+
+    // The owner's retry (the DB recovered) stamps and preserves the veto.
+    const retried = await request(probeApp())
+      .get("/probe")
+      .set("X-Convos-AuthToken", await tokenFor(owner));
+    expect(retried.status).toBe(200);
+    const stamped = await prisma.account.findUniqueOrThrow({
+      where: { id: owner },
+    });
+    expect(stamped.lastAuthAt?.getTime() ?? 0).toBeGreaterThan(
+      pendingRow.createdAt.getTime(),
+    );
+
+    await prisma.subscriptionTransfer.updateMany({
+      where: { status: "pending" },
+      data: { contestEndsAt: new Date(Date.now() - 1000) },
+    });
+    const settled = await settlePendingTransfers();
+    expect(settled.cancelled).toBe(1);
+    expect(settled.committed).toBe(0);
+    const row = await prisma.subscription.findFirstOrThrow({
+      where: { originalTransactionId: OTX },
+    });
+    expect(row.accountId).toBe(owner);
+  });
+});
+
+describe("drift reconciliation sweeps 72h-contested settlements", () => {
+  test("a default contest-window transfer settles, then drifts, and IS swept", async () => {
+    const { owner, claimer, pendingRow } = await createPendingTransfer();
+    // Age the pending row to the real 72h shape: created 73 hours ago,
+    // window just ended, owner silent since before the claim (ghost).
+    const createdAt = new Date(Date.now() - 73 * HOUR_MS);
+    await prisma.subscriptionTransfer.update({
+      where: { id: pendingRow.id },
+      data: { createdAt, contestEndsAt: new Date(Date.now() - 1000) },
+    });
+    await prisma.account.update({
+      where: { id: owner },
+      data: { lastAuthAt: new Date(Date.now() - 80 * HOUR_MS) },
+    });
+    const settled = await settlePendingTransfers();
+    expect(settled.committed).toBe(1);
+    expect(await getBalance(claimer)).toBe(PERIOD_CREDITS);
+
+    const journal = await prisma.subscriptionTransfer.findUniqueOrThrow({
+      where: { id: pendingRow.id },
+    });
+    expect(journal.status).toBe("committed");
+    expect(journal.committedAt).not.toBeNull();
+    // The exact shape a createdAt-window selection would miss: by settlement
+    // time the journal's createdAt is 73 hours old.
+    expect(journal.createdAt.getTime()).toBeLessThan(Date.now() - 72 * HOUR_MS);
+
+    // The provider revokes after settlement; the webhook is lost.
+    installAppleStatuses({ status: 2, signedLatest: "irrelevant" });
+    const counts = await runReclaimReconciliationSweep();
+    expect(counts.driftChecked).toBe(1);
+    expect(counts.driftCompensated).toBe(1);
+    expect(await getBalance(claimer)).toBe(0n);
+    const custody = await prisma.lineagePeriodCustody.findFirstOrThrow({});
+    expect(custody.state).toBe("invalidated");
+    // The Subscription row carries the provider-derived terminal state.
+    const row = await prisma.subscription.findFirstOrThrow({
+      where: { originalTransactionId: OTX },
+    });
+    expect(row.status).toBe(SubscriptionStatus.expired);
+    expect(row.willRenew).toBe(false);
+  });
+});
 
 describe("durable drift scheduling and rolling safety", () => {
   test(">50 equal-millisecond schedules are each swept once in one tick", async () => {

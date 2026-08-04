@@ -128,8 +128,8 @@ export async function googlePlayRtdnHandler(req: Request, res: Response) {
   }
 
   // Voided purchase: compensate the exact voided order's custody holder
-  // (works whether the value sits with the current owner or in deletion
-  // escrow), then ack. A void with no orderId or
+  // (works whether the value sits with the original owner, a claim
+  // transferee, or in deletion escrow), then ack. A void with no orderId or
   // no provably matching custody is PARKED for the reconciliation sweep —
   // never resolved by revoking current entitlement.
   if (notification.voidedPurchaseNotification) {
@@ -287,21 +287,22 @@ export async function googlePlayRtdnHandler(req: Request, res: Response) {
           notificationType: sub.notificationType,
           receiptRecorded: result.receiptRecorded,
         },
-        "play.rtdn.subscription_not_applied — acking",
+        "play.rtdn.unknown_subscription — acking",
       );
       res.status(200).json({ ok: true, applied: false });
       return;
     }
 
     if (result.kind === "tombstoned") {
-      // Deleted-account lineage: acknowledged without creating
-      // account-linked state.
+      // The purchase token (or its rotation predecessor) belongs to a
+      // deleted account. Explicit, counted no-op: ack so Pub/Sub stops
+      // retrying; never recreate account-linked state.
       req.log.info(
         {
           messageId: message.messageId,
           notificationType: sub.notificationType,
         },
-        "play.rtdn.subscription_not_applied — acking",
+        "play.rtdn.tombstoned_noop",
       );
       res.status(200).json({ ok: true, applied: false });
       return;

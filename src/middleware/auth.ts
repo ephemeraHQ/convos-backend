@@ -1,4 +1,5 @@
 import type { NextFunction, Request, Response } from "express";
+import { stampAuthActivity } from "@/accounts/auth-activity";
 import { accountIdSchema } from "@/utils/account-id";
 import { ADMIN_ACCOUNT_ID } from "@/utils/constants";
 import { AppError } from "@/utils/errors";
@@ -32,6 +33,11 @@ const isDeleteReplayCarveOut = (req: Request): boolean => {
  * channel). No positive caching: fail-closed means every check hits the
  * database. Returns false after writing the response when the request must
  * not proceed.
+ *
+ * Live requests also stamp lastAuthAt (awaited, fail-closed; throttled only
+ * while no outgoing transfer is pending): the claim contest window treats
+ * any authenticated act as a veto, so a request that cannot durably stamp
+ * fails with a 5xx rather than proceeding unstamped.
  */
 type VerifiedJwtPayload = Awaited<ReturnType<typeof verifyJwtToken>>;
 
@@ -45,11 +51,11 @@ const enforceLiveAccountClaim = async (
     res.status(401).json({ error: "Unauthorized" });
     return false;
   }
-  let account: { id: string } | null;
+  let account: { id: string; lastAuthAt: Date | null } | null;
   try {
     account = await prisma.account.findUnique({
       where: { id: payload.accountId },
-      select: { id: true },
+      select: { id: true, lastAuthAt: true },
     });
   } catch (error) {
     req.log.error({ error }, "auth.fence.account_lookup_failed");
@@ -60,6 +66,22 @@ const enforceLiveAccountClaim = async (
     req.log.warn({ deviceId: payload.deviceId }, "auth.fence.account_not_live");
     res.status(401).json({ error: "Unauthorized" });
     return false;
+  }
+  if (!isNotificationExtensionOnlyToken(payload)) {
+    // Awaited and fail-closed: the contest-window veto depends on this stamp
+    // being durable before the request proceeds (see stampAuthActivity). A
+    // stamp failure fails the request - proceeding unstamped could silently
+    // cost a legitimate owner their veto during a contest window.
+    try {
+      await stampAuthActivity(account.id, account.lastAuthAt);
+    } catch (err) {
+      req.log.error(
+        { err, deviceId: payload.deviceId },
+        "auth.activity_stamp_failed",
+      );
+      res.status(500).json({ error: "Internal server error" });
+      return false;
+    }
   }
   return true;
 };

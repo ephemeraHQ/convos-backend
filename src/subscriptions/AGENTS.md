@@ -14,7 +14,9 @@ lineage row is:
 - the **canonical first lock** for every money path (below);
 - the **tombstone carrier** — account deletion flips `state` to
   `tombstoned`; webhooks ack tombstoned lineages as counted no-ops, verify
-  returns 409 with `claimable: true`, and a claim restores the lineage.
+  returns 409 with `claimable: true`, and a claim restores the lineage;
+- the **cooldown/freeze anchor** for claims (`lastTransferAt`,
+  `liveTransferFrozenAt`).
 
 `LineagePeriodGrant` is the global once-per-funding-event registry (one row
 per Apple transactionId / Google latestOrderId), and `LineagePeriodCustody`
@@ -22,7 +24,7 @@ tracks who currently holds each funded period's remaining value. Custody —
 not account-scoped `sub_grant` rows — is the source of truth for the
 remainder after funding; every move debits by
 `D = min(lockedOwnerBalance, max(0, cap - ownerConsumesSince(custodyStartedAt)))`
-and sets `cap := D`, so no chain of escrow/restoration/refund exceeds the
+and sets `cap := D`, so no chain of transfer/undo/escrow/refund exceeds the
 allotment and commingled promo/admin credits never move.
 
 ## Global lock order (deadlock-free by construction)
@@ -53,7 +55,9 @@ Rules:
 
 - Tombstone restoration: escrow release referencing the existing funding
   row — never a second grant.
-- Live lineage and Google claim attempts fail closed; only Apple tombstone
-  restoration is supported.
+- Live transfer: flagged (`SUBSCRIPTION_CLAIM_LIVE_TRANSFER_ENABLED`, off at
+  launch), 72h contest window by default, per-lineage 30-day cooldown,
+  one-shot CAS undo for the immediately previous owner (cooldown-exempt,
+  executes immediately, sets the post-undo freeze).
 - App Check limited-use attestation is mandatory on the claim route and
   fails closed — no `app_attest_enabled` bypass.

@@ -8,8 +8,10 @@ import express, { json } from "express";
 import { importPKCS8, SignJWT } from "jose";
 import request from "supertest";
 import { afterAll, afterEach, beforeAll } from "vitest";
+import { __setAuthActivityStampFailureForTests } from "@/accounts/auth-activity";
 import {
   __setClaimAppCheckVerifierForTests,
+  __setPendingTransferNotifierForTests,
   claimAppCheckMiddleware,
   subscriptionClaimHandler,
 } from "@/api/v2/accounts/handlers/subscription-claim";
@@ -20,6 +22,7 @@ import {
   resetAppleApiClientForTests,
   setAppleApiClientForTests,
 } from "@/subscriptions/apple-server-api";
+import { __setSettlementEntitlementCheckerForTests } from "@/subscriptions/claim";
 import {
   resetPlayApiClientForTests,
   setPlayApiFixtureForTests,
@@ -273,6 +276,12 @@ export const playClaimRequest = async (
 export const wipeReclaimState = async () => {
   __setClaimAppCheckVerifierForTests(null);
   __setClaimCeilingIncrementForTests(null);
+  __setPendingTransferNotifierForTests(null);
+  __setSettlementEntitlementCheckerForTests(null);
+  __setAuthActivityStampFailureForTests(null);
+  delete process.env.SUBSCRIPTION_CLAIM_LIVE_TRANSFER_ENABLED;
+  delete process.env.SUBSCRIPTION_CLAIM_GOOGLE_ENABLED;
+  delete process.env.CLAIM_CONTEST_WINDOW_HOURS;
   resetVerifierForTests();
   resetAppleApiClientForTests();
   resetPlayApiClientForTests();

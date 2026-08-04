@@ -8,12 +8,17 @@ import {
   IdentityBarredError,
   upsertAuthMethodAndAccount,
 } from "@/accounts/repository";
-import { __setClaimAppCheckVerifierForTests } from "@/api/v2/accounts/handlers/subscription-claim";
+import {
+  __setClaimAppCheckVerifierForTests,
+  __setPendingTransferNotifierForTests,
+} from "@/api/v2/accounts/handlers/subscription-claim";
 import { subscriptionVerifyHandler } from "@/api/v2/accounts/handlers/subscription-verify";
 import { googlePlayWebhookRouter } from "@/api/v2/subscriptions/google-play-webhook.router";
 import { authMiddleware, requireAccount } from "@/middleware/auth";
 import { pinoMiddleware } from "@/middleware/pino";
 import { consume, getBalance } from "@/payments";
+import { resetAppleApiClientForTests } from "@/subscriptions/apple-server-api";
+import { settlePendingTransfers } from "@/subscriptions/claim";
 import { PlayNotificationType } from "@/subscriptions/google-play/notification-mapping";
 import {
   setPlayApiFixtureForTests,
@@ -328,6 +333,138 @@ describe("terminal events while tombstoned invalidate their exact escrow", () =>
   });
 });
 
+describe("one-shot undo under a real race", () => {
+  test("concurrent undos by the previous owner commit exactly one undo journal", async () => {
+    process.env.SUBSCRIPTION_CLAIM_LIVE_TRANSFER_ENABLED = "true";
+    process.env.CLAIM_CONTEST_WINDOW_HOURS = "0";
+    installLocalTestingVerifier();
+    __setClaimAppCheckVerifierForTests(() => Promise.resolve());
+    const owner = await newAccount();
+    const claimer = await newAccount();
+    const otx = "7000000000000001";
+    await upsertFromVerify(appleInput(owner, otx));
+    const jws = await signTransaction();
+    installAppleStatusMap({ [otx]: { status: 1, signedLatest: jws } });
+    expect((await claimRequest(claimer, jws)).status).toBe(200);
+
+    const [a, b] = await Promise.all([
+      claimRequest(owner, jws),
+      claimRequest(owner, jws),
+    ]);
+    // Winner undoes; loser converges as an idempotent replay (owner already
+    // holds the row) or an undo_consumed rejection — never a second undo.
+    for (const res of [a, b]) {
+      expect([200, 409]).toContain(res.status);
+    }
+    expect(
+      await prisma.subscriptionTransfer.count({ where: { kind: "undo" } }),
+    ).toBe(1);
+    const transfer = await prisma.subscriptionTransfer.findFirstOrThrow({
+      where: { kind: "transfer" },
+    });
+    expect(transfer.undoneByTransferId).not.toBeNull();
+    const row = await prisma.subscription.findFirstOrThrow({
+      where: { originalTransactionId: otx },
+    });
+    expect(row.accountId).toBe(owner);
+
+    // The undo journal row is never itself an undo target: the claimer's
+    // "undo of the undo" is rejected (post-undo freeze; and undo rows carry
+    // no undo deadline).
+    const undoRow = await prisma.subscriptionTransfer.findFirstOrThrow({
+      where: { kind: "undo" },
+    });
+    expect(undoRow.undoDeadlineAt).toBeNull();
+    const claimBack = await claimRequest(claimer, jws);
+    expect(claimBack.status).toBe(409);
+    expect((claimBack.body as ClaimBody).reason).toBe("transfer_frozen");
+  });
+});
+
+describe("contest-window settlement rechecks the provider", () => {
+  test("entitlement revoked during the window cancels the pending transfer", async () => {
+    process.env.SUBSCRIPTION_CLAIM_LIVE_TRANSFER_ENABLED = "true";
+    process.env.CLAIM_CONTEST_WINDOW_HOURS = "72";
+    installLocalTestingVerifier();
+    __setClaimAppCheckVerifierForTests(() => Promise.resolve());
+    __setPendingTransferNotifierForTests(() => Promise.resolve());
+    const owner = await newAccount();
+    const claimer = await newAccount();
+    const otx = "7000000000000001";
+    await upsertFromVerify(appleInput(owner, otx));
+    const jws = await signTransaction();
+    installAppleStatusMap({ [otx]: { status: 1, signedLatest: jws } });
+
+    expect((await claimRequest(claimer, jws)).status).toBe(202);
+
+    // The provider revokes inside the window; settlement's execution-time
+    // recheck must cancel instead of executing the stored transfer.
+    installAppleStatusMap({ [otx]: { status: 2, signedLatest: jws } });
+    await prisma.subscriptionTransfer.updateMany({
+      where: { status: "pending" },
+      data: { contestEndsAt: new Date(Date.now() - 1000) },
+    });
+    const settled = await settlePendingTransfers();
+    expect(settled.cancelled).toBe(1);
+    expect(settled.committed).toBe(0);
+    const row = await prisma.subscription.findFirstOrThrow({
+      where: { originalTransactionId: otx },
+    });
+    expect(row.accountId).toBe(owner);
+  });
+
+  test("provider unreachable defers settlement (row stays pending)", async () => {
+    process.env.SUBSCRIPTION_CLAIM_LIVE_TRANSFER_ENABLED = "true";
+    process.env.CLAIM_CONTEST_WINDOW_HOURS = "72";
+    installLocalTestingVerifier();
+    __setClaimAppCheckVerifierForTests(() => Promise.resolve());
+    __setPendingTransferNotifierForTests(() => Promise.resolve());
+    const owner = await newAccount();
+    const claimer = await newAccount();
+    const otx = "7000000000000001";
+    await upsertFromVerify(appleInput(owner, otx));
+    const jws = await signTransaction();
+    installAppleStatusMap({ [otx]: { status: 1, signedLatest: jws } });
+    expect((await claimRequest(claimer, jws)).status).toBe(202);
+
+    resetAppleApiClientForTests(); // provider calls now fail
+    await prisma.subscriptionTransfer.updateMany({
+      where: { status: "pending" },
+      data: { contestEndsAt: new Date(Date.now() - 1000) },
+    });
+    const settled = await settlePendingTransfers();
+    expect(settled).toEqual({ committed: 0, cancelled: 0 });
+    expect(
+      await prisma.subscriptionTransfer.count({ where: { status: "pending" } }),
+    ).toBe(1);
+  });
+
+  test("null lastAuthAt on the old account is a defensive veto", async () => {
+    process.env.SUBSCRIPTION_CLAIM_LIVE_TRANSFER_ENABLED = "true";
+    process.env.CLAIM_CONTEST_WINDOW_HOURS = "72";
+    installLocalTestingVerifier();
+    __setClaimAppCheckVerifierForTests(() => Promise.resolve());
+    __setPendingTransferNotifierForTests(() => Promise.resolve());
+    // Owner with NO lastAuthAt (direct create) — settlement must not treat
+    // the unknown as silence-equals-consent.
+    const owner = (await prisma.account.create({ data: {} })).id;
+    const claimer = await newAccount();
+    const otx = "7000000000000001";
+    await upsertFromVerify(appleInput(owner, otx));
+    const jws = await signTransaction();
+    installAppleStatusMap({ [otx]: { status: 1, signedLatest: jws } });
+    expect((await claimRequest(claimer, jws)).status).toBe(202);
+
+    await prisma.subscriptionTransfer.updateMany({
+      where: { status: "pending" },
+      data: { contestEndsAt: new Date(Date.now() - 1000) },
+    });
+    const settled = await settlePendingTransfers();
+    expect(settled.cancelled).toBe(1);
+    expect(settled.committed).toBe(0);
+  });
+});
+
 describe("deadlock retry", () => {
   test("withDeadlockRetry retries bounded on 40P01/40001-shaped failures", async () => {
     let calls = 0;
@@ -369,9 +506,119 @@ describe("deadlock retry", () => {
     expect(isRetryableTxConflict(new Error("40001"))).toBe(true);
     expect(isRetryableTxConflict(new Error("boring"))).toBe(false);
   });
+
+  test("opposite-direction transfers across two lineages converge (sorted wallet prelock)", async () => {
+    process.env.SUBSCRIPTION_CLAIM_LIVE_TRANSFER_ENABLED = "true";
+    process.env.CLAIM_CONTEST_WINDOW_HOURS = "0";
+    installLocalTestingVerifier();
+    __setClaimAppCheckVerifierForTests(() => Promise.resolve());
+    const accountA = await newAccount();
+    const accountB = await newAccount();
+    const otx1 = "7000000000000011";
+    const otx2 = "7000000000000012";
+    await upsertFromVerify(
+      appleInput(accountA, otx1, "11111111-2222-3333-4444-000000000001"),
+    );
+    await upsertFromVerify(
+      appleInput(accountB, otx2, "11111111-2222-3333-4444-000000000002"),
+    );
+    const jws1 = await signTransaction({
+      transactionId: otx1,
+      originalTransactionId: otx1,
+    });
+    const jws2 = await signTransaction({
+      transactionId: otx2,
+      originalTransactionId: otx2,
+    });
+    installAppleStatusMap({
+      [otx1]: { status: 1, signedLatest: jws1 },
+      [otx2]: { status: 1, signedLatest: jws2 },
+    });
+
+    // L1: A -> B while L2: B -> A, concurrently. Without sorted wallet
+    // prelocks this is the textbook AB-BA wallet deadlock.
+    const [r1, r2] = await Promise.all([
+      claimRequest(accountB, jws1),
+      claimRequest(accountA, jws2),
+    ]);
+    expect(
+      [r1.status, r2.status],
+      `${JSON.stringify(r1.body)} / ${JSON.stringify(r2.body)}`,
+    ).toEqual([200, 200]);
+    // Conservation: each wallet ends with exactly the other lineage's period.
+    expect(await getBalance(accountA)).toBe(PERIOD_CREDITS);
+    expect(await getBalance(accountB)).toBe(PERIOD_CREDITS);
+  });
 });
 
 describe("cumulative custody cap across the full lifecycle", () => {
+  test("transfer -> spend -> undo -> delete -> restore never exceeds one allotment", async () => {
+    process.env.SUBSCRIPTION_CLAIM_LIVE_TRANSFER_ENABLED = "true";
+    process.env.CLAIM_CONTEST_WINDOW_HOURS = "0";
+    installLocalTestingVerifier();
+    __setClaimAppCheckVerifierForTests(() => Promise.resolve());
+    const owner = await newAccount();
+    const claimerB = await newAccount();
+    const claimerC = await newAccount();
+    const otx = "7000000000000001";
+    await upsertFromVerify(appleInput(owner, otx));
+    const jws = await signTransaction();
+    installAppleStatusMap({ [otx]: { status: 1, signedLatest: jws } });
+
+    const capAfter = async (): Promise<bigint> => {
+      const custody = await prisma.lineagePeriodCustody.findFirstOrThrow({
+        orderBy: { periodEnd: "desc" },
+      });
+      return custody.remainderCap;
+    };
+
+    const caps: bigint[] = [await capAfter()];
+
+    // Transfer to B, B spends 1000, owner undoes (recovers the remainder).
+    expect((await claimRequest(claimerB, jws)).status).toBe(200);
+    caps.push(await capAfter());
+    await consume({
+      accountId: claimerB,
+      usdCostMicros: 500_000n,
+      idempotencyKey: `burn_${claimerB}`,
+      requestId: "burn",
+    });
+    expect((await claimRequest(owner, jws)).status).toBe(200);
+    caps.push(await capAfter());
+
+    // Owner deletes (escrow), C restores.
+    await deleteAccount({ accountId: owner, operationId: randomUUID() });
+    caps.push(await capAfter());
+    expect((await claimRequest(claimerC, jws)).status).toBe(200);
+    caps.push(await capAfter());
+
+    // The custody cap is monotonically non-increasing and bounded by the
+    // allotment.
+    for (let i = 1; i < caps.length; i += 1) {
+      expect(caps[i] <= caps[i - 1]).toBe(true);
+    }
+    expect(caps[0]).toBe(PERIOD_CREDITS);
+
+    // Cumulative movement bounded by one allotment: all remaining balances
+    // plus what B burned equal exactly the single funded period.
+    const balances = await Promise.all([
+      getBalance(claimerB),
+      getBalance(claimerC),
+    ]);
+    expect(balances[0]).toBe(0n);
+    expect(balances[1]).toBe(PERIOD_CREDITS - 1000n);
+    // The funding registry never grew past the one funded period (the
+    // original sub_grant ledger row died with the owner's wallet; the
+    // registry row is the durable funded-once record).
+    expect(await prisma.lineagePeriodGrant.count()).toBe(1);
+    // Restoration was an escrow release, never a second grant.
+    expect(
+      await prisma.creditLedger.count({
+        where: { idempotencyKey: { startsWith: "sub_escrow_release_" } },
+      }),
+    ).toBe(1);
+  });
+
   test("spend -> delete -> restore -> renewal cycles stay within funded allotments", async () => {
     installLocalTestingVerifier();
     __setClaimAppCheckVerifierForTests(() => Promise.resolve());

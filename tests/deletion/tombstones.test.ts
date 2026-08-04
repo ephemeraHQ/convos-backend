@@ -1,4 +1,4 @@
-import { generateKeyPairSync } from "node:crypto";
+import { generateKeyPairSync, randomUUID } from "node:crypto";
 import {
   Environment,
   SignedDataVerifier,
@@ -8,6 +8,8 @@ import express, { json } from "express";
 import { importPKCS8, SignJWT } from "jose";
 import request from "supertest";
 import { afterEach, beforeAll, describe, expect, test, vi } from "vitest";
+import { expireDeletionRecords } from "@/accounts/deletion/outbox";
+import { deleteAccount } from "@/accounts/deletion/service";
 import { accountsMeRouter } from "@/api/v2/accounts/accountsMeRouter";
 import { authMiddleware } from "@/middleware/auth";
 import { pinoMiddleware } from "@/middleware/pino";
@@ -48,6 +50,10 @@ const newAccount = async () => {
 
 const wipe = async () => {
   delete process.env.SUBSCRIPTION_CLAIM_TOMBSTONE_ENABLED;
+  await prisma.deletionTask.deleteMany();
+  await prisma.deletionRecord.deleteMany();
+  await prisma.deletedIdentity.deleteMany();
+  await prisma.adminAudit.deleteMany();
   await prisma.subscriptionTransfer.deleteMany();
   await prisma.lineagePeriodCustody.deleteMany();
   await prisma.lineagePeriodGrant.deleteMany();
@@ -132,6 +138,54 @@ const tombstone = (provider: BillingProvider, providerKey: string) =>
 afterEach(wipe);
 
 describe("verify against deletion tombstones", () => {
+  test("30-day record expiry does not lift re-verify dedup (replay abuse)", async () => {
+    // Macroscope scenario: subscriber deletes, waits out the 30-day
+    // DeletionRecord audit window, then re-verifies the same OTX from a
+    // fresh account hoping the dedup state was swept with the record.
+    const owner = await newAccount();
+    await upsertFromVerify(appleInput(owner, "otx-replay"));
+    const operationId = randomUUID();
+    await deleteAccount({ accountId: owner, operationId });
+
+    // Clock-travel the audit window and run the expiry sweep: the
+    // deletion-scoped rows (record + outbox tasks) are purged.
+    await prisma.deletionRecord.update({
+      where: { operationId },
+      data: { expiresAt: new Date(Date.now() - 1000) },
+    });
+    expect(await expireDeletionRecords()).toBe(1);
+    expect(await prisma.deletionRecord.count()).toBe(0);
+    expect(await prisma.deletionTask.count()).toBe(0);
+
+    // Subscription-scoped rows are on no sweep: tombstoned lineage,
+    // funding registry, and escrow custody all survive the expiry.
+    const lineage = await prisma.subscriptionLineage.findFirst({
+      where: { provider: BillingProvider.apple, lineageKey: "otx-replay" },
+    });
+    expect(lineage?.state).toBe("tombstoned");
+    expect(
+      await prisma.lineagePeriodGrant.count({
+        where: { lineageId: lineage?.id },
+      }),
+    ).toBe(1);
+    expect(
+      await prisma.lineagePeriodCustody.count({
+        where: { lineageId: lineage?.id, state: "escrow" },
+      }),
+    ).toBe(1);
+
+    // The replay: still the tombstone 409 — no fresh Subscription row and
+    // no fresh period grant for the new account.
+    const attacker = await newAccount();
+    await expect(
+      upsertFromVerify(appleInput(attacker, "otx-replay")),
+    ).rejects.toBeInstanceOf(SubscriptionTombstonedError);
+    expect(await prisma.subscription.count()).toBe(0);
+    expect(
+      await prisma.creditLedger.count({ where: { accountId: attacker } }),
+    ).toBe(0);
+  });
+
   test("tombstoned Apple key with no live row: throws, creates nothing", async () => {
     const accountId = await newAccount();
     await tombstone(BillingProvider.apple, "otx-dead");
@@ -198,7 +252,7 @@ describe("webhooks against deletion tombstones", () => {
     expect(await prisma.billingReceipt.count()).toBe(0);
   });
 
-  test("Play RTDN rotation onto a tombstoned token: counted no-op", async () => {
+  test("Play RTDN rotation onto a tombstoned token: no-op + absorption", async () => {
     await tombstone(BillingProvider.googlePlay, "token-old");
     const result = await applyNotification({
       provider: BillingProvider.googlePlay,
@@ -211,6 +265,10 @@ describe("webhooks against deletion tombstones", () => {
       update: { status: SubscriptionStatus.active },
     });
     expect(result).toEqual({ kind: "tombstoned" });
+    const absorbed = await prisma.lineageTokenAlias.findUnique({
+      where: { token: "token-new" },
+    });
+    expect(absorbed).not.toBeNull();
   });
 
   test("unknown key with no tombstone stays unknown_subscription", async () => {

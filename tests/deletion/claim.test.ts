@@ -3,8 +3,12 @@ import { BillingProvider } from "@prisma/client";
 import request from "supertest";
 import { describe, expect, test, vi } from "vitest";
 import { deleteAccount } from "@/accounts/deletion/service";
-import { __setClaimAppCheckVerifierForTests } from "@/api/v2/accounts/handlers/subscription-claim";
-import { getBalance } from "@/payments";
+import {
+  __setClaimAppCheckVerifierForTests,
+  __setPendingTransferNotifierForTests,
+} from "@/api/v2/accounts/handlers/subscription-claim";
+import { getBalance, grant } from "@/payments";
+import { settlePendingTransfers } from "@/subscriptions/claim";
 import { upsertFromVerify } from "@/subscriptions/repository";
 import { prisma } from "@/utils/prisma";
 import {
@@ -332,6 +336,196 @@ describe("live transfer tier", () => {
     expect(res.status).toBe(409);
     expect(body(res).reason).toBe("transfer_frozen");
     // Ownership untouched.
+    const row = await prisma.subscription.findFirst({
+      where: { originalTransactionId: otx },
+    });
+    expect(row?.accountId).toBe(owner);
+  });
+
+  test("instant transfer (window 0) conserves credits exactly; promo stays put", async () => {
+    process.env.SUBSCRIPTION_CLAIM_LIVE_TRANSFER_ENABLED = "true";
+    process.env.CLAIM_CONTEST_WINDOW_HOURS = "0";
+    const otx = "9000000000000001";
+    const owner = await setupLiveOwner(otx);
+    // Commingle promo credits into the owner wallet.
+    await grant({
+      accountId: owner,
+      credits: 1000,
+      kind: "manual",
+      idempotencyKey: `promo_${owner}`,
+      note: "promo",
+    });
+    const claimer = await newAccount();
+    passAppCheck();
+    const jws = await signTransaction({
+      transactionId: otx,
+      originalTransactionId: otx,
+    });
+    installAppleStatuses({ otx, status: 1, signedLatest: jws });
+
+    const ownerBefore = await getBalance(owner);
+    const res = await claimRequest(claimer, jws);
+    expect(res.status).toBe(200);
+
+    const ownerAfter = await getBalance(owner);
+    const claimerAfter = await getBalance(claimer);
+    // Conservation: what left the owner landed on the claimer.
+    expect(ownerBefore - ownerAfter).toBe(claimerAfter);
+    // The move is the subscription remainder only — promo credits survive.
+    expect(claimerAfter).toBe(PERIOD_CREDITS);
+    expect(ownerAfter).toBe(1000n);
+
+    const row = await prisma.subscription.findFirst({
+      where: { originalTransactionId: otx },
+    });
+    expect(row?.accountId).toBe(claimer);
+  });
+
+  test("fractional contest window (0.5) never means instant transfer: falls back to 72h pending", async () => {
+    process.env.SUBSCRIPTION_CLAIM_LIVE_TRANSFER_ENABLED = "true";
+    // parseInt would truncate this to 0 (instant transfer, the outcome that
+    // requires explicit security acceptance); the parser must reject it and
+    // keep the 72h default.
+    process.env.CLAIM_CONTEST_WINDOW_HOURS = "0.5";
+    const otx = "9000000000000001";
+    const owner = await setupLiveOwner(otx);
+    const claimer = await newAccount();
+    passAppCheck();
+    __setPendingTransferNotifierForTests(() => Promise.resolve());
+    const jws = await signTransaction({
+      transactionId: otx,
+      originalTransactionId: otx,
+    });
+    installAppleStatuses({ otx, status: 1, signedLatest: jws });
+
+    const res = await claimRequest(claimer, jws);
+    expect(res.status).toBe(202);
+    expect(body(res).status).toBe("pending");
+    // The fallback window is 72h, not a truncated zero.
+    const contestEndsAt = new Date(body(res).contestEndsAt ?? "").getTime();
+    expect(contestEndsAt).toBeGreaterThan(Date.now() + 71 * 60 * 60 * 1000);
+    // Ownership untouched while pending.
+    const row = await prisma.subscription.findFirst({
+      where: { originalTransactionId: otx },
+    });
+    expect(row?.accountId).toBe(owner);
+  });
+
+  test("second transfer inside the lineage cooldown: 409 cooldown; previous-owner undo is exempt and one-shot", async () => {
+    process.env.SUBSCRIPTION_CLAIM_LIVE_TRANSFER_ENABLED = "true";
+    process.env.CLAIM_CONTEST_WINDOW_HOURS = "0";
+    const otx = "9000000000000001";
+    const owner = await setupLiveOwner(otx);
+    const claimer = await newAccount();
+    const third = await newAccount();
+    passAppCheck();
+    const jws = await signTransaction({
+      transactionId: otx,
+      originalTransactionId: otx,
+    });
+    installAppleStatuses({ otx, status: 1, signedLatest: jws });
+
+    expect((await claimRequest(claimer, jws)).status).toBe(200);
+
+    // A third account inside the cooldown: rejected.
+    const thirdRes = await claimRequest(third, jws);
+    expect(thirdRes.status).toBe(409);
+    expect(body(thirdRes).reason).toBe("cooldown");
+
+    // The previous owner's undo is exempt from cooldown and succeeds.
+    const undoRes = await claimRequest(owner, jws);
+    expect(undoRes.status).toBe(200);
+    const row = await prisma.subscription.findFirst({
+      where: { originalTransactionId: otx },
+    });
+    expect(row?.accountId).toBe(owner);
+
+    // Post-undo freeze: the next automated transfer is rejected.
+    const afterUndo = await claimRequest(claimer, jws);
+    expect(afterUndo.status).toBe(409);
+    expect(body(afterUndo).reason).toBe("transfer_frozen");
+  });
+
+  test("contest window: 202 pending, push notifier fires, settlement executes after the window", async () => {
+    process.env.SUBSCRIPTION_CLAIM_LIVE_TRANSFER_ENABLED = "true";
+    process.env.CLAIM_CONTEST_WINDOW_HOURS = "72";
+    const otx = "9000000000000001";
+    const owner = await setupLiveOwner(otx);
+    const claimer = await newAccount();
+    passAppCheck();
+    const notified: string[] = [];
+    __setPendingTransferNotifierForTests(({ oldAccountId }) => {
+      notified.push(oldAccountId);
+      return Promise.resolve();
+    });
+    const jws = await signTransaction({
+      transactionId: otx,
+      originalTransactionId: otx,
+    });
+    installAppleStatuses({ otx, status: 1, signedLatest: jws });
+
+    const res = await claimRequest(claimer, jws);
+    expect(res.status).toBe(202);
+    expect(body(res).status).toBe("pending");
+    expect(new Date(body(res).contestEndsAt ?? "").getTime()).toBeGreaterThan(
+      Date.now(),
+    );
+    expect(notified).toEqual([owner]);
+
+    // A second claim while pending: 409 pending_contest.
+    const other = await newAccount();
+    const during = await claimRequest(other, jws);
+    expect(during.status).toBe(409);
+    expect(body(during).reason).toBe("pending_contest");
+
+    // Window elapses (backdate) -> settlement executes the transfer.
+    await prisma.subscriptionTransfer.updateMany({
+      where: { status: "pending" },
+      data: { contestEndsAt: new Date(Date.now() - 1000) },
+    });
+    const settled = await settlePendingTransfers();
+    expect(settled.committed).toBe(1);
+    const row = await prisma.subscription.findFirst({
+      where: { originalTransactionId: otx },
+    });
+    expect(row?.accountId).toBe(claimer);
+  });
+
+  test("contest veto: authenticated old-account act after the pending row cancels it", async () => {
+    process.env.SUBSCRIPTION_CLAIM_LIVE_TRANSFER_ENABLED = "true";
+    process.env.CLAIM_CONTEST_WINDOW_HOURS = "72";
+    const otx = "9000000000000001";
+    const owner = await setupLiveOwner(otx);
+    const claimer = await newAccount();
+    passAppCheck();
+    __setPendingTransferNotifierForTests(() => Promise.resolve());
+    const jws = await signTransaction({
+      transactionId: otx,
+      originalTransactionId: otx,
+    });
+    installAppleStatuses({ otx, status: 1, signedLatest: jws });
+
+    expect((await claimRequest(claimer, jws)).status).toBe(202);
+
+    // Old account authenticates during the window (lastAuthAt stamp).
+    // Anchored to the pending row's DB timestamp: the container's DB clock
+    // can sit ahead of the JS clock, so "new Date()" is not reliably after
+    // journal.createdAt.
+    const pendingRow = await prisma.subscriptionTransfer.findFirstOrThrow({
+      where: { status: "pending" },
+    });
+    await prisma.account.update({
+      where: { id: owner },
+      data: { lastAuthAt: new Date(pendingRow.createdAt.getTime() + 1000) },
+    });
+    await prisma.subscriptionTransfer.updateMany({
+      where: { status: "pending" },
+      data: { contestEndsAt: new Date(Date.now() - 1000) },
+    });
+
+    const settled = await settlePendingTransfers();
+    expect(settled.cancelled).toBe(1);
+    expect(settled.committed).toBe(0);
     const row = await prisma.subscription.findFirst({
       where: { originalTransactionId: otx },
     });
