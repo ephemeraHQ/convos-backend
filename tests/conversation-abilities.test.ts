@@ -418,7 +418,7 @@ describe("DELETE /v2/conversations/:conversationId/abilities/:abilityId", () => 
     expect(again.status).toBe(404);
   });
 
-  test("a 404 retry still heals a surviving legacy row (withdrawal converges)", async () => {
+  test("healing a surviving legacy row is a 204 — real consent transitioned (withdrawal converges)", async () => {
     const accountId = await makeAccount();
     await makeActiveEntitlement(accountId);
     // Divergent state a partial failure (or an old replica) could leave: the
@@ -438,12 +438,58 @@ describe("DELETE /v2/conversations/:conversationId/abilities/:abilityId", () => 
         `/conversations/${CONVERSATION}/abilities/googlecalendar?agentInboxId=agent-1`,
       )
       .set("X-Convos-AuthToken", await token(accountId));
-    expect(res.status).toBe(404);
+    // The legacy revoke withdrew live consent, so the wire reports success;
+    // a 404 would read as failure for a withdrawal that took effect.
+    expect(res.status).toBe(204);
 
     const legacy = await prisma.connectionGrant.findFirstOrThrow({
       where: { ownerAccountId: accountId },
     });
     expect(legacy.revokedAt).not.toBeNull();
+
+    // With both stores clear, the retry is the true not-found.
+    const again = await request(makeApp())
+      .delete(
+        `/conversations/${CONVERSATION}/abilities/googlecalendar?agentInboxId=agent-1`,
+      )
+      .set("X-Convos-AuthToken", await token(accountId));
+    expect(again.status).toBe(404);
+  });
+
+  test("cutover window: a live legacy grant with NO entitlement row withdraws with a 204", async () => {
+    const accountId = await makeAccount();
+    // The backfill/cutover window: an old replica wrote the legacy grant and
+    // the backfill has not created the entitlement row yet. The withdrawal
+    // must still succeed — the legacy revoke is the consent transition old
+    // readers observe.
+    await prisma.connectionGrant.create({
+      data: {
+        ownerAccountId: accountId,
+        ownerInboxId: "owner-inbox-1",
+        granteeInboxId: "agent-1",
+        conversationId: CONVERSATION,
+        toolkit: "GoogleCalendar",
+      },
+    });
+
+    const res = await request(makeApp())
+      .delete(
+        `/conversations/${CONVERSATION}/abilities/googlecalendar?agentInboxId=agent-1`,
+      )
+      .set("X-Convos-AuthToken", await token(accountId));
+    expect(res.status).toBe(204);
+
+    const legacy = await prisma.connectionGrant.findFirstOrThrow({
+      where: { ownerAccountId: accountId },
+    });
+    expect(legacy.revokedAt).not.toBeNull();
+
+    const again = await request(makeApp())
+      .delete(
+        `/conversations/${CONVERSATION}/abilities/googlecalendar?agentInboxId=agent-1`,
+      )
+      .set("X-Convos-AuthToken", await token(accountId));
+    expect(again.status).toBe(404);
   });
 
   test("400 without agentInboxId; scoping cannot touch another member's opt-in", async () => {

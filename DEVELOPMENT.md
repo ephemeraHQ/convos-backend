@@ -44,7 +44,7 @@
 
 ## Fresh Checkouts and Worktrees
 
-New checkouts and git worktrees need two extra steps before anything typechecks:
+New checkouts and git worktrees need three extra steps before anything typechecks:
 
 1. **Generate protobuf code** - the generated files under `src/gen` are not checked in:
 
@@ -52,7 +52,13 @@ New checkouts and git worktrees need two extra steps before anything typechecks:
    pnpm buf:generate
    ```
 
-2. **Copy `.env` from an existing checkout** - generated keys and secrets are per-machine, not per-worktree.
+2. **Generate the Prisma Client** - the client under `node_modules/.prisma` is built from `prisma/schema.prisma` and is not checked in:
+
+   ```bash
+   pnpm exec prisma generate
+   ```
+
+3. **Copy `.env` from an existing checkout** - generated keys and secrets are per-machine, not per-worktree.
 
 ## Environment Variables
 

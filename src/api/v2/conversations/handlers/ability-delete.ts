@@ -58,32 +58,41 @@ export async function conversationAbilityDeleteHandler(
     where: { accountId_abilityId: { accountId, abilityId } },
   });
 
-  const deletedCount = await prisma.$transaction(async (tx) => {
-    const deleted = entitlement
-      ? await tx.conversationAbility.deleteMany({
-          where: {
-            entitlementId: entitlement.id,
-            conversationId,
-            agentInboxId,
-          },
-        })
-      : { count: 0 };
-    // Unconditional: heals a live legacy row even when the extension is
-    // already gone (retry after partial failure, old-replica divergence).
-    await tx.connectionGrant.updateMany({
-      where: {
-        ownerAccountId: accountId,
-        toolkit: { equals: abilityId, mode: "insensitive" },
-        conversationId,
-        granteeInboxId: agentInboxId,
-        revokedAt: null,
-      },
-      data: { revokedAt: new Date() },
-    });
-    return deleted.count;
-  });
+  const { deletedCount, legacyRevokedCount } = await prisma.$transaction(
+    async (tx) => {
+      const deleted = entitlement
+        ? await tx.conversationAbility.deleteMany({
+            where: {
+              entitlementId: entitlement.id,
+              conversationId,
+              agentInboxId,
+            },
+          })
+        : { count: 0 };
+      // Unconditional: heals a live legacy row even when the extension is
+      // already gone (retry after partial failure, old-replica divergence).
+      const legacyRevoked = await tx.connectionGrant.updateMany({
+        where: {
+          ownerAccountId: accountId,
+          toolkit: { equals: abilityId, mode: "insensitive" },
+          conversationId,
+          granteeInboxId: agentInboxId,
+          revokedAt: null,
+        },
+        data: { revokedAt: new Date() },
+      });
+      return {
+        deletedCount: deleted.count,
+        legacyRevokedCount: legacyRevoked.count,
+      };
+    },
+  );
 
-  if (deletedCount === 0) {
+  // Success when EITHER store transitioned: during the backfill/cutover
+  // window a live legacy grant can exist with no entitlement row yet, and
+  // the legacy revoke above withdraws real consent — answering 404 for it
+  // would report failure for a withdrawal that took effect.
+  if (deletedCount === 0 && legacyRevokedCount === 0) {
     res.status(404).json({ code: "not_found" });
     return;
   }
