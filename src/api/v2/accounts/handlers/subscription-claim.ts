@@ -1,0 +1,397 @@
+import type {
+  JWSRenewalInfoDecodedPayload,
+  JWSTransactionDecodedPayload,
+} from "@apple/app-store-server-library";
+import { BillingProvider, SubscriptionStatus } from "@prisma/client";
+import type { NextFunction, Request, Response } from "express";
+import { z } from "zod";
+import { AccountNotLiveError } from "@/accounts/require-live-account";
+import { APPCHECK_HEADER } from "@/middleware/auth";
+import { getSubscriptionStatuses } from "@/subscriptions/apple-server-api";
+import {
+  executeClaim,
+  type ClaimSubscriptionSeed,
+} from "@/subscriptions/claim";
+import {
+  verifyAndDecodeRenewalInfo,
+  verifyAndDecodeTransaction,
+} from "@/subscriptions/jws-verifier";
+import {
+  LineageUnresolvedError,
+  resolveOrCreateAppleLineage,
+} from "@/subscriptions/lineage";
+import { productMapping } from "@/subscriptions/product-mapping";
+import { serializeUserSubscription } from "@/subscriptions/repository";
+import { deriveSubscriptionStatusFromTransaction } from "@/subscriptions/status";
+import { getFirebaseApp } from "@/utils/firebase";
+import { getRuntimeConfig } from "@/utils/runtimeConfig";
+
+/**
+ * POST /v2/accounts/me/subscription/claim.
+ *
+ * Explicit Apple tombstone restoration. The presented artifact must verify,
+ * Apple must report the subscription entitled now, and the artifact must be
+ * the latest transaction. App Check attestation is mandatory, consumed, and
+ * fail closed.
+ */
+
+// Strict discriminated union — no legacy platform-defaulting preprocess on
+// this new route.
+const appleClaimSchema = z
+  .object({
+    platform: z.literal("apple"),
+    jwsRepresentation: z.string().min(1),
+  })
+  .strict();
+const playClaimSchema = z
+  .object({
+    platform: z.literal("googlePlay"),
+    purchaseToken: z.string().min(1),
+    productId: z.string().min(1),
+  })
+  .strict();
+// Keep the shipped request shape accepted. Google claims fail closed below
+// before any provider call.
+const claimBodySchema = z.discriminatedUnion("platform", [
+  appleClaimSchema,
+  playClaimSchema,
+]);
+
+// ---------------------------------------------------------------------------
+// App Check (claim-specific, non-bypassable, consume semantics)
+// ---------------------------------------------------------------------------
+
+type ClaimAppCheckVerifier = (token: string) => Promise<void>;
+
+const defaultClaimAppCheckVerifier: ClaimAppCheckVerifier = async (token) => {
+  const { getAppCheck } = await import("firebase-admin/app-check");
+  const result = (await getAppCheck(getFirebaseApp()).verifyToken(token, {
+    consume: true,
+  })) as { alreadyConsumed?: boolean };
+  if (result.alreadyConsumed) {
+    throw new Error("App Check token already consumed");
+  }
+};
+
+let claimAppCheckVerifier: ClaimAppCheckVerifier | null = null;
+
+/** Test seam: inject a fake verifier; null restores the firebase default. */
+export const __setClaimAppCheckVerifierForTests = (
+  verifier: ClaimAppCheckVerifier | null,
+): void => {
+  claimAppCheckVerifier = verifier;
+};
+
+/**
+ * Mandatory attestation, checked before any provider call. Single error
+ * code for every failure mode (missing, invalid, replayed, attestation
+ * disabled) — no oracle. Deliberately does NOT use the global
+ * appCheckOnlyMiddleware: its app_attest_enabled=false bypass would leave
+ * this route open; here the flag is read directly and a disabled
+ * attestation config means the endpoint is OFF — even a valid token is
+ * rejected, never waved through.
+ */
+export const claimAppCheckMiddleware = async (
+  req: Request,
+  res: Response,
+  next: NextFunction,
+) => {
+  const appAttestEnabled =
+    (await getRuntimeConfig("app_attest_enabled", "true")) === "true";
+  if (!appAttestEnabled) {
+    req.log.warn({}, "subscription.claim.app_check_disabled_fail_closed");
+    res
+      .status(403)
+      .json({ error: "App attestation required", code: "app_check_required" });
+    return;
+  }
+  const token = req.header(APPCHECK_HEADER);
+  if (!token) {
+    res
+      .status(403)
+      .json({ error: "App attestation required", code: "app_check_required" });
+    return;
+  }
+  try {
+    const verifier = claimAppCheckVerifier ?? defaultClaimAppCheckVerifier;
+    await verifier(token);
+    next();
+  } catch (error) {
+    req.log.warn({ error }, "subscription.claim.app_check_rejected");
+    res
+      .status(403)
+      .json({ error: "App attestation required", code: "app_check_required" });
+    return;
+  }
+};
+
+// ---------------------------------------------------------------------------
+// Provider proof
+// ---------------------------------------------------------------------------
+
+/** Apple statuses that count as entitled-now: 1 = active, 4 = grace. */
+const APPLE_STATUS_BILLING_GRACE = 4;
+const ENTITLED_APPLE_STATUSES = new Set([1, APPLE_STATUS_BILLING_GRACE]);
+
+type VerifiedProof = {
+  lineageId: string;
+  currentPeriodStart: Date;
+  /** Exact funding-event key of the provider-verified current period. */
+  providerPeriodKey: string;
+  seed: ClaimSubscriptionSeed;
+  proofMetadata: Record<string, string>;
+};
+
+type ProofRejection =
+  | { status: 400 }
+  | { status: 404 }
+  | { status: 409; reason: "not_entitled" | "lineage_unresolved" };
+
+const rejectionResponse = (res: Response, rejection: ProofRejection): void => {
+  if (rejection.status === 400) {
+    res
+      .status(400)
+      .json({ error: "Invalid claim proof", code: "invalid_claim_proof" });
+    return;
+  }
+  if (rejection.status === 404) {
+    res.status(404).json({
+      error: "No subscription found for this purchase",
+      code: "subscription_not_found",
+    });
+    return;
+  }
+  res.status(409).json({
+    error: "Subscription cannot be claimed",
+    code: "subscription_claim_rejected",
+    reason: rejection.reason,
+  });
+};
+
+const verifyAppleProof = async (
+  req: Request,
+  jwsRepresentation: string,
+): Promise<VerifiedProof | ProofRejection> => {
+  let decoded: JWSTransactionDecodedPayload;
+  try {
+    decoded = await verifyAndDecodeTransaction(jwsRepresentation);
+  } catch (error) {
+    req.log.warn({ error }, "subscription.claim.invalid_jws");
+    return { status: 400 };
+  }
+  const otx = decoded.originalTransactionId;
+  const transactionId = decoded.transactionId;
+  const productId = decoded.productId;
+  if (!otx || !transactionId || !productId || !decoded.expiresDate) {
+    return { status: 400 };
+  }
+
+  // Mandatory authoritative lookup: entitled now + latest-transaction match
+  // against Apple's own answer (matched by OTX + environment, never
+  // lastTransactions[0]).
+  let latest: JWSTransactionDecodedPayload | null = null;
+  let latestStatus: number | undefined;
+  let latestSignedRenewalInfo: string | undefined;
+  let entitledNow = false;
+  try {
+    const statuses = await getSubscriptionStatuses(otx);
+    for (const group of statuses.data ?? []) {
+      for (const item of group.lastTransactions ?? []) {
+        if (item.originalTransactionId !== otx || !item.signedTransactionInfo) {
+          continue;
+        }
+        const candidate = await verifyAndDecodeTransaction(
+          item.signedTransactionInfo,
+        );
+        if (candidate.environment !== decoded.environment) continue;
+        latest = candidate;
+        latestStatus = item.status;
+        latestSignedRenewalInfo = item.signedRenewalInfo;
+        entitledNow =
+          item.status !== undefined && ENTITLED_APPLE_STATUSES.has(item.status);
+      }
+    }
+  } catch (error) {
+    req.log.warn({ error }, "subscription.claim.apple_status_lookup_failed");
+    return { status: 400 };
+  }
+  if (!latest) return { status: 400 };
+  if (!entitledNow) return { status: 409, reason: "not_entitled" };
+  if (latest.transactionId !== transactionId) {
+    // Only the subscription's newest artifact is ever usable.
+    return { status: 400 };
+  }
+
+  // Billing grace: the latest transaction is the lapsed one, so deriving
+  // the seed status from it would restore the row as expired / free tier
+  // and only a successful renewal would heal it. The grace state and its
+  // authoritative future deadline live in the status item's renewal info;
+  // the transaction is used only for period and funding identity.
+  let gracePeriodEnd: Date | null = null;
+  if (latestStatus === APPLE_STATUS_BILLING_GRACE) {
+    if (!latestSignedRenewalInfo) return { status: 400 };
+    let renewalInfo: JWSRenewalInfoDecodedPayload;
+    try {
+      renewalInfo = await verifyAndDecodeRenewalInfo(latestSignedRenewalInfo);
+    } catch (error) {
+      req.log.warn({ error }, "subscription.claim.invalid_renewal_info");
+      return { status: 400 };
+    }
+    const graceDeadlineMs = renewalInfo.gracePeriodExpiresDate;
+    if (!graceDeadlineMs) return { status: 400 };
+    if (graceDeadlineMs <= Date.now()) {
+      return { status: 409, reason: "not_entitled" };
+    }
+    gracePeriodEnd = new Date(graceDeadlineMs);
+  }
+
+  let mapping: ReturnType<typeof productMapping>;
+  try {
+    mapping = productMapping(productId);
+  } catch (error) {
+    req.log.warn(
+      { error, productId },
+      "subscription.claim.unrecognized_product",
+    );
+    return { status: 400 };
+  }
+  const { tier, period } = mapping;
+  const status = gracePeriodEnd
+    ? SubscriptionStatus.grace
+    : deriveSubscriptionStatusFromTransaction(decoded);
+  const currentPeriodStart = new Date(decoded.purchaseDate ?? Date.now());
+  let lineageId: string;
+  try {
+    lineageId = await resolveOrCreateAppleLineage(otx);
+  } catch (error) {
+    if (error instanceof LineageUnresolvedError) {
+      return { status: 409, reason: "lineage_unresolved" };
+    }
+    throw error;
+  }
+  return {
+    lineageId,
+    currentPeriodStart,
+    // The presented artifact equals Apple's latest transaction (checked
+    // above), so its transactionId names the current funding event.
+    providerPeriodKey: `apple_txn_${transactionId}`,
+    seed: {
+      provider: BillingProvider.apple,
+      productId,
+      tier,
+      period,
+      status,
+      originalTransactionId: otx,
+      appAccountToken: decoded.appAccountToken ?? null,
+      startedAt: new Date(decoded.originalPurchaseDate ?? Date.now()),
+      currentPeriodStart,
+      currentPeriodEnd: new Date(decoded.expiresDate),
+      gracePeriodEnd,
+      willRenew: true,
+      isInTrial: status === SubscriptionStatus.trial,
+      environment:
+        decoded.environment === "Production" ? "production" : "sandbox",
+    },
+    proofMetadata: { transactionId, originalTransactionId: otx },
+  };
+};
+
+// ---------------------------------------------------------------------------
+// Handler
+// ---------------------------------------------------------------------------
+
+export async function subscriptionClaimHandler(req: Request, res: Response) {
+  const accountId = res.locals.accountId as string;
+
+  const parsed = claimBodySchema.safeParse(req.body);
+  if (!parsed.success) {
+    req.log.warn(
+      { issues: parsed.error.issues },
+      "subscription.claim.invalid_body",
+    );
+    res
+      .status(400)
+      .json({ error: "Invalid claim proof", code: "invalid_claim_proof" });
+    return;
+  }
+
+  if (parsed.data.platform === "googlePlay") {
+    req.log.warn({}, "subscription.claim.google_provider_disabled");
+    res.status(409).json({
+      error: "Subscription cannot be claimed",
+      code: "subscription_claim_rejected",
+      reason: "transfer_frozen",
+    });
+    return;
+  }
+
+  try {
+    const proof = await verifyAppleProof(req, parsed.data.jwsRepresentation);
+    if ("status" in proof) {
+      req.log.warn(
+        { platform: parsed.data.platform, rejection: proof },
+        "subscription.claim.rejected",
+      );
+      rejectionResponse(res, proof);
+      return;
+    }
+
+    const result = await executeClaim({
+      callerAccountId: accountId,
+      lineageId: proof.lineageId,
+      currentPeriodStart: proof.currentPeriodStart,
+      providerPeriodKey: proof.providerPeriodKey,
+      subscriptionSeed: proof.seed,
+      providerProof: proof.proofMetadata,
+    });
+
+    switch (result.kind) {
+      case "restored":
+      case "replayed": {
+        req.log.info(
+          { kind: result.kind, lineageId: proof.lineageId },
+          "subscription.claim.granted",
+        );
+        res.status(200).json({
+          subscription: serializeUserSubscription(result.subscription),
+        });
+        return;
+      }
+      case "rejected": {
+        req.log.warn(
+          { reason: result.reason, lineageId: proof.lineageId },
+          "subscription.claim.rejected",
+        );
+        res.status(409).json({
+          error: "Subscription cannot be claimed",
+          code: "subscription_claim_rejected",
+          reason: result.reason,
+        });
+        return;
+      }
+      case "not_found": {
+        rejectionResponse(res, { status: 404 });
+        return;
+      }
+    }
+  } catch (error) {
+    if (error instanceof AccountNotLiveError) {
+      res.status(401).json({ error: "Unauthorized" });
+      return;
+    }
+    if (error instanceof LineageUnresolvedError) {
+      res.status(409).json({
+        error: "Subscription cannot be claimed",
+        code: "subscription_claim_rejected",
+        reason: "lineage_unresolved",
+      });
+      return;
+    }
+    req.log.error(
+      { error, stack: error instanceof Error ? error.stack : undefined },
+      "subscription.claim.failed",
+    );
+    res.status(500).json({ error: "Failed to claim subscription" });
+    return;
+  }
+}

@@ -53,6 +53,17 @@ into the wallet:
 Both run `applyDeltaWithTx` inside the caller's transaction, so the subscription
 row update and the ledger row commit or roll back together.
 
+**Account-deletion interactions.** `applyDeltaWithTx` takes the Account lock
+(`requireLiveAccount`, `FOR KEY SHARE`) before the `UserCredits` row lock:
+every account-linked writer acquires its Account lock first, so the deletion
+teardown (Account `FOR UPDATE` first) can never deadlock against a ledger
+writer, and a ledger write racing a deletion surfaces as
+`AccountNotLiveError` instead of an FK violation. The teardown itself removes
+the wallet through `deleteWalletForAccountWithTx`
+(`src/payments/ledger/repository.ts`) — the one sanctioned way to delete
+`CreditLedger` / `UserCredits` rows, kept inside the ledger module so the
+single-writer law survives account deletion.
+
 `getSpendableBalance` / `isSpendAllowed` / `recordConsume`
 (`src/payments/spendable.ts`) are thin aliases to `getBalance` / the floor check
 / `consume`, kept so the agent gate and admin view keep stable imports. Prefer

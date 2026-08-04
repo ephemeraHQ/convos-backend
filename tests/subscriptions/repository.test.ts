@@ -426,8 +426,11 @@ describe("upsertFromVerify", () => {
 
     // Simulate the pre-deploy state: subscription + receipt exist, but the
     // period's sub_grant ledger row was never written (grants only started
-    // being written at deploy time). Deleting the row and unwinding its delta
-    // reproduces exactly that shape.
+    // being written at deploy time). Pre-deploy also predates the lineage
+    // tables, so the funding-registry and custody rows the modern grant
+    // writes must be stripped alongside the ledger row — otherwise the
+    // registry's global-once guard (correctly) suppresses the re-grant and
+    // the legacy shape is not reproduced.
     const stripPeriodGrant = async (
       subscriptionId: string,
       accountId: string,
@@ -440,6 +443,20 @@ describe("upsertFromVerify", () => {
         },
       });
       if (!row) return;
+      const registryRows = await prisma.lineagePeriodGrant.findMany({
+        where: { ledgerKey: key },
+      });
+      for (const registryRow of registryRows) {
+        await prisma.lineagePeriodCustody.deleteMany({
+          where: {
+            lineageId: registryRow.lineageId,
+            providerPeriodKey: registryRow.providerPeriodKey,
+          },
+        });
+      }
+      await prisma.lineagePeriodGrant.deleteMany({
+        where: { ledgerKey: key },
+      });
       await prisma.creditLedger.delete({ where: { id: row.id } });
       await prisma.userCredits.update({
         where: { accountId },

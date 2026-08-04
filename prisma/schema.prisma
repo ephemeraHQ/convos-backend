@@ -106,6 +106,10 @@ model Account {
   id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+  /// Stamped on every SIWE token mint (generate-token.ts). Supports
+  /// activity-recency checks (e.g. the subscription-claim dead-or-silent
+  /// gate). Null for accounts that have not minted since the column landed.
+  lastAuthAt DateTime?
 
   authMethods              AuthMethod[]
   agentTemplates           AgentTemplate[]
@@ -316,6 +320,99 @@ model AuthNonce {
   createdAt DateTime @default(now())
 }
 
+/// Durable deletion barrier. One row per deleted identity, keyed by an
+/// HMAC-SHA256 (DELETION_HASH_SECRET) of the auth-method type plus the
+/// lowercased external key that lived in AuthMethod.externalKey. Consulted at
+/// token mint before auto-provisioning: a barred identity gets the terminal
+/// identity-deleted response and can never mint tokens or silently re-create
+/// an account. The bar is permanent — a genuinely new account requires new
+/// identity keys. The keyed hash is retained pseudonymous data; scope and
+/// rationale are documented in docs/plans/delete-my-account.md.
+model DeletedIdentity {
+  identityHash String   @id
+  deletedAt    DateTime @default(now())
+}
+
+/// Durable record of one account deletion, keyed by the client-generated
+/// operationId. Lets an idempotent retry (an unexpired pre-deletion JWT
+/// re-sending the same operationId) re-return the stored success after the
+/// account row is gone. accountRef is the keyed hash of the deleted
+/// accountId (same HMAC as DeletedIdentity) — the raw id is never retained.
+model DeletionRecord {
+  operationId String    @id @db.Uuid
+  accountRef  String
+  /// Lifecycle: purging (outbox still draining) | completed (drain done).
+  /// Plain string column, validated in app code (see the AuthMethod.type
+  /// comment for why Postgres enums are avoided).
+  status      String    @default("purging")
+  requestedAt DateTime  @default(now())
+  completedAt DateTime?
+  /// When the retention job may delete this record (set once the drain
+  /// completes, plus a bounded audit window).
+  expiresAt   DateTime?
+  updatedAt   DateTime  @updatedAt
+
+  @@index([accountRef])
+  @@index([status, requestedAt])
+  @@index([expiresAt])
+}
+
+/// Transactional-outbox row for one external purge action (S3 object,
+/// notification-server installation, Composio user, PostHog person),
+/// snapshotted inside the deletion transaction and drained asynchronously
+/// with retries. The payload necessarily retains account-linked identifiers
+/// until the drain completes; rows are removed as they finish and the
+/// deletion record tracks the overall purge SLA.
+model DeletionTask {
+  id            String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  operationId   String    @db.Uuid
+  /// Purge executor id: s3_object | notification_installation |
+  /// composio_user | posthog_person. Plain string, validated in app code.
+  kind          String
+  /// Executor-specific target (bucket/key, installation id, ...).
+  payload       Json
+  /// pending | done | failed (terminal — operator remediation path).
+  status        String    @default("pending")
+  attempts      Int       @default(0)
+  nextAttemptAt DateTime  @default(now())
+  lastError     String?   @db.Text
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  completedAt   DateTime?
+
+  @@index([status, nextAttemptAt])
+  @@index([operationId])
+}
+
+/// Superseded by SubscriptionLineage.state = "tombstoned" (the lineage row is
+/// the tombstone carrier). Retained additively so a rollback or an older
+/// replica that still references the relation keeps working; no current code
+/// path reads or writes it.
+model SubscriptionTombstone {
+  id          String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  provider    BillingProvider
+  providerKey String
+  accountRef  String
+  deletedAt   DateTime        @default(now())
+
+  @@unique([provider, providerKey])
+  @@index([accountRef])
+}
+
+/// Shared-store rate-limit counters (fixed windows). Backs limiters whose
+/// ceiling must hold across every replica — the claim endpoint's global
+/// claims-per-hour ceiling — where the default in-process MemoryStore would
+/// silently become a per-replica limit.
+model RateLimitCounter {
+  key         String
+  windowStart DateTime
+  count       Int      @default(0)
+  updatedAt   DateTime @updatedAt
+
+  @@id([key, windowStart])
+  @@index([windowStart])
+}
+
 enum LedgerReason {
   consume
   grant
@@ -435,6 +532,12 @@ model Subscription {
   gracePeriodEnd        DateTime?
   // Apple-only: which Apple environment the sub came from. Null for Google.
   environment           AppleEnv?
+  // Owning SubscriptionLineage (scalar link, no FK: the lineage outlives the
+  // row across delete/restore cycles). Null only for rows predating the
+  // lineage backfill that have not been touched since. Unique: at most one
+  // live Subscription row per lineage, so claim/webhook lookups by lineageId
+  // are deterministic.
+  lineageId             String?            @unique @db.Uuid
   createdAt             DateTime           @default(now())
   updatedAt             DateTime           @updatedAt
 
@@ -495,6 +598,170 @@ model BillingReceipt {
   @@index([provider, transactionId])
   @@index([subscriptionId, receivedAt])
   @@index([providerSubscriptionId])
+}
+
+/// One row per purchase lineage — Apple originalTransactionId, Google
+/// linkedPurchaseToken chain resolved to its root (rotated tokens live in
+/// LineageTokenAlias). The canonical lockable object for verify, claim,
+/// webhooks, and deletion (lock-order rule 1, see src/subscriptions/AGENTS.md),
+/// the cooldown anchor, and the tombstone carrier: a deleted owner flips
+/// state to "tombstoned" (webhooks ack as counted no-ops, verify grants no
+/// entitlement) until a claim restores it to "live".
+model SubscriptionLineage {
+  id                    String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  provider              BillingProvider
+  /// Apple OTX or the Google token-chain root.
+  lineageKey            String
+  /// live | tombstoned. Plain string, validated in app code.
+  state                 String          @default("live")
+  tombstonedAt          DateTime?
+  /// Keyed hash of the deleted accountId (same minimization as DeletionRecord).
+  deletedAccountRef     String?
+  /// Cooldown anchor: set on every committed transfer/restore/undo.
+  lastTransferAt        DateTime?
+  lastTransferJournalId String?         @db.Uuid
+  /// Set when an undo executes; while set, automated live transfers are
+  /// rejected (transfer_frozen) and only operator re-home proceeds.
+  liveTransferFrozenAt  DateTime?
+  createdAt             DateTime        @default(now())
+  updatedAt             DateTime        @updatedAt
+
+  driftSchedule SubscriptionDriftSchedule?
+
+  @@unique([provider, lineageKey])
+}
+
+/// Google rotated purchase tokens -> owning lineage. Populated at verify,
+/// webhook, and claim time whenever linkedPurchaseToken reveals a new alias;
+/// unfetchable-but-named predecessors are recorded too, so a later appearance
+/// can never mint a second lineage. Apple needs no aliases (OTX is stable).
+model LineageTokenAlias {
+  token     String   @id
+  lineageId String   @db.Uuid
+  createdAt DateTime @default(now())
+
+  @@index([lineageId])
+}
+
+/// Global once-per-period funding registry. One row per provider funding
+/// event (Apple transactionId / Google latestOrderId); the unique constraint
+/// is the cross-account dedupe CreditLedger's (accountId, idempotencyKey)
+/// cannot provide. accountId is a plain scalar (no FK): pseudonymized
+/// retained financial data that survives account deletion by design.
+model LineagePeriodGrant {
+  id                String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  lineageId         String   @db.Uuid
+  providerPeriodKey String
+  accountId         String   @db.Uuid
+  ledgerKey         String
+  createdAt         DateTime @default(now())
+
+  @@unique([lineageId, providerPeriodKey])
+}
+
+/// Custody/escrow state for one funded period. The source of truth for how
+/// much subscription value the current holder still carries: every move
+/// (transfer, undo, deletion-escrow, refund compensation) debits by
+/// D = min(lockedOwnerBalance, max(0, cap - ownerConsumesSince(custodyStartedAt)))
+/// then sets cap := D, so no chain of moves ever exceeds the original
+/// allotment and commingled promo/admin credits never transfer.
+/// ownerAccountId is a plain scalar (no FK), null iff state = escrow.
+model LineagePeriodCustody {
+  id                String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  lineageId         String   @db.Uuid
+  providerPeriodKey String
+  ownerAccountId    String?  @db.Uuid
+  remainderCap      BigInt
+  custodyStartedAt  DateTime @default(now())
+  periodStart       DateTime
+  periodEnd         DateTime
+  /// held | escrow | invalidated | exhausted. Plain string, app-validated.
+  state             String   @default("held")
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@unique([lineageId, providerPeriodKey])
+  @@index([lineageId, state])
+}
+
+/// Journal of every custody move on a lineage. kind: transfer | restore |
+/// undo | escrow. status: pending (live-tier contest window) | committed |
+/// cancelled. Account ids are plain scalars (pseudonymized retained data).
+model SubscriptionTransfer {
+  id                 String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  lineageId          String    @db.Uuid
+  kind               String
+  status             String    @default("committed")
+  fromAccountId      String?   @db.Uuid
+  toAccountId        String?   @db.Uuid
+  conservedCredits   BigInt    @default(0)
+  providerProof      Json?
+  undoOfTransferId   String?   @db.Uuid
+  /// One-shot undo CAS target: set exactly once by the undo that consumed
+  /// this transfer.
+  undoneByTransferId String?   @db.Uuid
+  undoDeadlineAt     DateTime?
+  contestEndsAt      DateTime?
+  /// Database-owned time when the journal reached `committed` (settlement
+  /// time for contested transfers, creation time for instant moves and
+  /// restores). Pending rows carry the column default, but a DB trigger
+  /// replaces it on the pending -> committed transition. The drift-schedule
+  /// trigger derives its 24h deadline from this: a 72h-contested transfer's
+  /// createdAt is already 72h old when it settles and cannot drive monitoring.
+  committedAt        DateTime  @default(now())
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  @@index([lineageId, createdAt])
+  @@index([status, contestEndsAt])
+  @@index([status, committedAt])
+  @@index([status, committedAt, id])
+}
+
+/// Durable, per-lineage post-transfer drift schedule. A database trigger on
+/// SubscriptionTransfer creates or extends this row whenever a transfer,
+/// restore, or undo commits. Per-row retry progress prevents one unavailable
+/// provider lineage from blocking every other lineage in the sweep.
+model SubscriptionDriftSchedule {
+  lineageId        String    @id @db.Uuid
+  nextDriftCheckAt DateTime  @default(now())
+  monitorUntil     DateTime
+  attempts         Int       @default(0)
+  needsOperatorAt  DateTime?
+  resolvedAt       DateTime?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  lineage SubscriptionLineage @relation(fields: [lineageId], references: [id], onDelete: Cascade)
+
+  @@index([resolvedAt, needsOperatorAt, nextDriftCheckAt, lineageId], map: "SubscriptionDriftSchedule_due_idx")
+  @@index([resolvedAt, monitorUntil], map: "SubscriptionDriftSchedule_monitor_idx")
+}
+
+/// Durable record of a Google token chain the resolver refused to auto-merge
+/// (alias conflict between lineages, or two funded lineages on one chain).
+/// Picked up by the reconciliation sweep / operators; the triggering events
+/// are acked but preserved here.
+model LineageQuarantine {
+  id              String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  provider        BillingProvider
+  token           String
+  reason          String
+  payload         Json?
+  /// Per-row retry progress: the sweep re-drives a row at most once per
+  /// backoff window (nextAttemptAt) and gives up to an operator after
+  /// enough attempts, so persistent rows can never starve newer ones.
+  attempts        Int             @default(0)
+  nextAttemptAt   DateTime        @default(now())
+  /// Escalated out of the retry pool: an operator owns this row. Set when
+  /// retries are exhausted or fresh provider state cannot resolve the
+  /// condition (e.g. a keyless void while the subscription is entitled).
+  needsOperatorAt DateTime?
+  createdAt       DateTime        @default(now())
+  resolvedAt      DateTime?
+
+  @@index([resolvedAt, createdAt])
+  @@index([resolvedAt, needsOperatorAt, nextAttemptAt])
 }
 
 model TelemetryBatch {

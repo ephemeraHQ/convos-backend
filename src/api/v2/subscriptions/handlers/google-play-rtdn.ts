@@ -9,7 +9,12 @@ import {
   PubsubAuthError,
   verifyPubsubPushAuth,
 } from "@/subscriptions/google-play/verifier";
-import { applyNotification, BillingProvider } from "@/subscriptions/repository";
+import { quarantineLineageToken } from "@/subscriptions/lineage";
+import {
+  applyNotification,
+  BillingProvider,
+  compensateVoidedPurchase,
+} from "@/subscriptions/repository";
 
 const messageSchema = z.object({
   messageId: z.string().min(1),
@@ -122,18 +127,49 @@ export async function googlePlayRtdnHandler(req: Request, res: Response) {
     return;
   }
 
-  // Voided purchase / one-time product: out of scope today, ack so Pub/Sub
-  // stops retrying.
+  // Voided purchase: compensate the exact voided order's custody holder
+  // (works whether the value sits with the current owner or in deletion
+  // escrow), then ack. A void with no orderId or
+  // no provably matching custody is PARKED for the reconciliation sweep —
+  // never resolved by revoking current entitlement.
   if (notification.voidedPurchaseNotification) {
-    req.log.info(
-      {
+    const voidedToken = notification.voidedPurchaseNotification.purchaseToken;
+    const voidedOrderId = notification.voidedPurchaseNotification.orderId;
+    try {
+      const result = await compensateVoidedPurchase(
+        voidedToken,
+        voidedOrderId ?? null,
+      );
+      const logPayload = {
         messageId: message.messageId,
-        purchaseToken:
-          notification.voidedPurchaseNotification.purchaseToken.slice(0, 12),
-      },
-      "play.rtdn.voided_purchase — not implemented, acking",
-    );
-    res.status(200).json({ ok: true, kind: "voided_purchase_skipped" });
+        purchaseToken: voidedToken.slice(0, 12),
+        orderId: voidedOrderId ?? null,
+      };
+      if (result.kind === "parked") {
+        req.log.error(logPayload, "play.rtdn.voided_purchase_parked");
+      } else {
+        req.log.info(
+          {
+            ...logPayload,
+            outcome: result.kind,
+            compensated:
+              result.kind === "compensated" ? result.amount.toString() : null,
+          },
+          "play.rtdn.voided_purchase_compensated",
+        );
+      }
+    } catch (err) {
+      req.log.error(
+        {
+          messageId: message.messageId,
+          errMessage: err instanceof Error ? err.message : String(err),
+        },
+        "play.rtdn.voided_purchase_compensation_failed",
+      );
+      res.status(500).json({ error: "Failed to apply voided purchase" });
+      return;
+    }
+    res.status(200).json({ ok: true, kind: "voided_purchase" });
     return;
   }
   if (notification.oneTimeProductNotification) {
@@ -201,12 +237,37 @@ export async function googlePlayRtdnHandler(req: Request, res: Response) {
     return;
   }
 
-  const playOrderId = purchase.latestOrderId ?? sub.purchaseToken;
+  if (!purchase.latestOrderId) {
+    // Keyless funding event (no order identity): fail closed — park the
+    // event in quarantine for reconciliation and ack so Pub/Sub stops
+    // retrying. Never synthesize a period key from the purchase token: a
+    // token identifies the subscription line, not a charge, so a rotated
+    // token would read as fresh funding without proof of a new charge.
+    await quarantineLineageToken(
+      BillingProvider.googlePlay,
+      sub.purchaseToken,
+      "missing_latest_order_id",
+      {
+        source: "rtdn",
+        messageId: message.messageId,
+        notificationType: sub.notificationType,
+        payload: raw,
+      },
+    );
+    req.log.error(
+      { messageId: message.messageId, notificationType: sub.notificationType },
+      "play.rtdn.missing_order_id_parked",
+    );
+    res.status(200).json({ ok: true, applied: false, kind: "keyless_parked" });
+    return;
+  }
+  const playOrderId = purchase.latestOrderId;
 
   try {
     const result = await applyNotification({
       provider: BillingProvider.googlePlay,
       purchaseToken: sub.purchaseToken,
+      linkedPurchaseToken: purchase.linkedPurchaseToken ?? null,
       playOrderId,
       messageId: message.messageId,
       notificationType: `PLAY_${sub.notificationType}`,
@@ -226,7 +287,21 @@ export async function googlePlayRtdnHandler(req: Request, res: Response) {
           notificationType: sub.notificationType,
           receiptRecorded: result.receiptRecorded,
         },
-        "play.rtdn.unknown_subscription — acking",
+        "play.rtdn.subscription_not_applied — acking",
+      );
+      res.status(200).json({ ok: true, applied: false });
+      return;
+    }
+
+    if (result.kind === "tombstoned") {
+      // Deleted-account lineage: acknowledged without creating
+      // account-linked state.
+      req.log.info(
+        {
+          messageId: message.messageId,
+          notificationType: sub.notificationType,
+        },
+        "play.rtdn.subscription_not_applied — acking",
       );
       res.status(200).json({ ok: true, applied: false });
       return;

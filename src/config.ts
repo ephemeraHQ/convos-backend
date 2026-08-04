@@ -131,6 +131,31 @@ export const SIWE_URI = process.env.SIWE_URI;
 export const SIWE_ALLOWED_CHAIN_IDS: readonly number[] = parsedChainIds;
 export const NONCE_HMAC_SECRET = process.env.NONCE_HMAC_SECRET;
 
+// Account-deletion hashing secret (required). Keys the HMAC that produces the
+// deletion-barrier identity hashes and the pseudonymous account refs on
+// retained deletion records. Deliberately distinct from NONCE_HMAC_SECRET:
+// nonce secrets must stay freely rotatable (nonces live minutes), while
+// rotating this secret would orphan every DeletedIdentity barrier row and
+// silently lift the bar. Treat as permanent once set.
+if (
+  !process.env.DELETION_HASH_SECRET ||
+  process.env.DELETION_HASH_SECRET.length < 64
+) {
+  throw new Error(
+    "DELETION_HASH_SECRET is not configured or too short (need >= 64 chars / 32 bytes hex)",
+  );
+}
+export const DELETION_HASH_SECRET = process.env.DELETION_HASH_SECRET;
+
+// ACCOUNT_DELETION_ENABLED
+//   Rollout gate for DELETE /v2/accounts/me. Env-based by design: flipping
+//   it is an infra PR + task-definition roll (env is fixed for the life of
+//   the process), not a 30-second RuntimeConfig cache expiry — the accepted
+//   trade-off for a deploy-audited switch. Fail-closed: only the exact
+//   string "true" enables deletion; unset, empty, or garbage disables it.
+export const loadAccountDeletionEnabled = (): boolean =>
+  (process.env.ACCOUNT_DELETION_ENABLED ?? "").trim() === "true";
+
 // Builder / template-gen + moderation (optional — services fail open / no-op
 // when these are unset; cached at module-load to avoid call-time process.env
 // reads on every generation).
@@ -187,6 +212,9 @@ export const POSTHOG_PROJECT_TOKEN =
   process.env.POSTHOG_PROJECT_TOKEN?.trim() || "";
 export const POSTHOG_HOST =
   process.env.POSTHOG_HOST?.trim() || "https://us.i.posthog.com";
+export const POSTHOG_API_HOST =
+  process.env.POSTHOG_API_HOST?.trim() || "https://us.posthog.com";
+export const CDN_BASE_URL = process.env.CDN_BASE_URL?.trim() || "";
 
 // Generation pipeline timing knobs (override via env in tests / staging).
 const parsePositiveInt = (

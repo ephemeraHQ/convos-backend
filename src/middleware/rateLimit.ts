@@ -1,4 +1,5 @@
 import { rateLimit } from "express-rate-limit";
+import { makeClaimGlobalCeiling } from "./claimGlobalCeiling";
 
 // General rate limit for API to 1000 requests per 5 minutes
 export const rateLimitMiddleware = rateLimit({
@@ -100,6 +101,74 @@ export const buildAttachmentPresignedLimiter = rateLimit({
   message: {
     error: "Too many attachment upload requests, please try again later",
   },
+});
+
+// Account deletion (DELETE /v2/accounts/me): destructive and cheap to call.
+// Two stacked limiters — 5 per 15 minutes per IP and 5 per 15 minutes per
+// account — so neither a single IP fanning out across stolen tokens nor a
+// single account hammered through proxies escapes the cap. Server-tunable,
+// not client-contractual.
+const accountDeletionLimiterConfig = {
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  limit: 5,
+  legacyHeaders: false,
+  standardHeaders: "draft-8" as const,
+  message: {
+    error: "Too many account deletion requests, please try again later",
+  },
+};
+
+export const accountDeletionIpLimiter = rateLimit({
+  ...accountDeletionLimiterConfig,
+  keyGenerator: (req) => req.ip || "unknown",
+});
+
+export const accountDeletionAccountLimiter = rateLimit({
+  ...accountDeletionLimiterConfig,
+  keyGenerator: (req, res) =>
+    (res as { locals?: { accountId?: string } }).locals?.accountId ||
+    req.ip ||
+    "unknown",
+});
+
+// Subscription claim (POST /v2/accounts/me/subscription/claim): ownership-
+// moving, so tight per-account and per-IP caps plus a global claims-per-hour
+// ceiling (limited-use App Check tokens carry no stable instance id, so the
+// global ceiling substitutes for per-instance limits; hitting it is an ops
+// alert via the 429 logs).
+const subscriptionClaimLimiterConfig = {
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  limit: 10,
+  legacyHeaders: false,
+  standardHeaders: "draft-8" as const,
+  message: {
+    error: "Too many subscription claim requests, please try again later",
+  },
+};
+
+export const subscriptionClaimIpLimiter = rateLimit({
+  ...subscriptionClaimLimiterConfig,
+  keyGenerator: (req) => req.ip || "unknown",
+});
+
+export const subscriptionClaimAccountLimiter = rateLimit({
+  ...subscriptionClaimLimiterConfig,
+  keyGenerator: (req, res) =>
+    (res as { locals?: { accountId?: string } }).locals?.accountId ||
+    req.ip ||
+    "unknown",
+});
+
+// The GLOBAL ceiling must hold across every replica (a per-process
+// MemoryStore would multiply it by the replica count), so it is a dedicated
+// middleware over the shared Postgres counter table, with DB-time window
+// identity and fail-CLOSED (503) semantics on counter-store errors — it is
+// the batch-theft tripwire, not a convenience limiter. The per-IP and
+// per-account limiters above stay in-process: they are per-caller ceilings
+// whose replica slack is bounded and acceptable.
+export const subscriptionClaimGlobalLimiter = makeClaimGlobalCeiling({
+  windowSeconds: 60 * 60, // 1 hour
+  limit: 200,
 });
 
 // Rate limiting for invite code redemption (5 attempts per 15 minutes per IP)

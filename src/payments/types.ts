@@ -19,6 +19,9 @@ export const LedgerScopeSchema = z.enum([
   "daily_refill",
   // Forfeit adjustment scope (negative subscription clawback).
   "sub_forfeit",
+  // Lineage custody moves (subscription restoration/escrow/refund
+  // compensation), keyed per journal row.
+  "sub_transfer",
 ]);
 export type LedgerScope = z.infer<typeof LedgerScopeSchema>;
 

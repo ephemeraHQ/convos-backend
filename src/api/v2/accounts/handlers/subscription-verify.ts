@@ -4,6 +4,8 @@ import {
 } from "@apple/app-store-server-library";
 import type { Request, Response } from "express";
 import { z } from "zod";
+import { AccountNotLiveError } from "@/accounts/require-live-account";
+import { evaluateClaimable } from "@/subscriptions/claim-eligibility";
 import {
   acknowledgePurchase,
   fetchSubscriptionPurchaseV2,
@@ -16,6 +18,7 @@ import {
   extractProductId,
 } from "@/subscriptions/google-play/status";
 import { verifyAndDecodeTransaction } from "@/subscriptions/jws-verifier";
+import { quarantineLineageToken } from "@/subscriptions/lineage";
 import { productMapping } from "@/subscriptions/product-mapping";
 import {
   AppleEnv,
@@ -29,6 +32,7 @@ import {
   type VerifyInput,
 } from "@/subscriptions/repository";
 import { deriveSubscriptionStatusFromTransaction } from "@/subscriptions/status";
+import { SubscriptionTombstonedError } from "@/subscriptions/tombstones";
 import { AppError } from "@/utils/errors";
 
 const uuidPattern =
@@ -142,6 +146,21 @@ const buildAppleInput = (
   };
 };
 
+/**
+ * Thrown when a Google purchase carries no `latestOrderId`. The order id is
+ * the funding-event identity: without it there is no period key, and
+ * synthesizing one from the purchase token would let token rotation
+ * masquerade as a new funding event. Fail closed: the event is parked in
+ * LineageQuarantine for reconciliation and no grant is issued.
+ */
+export class MissingPlayOrderIdError extends Error {
+  constructor(public readonly purchaseToken: string) {
+    super("Google Play purchase has no latestOrderId");
+    this.name = "MissingPlayOrderIdError";
+    Object.setPrototypeOf(this, MissingPlayOrderIdError.prototype);
+  }
+}
+
 const buildPlayInput = (
   accountId: string,
   body: z.infer<typeof playBodySchema>,
@@ -169,7 +188,12 @@ const buildPlayInput = (
   const startedAt = purchase.startTime
     ? new Date(purchase.startTime)
     : window.currentPeriodStart;
-  const playOrderId = purchase.latestOrderId ?? body.purchaseToken;
+  if (!purchase.latestOrderId) {
+    // No funding-event identity: fail closed (no key, no grant) — never
+    // synthesize a key from the purchase token.
+    throw new MissingPlayOrderIdError(body.purchaseToken);
+  }
+  const playOrderId = purchase.latestOrderId;
   const lineItem = purchase.lineItems?.[0];
   const willRenew = lineItem?.autoRenewingPlan?.autoRenewEnabled !== false;
   return {
@@ -318,6 +342,24 @@ const handlePlayBranch = async (
     const input = buildPlayInput(accountId, body, purchase);
     return { input, purchase };
   } catch (err) {
+    if (err instanceof MissingPlayOrderIdError) {
+      // Keyless funding event: park it for reconciliation and fail closed.
+      // Retryable server-side condition, not a client fault.
+      await quarantineLineageToken(
+        BillingProvider.googlePlay,
+        body.purchaseToken,
+        "missing_latest_order_id",
+        { source: "verify", accountId },
+      );
+      req.log.error(
+        { accountId },
+        "subscription.verify.play_missing_order_id_parked",
+      );
+      res
+        .status(502)
+        .json({ error: "Google Play purchase is missing its order identity" });
+      return null;
+    }
     if (err instanceof AppError) {
       res.status(err.statusCode).json({ error: err.message });
       return null;
@@ -435,17 +477,63 @@ export async function subscriptionVerifyHandler(req: Request, res: Response) {
     return;
   } catch (error) {
     if (error instanceof SubscriptionAccountMismatchError) {
+      // `claimable` is additive and informative only: whether the claim
+      // endpoint may succeed for this caller. The claim flow re-evaluates
+      // authoritatively.
+      const claimable = await evaluateClaimable({
+        provider: input.provider,
+        keys:
+          input.provider === BillingProvider.apple
+            ? [input.originalTransactionId]
+            : [input.purchaseToken, input.linkedPurchaseToken],
+      });
       req.log.warn(
         {
           accountId,
           existingAccountId: error.existingAccountId,
           providerSubscriptionId: error.providerSubscriptionId,
+          claimable,
         },
         "subscription.verify.account_mismatch",
       );
       res.status(409).json({
         error: "Subscription belongs to a different account. Contact support.",
         code: "subscription_account_mismatch",
+        claimable,
+      });
+      return;
+    }
+    if (error instanceof AccountNotLiveError) {
+      // Caller's account was deleted between requireAccount and the verify
+      // transaction. Generic 401 like every fail-closed route.
+      req.log.warn({ accountId }, "subscription.verify.account_not_live");
+      res.status(401).json({ error: "Unauthorized" });
+      return;
+    }
+    if (error instanceof SubscriptionTombstonedError) {
+      // Tombstoned provider key (deleted account's subscription): same 409
+      // envelope as an ownership mismatch (append-only law - no new code),
+      // with the same authoritative claim eligibility signal. No entitlement
+      // or subscription row is created.
+      const claimable = await evaluateClaimable({
+        provider: input.provider,
+        keys:
+          input.provider === BillingProvider.apple
+            ? [input.originalTransactionId]
+            : [input.purchaseToken, input.linkedPurchaseToken],
+      });
+      req.log.warn(
+        {
+          accountId,
+          providerKey: error.matchedKey,
+          claimable,
+        },
+        "subscription.verify.tombstoned",
+      );
+      res.status(409).json({
+        error: "Subscription belongs to a different account. Contact support.",
+        code: "subscription_account_mismatch",
+        claimable,
       });
       return;
     }

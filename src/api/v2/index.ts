@@ -135,7 +135,7 @@ v2Router.use("/assets", authMiddleware, assetsRouter);
 v2Router.use(
   "/agents/assets",
   agentAssetPreAuthLimiter,
-  agentApiKeyAuth,
+  authOrAgentApiKeyAuth,
   agentAssetLimiter,
   agentAssetsRouter,
 );

@@ -6,6 +6,7 @@ import {
 } from "@/subscriptions/google-play/notification-mapping";
 import type { SubscriptionPurchaseV2 } from "@/subscriptions/google-play/play-api";
 import { PlaySubscriptionState } from "@/subscriptions/google-play/status";
+import { SUBSCRIPTION_TIER_PLUS } from "@/subscriptions/tiers";
 
 const purchase = (
   overrides: Partial<SubscriptionPurchaseV2>,
@@ -33,6 +34,8 @@ describe("mapNotificationToUpdate", () => {
     });
     expect(result).toMatchObject({
       status: SubscriptionStatus.active,
+      tier: SUBSCRIPTION_TIER_PLUS,
+      productId: "app.convos.subs.builder.monthly",
       willRenew: true,
       cancelledAt: null,
       gracePeriodEnd: null,

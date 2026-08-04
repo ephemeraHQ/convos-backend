@@ -139,18 +139,39 @@ describe("persistSubscriptionIdentity", () => {
   });
 });
 
-// Handler-level test: proves subscribe() actually wraps the ClientIdentifier
-// upsert + DeviceRegistration adoption in a single prisma.$transaction. The
-// unit tests above pin persistSubscriptionIdentity's behavior on an injected
-// tx, but would still pass if the handler stopped wrapping it in a
-// transaction. This guards that wiring.
+// Handler-level test: proves subscribe() actually runs the ClientIdentifier
+// upsert + DeviceRegistration adoption inside ONE prisma.$transaction (the
+// fenced persistClientIdentifier transaction). The unit tests above pin
+// persistSubscriptionIdentity's behavior on an injected tx, but would still
+// pass if the handler stopped wrapping the writes in a transaction. This
+// guards that wiring.
 const txClient = {
   clientIdentifier: {
-    upsert: vi.fn().mockResolvedValue(undefined),
+    findUnique: vi.fn().mockResolvedValue(null),
+    upsert: vi.fn().mockResolvedValue({
+      accountId: ACCOUNT_A,
+      deviceId: DEVICE_ID,
+      updatedAt: new Date(),
+    }),
   },
   deviceRegistration: {
+    findUnique: vi.fn().mockResolvedValue({
+      deviceId: DEVICE_ID,
+      accountId: null,
+      disabled: false,
+      pushToken: null,
+      pushTokenType: "apns",
+      apnsEnv: "production",
+    }),
     updateMany: vi.fn().mockResolvedValue({ count: 1 }),
   },
+  // Raw lock/fence statements: the deletion-outbox probe must see NO
+  // pending purge (empty), every other lock/live-account probe succeeds.
+  $queryRaw: vi.fn((strings: TemplateStringsArray) =>
+    Promise.resolve(
+      strings.join("").includes("DeletionTask") ? [] : [{ ok: 1 }],
+    ),
+  ),
 };
 const transactionMock = vi.fn((cb: (tx: typeof txClient) => Promise<unknown>) =>
   cb(txClient),

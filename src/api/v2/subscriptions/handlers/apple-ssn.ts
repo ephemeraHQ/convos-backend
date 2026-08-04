@@ -229,6 +229,22 @@ export async function appleSsnHandler(req: Request, res: Response) {
       return;
     }
 
+    if (result.kind === "tombstoned") {
+      // The subscription belonged to a deleted account. Explicit, counted
+      // no-op: ack so Apple stops retrying; never recreate account-linked
+      // state.
+      req.log.info(
+        {
+          originalTransactionId,
+          notificationType: notification.notificationType,
+          notificationUUID,
+        },
+        "subscription.ssn.tombstoned_noop",
+      );
+      res.status(200).json({ ok: true, applied: false });
+      return;
+    }
+
     // Single-ledger: `applyNotification` already wrote the money move for this
     // notification inside its own transaction. On DID_RENEW it advances
     // currentPeriodStart and writes a real `sub_grant` credit row for the new

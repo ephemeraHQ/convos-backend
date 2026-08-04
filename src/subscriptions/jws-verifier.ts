@@ -6,6 +6,7 @@ import {
   SignedDataVerifier,
   VerificationException,
   VerificationStatus,
+  type JWSRenewalInfoDecodedPayload,
   type JWSTransactionDecodedPayload,
   type ResponseBodyV2DecodedPayload,
 } from "@apple/app-store-server-library";
@@ -228,4 +229,11 @@ export const verifyAndDecodeTransaction = (
 ): Promise<JWSTransactionDecodedPayload> =>
   verifyWithEnvironmentFallback((verifier) =>
     verifier.verifyAndDecodeTransaction(signedTransactionInfo),
+  );
+
+export const verifyAndDecodeRenewalInfo = (
+  signedRenewalInfo: string,
+): Promise<JWSRenewalInfoDecodedPayload> =>
+  verifyWithEnvironmentFallback((verifier) =>
+    verifier.verifyAndDecodeRenewalInfo(signedRenewalInfo),
   );

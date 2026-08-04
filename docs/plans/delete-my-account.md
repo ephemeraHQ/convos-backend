@@ -465,8 +465,11 @@ cannot mint tokens".
 ### Phase 2: billing tombstones
 
 - [ ] Provider-key tombstone model; no-op handling in Apple and Google
-      webhook processing and in subscription verification; token-rotation
-      absorption; deletion-vs-webhook concurrency semantics.
+      webhook processing and in subscription verification; recursive alias
+      resolution for live ingest; deletion-vs-webhook concurrency semantics.
+- [ ] Tombstoned-lineage token-rotation absorption bookkeeping is deferred
+      with Google claim restoration. Rotation events on tombstoned lineages
+      remain counted no-ops until that follow-up ships.
 
 ### Phase 3: external purges and retention enforcement
 
@@ -544,49 +547,118 @@ cannot mint tokens".
       credits (a ledger `forfeitSubscriptionPeriod` before the wallet goes),
       or is deleting the wallet itself sufficient erasure?
 
+## Decided contract and defaults (as built)
+
+The cross-repo wire contract (agreed with the companion iOS plan) and the
+open-question resolutions this implementation shipped with:
+
+- **Route/body**: `DELETE /v2/accounts/me`, JSON body `{ "operationId":
+"<uuid v4, client-generated, persisted before first send>" }`; 200
+  `{ "status": "deleted", "operationId", "deletedAt", "purgeWindowHours": 24 }`.
+  Replays - same or different operationId, via the endpoint-specific
+  carve-out - return the stored record, echoing the stored operationId.
+- **Terminal identity-deleted**: 410 `{ "error", "code": "identity_deleted" }`
+  at `POST /v2/auth/token`, only after full SIWE validation (no
+  unauthenticated deletion oracle). The delete-200 and this 410 are the only
+  confirmation channels.
+- **Fail-closed requireAccount**: deleted account with an unexpired token
+  gets a generic 401 on every other route; no positive existence caching
+  anywhere on this boundary - every check hits the database.
+- **Verify claimable signal**: ownership-mismatch/tombstone 409s keep code
+  `subscription_account_mismatch` (append-only law) and gain the additive
+  `claimable` boolean.
+- **Barrier**: permanent, keyed hash (HMAC keyed by the dedicated
+  `DELETION_HASH_SECRET`, which must never rotate).
+- **Fresh-token requirement**: not in v1 (rate limits + audit instead).
+- **Forfeit-before-wallet-delete**: superseded by custody escrow - the
+  deletion transaction escrows the conservative period remainder for a
+  future claim instead of just forfeiting it.
+- **AdminAudit**: pre-existing entries retained as-is (ops carve-out); the
+  deletion entry uses a sentinel account id with the keyed accountRef in
+  `reason`.
+- **Retention defaults**: BillingReceipt and CreditLedger rows are deleted
+  outright (swappable single point: `deleteWalletForAccountWithTx` in the
+  ledger module); the tombstoned lineage plus custody/registry rows are the
+  pseudonymized retained billing trace; the DeletionRecord and outbox rows
+  expire 30 days after the drain completes.
+- **Untracked S3 attachments**: retain-and-disclose (immutable message
+  content); bucket lifecycle policy is an ops follow-up.
+- **Legacy avatar objects**: unscoped `a/<uuid>` keys have no provable owner
+  and are not purged by account teardown. New uploads use
+  `a/<accountId>/<uuid>`; bucket lifecycle policy remains the ops follow-up
+  for legacy unscoped objects.
+- **PostHog**: person deletion via the private API (new optional
+  `POSTHOG_PERSONAL_API_KEY` / `POSTHOG_PROJECT_ID`); when analytics is on
+  and the credentials are missing, purge tasks retry and page ops.
+- **Purge SLA**: 24 hours, returned as `purgeWindowHours` and alerted on
+  breach (`deletion.purge.sla_breach`).
+- **Ops kill switch**: env var `ACCOUNT_DELETION_ENABLED` (fail-closed,
+  default off) gates the endpoint; flips ship as an infra PR + task-definition
+  roll (dev true, prod false until launch). Ops enables it only after the
+  full rollout; the same switch remains the emergency kill switch.
+
 ## References
 
 - Companion client plan: convos-ios repo, `docs/plans/delete-my-account.md`.
 - Apple App Store Review Guideline 5.1.1(v) (account deletion requirement).
 - Apple developer guidance: "Provide options to delete your app's account".
 
-## Relationship to subscription ownership reconciliation
+## Relationship to subscription ownership reconciliation (as built)
 
-The provider-key subscription tombstone proposed here supplies the safety gate
-that Option A in `docs/plans/subscription-ownership-reconciliation.md` lacks.
-The two plans should compose in this order:
-
-1. Ship account deletion as detach+tombstone: detach the `Subscription` from
-   the deleted `Account`, retain only the minimal provider-key tombstone, and
-   make webhooks and verify fail closed. This delivers deletion compliant with
-   Apple App Store Guideline 5.1.1(v) before introducing ownership transfer.
-2. Ship Option B's mismatch detection and telemetry immediately, including
-   `subscription.verify.account_mismatch` visibility and alerts, while
-   cross-account verification continues to return 409.
-3. Add Option A only when a fresh provider-verified transaction targets a
-   provider key whose prior owner is represented by a committed deletion
-   tombstone, and the new account makes an explicit, one-time ownership claim
-   (a deliberate restore/claim act, not a background verify). The tombstone
-   proves the old owner is dead; it does not by itself prove the caller owns
-   the entitlement, so possession of a provider key or a replayable signed
-   payload alone must never transfer. Absent a valid claim, verify keeps
-   failing cross-account and manual, support-mediated transfer remains the
-   fallback. Under those two gates, transfer heals a paying user's
-   entitlement without turning an ordinary ownership mismatch into a
-   subscription hijack vector.
-
-The July 12-13 incident demonstrates the need: account recreation orphaned
+This section originally proposed tombstone-gated transfer only. The
+implementation supersedes it with the subscription-lineage claim design
+(adversarially reviewed; see the claim section below). The July 12-13
+incident remains the motivating case: account recreation orphaned
 subscriptions, leaving the new account with a verify 409 while renewals kept
 enriching the ghost account's wallet.
+
+## Subscription claim (as built)
+
+One `SubscriptionLineage` row per purchase line (Apple originalTransactionId;
+Google linkedPurchaseToken chain resolved to its root, rotated tokens kept as
+aliases) is the canonical first lock for verify, webhooks, claims, and the
+deletion teardown, the cooldown anchor, and the tombstone carrier: deletion
+flips the lineage to `tombstoned` instead of writing a separate tombstone
+table. `LineagePeriodGrant` makes period funding global-once (keyed by the
+provider funding event: Apple transactionId / Google latestOrderId), and
+`LineagePeriodCustody` tracks each funded period's remaining value; every
+move debits `D = min(lockedBalance, max(0, cap - consumesSince))` and sets
+`cap := D`, so no sequence of delete/claim/undo/refund events can move more
+than one period allotment and commingled promo/admin/signup credits never
+transfer.
+
+`POST /v2/accounts/me/subscription/claim` is the
+explicit one-time claim act:
+
+- Proof requirements are authoritative: verified artifact, provider-confirmed
+  entitled-now, and latest-transaction match (no signedDate freshness window
+  - it is not a challenge). Firebase App Check attestation with a
+    limited-use, consumed token is mandatory and fails closed; there is no
+    `app_attest_enabled` bypass on this route.
+- Tombstone restoration (deleted owner): the deletion transaction escrowed
+  the conservative remainder into custody; the claim releases the escrow to
+  the claimant (never a second grant) and flips the lineage back to live.
+  Enabled at launch (`SUBSCRIPTION_CLAIM_TOMBSTONE_ENABLED`).
+- Live bearer-transfer (owner still exists): behind
+  `SUBSCRIPTION_CLAIM_LIVE_TRANSFER_ENABLED` (off until security sign-off),
+  with a 72-hour contest window by default (202 pending; the old account's
+  devices are push-notified; any authenticated act by the old account before
+  settlement vetoes), a 30-day per-lineage cooldown, and a one-shot CAS undo
+  for the immediately previous owner - cooldown-exempt, executes
+  immediately, and freezes further automated transfers on the lineage
+  (operator re-home only). Recovery language is honest: the previous owner
+  can recover once, within 30 days; after the undo is spent, the deadline
+  passes, or the lineage moves on again, recovery is support-mediated.
+- Deviation from the original section: claims work without a deletion
+  tombstone (bounded bearer-transfer semantics), because the primary heal
+  class - ghost accounts whose keys are gone - can never produce an
+  old-owner approval, and the consequences are bounded by conservation,
+  attestation, cooldown, contest window, undo, journaling, and alerting.
 
 ## Design decisions (agreed 2026-07-22)
 
 Agreed between Louis and Borja after the ledger retention review and the
-first end-to-end device deletions. These decisions resolve the retention,
-forfeit, and transfer-policy open questions above; the mechanisms they name
-(SubscriptionLineage, period custody/escrow, LineagePeriodGrant,
-DeletionRecord, DeletedIdentity) are built on the implementation branch
-(`feature/delete-account-live-transfer`).
+first end-to-end device deletions.
 
 - **Immediate deletion on request.** No defer-to-subscription-expiry
   variant: Apple 5.1.1(v) and GDPR erasure timing both point at deleting

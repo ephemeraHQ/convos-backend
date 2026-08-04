@@ -10,6 +10,12 @@ import {
   SubscriptionSchema,
   type Subscription,
 } from "@/gen/notifications/v1/service_pb";
+import {
+  notificationMutationCallOptions,
+  withInstallationMutationFence,
+} from "@/notifications/installation-mutation-fence";
+import logger from "@/utils/logger";
+import { prisma } from "@/utils/prisma";
 
 export function createNotificationClient() {
   const transport = createConnectTransport({
@@ -64,6 +70,11 @@ export async function subscribeToTopics(
   notificationClient: ReturnType<typeof createNotificationClient>,
   topics: Topic[],
 ) {
+  const client = await prisma.clientIdentifier.findUnique({
+    where: { id: installationId },
+    include: { device: { select: { accountId: true } } },
+  });
+  if (!client) return;
   // convert topics to subscriptions
   const subscriptions = topics.map(
     (topic): Subscription =>
@@ -79,8 +90,27 @@ export async function subscribeToTopics(
       }),
   );
 
-  await notificationClient.subscribeWithMetadata({
+  const result = await withInstallationMutationFence({
     installationId,
-    subscriptions,
+    expectation: {
+      state: "present",
+      generation: {
+        accountId: client.accountId,
+        deviceAccountId: client.device.accountId,
+        deviceId: client.deviceId,
+        updatedAt: client.updatedAt,
+      },
+    },
+    mutate: () =>
+      notificationClient.subscribeWithMetadata(
+        { installationId, subscriptions },
+        notificationMutationCallOptions(),
+      ),
   });
+  if (!result.applied) {
+    logger.info(
+      { installationId },
+      "notifications.subscribe_to_topics.superseded",
+    );
+  }
 }

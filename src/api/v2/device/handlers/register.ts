@@ -1,7 +1,9 @@
 import { ApnsEnvironmentSchema, PushTokenTypeSchema } from "@prisma-zod/index";
-import type { ApnsEnvironment, PushTokenType } from "@prisma/client";
+import type { ApnsEnvironment, Prisma, PushTokenType } from "@prisma/client";
 import type { Request, Response } from "express";
 import { z } from "zod";
+import { requireLiveAccount } from "@/accounts/require-live-account";
+import { lockNotificationInstallation } from "@/notifications/installation-mutation-fence";
 import { deviceIdSchema } from "@/utils/device-id";
 import { prisma } from "@/utils/prisma";
 
@@ -16,6 +18,92 @@ const registerRequestSchema = z.object({
 });
 
 export type IRegisterRequestBody = z.infer<typeof registerRequestSchema>;
+
+const DEVICE_REGISTRATION_FENCE_RETRIES = 3;
+class DeviceRegistrationFenceChangedError extends Error {}
+
+let beforeAccountLocksForTests: (() => Promise<void>) | null = null;
+export const __setDeviceRegistrationBeforeAccountLocksForTests = (
+  hook: (() => Promise<void>) | null,
+): void => {
+  beforeAccountLocksForTests = hook;
+};
+
+const loadDeviceRegistrationState = async (
+  tx: Prisma.TransactionClient,
+  args: {
+    deviceId: string;
+    pushToken: string | undefined;
+    pushTokenType: PushTokenType | undefined;
+  },
+) => {
+  const targetDevice = await tx.deviceRegistration.findUnique({
+    where: { deviceId: args.deviceId },
+    include: { clientIdentifiers: true },
+  });
+  const sourceDevices = args.pushToken
+    ? await tx.deviceRegistration.findMany({
+        where: {
+          pushToken: args.pushToken,
+          pushTokenType: args.pushTokenType ?? "apns",
+          deviceId: { not: args.deviceId },
+        },
+        include: { clientIdentifiers: true },
+        orderBy: { deviceId: "asc" },
+      })
+    : [];
+  const clientIdsToMigrate = [
+    ...new Set(
+      sourceDevices.flatMap((device) =>
+        device.clientIdentifiers.map((client) => client.id),
+      ),
+    ),
+  ].sort();
+  const accountIds = [
+    ...new Set(
+      [targetDevice, ...sourceDevices]
+        .flatMap((device) => [
+          device?.accountId,
+          ...(device?.clientIdentifiers.map((client) => client.accountId) ??
+            []),
+        ])
+        .filter(
+          (accountId): accountId is string => typeof accountId === "string",
+        ),
+    ),
+  ].sort();
+  const deviceIds = [
+    ...new Set([
+      args.deviceId,
+      ...sourceDevices.map((device) => device.deviceId),
+    ]),
+  ].sort();
+  const signature = JSON.stringify({
+    target: targetDevice
+      ? {
+          accountId: targetDevice.accountId,
+          clientIdentifiers: targetDevice.clientIdentifiers
+            .map((client) => [client.id, client.accountId])
+            .sort(),
+          deviceId: targetDevice.deviceId,
+        }
+      : null,
+    sources: sourceDevices.map((device) => ({
+      accountId: device.accountId,
+      clientIdentifiers: device.clientIdentifiers
+        .map((client) => [client.id, client.accountId])
+        .sort(),
+      deviceId: device.deviceId,
+    })),
+  });
+  return {
+    accountIds,
+    clientIdsToMigrate,
+    deviceIds,
+    signature,
+    sourceDevices,
+  };
+};
 
 /**
  * Helper function to perform the device registration transaction.
@@ -33,80 +121,94 @@ async function performDeviceRegistration(
   },
   logger: Request["log"],
 ) {
-  await prisma.$transaction(async (tx) => {
-    // Track old devices and their client identifiers for migration
-    let oldDeviceIds: string[] = [];
-    let clientIdsToMigrate: string[] = [];
-
-    // If a push token is provided, handle conflicts with other devices
-    // We check across all apnsEnv values because the same physical device
-    // can switch between sandbox (Xcode) and production (TestFlight) builds,
-    // and Apple may issue the same push token for both environments.
-    if (pushToken) {
-      const tokenType = pushTokenType ?? "apns";
-
-      // Find any other device with the same push token (regardless of apnsEnv)
-      const existingDevices = await tx.deviceRegistration.findMany({
-        where: {
+  for (
+    let attempt = 0;
+    attempt < DEVICE_REGISTRATION_FENCE_RETRIES;
+    attempt += 1
+  ) {
+    try {
+      await prisma.$transaction(async (tx) => {
+        const initial = await loadDeviceRegistrationState(tx, {
+          deviceId,
           pushToken,
-          pushTokenType: tokenType,
-          deviceId: { not: deviceId },
-        },
-        include: {
-          clientIdentifiers: true,
-        },
-      });
-
-      if (existingDevices.length > 0) {
-        oldDeviceIds = existingDevices.map((d) => d.deviceId);
-        clientIdsToMigrate = existingDevices.flatMap((d) =>
-          d.clientIdentifiers.map((c) => c.id),
-        );
-
-        logger.info(
-          {
-            oldDeviceIds,
-            newDeviceId: deviceId,
-            clientIdsToMigrate,
-            hasPushToken: !!pushToken,
-          },
-          "Push token moving from old device(s) to new device - migrating client identifiers and clearing old registrations",
-        );
-
-        // Clear the push token from all old devices FIRST (before upsert to avoid unique constraint)
-        await tx.deviceRegistration.updateMany({
-          where: {
-            deviceId: { in: oldDeviceIds },
-          },
-          data: { pushToken: null },
+          pushTokenType,
         });
-      }
-    }
+        await beforeAccountLocksForTests?.();
 
-    // Upsert the new device registration
-    // This ensures the foreign key target exists
-    await tx.deviceRegistration.upsert({
-      where: { deviceId },
-      create: {
-        deviceId,
-        pushToken: pushToken ?? null,
-        pushTokenType: pushTokenType ?? "apns",
-        apnsEnv: apnsEnv ?? null,
-      },
-      update: updateData,
-    });
+        // Account locks are always first and sorted. Deletion either observes
+        // the completed migration in its snapshot or removes the Account and
+        // makes requireLiveAccount fail before any attachment can occur.
+        for (const accountId of initial.accountIds) {
+          await requireLiveAccount(tx, accountId);
+        }
+        for (const clientId of initial.clientIdsToMigrate) {
+          await lockNotificationInstallation(tx, clientId);
+        }
+        for (const lockedDeviceId of initial.deviceIds) {
+          await tx.$queryRaw`
+            SELECT 1 FROM "DeviceRegistration"
+            WHERE "deviceId" = ${lockedDeviceId}
+            FOR UPDATE
+          `;
+        }
 
-    // Migrate ClientIdentifiers from old devices to the new device
-    // This must happen after the upsert so the FK target exists
-    if (clientIdsToMigrate.length > 0) {
-      await tx.clientIdentifier.updateMany({
-        where: {
-          id: { in: clientIdsToMigrate },
-        },
-        data: { deviceId },
+        const current = await loadDeviceRegistrationState(tx, {
+          deviceId,
+          pushToken,
+          pushTokenType,
+        });
+        if (current.signature !== initial.signature) {
+          throw new DeviceRegistrationFenceChangedError();
+        }
+
+        const oldDeviceIds = current.sourceDevices.map(
+          (source) => source.deviceId,
+        );
+        if (oldDeviceIds.length > 0) {
+          logger.info(
+            {
+              oldDeviceIds,
+              newDeviceId: deviceId,
+              clientIdsToMigrate: current.clientIdsToMigrate,
+              hasPushToken: !!pushToken,
+            },
+            "Push token moving from old device(s) to new device - migrating client identifiers and clearing old registrations",
+          );
+          await tx.deviceRegistration.updateMany({
+            where: { deviceId: { in: oldDeviceIds } },
+            data: { pushToken: null },
+          });
+        }
+
+        await tx.deviceRegistration.upsert({
+          where: { deviceId },
+          create: {
+            deviceId,
+            pushToken: pushToken ?? null,
+            pushTokenType: pushTokenType ?? "apns",
+            apnsEnv: apnsEnv ?? null,
+          },
+          update: updateData,
+        });
+
+        if (current.clientIdsToMigrate.length > 0) {
+          await tx.clientIdentifier.updateMany({
+            where: { id: { in: current.clientIdsToMigrate } },
+            data: { deviceId },
+          });
+        }
       });
+      return;
+    } catch (error) {
+      if (
+        error instanceof DeviceRegistrationFenceChangedError &&
+        attempt + 1 < DEVICE_REGISTRATION_FENCE_RETRIES
+      ) {
+        continue;
+      }
+      throw error;
     }
-  });
+  }
 }
 
 export async function register(

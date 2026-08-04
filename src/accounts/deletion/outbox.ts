@@ -1,0 +1,402 @@
+import { getDeletionExecutor } from "@/accounts/deletion/executors";
+import { PURGE_WINDOW_HOURS } from "@/accounts/deletion/service";
+import { runReclaimReconciliationSweep } from "@/subscriptions/reconciliation";
+import logger from "@/utils/logger";
+import { prisma } from "@/utils/prisma";
+
+/**
+ * Deletion-outbox drain. Each sweep tick:
+ *
+ *   1. Drains due pending DeletionTasks (executes the purge, marks done, or
+ *      schedules a retry with exponential backoff; a task exhausting its
+ *      attempts goes terminal `failed` and pages an operator via logs).
+ *   2. Completes DeletionRecords whose tasks are all done (stamping
+ *      completedAt and the record's own expiry), and alerts on records still
+ *      purging past the published purge window (SLA breach).
+ *   3. Expires records (and their task rows) past their audit window — the
+ *      record and outbox retain account-linked identifiers, so they get a
+ *      bounded lifetime like every other retained class.
+ *
+ * Same setInterval lifecycle as the generation/telemetry sweeps in
+ * src/index.ts.
+ */
+
+const DEFAULT_SWEEP_INTERVAL_MS = 60_000;
+const DRAIN_BATCH_SIZE = 25;
+const MAX_ATTEMPTS = 10;
+const BACKOFF_BASE_MS = 30_000;
+const BACKOFF_CAP_MS = 60 * 60 * 1000; // 1 hour
+const OUTBOX_ADVISORY_LOCK_CLASS_ID = 7_281;
+const OUTBOX_ADVISORY_LOCK_OBJECT_ID = 93_643;
+const OUTBOX_LEASE_TIMEOUT_MS = 10 * 60 * 1000;
+const OUTBOX_STALE_CLAIM_MS = 30 * 60 * 1000;
+/** How long a completed DeletionRecord (and its task rows) is kept. */
+const RECORD_AUDIT_WINDOW_DAYS = 30;
+
+let _intervalId: ReturnType<typeof setInterval> | null = null;
+let _sweepIntervalMs: number | null = DEFAULT_SWEEP_INTERVAL_MS;
+
+/** Exponential backoff for a task that has failed `attempts` times. */
+export const retryDelayMs = (attempts: number): number =>
+  Math.min(BACKOFF_CAP_MS, BACKOFF_BASE_MS * 2 ** Math.max(0, attempts - 1));
+
+/**
+ * Drain one batch of due pending tasks. Returns counts for observability.
+ */
+type DrainCounts = {
+  done: number;
+  retried: number;
+  failed: number;
+};
+
+const drainDeletionTasksUnderLease = async (): Promise<DrainCounts> => {
+  const now = new Date();
+  const reclaimed = await prisma.deletionTask.updateMany({
+    where: {
+      status: "processing",
+      updatedAt: {
+        lte: new Date(now.getTime() - OUTBOX_STALE_CLAIM_MS),
+      },
+    },
+    data: {
+      status: "pending",
+      lastError: "Processing claim expired before completion",
+      nextAttemptAt: now,
+    },
+  });
+  if (reclaimed.count > 0) {
+    logger.warn(
+      { count: reclaimed.count },
+      "deletion.outbox.stale_claims_reclaimed",
+    );
+  }
+
+  const due = await prisma.deletionTask.findMany({
+    where: { status: "pending", nextAttemptAt: { lte: now } },
+    orderBy: { nextAttemptAt: "asc" },
+    take: DRAIN_BATCH_SIZE,
+  });
+
+  let done = 0;
+  let retried = 0;
+  let failed = 0;
+
+  for (const task of due) {
+    if (task.attempts >= MAX_ATTEMPTS) {
+      const transitioned = await prisma.deletionTask.updateMany({
+        where: {
+          id: task.id,
+          status: "pending",
+          attempts: task.attempts,
+        },
+        data: {
+          status: "failed",
+          lastError: "Maximum deletion attempts exhausted before claim",
+        },
+      });
+      if (transitioned.count > 0) {
+        failed += transitioned.count;
+        logger.error(
+          {
+            taskId: task.id,
+            operationId: task.operationId,
+            kind: task.kind,
+            attempts: task.attempts,
+          },
+          "deletion.task.terminal_failure",
+        );
+      }
+      continue;
+    }
+    // `updatedAt` is the claim timestamp. The conditional transition makes
+    // this task single-runner even if the outer advisory lease expires or a
+    // replica starts a concurrent drain.
+    const claimedAttempts = task.attempts + 1;
+    const claimed = await prisma.deletionTask.updateMany({
+      where: {
+        id: task.id,
+        status: "pending",
+        attempts: task.attempts,
+        AND: { attempts: { lt: MAX_ATTEMPTS } },
+        nextAttemptAt: { lte: now },
+      },
+      data: {
+        status: "processing",
+        attempts: claimedAttempts,
+        updatedAt: new Date(),
+      },
+    });
+    if (claimed.count === 0) continue;
+
+    const executor = getDeletionExecutor(task.kind);
+    try {
+      if (!executor) {
+        throw new Error(`No executor for deletion task kind "${task.kind}"`);
+      }
+      await executor(task.payload);
+      const completed = await prisma.deletionTask.updateMany({
+        where: {
+          id: task.id,
+          status: "processing",
+          attempts: claimedAttempts,
+        },
+        data: { status: "done", completedAt: new Date(), lastError: null },
+      });
+      done += completed.count;
+    } catch (err) {
+      const lastError = err instanceof Error ? err.message : String(err);
+      if (claimedAttempts >= MAX_ATTEMPTS) {
+        const transitioned = await prisma.deletionTask.updateMany({
+          where: {
+            id: task.id,
+            status: "processing",
+            attempts: claimedAttempts,
+          },
+          data: { status: "failed", lastError },
+        });
+        if (transitioned.count === 0) continue;
+        failed += transitioned.count;
+        // Terminal purge failure: defined operator remediation path, never
+        // silent abandonment.
+        logger.error(
+          {
+            taskId: task.id,
+            operationId: task.operationId,
+            kind: task.kind,
+            attempts: claimedAttempts,
+            lastError,
+          },
+          "deletion.task.terminal_failure",
+        );
+      } else {
+        const transitioned = await prisma.deletionTask.updateMany({
+          where: {
+            id: task.id,
+            status: "processing",
+            attempts: claimedAttempts,
+          },
+          data: {
+            status: "pending",
+            lastError,
+            nextAttemptAt: new Date(Date.now() + retryDelayMs(claimedAttempts)),
+          },
+        });
+        if (transitioned.count === 0) continue;
+        retried += transitioned.count;
+        logger.warn(
+          {
+            taskId: task.id,
+            operationId: task.operationId,
+            kind: task.kind,
+            attempts: claimedAttempts,
+            lastError,
+          },
+          "deletion.task.retry_scheduled",
+        );
+      }
+    }
+  }
+
+  return { done, retried, failed };
+};
+
+/** Test seam for exercising claim-generation races without the outer lease. */
+export const __drainDeletionTasksWithoutLeaseForTests =
+  drainDeletionTasksUnderLease;
+
+/**
+ * Drain one batch under a cross-replica lease. The transaction exists only
+ * to hold the advisory lock; task reads and writes use ordinary pooled
+ * connections. The per-task pending-to-processing claim remains authoritative
+ * if this lease times out. A lost worker's stale claim is reclaimed later;
+ * external purge operations must therefore remain idempotent.
+ *
+ * Because the tx holds nothing but the advisory lock, a lease timeout on
+ * COMMIT after the drain finished must not discard the drain's counts: the
+ * per-task writes already committed on the pooled client. That edge is
+ * logged and the counts are returned; only a failure BEFORE the drain
+ * completed (lock acquisition, mid-batch abort) propagates as a genuine
+ * drain failure.
+ */
+export const drainDeletionTasks = async (): Promise<DrainCounts> => {
+  let counts: DrainCounts = { done: 0, retried: 0, failed: 0 };
+  // Explicitly widened: assigned inside the transaction closure, which
+  // TS's flow analysis cannot see from the catch block.
+  let drainCompleted: boolean = false;
+  try {
+    await prisma.$transaction(
+      async (tx) => {
+        const lockRows = await tx.$queryRaw<Array<{ locked: boolean }>>`
+          SELECT pg_try_advisory_xact_lock(
+            ${OUTBOX_ADVISORY_LOCK_CLASS_ID}::int,
+            ${OUTBOX_ADVISORY_LOCK_OBJECT_ID}::int
+          ) AS locked
+        `;
+        if (!lockRows[0]?.locked) {
+          logger.info("deletion.outbox.lease_held_elsewhere");
+          drainCompleted = true;
+          return;
+        }
+        counts = await drainDeletionTasksUnderLease();
+        drainCompleted = true;
+      },
+      { timeout: OUTBOX_LEASE_TIMEOUT_MS, maxWait: 5_000 },
+    );
+  } catch (err) {
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- assigned inside the transaction closure, which flow analysis cannot see from this catch block
+    if (!drainCompleted) throw err;
+    // The drain ran to completion and its work is durable on the pooled
+    // client; only the advisory-lock transaction's close failed (e.g. the
+    // lease timed out under a long batch). Surface the counts instead of a
+    // generic drain_failed that would hide completed work.
+    logger.warn({ err, ...counts }, "deletion.outbox.lease_commit_failed");
+  }
+  return counts;
+};
+
+/**
+ * Flip fully-drained records to completed (with expiry), and alert on
+ * records still purging past the purge window.
+ */
+export const completeDeletionRecords = async (): Promise<number> => {
+  const purging = await prisma.deletionRecord.findMany({
+    where: { status: "purging" },
+    select: { operationId: true, requestedAt: true },
+  });
+  let completed = 0;
+  const slaBreachedOperationIds: string[] = [];
+  const purgeWindowMs = PURGE_WINDOW_HOURS * 60 * 60 * 1000;
+
+  for (const record of purging) {
+    const remaining = await prisma.deletionTask.count({
+      where: { operationId: record.operationId, status: { not: "done" } },
+    });
+    if (remaining === 0) {
+      await prisma.deletionRecord.update({
+        where: { operationId: record.operationId },
+        data: {
+          status: "completed",
+          completedAt: new Date(),
+          expiresAt: new Date(
+            Date.now() + RECORD_AUDIT_WINDOW_DAYS * 24 * 60 * 60 * 1000,
+          ),
+        },
+      });
+      completed += 1;
+      logger.info(
+        { operationId: record.operationId },
+        "deletion.purge.completed",
+      );
+    } else if (Date.now() - record.requestedAt.getTime() > purgeWindowMs) {
+      slaBreachedOperationIds.push(record.operationId);
+    }
+  }
+
+  if (slaBreachedOperationIds.length > 0) {
+    // Alert channel: ops pages on this event.
+    logger.error(
+      {
+        operationIds: slaBreachedOperationIds,
+        purgeWindowHours: PURGE_WINDOW_HOURS,
+      },
+      "deletion.purge.sla_breach",
+    );
+  }
+
+  return completed;
+};
+
+/** Remove expired deletion records and their task rows. */
+export const expireDeletionRecords = async (): Promise<number> => {
+  const now = new Date();
+  const expired = await prisma.deletionRecord.findMany({
+    where: { expiresAt: { lte: now } },
+    select: { operationId: true },
+  });
+  if (expired.length === 0) return 0;
+  const operationIds = expired.map((r) => r.operationId);
+  await prisma.deletionTask.deleteMany({
+    where: { operationId: { in: operationIds } },
+  });
+  await prisma.deletionRecord.deleteMany({
+    where: { operationId: { in: operationIds } },
+  });
+  logger.info({ operationIds }, "deletion.record.expired");
+  return expired.length;
+};
+
+/** One full sweep tick; each pass isolates its own errors. */
+export const runDeletionOutboxSweep = async (): Promise<void> => {
+  try {
+    const counts = await drainDeletionTasks();
+    if (counts.done + counts.retried + counts.failed > 0) {
+      logger.info(counts, "deletion.outbox.drained");
+    }
+  } catch (err) {
+    logger.error({ err }, "deletion.outbox.drain_failed");
+  }
+  try {
+    await completeDeletionRecords();
+  } catch (err) {
+    logger.error({ err }, "deletion.outbox.completion_pass_failed");
+  }
+  try {
+    await expireDeletionRecords();
+  } catch (err) {
+    logger.error({ err }, "deletion.outbox.expiry_pass_failed");
+  }
+  try {
+    // Reclaim reconciliation (quarantine drain + lineage drift)
+    // rides the same tick, self-throttled: it makes provider calls, so it
+    // runs at most once per interval rather than every minute.
+    if (
+      _reconcileIntervalMs !== null &&
+      Date.now() - _lastReconcileAt >= _reconcileIntervalMs
+    ) {
+      _lastReconcileAt = Date.now();
+      await runReclaimReconciliationSweep();
+    }
+  } catch (err) {
+    logger.error({ err }, "deletion.outbox.reconciliation_pass_failed");
+  }
+};
+
+/** Reconciliation cadence: provider-calling, so hourly, not per-tick. */
+const DEFAULT_RECONCILE_INTERVAL_MS = 60 * 60 * 1000;
+let _reconcileIntervalMs: number | null = DEFAULT_RECONCILE_INTERVAL_MS;
+let _lastReconcileAt = 0;
+
+/** Test seam: force the reconciliation cadence (0 = every tick), or null
+ *  to disable the pass entirely. */
+export const __setReconciliationIntervalForTests = (
+  ms: number | null,
+): void => {
+  _reconcileIntervalMs = ms;
+  _lastReconcileAt = 0;
+};
+
+/** Test seam: override the sweep interval, or null to disable. */
+export const __setDeletionSweepIntervalForTests = (ms: number | null): void => {
+  _sweepIntervalMs = ms;
+  if (ms === null) {
+    stopDeletionOutboxSweep();
+  }
+};
+
+export const startDeletionOutboxSweep = (): void => {
+  if (_intervalId !== null) return;
+  if (_sweepIntervalMs === null) return;
+  _intervalId = setInterval(() => {
+    void runDeletionOutboxSweep();
+  }, _sweepIntervalMs);
+  if (typeof _intervalId === "object" && "unref" in _intervalId) {
+    _intervalId.unref();
+  }
+};
+
+export const stopDeletionOutboxSweep = (): void => {
+  if (_intervalId !== null) {
+    clearInterval(_intervalId);
+    _intervalId = null;
+  }
+};
