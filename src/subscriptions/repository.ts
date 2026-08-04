@@ -535,43 +535,52 @@ export const upsertFromVerify = async (
           // pre-#324 already-granted replay; a false "missing" for a
           // post-lineage Google replay is caught by the grant's own
           // event-key/registry short-circuits, never double-minting.
+          //
+          // `subscription` is null only on drop receipts (`apple-ssn:*` /
+          // `play-rtdn:*` keys, subscriptionId NULL) — a verify idempotencyKey
+          // (`apple-verify:*` / `play-verify:*`) can never collide with those,
+          // so this narrows away an impossible state. If it ever DID happen,
+          // falling through to the create path is safe: the receipt insert
+          // below would P2002 and resolve via the outer conflict handler.
           const replayed = existingReceipt.subscription;
-          const isStaleReplay =
-            input.currentPeriodEnd < replayed.currentPeriodEnd;
-          if (!isStaleReplay && isEntitledSubscription(replayed)) {
-            const currentPeriodGrant = await tx.creditLedger.findUnique({
-              where: {
-                accountId_idempotencyKey: {
-                  accountId: replayed.accountId,
-                  idempotencyKey: subGrantKey(
-                    replayed.id,
-                    replayed.currentPeriodStart,
-                  ),
-                },
-              },
-            });
-            if (!currentPeriodGrant) {
-              await grantSubscriptionPeriod(tx, {
-                subscription: replayed,
-                periodStart: replayed.currentPeriodStart,
-                lineage: {
-                  ctx: lineageCtx,
-                  providerPeriodKey: verifyProviderPeriodKey(input),
-                  periodStart: effectiveCustodyPeriodStart({
-                    provider: input.provider,
-                    periodStart: replayed.currentPeriodStart,
-                    periodEnd: replayed.currentPeriodEnd,
-                    previousPeriodEnd: null,
-                  }),
-                  periodEnd: replayed.currentPeriodEnd,
+          if (replayed) {
+            const isStaleReplay =
+              input.currentPeriodEnd < replayed.currentPeriodEnd;
+            if (!isStaleReplay && isEntitledSubscription(replayed)) {
+              const currentPeriodGrant = await tx.creditLedger.findUnique({
+                where: {
+                  accountId_idempotencyKey: {
+                    accountId: replayed.accountId,
+                    idempotencyKey: subGrantKey(
+                      replayed.id,
+                      replayed.currentPeriodStart,
+                    ),
+                  },
                 },
               });
+              if (!currentPeriodGrant) {
+                await grantSubscriptionPeriod(tx, {
+                  subscription: replayed,
+                  periodStart: replayed.currentPeriodStart,
+                  lineage: {
+                    ctx: lineageCtx,
+                    providerPeriodKey: verifyProviderPeriodKey(input),
+                    periodStart: effectiveCustodyPeriodStart({
+                      provider: input.provider,
+                      periodStart: replayed.currentPeriodStart,
+                      periodEnd: replayed.currentPeriodEnd,
+                      previousPeriodEnd: null,
+                    }),
+                    periodEnd: replayed.currentPeriodEnd,
+                  },
+                });
+              }
             }
+            return {
+              subscription: replayed,
+              receiptCreated: false,
+            };
           }
-          return {
-            subscription: replayed,
-            receiptCreated: false,
-          };
         }
 
         // Lock the row for the rest of the tx and read its TRUE current
@@ -912,7 +921,11 @@ export type ApplyNotificationInput =
 export type ApplyNotificationResult =
   | { kind: "replayed"; subscription: Subscription }
   | { kind: "applied"; subscription: Subscription }
-  | { kind: "unknown_subscription" }
+  // No Subscription row matched the provider identifier. A drop receipt
+  // (BillingReceipt with subscriptionId NULL) is persisted so the delivery is
+  // auditable from the DB; `receiptRecorded` is false when this notification
+  // was already recorded (provider retry of an already-acked delivery).
+  | { kind: "unknown_subscription"; receiptRecorded: boolean }
   /** The provider key belongs to a deleted account: acknowledged, counted
    *  no-op. No state was touched. */
   | { kind: "tombstoned" };
@@ -941,11 +954,67 @@ const notificationReceiptShape = (input: ApplyNotificationInput) => {
   };
 };
 
+// Provider-side subscription identity carried by a notification — what the
+// row WOULD have been looked up by (mirrors notificationLookup). Recorded on
+// drop receipts so unmatched deliveries can be grouped/joined later.
+const notificationProviderSubscriptionId = (
+  input: ApplyNotificationInput,
+): string =>
+  input.provider === BillingProvider.apple
+    ? input.originalTransactionId
+    : input.purchaseToken;
+
+/**
+ * Persist an unmatched provider notification as a drop receipt: a
+ * BillingReceipt with subscriptionId NULL, keyed by the same
+ * idempotencyKey/externalNotificationId a matched receipt would use. Makes
+ * "notifications arriving for subscriptions we don't know" queryable
+ * (`WHERE "subscriptionId" IS NULL`) instead of log-only. Idempotent on the
+ * notification identity: a P2002 on either unique (idempotencyKey or
+ * externalNotificationId — both derive from the same provider id) means this
+ * delivery was already recorded → receiptRecorded: false.
+ *
+ * A provider retry of the SAME notification arriving after /verify has
+ * created the Subscription row is NOT lost: the apply path claims the drop
+ * receipt (guarded update from subscriptionId NULL) and applies the state
+ * change — see the adoption step in applyNotificationOnce.
+ */
+const recordDroppedNotification = async (
+  input: ApplyNotificationInput,
+): Promise<{ receiptRecorded: boolean }> => {
+  const receiptShape = notificationReceiptShape(input);
+  try {
+    await prisma.billingReceipt.create({
+      data: {
+        subscriptionId: null,
+        provider: input.provider,
+        idempotencyKey: receiptShape.idempotencyKey,
+        externalNotificationId: receiptShape.externalNotificationId,
+        transactionId: receiptShape.transactionId,
+        notificationType: input.notificationType,
+        notificationSubtype: input.notificationSubtype ?? null,
+        providerSubscriptionId: notificationProviderSubscriptionId(input),
+        signedPayload: input.signedPayload,
+      },
+    });
+    return { receiptRecorded: true };
+  } catch (err) {
+    if (
+      err instanceof Prisma.PrismaClientKnownRequestError &&
+      err.code === "P2002"
+    ) {
+      return { receiptRecorded: false };
+    }
+    throw err;
+  }
+};
+
 /**
  * Apply a provider notification atomically:
  *   1. Look up the subscription by provider-specific identifier. If unknown,
- *      return "unknown_subscription" — the caller decides how to recover
- *      (typically ack and let /verify create the row).
+ *      persist a drop receipt (subscriptionId NULL) and return
+ *      "unknown_subscription" — the caller decides how to recover (typically
+ *      ack and let /verify create the row).
  *   2. Insert the BillingReceipt row keyed on the provider's external
  *      notification id. A P2002 unique violation means the provider retried
  *      the same notification — we return "replayed" with the current sub
@@ -1143,8 +1212,10 @@ export const applyNotification = async (
     if (result.kind !== "retry_live") return result;
   }
   // Restored again while retrying — ack; the next provider event (or a
-  // verify) converges the live row.
-  return { kind: "unknown_subscription" };
+  // verify) converges the live row. Persist the delivery as a drop receipt so
+  // it stays auditable (and adoptable by a provider retry).
+  const { receiptRecorded } = await recordDroppedNotification(input);
+  return { kind: "unknown_subscription", receiptRecorded };
 };
 
 const applyNotificationOnce = async (
@@ -1154,10 +1225,12 @@ const applyNotificationOnce = async (
   if (!subscription) {
     // Unknown key: distinguish "verify hasn't created the row yet" from
     // "the row was deleted with its account" — the latter is a counted
-    // no-op, never a recreate.
+    // no-op, never a recreate. Genuinely-unknown deliveries are persisted as
+    // drop receipts (subscriptionId NULL) so they stay auditable from the DB.
     const tombstoned = await notificationTombstoneProbe(input);
     if (tombstoned) return tombstoned;
-    return { kind: "unknown_subscription" };
+    const { receiptRecorded } = await recordDroppedNotification(input);
+    return { kind: "unknown_subscription", receiptRecorded };
   }
 
   const receiptShape = notificationReceiptShape(input);
@@ -1177,251 +1250,304 @@ const applyNotificationOnce = async (
           : undefined,
     }));
 
-  try {
-    return await withDeadlockRetry(
-      () =>
-        prisma.$transaction(async (tx) => {
-          // Lock order: lineage first (rule 1), then the owning Account
-          // (rule 2). A teardown holding the locks makes this throw
-          // AccountNotLiveError, converged below to a tombstone probe — and a
-          // notification already past these locks blocks the teardown until it
-          // commits, so neither side can deadlock.
-          const lineageCtx = await lockLineage(tx, lineageId);
-          // Re-read the row now that the lineage lock is held: the pre-tx
-          // lookup is a stale snapshot — a concurrent renewal or claim may
-          // have advanced the window or re-homed the row, and every decision
-          // below (owner lock, staleness guard, renewal gate) must compare
-          // against committed state, not the snapshot.
-          const current = await tx.subscription.findUnique({
-            where: { id: subscription.id },
-          });
-          if (!current) {
-            // Deleted between the lookup and the lock; converge like the
-            // delete-then-notify path.
-            throw new AccountNotLiveError(subscription.accountId);
-          }
-          await requireLiveAccount(tx, current.accountId);
+  // Attempt 0 + at most one retry: the retry fires only when a P2002 exposes
+  // a concurrently-committed DROP receipt for this notification (see the
+  // catch below) — the second attempt's adoption claim then wins.
+  for (let adoptionAttempt = 0; ; adoptionAttempt++) {
+    try {
+      return await withDeadlockRetry(
+        () =>
+          prisma.$transaction(async (tx) => {
+            // Lock order: lineage first (rule 1), then the owning Account
+            // (rule 2). A teardown holding the locks makes this throw
+            // AccountNotLiveError, converged below to a tombstone probe — and a
+            // notification already past these locks blocks the teardown until it
+            // commits, so neither side can deadlock.
+            const lineageCtx = await lockLineage(tx, lineageId);
+            // Re-read the row now that the lineage lock is held: the pre-tx
+            // lookup is a stale snapshot — a concurrent renewal or claim may
+            // have advanced the window or re-homed the row, and every decision
+            // below (owner lock, staleness guard, renewal gate) must compare
+            // against committed state, not the snapshot.
+            const current = await tx.subscription.findUnique({
+              where: { id: subscription.id },
+            });
+            if (!current) {
+              // Deleted between the lookup and the lock; converge like the
+              // delete-then-notify path.
+              throw new AccountNotLiveError(subscription.accountId);
+            }
+            await requireLiveAccount(tx, current.accountId);
 
-          await tx.billingReceipt.create({
-            data: {
-              subscriptionId: current.id,
-              provider: input.provider,
-              idempotencyKey: receiptShape.idempotencyKey,
-              externalNotificationId: receiptShape.externalNotificationId,
-              transactionId: receiptShape.transactionId,
-              notificationType: input.notificationType,
-              notificationSubtype: input.notificationSubtype ?? null,
-              signedPayload: input.signedPayload,
-            },
-          });
+            // ADOPTION of drop receipts: if this same notification previously
+            // arrived while the Subscription row didn't exist yet, it was
+            // persisted as a drop receipt (subscriptionId NULL) and 200-acked.
+            // A provider retry landing AFTER /verify created the row must
+            // APPLY, not resolve as "replayed" — otherwise the state change is
+            // swallowed forever. The guarded updateMany claims the drop receipt
+            // atomically (row lock + re-checked WHERE make exactly one
+            // concurrent claimer win; losers fall through to create → P2002 →
+            // outer catch → adoption retry or replayed).
+            const claimed = await tx.billingReceipt.updateMany({
+              where: {
+                idempotencyKey: receiptShape.idempotencyKey,
+                subscriptionId: null,
+              },
+              data: { subscriptionId: current.id },
+            });
+            if (claimed.count === 0) {
+              await tx.billingReceipt.create({
+                data: {
+                  subscriptionId: current.id,
+                  provider: input.provider,
+                  idempotencyKey: receiptShape.idempotencyKey,
+                  externalNotificationId: receiptShape.externalNotificationId,
+                  transactionId: receiptShape.transactionId,
+                  notificationType: input.notificationType,
+                  notificationSubtype: input.notificationSubtype ?? null,
+                  signedPayload: input.signedPayload,
+                },
+              });
+            }
 
-          // STALENESS GUARD (mirrors verify's `isStaleVerify`): a valid but
-          // OUT-OF-ORDER notification — e.g. an EXPIRED/REVOKE for a period a
-          // later renewal already superseded — must not roll the
-          // subscription's entitlement window/status backwards NOR forfeit
-          // the now-active period. Skipping only the forfeit is insufficient:
-          // the stale update would still write a terminal status over the
-          // renewed active row. So we skip the ENTIRE state-apply (update +
-          // grant + forfeit) when the notification's own period end predates
-          // the LOCKED row's (the pre-lock snapshot would race a concurrent
-          // renewal committing first). The receipt is already recorded above,
-          // preserving idempotency/audit. The terminal mapping cases carry
-          // `currentPeriodEnd` (from the JWS transaction's expiresDate / the
-          // refreshed Play purchase) precisely so this guard has a period to
-          // compare; updates that omit it (no period drift possible) fall
-          // through and apply as before.
-          if (
-            input.update.currentPeriodEnd !== undefined &&
-            input.update.currentPeriodEnd.getTime() <
-              current.currentPeriodEnd.getTime()
-          ) {
-            return { kind: "applied" as const, subscription: current };
-          }
+            // STALENESS GUARD (mirrors verify's `isStaleVerify`): a valid but
+            // OUT-OF-ORDER notification — e.g. an EXPIRED/REVOKE for a period a
+            // later renewal already superseded — must not roll the
+            // subscription's entitlement window/status backwards NOR forfeit
+            // the now-active period. Skipping only the forfeit is insufficient:
+            // the stale update would still write a terminal status over the
+            // renewed active row. So we skip the ENTIRE state-apply (update +
+            // grant + forfeit) when the notification's own period end predates
+            // the LOCKED row's (the pre-lock snapshot would race a concurrent
+            // renewal committing first). The receipt is already recorded above,
+            // preserving idempotency/audit. The terminal mapping cases carry
+            // `currentPeriodEnd` (from the JWS transaction's expiresDate / the
+            // refreshed Play purchase) precisely so this guard has a period to
+            // compare; updates that omit it (no period drift possible) fall
+            // through and apply as before.
+            if (
+              input.update.currentPeriodEnd !== undefined &&
+              input.update.currentPeriodEnd.getTime() <
+                current.currentPeriodEnd.getTime()
+            ) {
+              return { kind: "applied" as const, subscription: current };
+            }
 
-          const updated = await tx.subscription.update({
-            where: { id: current.id },
-            data: { ...input.update, lineageId },
-          });
+            const updated = await tx.subscription.update({
+              where: { id: current.id },
+              data: { ...input.update, lineageId },
+            });
 
-          // Single-ledger money-in / money-out, transactional with the state
-          // update.
-          if (
-            updated.status === SubscriptionStatus.expired ||
-            updated.status === SubscriptionStatus.revoked
-          ) {
-            // Expiry / refund / revoke → bounded clawback of the unused
-            // subscription portion from the current custody holder. Custody
-            // also works after restoration, where account-scoped sub_grant
-            // discovery finds nothing. When the holder is still the original
-            // grantee the debit keeps the legacy sub_forfeit shape
-            // (idempotent per (sub, period)); custody is invalidated either
-            // way so no later move can touch the period again, and an
-            // already-settled custody row (invalidated/exhausted) means a
-            // duplicate event claws nothing. Periods funded before the
-            // lineage tables fall back to the legacy per-subscription
-            // forfeit alone. Late events touch only their own period:
-            // primary custody lookup by the event's funding key, window
-            // fallback for legacy rows.
-            // Cancel-while-active never reaches here: it only flips
-            // willRenew (status stays active), so credits stay to the period
-            // end. Stale out-of-order terminal events were already
-            // short-circuited by the staleness guard above.
-            const byKey = await findCustody(
-              tx,
-              lineageCtx,
-              notificationProviderPeriodKey(input),
-            );
-            const custody =
-              byKey ??
-              (await findCustodyCovering(
+            // Single-ledger money-in / money-out, transactional with the state
+            // update.
+            if (
+              updated.status === SubscriptionStatus.expired ||
+              updated.status === SubscriptionStatus.revoked
+            ) {
+              // Expiry / refund / revoke → bounded clawback of the unused
+              // subscription portion from the current custody holder. Custody
+              // also works after restoration, where account-scoped sub_grant
+              // discovery finds nothing. When the holder is still the original
+              // grantee the debit keeps the legacy sub_forfeit shape
+              // (idempotent per (sub, period)); custody is invalidated either
+              // way so no later move can touch the period again, and an
+              // already-settled custody row (invalidated/exhausted) means a
+              // duplicate event claws nothing. Periods funded before the
+              // lineage tables fall back to the legacy per-subscription
+              // forfeit alone. Late events touch only their own period:
+              // primary custody lookup by the event's funding key, window
+              // fallback for legacy rows.
+              // Cancel-while-active never reaches here: it only flips
+              // willRenew (status stays active), so credits stay to the period
+              // end. Stale out-of-order terminal events were already
+              // short-circuited by the staleness guard above.
+              const byKey = await findCustody(
                 tx,
                 lineageCtx,
-                updated.currentPeriodStart,
-                [
-                  CUSTODY_STATE_HELD,
-                  CUSTODY_STATE_ESCROW,
-                  CUSTODY_STATE_INVALIDATED,
-                  CUSTODY_STATE_EXHAUSTED,
-                ],
-              ));
-            if (!custody) {
-              // Forfeit the LOCKED (lineage-serialized) current period — the
-              // one the sub is actually in. Terminal events have no
-              // successor period, so consumesUntil stays open-ended.
-              await forfeitSubscriptionPeriod(tx, {
-                subscription: updated,
-                periodStart: current.currentPeriodStart,
-              });
-            } else if (custody.state === CUSTODY_STATE_HELD) {
-              // Prefer the legacy per-subscription forfeit shape when it
-              // applies — it only does when the holder carries the original
-              // account-scoped sub_grant row. A restored holder has no such
-              // row, so custody performs the compensation instead.
-              const forfeited = await forfeitSubscriptionPeriod(tx, {
-                subscription: updated,
-                periodStart: current.currentPeriodStart,
-              });
-              if (
-                forfeited.kind === "forfeited" ||
-                forfeited.kind === "replayed"
-              ) {
+                notificationProviderPeriodKey(input),
+              );
+              const custody =
+                byKey ??
+                (await findCustodyCovering(
+                  tx,
+                  lineageCtx,
+                  updated.currentPeriodStart,
+                  [
+                    CUSTODY_STATE_HELD,
+                    CUSTODY_STATE_ESCROW,
+                    CUSTODY_STATE_INVALIDATED,
+                    CUSTODY_STATE_EXHAUSTED,
+                  ],
+                ));
+              if (!custody) {
+                // Forfeit the LOCKED (lineage-serialized) current period — the
+                // one the sub is actually in. Terminal events have no
+                // successor period, so consumesUntil stays open-ended.
+                await forfeitSubscriptionPeriod(tx, {
+                  subscription: updated,
+                  periodStart: current.currentPeriodStart,
+                });
+              } else if (custody.state === CUSTODY_STATE_HELD) {
+                // Prefer the legacy per-subscription forfeit shape when it
+                // applies — it only does when the holder carries the original
+                // account-scoped sub_grant row. A restored holder has no such
+                // row, so custody performs the compensation instead.
+                const forfeited = await forfeitSubscriptionPeriod(tx, {
+                  subscription: updated,
+                  periodStart: current.currentPeriodStart,
+                });
+                if (
+                  forfeited.kind === "forfeited" ||
+                  forfeited.kind === "replayed"
+                ) {
+                  await tx.lineagePeriodCustody.update({
+                    where: { id: custody.id },
+                    data: {
+                      remainderCap: 0n,
+                      state: CUSTODY_STATE_INVALIDATED,
+                    },
+                  });
+                } else {
+                  await invalidateCustody(tx, lineageCtx, {
+                    custody,
+                    journalId: custody.id,
+                  });
+                }
+              } else if (custody.state === CUSTODY_STATE_ESCROW) {
+                // The value already left a wallet at deletion time; nothing
+                // further moves.
                 await tx.lineagePeriodCustody.update({
                   where: { id: custody.id },
                   data: { remainderCap: 0n, state: CUSTODY_STATE_INVALIDATED },
                 });
-              } else {
-                await invalidateCustody(tx, lineageCtx, {
-                  custody,
-                  journalId: custody.id,
+              }
+            } else if (
+              isEntitledSubscriptionStatus(updated.status) &&
+              windowAdvanced(input.provider, current, updated)
+            ) {
+              // A renewal advanced the entitlement window → materialize the
+              // new period's allotment. Apple gates on the period start
+              // advancing; Google gates on the expiry advancing, because its
+              // reported start is the subscription-lifetime startTime and
+              // never moves (gating on it suppressed every renewal after the
+              // first). A grace/billing-retry transition that keeps the same
+              // window does not re-grant either way.
+              //
+              // No carryover: forfeit the period the row advanced FROM before
+              // granting the new one, bounding its consumes to spends made
+              // before the new period began. Gated on the START advancing —
+              // Google's static lifetime start never trips it, and its
+              // ending-period remainder stays bounded by custody conservation
+              // instead. The per-period forfeit key + the lineage lock make a
+              // racing verify for the same advance resolve to exactly one
+              // forfeit and one grant.
+              if (
+                updated.currentPeriodStart.getTime() >
+                current.currentPeriodStart.getTime()
+              ) {
+                await forfeitSubscriptionPeriod(tx, {
+                  subscription: updated,
+                  periodStart: current.currentPeriodStart,
+                  consumesUntil: updated.currentPeriodStart,
                 });
               }
-            } else if (custody.state === CUSTODY_STATE_ESCROW) {
-              // The value already left a wallet at deletion time; nothing
-              // further moves.
-              await tx.lineagePeriodCustody.update({
-                where: { id: custody.id },
-                data: { remainderCap: 0n, state: CUSTODY_STATE_INVALIDATED },
-              });
-            }
-          } else if (
-            isEntitledSubscriptionStatus(updated.status) &&
-            windowAdvanced(input.provider, current, updated)
-          ) {
-            // A renewal advanced the entitlement window → materialize the
-            // new period's allotment. Apple gates on the period start
-            // advancing; Google gates on the expiry advancing, because its
-            // reported start is the subscription-lifetime startTime and
-            // never moves (gating on it suppressed every renewal after the
-            // first). A grace/billing-retry transition that keeps the same
-            // window does not re-grant either way.
-            //
-            // No carryover: forfeit the period the row advanced FROM before
-            // granting the new one, bounding its consumes to spends made
-            // before the new period began. Gated on the START advancing —
-            // Google's static lifetime start never trips it, and its
-            // ending-period remainder stays bounded by custody conservation
-            // instead. The per-period forfeit key + the lineage lock make a
-            // racing verify for the same advance resolve to exactly one
-            // forfeit and one grant.
-            if (
-              updated.currentPeriodStart.getTime() >
-              current.currentPeriodStart.getTime()
-            ) {
-              await forfeitSubscriptionPeriod(tx, {
+              if (input.provider === BillingProvider.googlePlay) {
+                await bootstrapLegacyCustody(tx, lineageCtx, {
+                  subscriptionId: current.id,
+                  ownerAccountId: current.accountId,
+                  periodStart: current.currentPeriodStart,
+                  periodEnd: current.currentPeriodEnd,
+                });
+              }
+              const grantResult = await grantSubscriptionPeriod(tx, {
                 subscription: updated,
-                periodStart: current.currentPeriodStart,
-                consumesUntil: updated.currentPeriodStart,
-              });
-            }
-            if (input.provider === BillingProvider.googlePlay) {
-              await bootstrapLegacyCustody(tx, lineageCtx, {
-                subscriptionId: current.id,
-                ownerAccountId: current.accountId,
-                periodStart: current.currentPeriodStart,
-                periodEnd: current.currentPeriodEnd,
-              });
-            }
-            const grantResult = await grantSubscriptionPeriod(tx, {
-              subscription: updated,
-              periodStart: updated.currentPeriodStart,
-              lineage: {
-                ctx: lineageCtx,
-                providerPeriodKey: notificationProviderPeriodKey(input),
-                periodStart: effectiveCustodyPeriodStart({
-                  provider: input.provider,
-                  periodStart: updated.currentPeriodStart,
+                periodStart: updated.currentPeriodStart,
+                lineage: {
+                  ctx: lineageCtx,
+                  providerPeriodKey: notificationProviderPeriodKey(input),
+                  periodStart: effectiveCustodyPeriodStart({
+                    provider: input.provider,
+                    periodStart: updated.currentPeriodStart,
+                    periodEnd: updated.currentPeriodEnd,
+                    previousPeriodEnd: current.currentPeriodEnd,
+                  }),
                   periodEnd: updated.currentPeriodEnd,
-                  previousPeriodEnd: current.currentPeriodEnd,
-                }),
-                periodEnd: updated.currentPeriodEnd,
-              },
+                },
+              });
+              if (grantResult.kind === "granted") {
+                return {
+                  kind: "applied" as const,
+                  subscription: grantResult.subscription,
+                };
+              }
+            }
+
+            return { kind: "applied" as const, subscription: updated };
+          }),
+        { label: "apply_notification" },
+      );
+    } catch (err) {
+      if (err instanceof AccountNotLiveError) {
+        // The owning account was deleted between the pre-tx lookup and the
+        // Account lock. Same convergence as delete-then-notify.
+        const tombstoned = await notificationTombstoneProbe(input);
+        if (tombstoned) return tombstoned;
+        const { receiptRecorded } = await recordDroppedNotification(input);
+        return { kind: "unknown_subscription", receiptRecorded };
+      }
+      if (err instanceof Prisma.PrismaClientKnownRequestError) {
+        // Only a BillingReceipt idempotencyKey conflict may resolve to
+        // adoption-retry/replay. Any other P2002 — in particular CreditLedger's
+        // (accountId, idempotencyKey) from grantSubscriptionPeriod /
+        // forfeitSubscriptionPeriod racing inside this tx — MUST rethrow
+        // (mirrors the verify path's guard): the tx rolled back receipt AND
+        // state update, so acking it as "replayed" would silently lose the
+        // notification (the provider stops retrying on 200). Rethrowing 500s
+        // the webhook and the provider redelivers.
+        if (err.code === "P2002" && isBillingReceiptIdempotencyConflict(err)) {
+          // The conflict may come from a DROP receipt committed by a concurrent
+          // unknown-path delivery of this same notification AFTER our adoption
+          // claim ran (the uncommitted insert was invisible to updateMany, then
+          // our create lost the unique race). Re-read: if the receipt is still
+          // unmatched, retry once — the claim now sees the committed row and
+          // wins, so the state change is applied instead of being swallowed as
+          // a replay. A conflict on an already-matched receipt is a true
+          // provider replay.
+          if (adoptionAttempt === 0) {
+            const conflicting = await prisma.billingReceipt.findUnique({
+              where: { idempotencyKey: receiptShape.idempotencyKey },
+              select: { subscriptionId: true },
             });
-            if (grantResult.kind === "granted") {
-              return {
-                kind: "applied" as const,
-                subscription: grantResult.subscription,
-              };
+            if (conflicting !== null && conflicting.subscriptionId === null) {
+              continue;
             }
           }
-
-          return { kind: "applied" as const, subscription: updated };
-        }),
-      { label: "apply_notification" },
-    );
-  } catch (err) {
-    if (err instanceof AccountNotLiveError) {
-      // The owning account was deleted between the pre-tx lookup and the
-      // Account lock. Same convergence as delete-then-notify.
-      const tombstoned = await notificationTombstoneProbe(input);
-      if (tombstoned) return tombstoned;
-      return { kind: "unknown_subscription" };
-    }
-    if (err instanceof Prisma.PrismaClientKnownRequestError) {
-      if (err.code === "P2002") {
-        const current = await prisma.subscription.findUnique({
-          where: { id: subscription.id },
-        });
-        if (current) {
-          return { kind: "replayed", subscription: current };
+          const current = await prisma.subscription.findUnique({
+            where: { id: subscription.id },
+          });
+          if (current) {
+            return { kind: "replayed", subscription: current };
+          }
+        }
+        // Deletion raced this notification: the row (captured by the pre-tx
+        // lookup) was torn down mid-flight, so the receipt insert hits the
+        // Subscription FK (P2003) or the update finds no row (P2025). Converge
+        // to the same outcome as delete-then-notify: a tombstoned (or unknown)
+        // no-op, not a 500-and-retry.
+        if (err.code === "P2003" || err.code === "P2025") {
+          const current = await prisma.subscription.findUnique({
+            where: { id: subscription.id },
+          });
+          if (!current) {
+            const tombstoned = await notificationTombstoneProbe(input);
+            if (tombstoned) return tombstoned;
+            const { receiptRecorded } = await recordDroppedNotification(input);
+            return { kind: "unknown_subscription", receiptRecorded };
+          }
         }
       }
-      // Deletion raced this notification: the row (captured by the pre-tx
-      // lookup) was torn down mid-flight, so the receipt insert hits the
-      // Subscription FK (P2003) or the update finds no row (P2025). Converge
-      // to the same outcome as delete-then-notify: a tombstoned (or unknown)
-      // no-op, not a 500-and-retry.
-      if (err.code === "P2003" || err.code === "P2025") {
-        const current = await prisma.subscription.findUnique({
-          where: { id: subscription.id },
-        });
-        if (!current) {
-          const tombstoned = await notificationTombstoneProbe(input);
-          if (tombstoned) return tombstoned;
-          return { kind: "unknown_subscription" };
-        }
-      }
+      throw err;
     }
-    throw err;
   }
 };
 

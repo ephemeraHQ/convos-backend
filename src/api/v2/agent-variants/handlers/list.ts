@@ -16,8 +16,22 @@ export async function listAgentVariantsHandler(req: Request, res: Response) {
   }
 
   try {
+    // The picker gets the same liveness rule the router uses, so it can only
+    // offer a variant that requests will actually be routed to — listing an
+    // expired one invites a device to pin something that silently resolves to
+    // the default worker, which reads as the variant doing nothing.
+    //
+    // The variant-sweep CI (agent API key) gets the unfiltered set: it is the
+    // reaper, and an expired row is precisely what it exists to clean up.
+    // Hiding those would strand them in the registry forever.
+    const isReaper = res.locals.isApiKeyListener === true;
     const variants = await prisma.agentVariant.findMany({
-      where: { status: { in: ["ready", "building"] } },
+      where: {
+        status: { in: ["ready", "building"] },
+        ...(isReaper
+          ? {}
+          : { OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }] }),
+      },
       orderBy: { createdAt: "desc" },
     });
     res.status(200).json({ data: variants.map(serializeAgentVariant) });

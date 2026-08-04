@@ -276,12 +276,26 @@ export async function googlePlayRtdnHandler(req: Request, res: Response) {
       update,
     });
 
-    if (
-      result.kind === "unknown_subscription" ||
-      result.kind === "tombstoned"
-    ) {
-      // Unknown and deleted-account lineages are acknowledged without
-      // creating account-linked state.
+    if (result.kind === "unknown_subscription") {
+      // SUBSCRIPTION_PURCHASED before verify, or a notification whose
+      // purchaseToken our row hasn't been linked to yet. Ack; /verify will
+      // create or refresh the row. A drop receipt (BillingReceipt with
+      // subscriptionId NULL) was persisted by applyNotification for audit.
+      req.log.info(
+        {
+          messageId: message.messageId,
+          notificationType: sub.notificationType,
+          receiptRecorded: result.receiptRecorded,
+        },
+        "play.rtdn.subscription_not_applied — acking",
+      );
+      res.status(200).json({ ok: true, applied: false });
+      return;
+    }
+
+    if (result.kind === "tombstoned") {
+      // Deleted-account lineage: acknowledged without creating
+      // account-linked state.
       req.log.info(
         {
           messageId: message.messageId,

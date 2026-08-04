@@ -4,6 +4,7 @@ export {
   deleteWalletForAccountWithTx,
   findLedgerByIdempotencyKey,
   getBalance,
+  getBalances,
   getBucketedConsumption,
   getHistory,
   LedgerFloorBreachError,

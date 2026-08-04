@@ -5,6 +5,7 @@
   "license": "MIT",
   "type": "module",
   "scripts": {
+    "apple:sub-status": "tsx --env-file-if-exists=.env scripts/check-apple-subscription-status.ts",
     "buf:generate": "NODE_NO_WARNINGS=1 buf generate",
     "build": "tsup",
     "check": "pnpm typecheck && pnpm format:check && pnpm lint",

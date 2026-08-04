@@ -41,6 +41,20 @@ export const agentJoinStatusLimiter = rateLimit({
   message: { error: "Too many status polls, please try again later" },
 });
 
+// Rate limiting for the agent participation endpoint
+// (PATCH /api/v2/agents/:instanceId/participation). A person tapping through
+// levels in a sheet produces a handful of calls, not a stream, so this sits
+// well below status polling. Each call is one small upstream write.
+export const agentParticipationLimiter = rateLimit({
+  windowMs: 5 * 60 * 1000, // 5 minutes
+  limit: 30,
+  legacyHeaders: false,
+  standardHeaders: "draft-8",
+  message: {
+    error: "Too many participation changes, please try again later",
+  },
+});
+
 // Rate limiting for asset renewal endpoint (10 batch requests per hour per device)
 export const assetRenewalLimiter = rateLimit({
   windowMs: 60 * 60 * 1000, // 1 hour

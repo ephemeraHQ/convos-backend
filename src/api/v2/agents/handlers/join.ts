@@ -1,5 +1,9 @@
 import type { Request, Response } from "express";
 import { z } from "zod";
+import {
+  recordAgentInstanceDispatched,
+  recordAgentInstanceStatus,
+} from "@/api/v2/agents/lib/agent-instances";
 import { buildJoinPayload } from "@/api/v2/agents/lib/build-join-payload";
 import {
   allowedVariantWorkerOrigin,
@@ -27,6 +31,7 @@ type VariantDescriptor = {
   label: string;
   whatToTest: string;
   prUrl: string;
+  skipCredits: boolean;
   assistantWorkerUrl: string | null;
 };
 
@@ -202,7 +207,7 @@ const dispatchBodySchema = z
   );
 
 type PollOutcome =
-  | { kind: "joined" }
+  | { kind: "joined"; inboxId: string | null; conversationId: string | null }
   | { kind: "failed"; reason: string | null }
   | { kind: "pending" };
 
@@ -280,6 +285,13 @@ async function pollAssistantStatus<Outcome>(args: {
             { issues: parsed.error.issues, instanceId },
             "Assistant status poll returned malformed body",
           );
+        } else if (parsed.data.instanceId !== instanceId) {
+          // A status row about a different instance must not drive this
+          // join's outcome (or the identity facts recorded from it).
+          log.warn(
+            { instanceId, upstreamInstanceId: parsed.data.instanceId },
+            "Assistant status poll returned a different instance — ignoring",
+          );
         } else {
           const outcome = check(parsed.data);
           if (outcome !== null) return outcome;
@@ -310,7 +322,14 @@ function pollUntilJoined(
     ...args,
     check: (status) => {
       if (status.joinStatus === "joined" || status.joinStatus === "ready") {
-        return { kind: "joined" };
+        // Carry the identity facts the status row already holds so the
+        // caller can record them (AgentInstance bookkeeping) without an
+        // extra status fetch.
+        return {
+          kind: "joined",
+          inboxId: status.inboxId ?? null,
+          conversationId: status.conversationId ?? null,
+        };
       }
       if (status.joinStatus === "failed") {
         return { kind: "failed", reason: status.joinFailureReason ?? null };
@@ -483,6 +502,7 @@ export async function joinHandler(req: Request, res: Response) {
           label: true,
           whatToTest: true,
           prUrl: true,
+          skipCredits: true,
           assistantWorkerUrl: true,
         },
       });
@@ -718,6 +738,7 @@ export async function joinHandler(req: Request, res: Response) {
           label: variant.label,
           whatToTest: variant.whatToTest,
           prUrl: variant.prUrl,
+          skipCredits: variant.skipCredits,
         }),
       };
     }
@@ -820,6 +841,25 @@ export async function joinHandler(req: Request, res: Response) {
     return;
   }
 
+  // Record who pays for this agent. The backend is the sole authority on
+  // ownerAccountId (stamped from the caller's JWT, dispatched upstream just
+  // above) — persisting it here is what lets conversation payloads carry the
+  // owner-computed agentPowerDepleted field (CON-807). Bookkeeping must never
+  // fail the join: the agent is already provisioning upstream, so log and
+  // continue.
+  try {
+    await recordAgentInstanceDispatched({
+      instanceId,
+      ownerAccountId: joiningUserAccountId,
+      conversationId: conversationId ?? null,
+    });
+  } catch (error) {
+    req.log.error(
+      { error, instanceId },
+      "Failed to record agent instance dispatch",
+    );
+  }
+
   // Direct-add: wait only for Herald registration so the caller gets the
   // inboxId to add to the group; the join completes when the runtime
   // observes the group welcome their addMembers produces.
@@ -860,6 +900,20 @@ export async function joinHandler(req: Request, res: Response) {
         "Agent registration still pending after server-side wait budget",
       );
     }
+    if (outcome.kind === "registered") {
+      try {
+        await recordAgentInstanceStatus({
+          instanceId,
+          inboxId: outcome.inboxId,
+          conversationId: null,
+        });
+      } catch (error) {
+        req.log.error(
+          { error, instanceId },
+          "Failed to record agent instance registration",
+        );
+      }
+    }
     res.status(200).json({
       success: true,
       joined: false,
@@ -899,6 +953,21 @@ export async function joinHandler(req: Request, res: Response) {
   }
 
   if (outcome.kind === "joined") {
+    // Invite joins learn the conversation (and inbox) only from the runtime's
+    // status row — fill them in now so the participation payload can list
+    // this agent. Bookkeeping must not fail an already-successful join.
+    try {
+      await recordAgentInstanceStatus({
+        instanceId,
+        inboxId: outcome.inboxId,
+        conversationId: outcome.conversationId,
+      });
+    } catch (error) {
+      req.log.error(
+        { error, instanceId },
+        "Failed to record agent instance join",
+      );
+    }
     res.status(200).json({ success: true, joined: true, instanceId });
     return;
   }

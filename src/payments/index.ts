@@ -11,6 +11,7 @@ import {
   findLedgerByIdempotencyKey,
   LedgerFloorBreachError,
   getBalance as ledgerGetBalance,
+  getBalances as ledgerGetBalances,
   getBucketedConsumption as ledgerGetBucketedConsumption,
   getHistory as ledgerGetHistory,
   validateReplayPayload,
@@ -229,11 +230,24 @@ export const getBalance = async (accountId: string): Promise<bigint> =>
   ledgerGetBalance(accountId);
 
 /**
+ * Batch counterpart of `getBalance` — same source of truth, one query for
+ * many accounts. Accounts with no `UserCredits` row read as 0n.
+ */
+export const getBalances = async (
+  accountIds: readonly string[],
+): Promise<Map<string, bigint>> => ledgerGetBalances(accountIds);
+
+/**
  * Advisory balance check. NOT an authorization gate — only consume()
  * enforces the floor atomically. Use for UX hints (disable button).
  */
 export const isAllowed = async (accountId: string): Promise<boolean> =>
   isAllowedFromBalance(await ledgerGetBalance(accountId));
+
+// The pure form of the advisory check, for callers that already hold a
+// balance (e.g. a batch read via getBalances). Same floor as isAllowed /
+// isSpendAllowed: balance >= reservedMaxTurnCredits.
+export { isAllowedFromBalance } from "./credits/policy";
 
 export const getHistory = async (
   accountId: string,
