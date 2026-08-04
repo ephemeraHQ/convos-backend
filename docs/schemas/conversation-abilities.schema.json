@@ -1,0 +1,69 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://convos.org/schemas/conversation-abilities.schema.json",
+  "title": "GET /v2/conversations/{conversationId}/abilities response",
+  "description": "The conversation's ability view: one entry per (ability, agent) opt-in, across every member, for the conversation info screen. Possession of the opaque XMTP conversationId is the membership proof (no Conversation table exists); entries are bounded accordingly — the extender appears as a conversation-visible inbox id, the backing entitlement contributes only its status (while the entitlement tables are still converging after boot, entries derive from live legacy grants and serve status active), and no accountId, credential id, or raw Composio action slug is ever served. PUT /v2/conversations/{conversationId}/abilities/{abilityId} answers a single Entry (with extendedByMe always true); its request body is {agentInboxId, bundleIds (non-empty), extendedByInboxId?} and requires an active entitlement (409 {code: needs_entitlement} otherwise; 400 {code: unknown_bundle, bundleId} on a stale bundle id; retryable 503 {code: entitlements_unavailable} while the entitlement tables are still converging after boot). DELETE ...?agentInboxId=... withdraws the opt-in (204; 404 {code: not_found}). All routes requireAccount. Source of truth: src/api/v2/conversations/handlers/.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["abilities"],
+  "properties": {
+    "abilities": {
+      "description": "Newest first.",
+      "type": "array",
+      "items": { "$ref": "#/$defs/Entry" }
+    }
+  },
+  "$defs": {
+    "Entry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "abilityId",
+        "conversationId",
+        "agentInboxId",
+        "bundleIds",
+        "extendedByInboxId",
+        "extendedByMe",
+        "status",
+        "createdAt",
+        "updatedAt"
+      ],
+      "properties": {
+        "abilityId": {
+          "description": "Stable ability id (Composio toolkit slug for Composio-backed abilities). Legacy-carried rows can name a toolkit outside the served catalog.",
+          "type": "string"
+        },
+        "conversationId": { "type": "string" },
+        "agentInboxId": {
+          "description": "The agent this opt-in allows to act. A second agent in the conversation never inherits; it has its own entry or none.",
+          "type": "string"
+        },
+        "bundleIds": {
+          "description": "Granted permission-bundle ids; resolved to actions backend-side only. Legacy-carried rows can be empty (the V1 whole-toolkit transition default).",
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "extendedByInboxId": {
+          "description": "Who extended it, as that member's inbox id in this conversation; null when a V2 write did not provide it.",
+          "type": ["string", "null"]
+        },
+        "extendedByMe": {
+          "description": "True when the backing entitlement belongs to the caller — the entries the caller may PUT/DELETE.",
+          "type": "boolean"
+        },
+        "status": {
+          "description": "The backing entitlement's lifecycle status (server-owned; clients never derive it).",
+          "enum": [
+            "pending_auth",
+            "active",
+            "needs_reauth",
+            "expired",
+            "revoked"
+          ]
+        },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      }
+    }
+  }
+}

@@ -1,11 +1,18 @@
 import { Router } from "express";
 import { requireAccount } from "@/middleware/auth";
 import { agentParticipationLimiter } from "@/middleware/rateLimit";
+import { conversationAbilitiesGetHandler } from "./handlers/abilities-get";
+import { conversationAbilityDeleteHandler } from "./handlers/ability-delete";
+import { conversationAbilityPutHandler } from "./handlers/ability-put";
 import {
   getParticipationHandler,
   participationHandler,
 } from "./handlers/participation";
 
+// /v2/conversations — conversation-scoped surfaces. Mounted behind
+// authMiddleware in src/api/v2/index.ts; every route here applies
+// requireAccount itself. conversationId is the opaque XMTP string (no
+// Conversation table).
 export const conversationsRouter = Router();
 
 // How much the agents in this conversation may speak. `requireAccount` for the
@@ -28,4 +35,23 @@ conversationsRouter.patch(
   agentParticipationLimiter,
   requireAccount,
   participationHandler,
+);
+
+// Conversation-scoped ability extensions (Connections V2,
+// docs/plans/abilities-entitlements.md "Extend"). Every route is a
+// signed-in-account surface.
+conversationsRouter.get(
+  "/:conversationId/abilities",
+  requireAccount,
+  conversationAbilitiesGetHandler,
+);
+conversationsRouter.put(
+  "/:conversationId/abilities/:abilityId",
+  requireAccount,
+  conversationAbilityPutHandler,
+);
+conversationsRouter.delete(
+  "/:conversationId/abilities/:abilityId",
+  requireAccount,
+  conversationAbilityDeleteHandler,
 );

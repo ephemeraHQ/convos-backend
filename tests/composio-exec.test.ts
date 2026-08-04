@@ -9,6 +9,7 @@ import {
   test,
   vi,
 } from "vitest";
+import { __setEntitlementReadReadinessForTests } from "@/api/v2/abilities/read-readiness";
 import { composioRouter } from "@/api/v2/composio/composio.router";
 import {
   AGENT_INBOX_ID_HEADER,
@@ -18,6 +19,11 @@ import {
   __resetComposioServiceForTests,
   ComposioService,
 } from "@/api/v2/connections/composio.service";
+import {
+  issueConnectionGrant,
+  revokeConnectionGrantsByNaturalKey,
+  upsertConversationAbilityExtension,
+} from "@/api/v2/connections/v1-grant-adapter";
 import {
   __setComposioExecApiKeyOverrideForTests,
   COMPOSIO_EXEC_API_KEY_HEADER,
@@ -164,6 +170,43 @@ async function asJson<T>(res: Response): Promise<T> {
   return (await res.json()) as T;
 }
 
+// Grant seeding goes through the V1-adapter path (the same service functions
+// the /v2/connections handlers call), which writes the legacy ConnectionGrant
+// row AND the entitlement tables that exec's checkEntitlement now reads.
+// Seeding the legacy table directly would leave the new tables empty and every
+// authorization test would fail for the wrong reason.
+async function seedGrant(data: {
+  ownerAccountId: string;
+  ownerInboxId: string;
+  granteeInboxId: string;
+  conversationId: string;
+  toolkit: string;
+  actions?: string[];
+  bundleIds?: string[];
+  serviceVersion?: number;
+  revokedAt?: Date;
+}) {
+  const grant = await issueConnectionGrant({
+    accountId: data.ownerAccountId,
+    ownerInboxId: data.ownerInboxId,
+    granteeInboxId: data.granteeInboxId,
+    conversationId: data.conversationId,
+    toolkit: data.toolkit,
+    actions: data.actions,
+    bundleIds: data.bundleIds,
+    serviceVersion: data.serviceVersion,
+  });
+  if (data.revokedAt) {
+    await revokeConnectionGrantsByNaturalKey({
+      accountId: data.ownerAccountId,
+      toolkit: data.toolkit,
+      conversationId: data.conversationId,
+      granteeInboxId: data.granteeInboxId,
+    });
+  }
+  return grant;
+}
+
 const VALID_BODY = {
   toolkit: "googlecalendar",
   action: "GOOGLECALENDAR_EVENTS_LIST",
@@ -172,6 +215,10 @@ const VALID_BODY = {
 
 beforeAll(async () => {
   __setComposioExecApiKeyOverrideForTests(EXEC_KEY);
+  // Pin the check onto the entitlement tables: the real gate reads the
+  // shared database's migration ledgers, whose state this suite must not
+  // depend on. The ledger-gated fallback has its own test below.
+  __setEntitlementReadReadinessForTests(true);
   await new Promise<void>((resolve) => {
     server = app.listen(4014, () => {
       resolve();
@@ -186,6 +233,7 @@ afterAll(async () => {
     });
   });
   __setComposioExecApiKeyOverrideForTests(undefined);
+  __setEntitlementReadReadinessForTests(null);
   __resetComposioServiceForTests(null);
 });
 
@@ -376,15 +424,13 @@ describe("POST /v2/composio/exec — grant authorization (DB)", () => {
 
   test("executes when a live grant matches — connection resolved server-side", async () => {
     const ownerAccountId = await makeAccount();
-    await prisma.connectionGrant.create({
-      data: {
-        ownerAccountId,
-        ownerInboxId: "owner-inbox",
-        granteeInboxId: AGENT_INBOX,
-        conversationId: CONVERSATION,
-        toolkit: "googlecalendar",
-        actions: [],
-      },
+    await seedGrant({
+      ownerAccountId,
+      ownerInboxId: "owner-inbox",
+      granteeInboxId: AGENT_INBOX,
+      conversationId: CONVERSATION,
+      toolkit: "googlecalendar",
+      actions: [],
     });
     let seen: {
       userId: string;
@@ -416,15 +462,13 @@ describe("POST /v2/composio/exec — grant authorization (DB)", () => {
 
   test("502 toolkit_version_unresolved when Composio reports no versions — fail closed", async () => {
     const ownerAccountId = await makeAccount();
-    await prisma.connectionGrant.create({
-      data: {
-        ownerAccountId,
-        ownerInboxId: "owner-inbox",
-        granteeInboxId: AGENT_INBOX,
-        conversationId: CONVERSATION,
-        toolkit: "googlecalendar",
-        actions: [],
-      },
+    await seedGrant({
+      ownerAccountId,
+      ownerInboxId: "owner-inbox",
+      granteeInboxId: AGENT_INBOX,
+      conversationId: CONVERSATION,
+      toolkit: "googlecalendar",
+      actions: [],
     });
     let executed = false;
     installComposioStub({
@@ -449,15 +493,13 @@ describe("POST /v2/composio/exec — grant authorization (DB)", () => {
 
   test("a client-supplied connection id in the body is ignored (#2)", async () => {
     const ownerAccountId = await makeAccount();
-    await prisma.connectionGrant.create({
-      data: {
-        ownerAccountId,
-        ownerInboxId: "owner-inbox",
-        granteeInboxId: AGENT_INBOX,
-        conversationId: CONVERSATION,
-        toolkit: "googlecalendar",
-        actions: [],
-      },
+    await seedGrant({
+      ownerAccountId,
+      ownerInboxId: "owner-inbox",
+      granteeInboxId: AGENT_INBOX,
+      conversationId: CONVERSATION,
+      toolkit: "googlecalendar",
+      actions: [],
     });
     let seen: { connectedAccountId?: string } | null = null;
     installComposioStub({
@@ -492,15 +534,13 @@ describe("POST /v2/composio/exec — grant authorization (DB)", () => {
 
   test("403 no_grant for the same agent in a DIFFERENT conversation", async () => {
     const ownerAccountId = await makeAccount();
-    await prisma.connectionGrant.create({
-      data: {
-        ownerAccountId,
-        ownerInboxId: "owner-inbox",
-        granteeInboxId: AGENT_INBOX,
-        conversationId: CONVERSATION,
-        toolkit: "googlecalendar",
-        actions: [],
-      },
+    await seedGrant({
+      ownerAccountId,
+      ownerInboxId: "owner-inbox",
+      granteeInboxId: AGENT_INBOX,
+      conversationId: CONVERSATION,
+      toolkit: "googlecalendar",
+      actions: [],
     });
     installComposioStub();
     const res = await exec(VALID_BODY, {
@@ -515,15 +555,13 @@ describe("POST /v2/composio/exec — grant authorization (DB)", () => {
 
   test("403 no_grant when the action is outside the granted scope", async () => {
     const ownerAccountId = await makeAccount();
-    await prisma.connectionGrant.create({
-      data: {
-        ownerAccountId,
-        ownerInboxId: "owner-inbox",
-        granteeInboxId: AGENT_INBOX,
-        conversationId: CONVERSATION,
-        toolkit: "googlecalendar",
-        actions: ["GOOGLECALENDAR_EVENTS_LIST"],
-      },
+    await seedGrant({
+      ownerAccountId,
+      ownerInboxId: "owner-inbox",
+      granteeInboxId: AGENT_INBOX,
+      conversationId: CONVERSATION,
+      toolkit: "googlecalendar",
+      actions: ["GOOGLECALENDAR_EVENTS_LIST"],
     });
     installComposioStub();
     const res = await exec(
@@ -542,17 +580,15 @@ describe("POST /v2/composio/exec — grant authorization (DB)", () => {
   // slug that simply isn't granted stays `no_grant` (the consent path).
   test("422 invalid_action when the slug is not in the toolkit catalog (even with a covering grant)", async () => {
     const ownerAccountId = await makeAccount();
-    await prisma.connectionGrant.create({
-      data: {
-        ownerAccountId,
-        ownerInboxId: "owner-inbox",
-        granteeInboxId: AGENT_INBOX,
-        conversationId: CONVERSATION,
-        toolkit: "googlecalendar",
-        actions: [],
-        bundleIds: ["calendar.events"],
-        serviceVersion: 5,
-      },
+    await seedGrant({
+      ownerAccountId,
+      ownerInboxId: "owner-inbox",
+      granteeInboxId: AGENT_INBOX,
+      conversationId: CONVERSATION,
+      toolkit: "googlecalendar",
+      actions: [],
+      bundleIds: ["calendar.events"],
+      serviceVersion: 5,
     });
     installComposioStub({
       connections: [
@@ -665,17 +701,15 @@ describe("POST /v2/composio/exec — grant authorization (DB)", () => {
   // fail CLOSED (never the whole-toolkit transition default).
   test("bundle scope: an action inside the granted bundle is allowed", async () => {
     const ownerAccountId = await makeAccount();
-    await prisma.connectionGrant.create({
-      data: {
-        ownerAccountId,
-        ownerInboxId: "owner-inbox",
-        granteeInboxId: AGENT_INBOX,
-        conversationId: CONVERSATION,
-        toolkit: "googlecalendar",
-        actions: [],
-        bundleIds: ["calendar.events"],
-        serviceVersion: 1,
-      },
+    await seedGrant({
+      ownerAccountId,
+      ownerInboxId: "owner-inbox",
+      granteeInboxId: AGENT_INBOX,
+      conversationId: CONVERSATION,
+      toolkit: "googlecalendar",
+      actions: [],
+      bundleIds: ["calendar.events"],
+      serviceVersion: 1,
     });
     installComposioStub({
       connections: [
@@ -691,17 +725,15 @@ describe("POST /v2/composio/exec — grant authorization (DB)", () => {
 
   test("bundle scope: an action outside the granted bundle is no_grant", async () => {
     const ownerAccountId = await makeAccount();
-    await prisma.connectionGrant.create({
-      data: {
-        ownerAccountId,
-        ownerInboxId: "owner-inbox",
-        granteeInboxId: AGENT_INBOX,
-        conversationId: CONVERSATION,
-        toolkit: "googlecalendar",
-        actions: [],
-        bundleIds: ["calendar.events"],
-        serviceVersion: 1,
-      },
+    await seedGrant({
+      ownerAccountId,
+      ownerInboxId: "owner-inbox",
+      granteeInboxId: AGENT_INBOX,
+      conversationId: CONVERSATION,
+      toolkit: "googlecalendar",
+      actions: [],
+      bundleIds: ["calendar.events"],
+      serviceVersion: 1,
     });
     installComposioStub({
       connections: [
@@ -722,17 +754,15 @@ describe("POST /v2/composio/exec — grant authorization (DB)", () => {
     // used to fall through to the whole-toolkit transition default (fail-open).
     // It must now be inapplicable for EVERY action — read or write.
     const ownerAccountId = await makeAccount();
-    await prisma.connectionGrant.create({
-      data: {
-        ownerAccountId,
-        ownerInboxId: "owner-inbox",
-        granteeInboxId: AGENT_INBOX,
-        conversationId: CONVERSATION,
-        toolkit: "googlecalendar",
-        actions: [],
-        bundleIds: ["calendar.bogus"],
-        serviceVersion: 2,
-      },
+    await seedGrant({
+      ownerAccountId,
+      ownerInboxId: "owner-inbox",
+      granteeInboxId: AGENT_INBOX,
+      conversationId: CONVERSATION,
+      toolkit: "googlecalendar",
+      actions: [],
+      bundleIds: ["calendar.bogus"],
+      serviceVersion: 2,
     });
     installComposioStub({
       connections: [
@@ -758,17 +788,15 @@ describe("POST /v2/composio/exec — grant authorization (DB)", () => {
     // backward-compat guarantee that those grants keep resolving to LIST,
     // and ONLY to LIST, at exec time.
     const ownerAccountId = await makeAccount();
-    await prisma.connectionGrant.create({
-      data: {
-        ownerAccountId,
-        ownerInboxId: "owner-inbox",
-        granteeInboxId: AGENT_INBOX,
-        conversationId: CONVERSATION,
-        toolkit: "googlecalendar",
-        actions: [],
-        bundleIds: ["calendar.events.read"],
-        serviceVersion: 2,
-      },
+    await seedGrant({
+      ownerAccountId,
+      ownerInboxId: "owner-inbox",
+      granteeInboxId: AGENT_INBOX,
+      conversationId: CONVERSATION,
+      toolkit: "googlecalendar",
+      actions: [],
+      bundleIds: ["calendar.events.read"],
+      serviceVersion: 2,
     });
     installComposioStub({
       connections: [
@@ -800,15 +828,13 @@ describe("POST /v2/composio/exec — grant authorization (DB)", () => {
     // fields empty) — even a write action passes. Tightens once clients always
     // send bundleIds.
     const ownerAccountId = await makeAccount();
-    await prisma.connectionGrant.create({
-      data: {
-        ownerAccountId,
-        ownerInboxId: "owner-inbox",
-        granteeInboxId: AGENT_INBOX,
-        conversationId: CONVERSATION,
-        toolkit: "googlecalendar",
-        actions: [],
-      },
+    await seedGrant({
+      ownerAccountId,
+      ownerInboxId: "owner-inbox",
+      granteeInboxId: AGENT_INBOX,
+      conversationId: CONVERSATION,
+      toolkit: "googlecalendar",
+      actions: [],
     });
     installComposioStub({
       connections: [
@@ -824,16 +850,14 @@ describe("POST /v2/composio/exec — grant authorization (DB)", () => {
 
   test("403 no_grant once the grant is revoked", async () => {
     const ownerAccountId = await makeAccount();
-    await prisma.connectionGrant.create({
-      data: {
-        ownerAccountId,
-        ownerInboxId: "owner-inbox",
-        granteeInboxId: AGENT_INBOX,
-        conversationId: CONVERSATION,
-        toolkit: "googlecalendar",
-        actions: [],
-        revokedAt: new Date(),
-      },
+    await seedGrant({
+      ownerAccountId,
+      ownerInboxId: "owner-inbox",
+      granteeInboxId: AGENT_INBOX,
+      conversationId: CONVERSATION,
+      toolkit: "googlecalendar",
+      actions: [],
+      revokedAt: new Date(),
     });
     installComposioStub();
     const res = await exec(VALID_BODY, { headers: workerHeaders() });
@@ -849,15 +873,13 @@ describe("POST /v2/composio/exec — grant authorization (DB)", () => {
         [alice, "alice-inbox"],
         [bob, "bob-inbox"],
       ] as const) {
-        await prisma.connectionGrant.create({
-          data: {
-            ownerAccountId: accountId,
-            ownerInboxId: inbox,
-            granteeInboxId: AGENT_INBOX,
-            conversationId: CONVERSATION,
-            toolkit: "googlecalendar",
-            actions: [],
-          },
+        await seedGrant({
+          ownerAccountId: accountId,
+          ownerInboxId: inbox,
+          granteeInboxId: AGENT_INBOX,
+          conversationId: CONVERSATION,
+          toolkit: "googlecalendar",
+          actions: [],
         });
       }
       return { alice, bob };
@@ -904,5 +926,360 @@ describe("POST /v2/composio/exec — grant authorization (DB)", () => {
       expect(res.status).toBe(403);
       expect((await asJson<{ code: string }>(res)).code).toBe("no_grant");
     });
+  });
+
+  describe("extendedByInboxId spoofing (attribution, never credential routing)", () => {
+    // The extender inbox id is client-attested and unverifiable server-side
+    // (see conversationAbilityPutBodySchema's trust-model note). These tests
+    // pin WHY that is safe: the executing credential always resolves from
+    // ownerAccountId — the authenticated account behind the extension's own
+    // entitlement — so a spoofed inbox id can misattribute, but can never
+    // route execution through another member's credential.
+
+    test("a grant spoofing the victim's inbox id executes with the ATTACKER's own credential", async () => {
+      const attacker = await makeAccount();
+      const victim = await makeAccount();
+      // The attacker attests the victim's inbox id as the extender. The
+      // victim has a live Composio credential but granted nothing here.
+      await seedGrant({
+        ownerAccountId: attacker,
+        ownerInboxId: "victim-inbox",
+        granteeInboxId: AGENT_INBOX,
+        conversationId: CONVERSATION,
+        toolkit: "googlecalendar",
+        actions: [],
+      });
+      let seen: { userId: string; connectedAccountId?: string } | null = null;
+      installComposioStub({
+        execute: (_slug, body) => {
+          seen = body;
+          return Promise.resolve({ data: { ok: true } });
+        },
+        connections: [
+          { id: "conn_attacker", userId: attacker, slug: "googlecalendar" },
+          { id: "conn_victim", userId: victim, slug: "googlecalendar" },
+        ],
+      });
+      const res = await exec(
+        { ...VALID_BODY, onBehalfOf: "victim-inbox" },
+        { headers: workerHeaders() },
+      );
+      expect(res.status).toBe(200);
+      // The selector matched the spoofed row, but the credential is resolved
+      // from the row's OWNER account — the attacker's own — never from the
+      // inbox id. The victim's credential is untouched.
+      expect(seen).toMatchObject({
+        userId: attacker,
+        connectedAccountId: "conn_attacker",
+      });
+    });
+
+    test("when the victim really granted too, the spoof degrades to ambiguous_grant — never the victim's credential", async () => {
+      const attacker = await makeAccount();
+      const victim = await makeAccount();
+      await seedGrant({
+        ownerAccountId: victim,
+        ownerInboxId: "victim-inbox",
+        granteeInboxId: AGENT_INBOX,
+        conversationId: CONVERSATION,
+        toolkit: "googlecalendar",
+        actions: [],
+      });
+      await seedGrant({
+        ownerAccountId: attacker,
+        ownerInboxId: "victim-inbox",
+        granteeInboxId: AGENT_INBOX,
+        conversationId: CONVERSATION,
+        toolkit: "googlecalendar",
+        actions: [],
+      });
+      let executed = false;
+      installComposioStub({
+        execute: () => {
+          executed = true;
+          return Promise.resolve({ data: { ok: true } });
+        },
+        connections: [
+          { id: "conn_victim", userId: victim, slug: "googlecalendar" },
+        ],
+      });
+      const res = await exec(
+        { ...VALID_BODY, onBehalfOf: "victim-inbox" },
+        { headers: workerHeaders() },
+      );
+      // Two owner accounts behind one selector: exec refuses rather than
+      // pick either credential.
+      expect(res.status).toBe(409);
+      expect((await asJson<{ code: string }>(res)).code).toBe(
+        "ambiguous_grant",
+      );
+      expect(executed).toBe(false);
+    });
+  });
+});
+
+// --- DB-backed: the entitlement tables are the authoritative store ---
+//
+// The suite above seeds through the V1 adapter, which writes BOTH stores; it
+// would keep passing if exec silently regressed to reading ConnectionGrant.
+// These fixtures pin the store: positives seeded ONLY in the new tables,
+// denials seeded ONLY in the legacy table, and a poisoned legacy row that
+// must not widen a narrow new-table scope.
+
+describe("POST /v2/composio/exec — new tables are authoritative (DB)", () => {
+  const accountIds: string[] = [];
+
+  async function makeAccount(): Promise<string> {
+    const account = await prisma.account.create({ data: {} });
+    accountIds.push(account.id);
+    return account.id;
+  }
+
+  async function seedEntitlementOnly(
+    ownerAccountId: string,
+    extension: { actions?: string[]; bundleIds?: string[] } = {},
+  ) {
+    const entitlement = await prisma.abilityEntitlement.create({
+      data: {
+        accountId: ownerAccountId,
+        abilityId: "googlecalendar",
+        status: "active",
+      },
+    });
+    await prisma.conversationAbility.create({
+      data: {
+        entitlementId: entitlement.id,
+        conversationId: CONVERSATION,
+        agentInboxId: AGENT_INBOX,
+        actions: extension.actions ?? [],
+        bundleIds: extension.bundleIds ?? [],
+        extendedByInboxId: "owner-inbox",
+      },
+    });
+    return entitlement;
+  }
+
+  afterEach(async () => {
+    __setEntitlementReadReadinessForTests(true);
+    await prisma.connectionGrant.deleteMany({
+      where: { ownerAccountId: { in: accountIds } },
+    });
+    // Cascades entitlements + extensions.
+    await prisma.account.deleteMany({ where: { id: { in: accountIds } } });
+    accountIds.length = 0;
+  });
+
+  test("executes from the entitlement tables alone — no legacy row exists", async () => {
+    const ownerAccountId = await makeAccount();
+    await seedEntitlementOnly(ownerAccountId);
+    let seen: { userId: string } | null = null;
+    installComposioStub({
+      execute: (_slug, body) => {
+        seen = body;
+        return Promise.resolve({ data: { ok: true } });
+      },
+      connections: [
+        { id: "conn_owned", userId: ownerAccountId, slug: "googlecalendar" },
+      ],
+    });
+
+    const res = await exec(VALID_BODY, { headers: workerHeaders() });
+    expect(res.status).toBe(200);
+    expect(seen).toMatchObject({ userId: ownerAccountId });
+    // Prove the fixture really is new-table-only.
+    const legacy = await prisma.connectionGrant.findMany({
+      where: { ownerAccountId },
+    });
+    expect(legacy).toHaveLength(0);
+  });
+
+  test("a legacy-only grant does not authorize after cutover (403 no_grant)", async () => {
+    const ownerAccountId = await makeAccount();
+    await prisma.connectionGrant.create({
+      data: {
+        ownerAccountId,
+        ownerInboxId: "owner-inbox",
+        granteeInboxId: AGENT_INBOX,
+        conversationId: CONVERSATION,
+        toolkit: "googlecalendar",
+        actions: [],
+      },
+    });
+    installComposioStub({
+      connections: [
+        { id: "conn_owned", userId: ownerAccountId, slug: "googlecalendar" },
+      ],
+    });
+
+    const res = await exec(VALID_BODY, { headers: workerHeaders() });
+    expect(res.status).toBe(403);
+    expect((await asJson<{ code: string }>(res)).code).toBe("no_grant");
+  });
+
+  test("a wider legacy row cannot widen a narrow new-table scope (poisoned pair)", async () => {
+    const ownerAccountId = await makeAccount();
+    // New store: scoped to one action. Legacy store: whole-toolkit.
+    await seedEntitlementOnly(ownerAccountId, {
+      actions: ["GOOGLECALENDAR_EVENTS_LIST"],
+    });
+    await prisma.connectionGrant.create({
+      data: {
+        ownerAccountId,
+        ownerInboxId: "owner-inbox",
+        granteeInboxId: AGENT_INBOX,
+        conversationId: CONVERSATION,
+        toolkit: "googlecalendar",
+        actions: [],
+      },
+    });
+    installComposioStub({
+      connections: [
+        { id: "conn_owned", userId: ownerAccountId, slug: "googlecalendar" },
+      ],
+    });
+
+    const denied = await exec(
+      { ...VALID_BODY, action: "GOOGLECALENDAR_CREATE_EVENT" },
+      { headers: workerHeaders() },
+    );
+    expect(denied.status).toBe(403);
+    expect((await asJson<{ code: string }>(denied)).code).toBe("no_grant");
+
+    const allowed = await exec(VALID_BODY, { headers: workerHeaders() });
+    expect(allowed.status).toBe(200);
+  });
+
+  test("before the ledgers confirm, exec authorizes from the legacy matcher (fallback)", async () => {
+    __setEntitlementReadReadinessForTests(false);
+    const ownerAccountId = await makeAccount();
+    await prisma.connectionGrant.create({
+      data: {
+        ownerAccountId,
+        ownerInboxId: "owner-inbox",
+        granteeInboxId: AGENT_INBOX,
+        conversationId: CONVERSATION,
+        toolkit: "googlecalendar",
+        actions: [],
+      },
+    });
+    installComposioStub({
+      connections: [
+        { id: "conn_owned", userId: ownerAccountId, slug: "googlecalendar" },
+      ],
+    });
+
+    const res = await exec(VALID_BODY, { headers: workerHeaders() });
+    expect(res.status).toBe(200);
+  });
+
+  test("a narrowing V2 PUT supersedes inherited legacy actions in BOTH stores (consent narrowing)", async () => {
+    const ownerAccountId = await makeAccount();
+    // A legacy V1 grant carrying an explicit write slug; the adapter mirrors
+    // it into the extension's `actions` (as the backfill does).
+    await seedGrant({
+      ownerAccountId,
+      ownerInboxId: "owner-inbox",
+      granteeInboxId: AGENT_INBOX,
+      conversationId: CONVERSATION,
+      toolkit: "googlecalendar",
+      actions: ["GOOGLECALENDAR_DELETE_EVENT", "GOOGLECALENDAR_EVENTS_LIST"],
+    });
+    const entitlement = await prisma.abilityEntitlement.findUniqueOrThrow({
+      where: {
+        accountId_abilityId: {
+          accountId: ownerAccountId,
+          abilityId: "googlecalendar",
+        },
+      },
+    });
+    // The user narrows consent to the read-only bundle via V2 PUT.
+    await upsertConversationAbilityExtension({
+      accountId: ownerAccountId,
+      entitlementId: entitlement.id,
+      abilityId: "googlecalendar",
+      conversationId: CONVERSATION,
+      agentInboxId: AGENT_INBOX,
+      bundleIds: ["calendar.events.read"],
+      extendedByInboxId: "owner-inbox",
+    });
+    installComposioStub({
+      connections: [
+        { id: "conn_owned", userId: ownerAccountId, slug: "googlecalendar" },
+      ],
+    });
+
+    // The write slug the legacy grant carried must NOT survive the
+    // narrowing: the check unions actions with bundle-resolved scope, so a
+    // stale action would resurrect the broader consent.
+    const denied = await exec(
+      { ...VALID_BODY, action: "GOOGLECALENDAR_DELETE_EVENT" },
+      { headers: workerHeaders() },
+    );
+    expect(denied.status).toBe(403);
+    expect((await asJson<{ code: string }>(denied)).code).toBe("no_grant");
+
+    // The narrowed bundle still authorizes its read.
+    const allowed = await exec(VALID_BODY, { headers: workerHeaders() });
+    expect(allowed.status).toBe(200);
+
+    // The legacy mirror was narrowed too — an old replica's exec (and the
+    // pre-readiness fallback matcher) must not authorize the write either.
+    const legacyRows = await prisma.connectionGrant.findMany({
+      where: { ownerAccountId },
+    });
+    expect(legacyRows).toHaveLength(1);
+    expect(legacyRows[0].actions).toEqual([]);
+    __setEntitlementReadReadinessForTests(false);
+    const deniedLegacy = await exec(
+      { ...VALID_BODY, action: "GOOGLECALENDAR_DELETE_EVENT" },
+      { headers: workerHeaders() },
+    );
+    expect(deniedLegacy.status).toBe(403);
+    expect((await asJson<{ code: string }>(deniedLegacy)).code).toBe(
+      "no_grant",
+    );
+  });
+
+  test("mixed-case toolkit grants converge and stay revocable (normalization regression)", async () => {
+    const ownerAccountId = await makeAccount();
+    // A V1 client issued with a case-variant toolkit; the adapter normalizes
+    // the entitlement id, so the canonical exec request matches.
+    await seedGrant({
+      ownerAccountId,
+      ownerInboxId: "owner-inbox",
+      granteeInboxId: AGENT_INBOX,
+      conversationId: CONVERSATION,
+      toolkit: "GoogleCalendar",
+      actions: [],
+    });
+    const entitlement = await prisma.abilityEntitlement.findUnique({
+      where: {
+        accountId_abilityId: {
+          accountId: ownerAccountId,
+          abilityId: "googlecalendar",
+        },
+      },
+    });
+    expect(entitlement).not.toBeNull();
+
+    installComposioStub({
+      connections: [
+        { id: "conn_owned", userId: ownerAccountId, slug: "googlecalendar" },
+      ],
+    });
+    const allowed = await exec(VALID_BODY, { headers: workerHeaders() });
+    expect(allowed.status).toBe(200);
+
+    // The canonical revoke reaches the case-variant legacy row too.
+    await revokeConnectionGrantsByNaturalKey({
+      accountId: ownerAccountId,
+      toolkit: "googlecalendar",
+    });
+    const denied = await exec(VALID_BODY, { headers: workerHeaders() });
+    expect(denied.status).toBe(403);
+    const legacy = await prisma.connectionGrant.findMany({
+      where: { ownerAccountId },
+    });
+    expect(legacy.every((grant) => grant.revokedAt !== null)).toBe(true);
   });
 });

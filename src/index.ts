@@ -3,6 +3,7 @@ import cookieParser from "cookie-parser";
 import cors from "cors";
 import express from "express";
 import helmet from "helmet";
+import { runAbilityEntitlementsBackfillOnce } from "@/api/v2/abilities/backfill-entitlements";
 import { shutdownPostHog } from "@/api/v2/agent-templates/services/posthog";
 import {
   startTtlSweep as startGenerationTtlSweep,
@@ -121,8 +122,17 @@ validateJWTKeys()
       // stable accountId. Self-guards via a RuntimeConfig ledger marker so it
       // runs exactly once per environment (like a DB migration) and is a no-op
       // on every subsequent boot. Fired after listen so a slow/failing external
-      // call never blocks startup or health checks.
-      void runComposioUserIdMigrationOnce();
+      // call never blocks startup or health checks. The entitlement backfill
+      // runs strictly after it because it keys the Composio inventory by the
+      // accountIds that migration establishes — and it re-checks the
+      // migration's ledger itself (a resolved promise here also covers
+      // advisory-lock contention and failure, which must NOT start the
+      // backfill; neither routine throws). Until the ledgers confirm —
+      // including the post-drain cutover marker — exec stays on the legacy
+      // grant matcher (see abilities/read-readiness.ts).
+      void runComposioUserIdMigrationOnce().then(() =>
+        runAbilityEntitlementsBackfillOnce(),
+      );
     });
 
     // Wrap the async drain steps in a void-IIFE so the SIGTERM listener

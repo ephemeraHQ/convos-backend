@@ -1,4 +1,5 @@
 import type { Request, Response } from "express";
+import { noteV1ConnectionDeleted } from "@/api/v2/connections/v1-connection-adapter";
 import { createComposioService } from "../composio.service";
 
 export async function deleteHandler(
@@ -33,6 +34,14 @@ export async function deleteHandler(
       return;
     }
     await service.delete(connectionId);
+    // Mirror into the entitlement tables (best-effort; never changes the V1
+    // wire): re-derive from the remaining connections, or tombstone when the
+    // last one went.
+    await noteV1ConnectionDeleted({
+      accountId,
+      toolkitSlug: owned.toolkit.slug,
+      service,
+    });
     res.status(204).send();
     return;
   } catch (error) {

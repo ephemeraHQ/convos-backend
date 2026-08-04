@@ -1,5 +1,6 @@
 import type { Request, Response } from "express";
 import { z } from "zod";
+import { noteV1AuthFlowStarted } from "@/api/v2/connections/v1-connection-adapter";
 import { createComposioService } from "../composio.service";
 
 const bodySchema = z.object({
@@ -63,6 +64,12 @@ export async function initiateHandler(req: Request, res: Response) {
       userId: accountId,
       authConfigId,
       callbackUrl: parsed.data.redirectUri,
+    });
+    // Mirror into the entitlement tables (best-effort; never changes the V1
+    // wire) so the V2 catalog sees the in-flight auth.
+    await noteV1AuthFlowStarted({
+      accountId,
+      serviceId: parsed.data.serviceId,
     });
     res.status(200).json({
       connectionRequestId: request.id,

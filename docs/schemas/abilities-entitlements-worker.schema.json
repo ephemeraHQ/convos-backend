@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://convos.org/schemas/abilities-entitlements-worker.schema.json",
+  "title": "GET /v2/abilities/entitlements response (worker-facing)",
+  "description": "The worker-facing enumerate: every ability the calling agent may use in the calling conversation, per owner, with the resolved allowed-action union. Vendor-neutral route; not the client-facing GET /v2/abilities catalog (abilities.schema.json). Auth mirrors POST /v2/composio/exec exactly — X-Composio-Exec-Key (composioExecAuth; the key name is legacy-scoped to its first consumer) plus the worker-stamped x-convos-conversation-id / x-convos-agent-inbox-id trusted identity headers (403 {code: trusted_identity_unavailable} without them); the caller is the trusted assistants worker, the same trust class and key as exec. Derived from live ConversationAbility rows and their parent entitlements only; while the entitlement tables are still converging after boot the endpoint answers a retryable 503 {code: entitlements_unavailable} — never a partial list. No connection id, account id, or other bearer capability is ever served. Source of truth: src/api/v2/abilities/handlers/entitlements-worker.ts.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["abilities"],
+  "properties": {
+    "abilities": {
+      "description": "Sorted by abilityId. Empty when nothing is entitled to this agent in this conversation — a valid response, not an error.",
+      "type": "array",
+      "items": { "$ref": "#/$defs/Ability" }
+    }
+  },
+  "$defs": {
+    "Ability": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["abilityId", "owners"],
+      "properties": {
+        "abilityId": {
+          "description": "Stable ability id (the Composio toolkit slug for Composio-backed abilities), canonical lowercase — the value exec takes as `toolkit`.",
+          "type": "string"
+        },
+        "owners": {
+          "description": "One entry per owner account with at least one cleanly executable grant for this agent here, sorted by ownerInboxId. Every advertised (owner, action) pair is executable by exec as-is: pass onBehalfOf = ownerInboxId, or omit onBehalfOf when ownerInboxId is null. Ambiguity is resolved per action, exactly as exec counts it — never simply by owner count: owners whose scopes overlap under distinct extender inbox ids are all advertised in full (onBehalfOf isolates each), while an action that overlapping owner accounts make ambiguous under an entry's own selector (the same extender inbox id on two accounts, or a null extender overlapping any other owner — no onBehalfOf value can isolate either) is excluded from the affected entries, and an entry left with nothing is withheld (fail closed; exec stays the authority).",
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/Owner" }
+        }
+      }
+    },
+    "Owner": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ownerInboxId", "actions"],
+      "properties": {
+        "ownerInboxId": {
+          "description": "The member whose connection this entry represents, as that member's conversation-visible inbox id (who extended the ability) — the value to pass as exec's onBehalfOf. Null when a V2 write did not record the extender: no onBehalfOf value can name such an owner, so its entry lists only actions exec resolves to it uniquely without a selector.",
+          "type": ["string", "null"]
+        },
+        "actions": {
+          "description": "The resolved allowed-action union for this owner as raw Composio action slugs — the same resolution exec enforces (legacy explicit actions plus bundle-resolved against the current catalog), sorted, minus any action exec would deny as ambiguous_grant under this entry's selector (see owners). Slugs are deliberately served on this wire: the caller is the trusted assistants worker (same trust class as exec), unlike client-facing surfaces, which never serve slugs. Empty means the whole-toolkit transition default (a true legacy grant with neither actions nor bundle ids): every action of the ability is allowed — served only when no other owner's grant overlaps the entry (an overlapped whole-toolkit entry is withheld entirely, since \"everything except the overlap\" is not expressible here).",
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    }
+  }
+}

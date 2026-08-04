@@ -1,5 +1,6 @@
 import type { Request, Response } from "express";
 import { z } from "zod";
+import { noteV1ConnectionCompleted } from "@/api/v2/connections/v1-connection-adapter";
 import { createComposioService } from "../composio.service";
 import { mapComposioToResponse } from "../types";
 
@@ -47,6 +48,15 @@ export async function completeHandler(req: Request, res: Response) {
       res.status(403).json({ error: "Connection not owned by this account" });
       return;
     }
+    // Mirror into the entitlement tables (best-effort; never changes the V1
+    // wire): the entitlement status derives from the connection's own status
+    // — only a verified ACTIVE credential activates it.
+    await noteV1ConnectionCompleted({
+      accountId,
+      connectionId: owned.id,
+      toolkitSlug: owned.toolkit.slug,
+      connectionStatus: owned.status,
+    });
     res.status(200).json(mapComposioToResponse(owned, accountId));
     return;
   } catch (error) {

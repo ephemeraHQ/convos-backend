@@ -42,6 +42,24 @@
    curl http://localhost:4000/healthcheck
    ```
 
+## Fresh Checkouts and Worktrees
+
+New checkouts and git worktrees need three extra steps before anything typechecks:
+
+1. **Generate protobuf code** - the generated files under `src/gen` are not checked in:
+
+   ```bash
+   pnpm buf:generate
+   ```
+
+2. **Generate the Prisma Client** - the client under `node_modules/.prisma` is built from `prisma/schema.prisma` and is not checked in:
+
+   ```bash
+   pnpm exec prisma generate
+   ```
+
+3. **Copy `.env` from an existing checkout** - generated keys and secrets are per-machine, not per-worktree.
+
 ## Environment Variables
 
 ```bash
@@ -76,6 +94,14 @@ The `dev/compose.yml` runs:
 | `notification_db`     | -          | PostgreSQL for notification server |
 
 The backend connects to `convos_db` and `notification_server`. It does not connect directly to the XMTP node.
+
+## Database Migrations
+
+The shared local/dev database is schema-pushed and has no `_prisma_migrations` table, so `prisma migrate dev` and `prisma migrate deploy` cannot run against it. Apply new migrations there by running the migration SQL directly with `psql`. Real environments replay the same migration files via `prisma migrate deploy`; if an environment received the SQL manually, reconcile the bookkeeping with `prisma migrate resolve --applied <migration>`.
+
+## Testing Notes
+
+Do not `vi.spyOn` Prisma delegate methods (e.g. `prisma.<model>.findMany`) - spying corrupts the client for every later query in the file, even after `mockRestore()`. Patch the method manually and restore the original afterwards; see the commented pattern in `tests/abilities.test.ts`.
 
 ## Authentication Model
 
