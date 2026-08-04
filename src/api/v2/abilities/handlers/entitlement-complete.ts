@@ -1,3 +1,4 @@
+import { Prisma } from "@prisma/client";
 import type { Request, Response } from "express";
 import { z } from "zod";
 import { normalizeAbilityId } from "@/api/v2/abilities/ability-id";
@@ -124,33 +125,52 @@ export async function entitlementCompleteHandler(req: Request, res: Response) {
             externalConnectionId: string | null;
           } | null;
         };
-    const outcome = await prisma.$transaction(async (tx): Promise<Outcome> => {
-      await tx.$queryRaw`SELECT "id" FROM "AbilityEntitlement" WHERE "accountId" = ${accountId}::uuid AND "abilityId" = ${abilityId} FOR UPDATE`;
-      const prior = await tx.abilityEntitlement.findUnique({
-        where: { accountId_abilityId: { accountId, abilityId } },
+    const runActivation = (): Promise<Outcome> =>
+      prisma.$transaction(async (tx): Promise<Outcome> => {
+        await tx.$queryRaw`SELECT "id" FROM "AbilityEntitlement" WHERE "accountId" = ${accountId}::uuid AND "abilityId" = ${abilityId} FOR UPDATE`;
+        const prior = await tx.abilityEntitlement.findUnique({
+          where: { accountId_abilityId: { accountId, abilityId } },
+        });
+        const priorRevokedAtMs = prior?.revokedAt?.getTime() ?? null;
+        const preRevokedAtMs = pre?.revokedAt?.getTime() ?? null;
+        if (priorRevokedAtMs !== null && priorRevokedAtMs !== preRevokedAtMs) {
+          return { kind: "revoked_during_complete" };
+        }
+        await tx.abilityEntitlement.upsert({
+          where: { accountId_abilityId: { accountId, abilityId } },
+          create: {
+            accountId,
+            abilityId,
+            status: "active",
+            externalConnectionId: owned.id,
+            abilityVersion: getServedAbilityVersion(abilityId),
+          },
+          update: {
+            status: "active",
+            externalConnectionId: owned.id,
+            revokedAt: null,
+          },
+        });
+        return { kind: "active", prior };
       });
-      const priorRevokedAtMs = prior?.revokedAt?.getTime() ?? null;
-      const preRevokedAtMs = pre?.revokedAt?.getTime() ?? null;
-      if (priorRevokedAtMs !== null && priorRevokedAtMs !== preRevokedAtMs) {
-        return { kind: "revoked_during_complete" };
-      }
-      await tx.abilityEntitlement.upsert({
-        where: { accountId_abilityId: { accountId, abilityId } },
-        create: {
-          accountId,
-          abilityId,
-          status: "active",
-          externalConnectionId: owned.id,
-          abilityVersion: getServedAbilityVersion(abilityId),
-        },
-        update: {
-          status: "active",
-          externalConnectionId: owned.id,
-          revokedAt: null,
-        },
-      });
-      return { kind: "active", prior };
-    });
+
+    let outcome: Outcome;
+    try {
+      outcome = await runActivation();
+    } catch (error) {
+      const uniqueCollision =
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === "P2002";
+      if (!uniqueCollision) throw error;
+      // Two concurrent FIRST-TIME completions (mobile OAuth double-tap): a
+      // FOR UPDATE on a row that does not exist yet takes no lock, so both
+      // reach the upsert and the loser's create hits the unique key. The
+      // collision aborts the whole Postgres transaction, so convergence is a
+      // rerun, not an in-transaction fallback: the winner's row is committed
+      // by the time the conflict surfaces, and the rerun locks it and takes
+      // the update path -- through the same tombstone re-check.
+      outcome = await runActivation();
+    }
 
     if (outcome.kind === "revoked_during_complete") {
       req.log.warn(

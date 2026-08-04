@@ -748,6 +748,62 @@ describe("DELETE /v2/abilities/:abilityId/entitlement — concurrency and partia
     expect(row!.externalConnectionId).toBeNull();
   });
 
+  test("two concurrent FIRST-TIME completions both answer 200 active with one row (OAuth double-tap)", async () => {
+    const accountId = await makeAccount();
+    // No pre-existing entitlement row: FOR UPDATE has nothing to lock, so
+    // both requests race into the create path.
+    const deleted: string[] = [];
+    let arrived = 0;
+    let releaseBoth!: () => void;
+    const bothArrived = new Promise<void>((resolve) => {
+      releaseBoth = resolve;
+    });
+    installStatefulComposioStub({
+      connections: [
+        { id: "conn_a", userId: accountId, slug: "googlecalendar" },
+      ],
+      deleted,
+      onList: async (call) => {
+        if (call <= 2) {
+          // Hold both ownership reads until both requests are in flight, so
+          // the two activation transactions genuinely overlap.
+          arrived += 1;
+          if (arrived === 2) releaseBoth();
+          await bothArrived;
+        }
+      },
+    });
+
+    const authToken = await token(accountId);
+    const [first, second] = await Promise.all([
+      request(makeApp())
+        .post("/abilities/googlecalendar/entitlement/complete")
+        .set("X-Convos-AuthToken", authToken)
+        .send({ connectionRequestId: "conn_a" })
+        .then((r) => r),
+      request(makeApp())
+        .post("/abilities/googlecalendar/entitlement/complete")
+        .set("X-Convos-AuthToken", authToken)
+        .send({ connectionRequestId: "conn_a" })
+        .then((r) => r),
+    ]);
+
+    // The loser of the create race converges through the update path -- a
+    // double-tap must never surface a 5xx for a completion that succeeded.
+    expect(first.status).toBe(200);
+    expect(first.body).toEqual({ status: "active" });
+    expect(second.status).toBe(200);
+    expect(second.body).toEqual({ status: "active" });
+
+    const rows = await prisma.abilityEntitlement.findMany({
+      where: { accountId },
+    });
+    expect(rows).toHaveLength(1);
+    expect(rows[0].status).toBe("active");
+    expect(rows[0].externalConnectionId).toBe("conn_a");
+    expect(deleted).toEqual([]);
+  });
+
   test("a STALE ownership read is refused by the in-transaction tombstone re-check", async () => {
     const accountId = await makeAccount();
     await prisma.abilityEntitlement.create({
