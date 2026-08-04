@@ -108,6 +108,40 @@ describe("deletion executors", () => {
     ).toBe(`a/${ACCOUNT_ID}/${OBJECT_ID}`);
   });
 
+  test("PostHog purge without personal key/project id completes as a skip (no API call)", async () => {
+    process.env.POSTHOG_PROJECT_TOKEN = "project-token";
+    delete process.env.POSTHOG_PERSONAL_API_KEY;
+    delete process.env.POSTHOG_PROJECT_ID;
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    vi.resetModules();
+    const { getDeletionExecutor } =
+      await import("@/accounts/deletion/executors");
+
+    // Resolving (not throwing) is what lets the outbox mark the task done
+    // and the DeletionRecord reach `completed` on unconfigured deployments.
+    await expect(
+      getDeletionExecutor("posthog_person")?.({ distinctId: "acct/1" }),
+    ).resolves.toBeUndefined();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  test("PostHog purge with analytics disabled entirely completes as a skip", async () => {
+    delete process.env.POSTHOG_PROJECT_TOKEN;
+    delete process.env.POSTHOG_PERSONAL_API_KEY;
+    delete process.env.POSTHOG_PROJECT_ID;
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    vi.resetModules();
+    const { getDeletionExecutor } =
+      await import("@/accounts/deletion/executors");
+
+    await expect(
+      getDeletionExecutor("posthog_person")?.({ distinctId: "acct/1" }),
+    ).resolves.toBeUndefined();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   test("PostHog deletion uses the private API host and timeouts on both requests", async () => {
     process.env.POSTHOG_PROJECT_TOKEN = "project-token";
     process.env.POSTHOG_PERSONAL_API_KEY = "personal-key";
