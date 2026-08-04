@@ -33,6 +33,36 @@ type ToolkitActionsCacheEntry = { slugs: Set<string>; expiresAt: number };
 // exists to keep a broken cursor chain from looping forever.
 const LIST_PAGE_LIMIT = 10;
 
+// Upper bound on any single Composio SDK call made on a request path. The
+// SDK's own default timeout is 60s — far beyond what a request handler
+// should ever spend waiting on an upstream — so every call here is raced
+// against this bound and a timeout surfaces as an ordinary Composio failure
+// (callers already treat those as 502-class upstream errors). Tool execution
+// gets a larger budget: real tool runs can legitimately take longer than
+// metadata calls.
+const COMPOSIO_CALL_TIMEOUT_MS = 10_000;
+const COMPOSIO_EXECUTE_TIMEOUT_MS = 30_000;
+
+async function withComposioTimeout<T>(
+  label: string,
+  budgetMs: number,
+  run: () => Promise<T>,
+): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    return await Promise.race([
+      run(),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => {
+          reject(new Error(`Composio ${label} timed out after ${budgetMs}ms`));
+        }, budgetMs);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export class ComposioService {
   private composio: Composio;
   private authConfigCache = new Map<string, AuthConfigCacheEntry>();
@@ -58,7 +88,11 @@ export class ComposioService {
       return hit.authConfigId;
     }
 
-    const list = await this.composio.authConfigs.list({ toolkit: normalized });
+    const list = await withComposioTimeout(
+      "authConfigs.list",
+      COMPOSIO_CALL_TIMEOUT_MS,
+      () => this.composio.authConfigs.list({ toolkit: normalized }),
+    );
     const enabled = list.items.find(
       (item) =>
         item.toolkit.slug.toLowerCase() === normalized &&
@@ -111,7 +145,11 @@ export class ComposioService {
       return hit.version;
     }
 
-    const info = await this.composio.toolkits.get(normalized);
+    const info = await withComposioTimeout(
+      "toolkits.get",
+      COMPOSIO_CALL_TIMEOUT_MS,
+      () => this.composio.toolkits.get(normalized),
+    );
     const versions = info.meta.availableVersions ?? [];
     const version = versions.reduce<string | null>(
       (max, candidate) => (max === null || candidate > max ? candidate : max),
@@ -164,9 +202,12 @@ export class ComposioService {
 
     const slugs = new Set<string>();
     try {
-      const tools = await this.composio.tools.getRawComposioTools({
-        toolkits: [normalized],
-      });
+      const tools = await withComposioTimeout(
+        "tools.getRawComposioTools",
+        COMPOSIO_CALL_TIMEOUT_MS,
+        () =>
+          this.composio.tools.getRawComposioTools({ toolkits: [normalized] }),
+      );
       for (const tool of tools) {
         if (tool.slug) slugs.add(tool.slug);
       }
@@ -210,12 +251,13 @@ export class ComposioService {
     authConfigId: string;
     callbackUrl?: string;
   }) {
-    return this.composio.connectedAccounts.link(
-      args.userId,
-      args.authConfigId,
-      {
-        callbackUrl: args.callbackUrl ?? COMPOSIO_CONNECTION_CALLBACK_URL,
-      },
+    return withComposioTimeout(
+      "connectedAccounts.link",
+      COMPOSIO_CALL_TIMEOUT_MS,
+      () =>
+        this.composio.connectedAccounts.link(args.userId, args.authConfigId, {
+          callbackUrl: args.callbackUrl ?? COMPOSIO_CONNECTION_CALLBACK_URL,
+        }),
     );
   }
 
@@ -246,10 +288,16 @@ export class ComposioService {
     const items: ConnectedAccountListResponseItem[] = [];
     let cursor: string | undefined;
     for (let page = 0; page < LIST_PAGE_LIMIT; page++) {
-      const list = await this.composio.connectedAccounts.list({
-        userIds: [userId],
-        ...(cursor ? { cursor } : {}),
-      });
+      const pageCursor = cursor;
+      const list = await withComposioTimeout(
+        "connectedAccounts.list",
+        COMPOSIO_CALL_TIMEOUT_MS,
+        () =>
+          this.composio.connectedAccounts.list({
+            userIds: [userId],
+            ...(pageCursor ? { cursor: pageCursor } : {}),
+          }),
+      );
       items.push(...list.items);
       if (!list.nextCursor) {
         return { items };
@@ -266,7 +314,11 @@ export class ComposioService {
   }
 
   async delete(connectionId: string) {
-    return this.composio.connectedAccounts.delete(connectionId);
+    return withComposioTimeout(
+      "connectedAccounts.delete",
+      COMPOSIO_CALL_TIMEOUT_MS,
+      () => this.composio.connectedAccounts.delete(connectionId),
+    );
   }
 
   /**
@@ -303,14 +355,19 @@ export class ComposioService {
     connectedAccountId?: string;
     version?: string;
   }) {
-    return this.composio.tools.execute(args.action, {
-      userId: args.userId,
-      arguments: args.arguments,
-      ...(args.connectedAccountId
-        ? { connectedAccountId: args.connectedAccountId }
-        : {}),
-      ...(args.version ? { version: args.version } : {}),
-    });
+    return withComposioTimeout(
+      "tools.execute",
+      COMPOSIO_EXECUTE_TIMEOUT_MS,
+      () =>
+        this.composio.tools.execute(args.action, {
+          userId: args.userId,
+          arguments: args.arguments,
+          ...(args.connectedAccountId
+            ? { connectedAccountId: args.connectedAccountId }
+            : {}),
+          ...(args.version ? { version: args.version } : {}),
+        }),
+    );
   }
 }
 

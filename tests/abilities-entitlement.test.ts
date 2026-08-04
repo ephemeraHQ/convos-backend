@@ -367,6 +367,45 @@ describe("POST /v2/abilities/:abilityId/entitlement/complete", () => {
     });
     expect(row).toBeNull();
   });
+
+  test("an upstream (Composio) failure is a 502", async () => {
+    const accountId = await makeAccount();
+    installComposioStub({ listThrows: true });
+    const res = await request(makeApp())
+      .post("/abilities/googlecalendar/entitlement/complete")
+      .set("X-Convos-AuthToken", await token(accountId))
+      .send({ connectionRequestId: "creq_1" });
+    expect(res.status).toBe(502);
+    expect(res.body).toEqual({ code: "complete_failed" });
+  });
+
+  test("an internal (database) failure is a 500, not blamed on the upstream", async () => {
+    const accountId = await makeAccount();
+    installComposioStub({
+      connections: [
+        { id: "creq_1", userId: accountId, slug: "googlecalendar" },
+      ],
+    });
+    // Manual patch, not vi.spyOn -- see the pattern note in tests/abilities.test.ts.
+    const client = prisma as unknown as {
+      $transaction: (...args: never[]) => Promise<unknown>;
+    };
+    const original = client.$transaction.bind(prisma);
+    client.$transaction = () =>
+      Promise.reject(new Error("induced transaction failure"));
+    let res;
+    try {
+      res = await request(makeApp())
+        .post("/abilities/googlecalendar/entitlement/complete")
+        .set("X-Convos-AuthToken", await token(accountId))
+        .send({ connectionRequestId: "creq_1" });
+    } finally {
+      client.$transaction = original;
+    }
+    expect(res.status).toBe(500);
+    // Same body shape as the upstream case: one retryable error surface.
+    expect(res.body).toEqual({ code: "complete_failed" });
+  });
 });
 
 describe("noteV1ConnectionCompleted (V1 mirror)", () => {
@@ -581,7 +620,7 @@ describe("DELETE /v2/abilities/:abilityId/entitlement — concurrency and partia
     onList?: (call: number) => Promise<void> | void;
     /** Runs after a list call computed its snapshot (mutations here are
      * visible to LATER calls only). */
-    afterListSnapshot?: (call: number) => void;
+    afterListSnapshot?: (call: number) => Promise<void> | void;
     onDelete?: (id: string) => void;
   };
 
@@ -607,7 +646,7 @@ describe("DELETE /v2/abilities/:abilityId/entitlement — concurrency and partia
               status: "ACTIVE",
               toolkit: { slug: c.slug },
             }));
-          state.afterListSnapshot?.(call);
+          await state.afterListSnapshot?.(call);
           return { items, totalPages: 1, nextCursor: null };
         },
         delete: (id: string) => {
@@ -657,9 +696,9 @@ describe("DELETE /v2/abilities/:abilityId/entitlement — concurrency and partia
       deleted,
       onList: async (call) => {
         if (call === 1) {
-          // Complete's in-transaction ownership read: the entitlement row
-          // lock is already held. Park it until the concurrent revoke has
-          // finished its external teardown.
+          // Complete's ownership read (before its transaction). Park it
+          // until the concurrent revoke has finished its external teardown,
+          // so the read observes the deletion.
           signalCompleteInside();
           await completeGate;
         }
@@ -669,7 +708,7 @@ describe("DELETE /v2/abilities/:abilityId/entitlement — concurrency and partia
       },
     });
 
-    // Complete first: its transaction takes the row lock, then its ownership
+    // Complete first: its pre-read snapshots the row, then its ownership
     // read parks on the gate.
     const completePromise = request(makeApp())
       .post("/abilities/googlecalendar/entitlement/complete")
@@ -678,9 +717,8 @@ describe("DELETE /v2/abilities/:abilityId/entitlement — concurrency and partia
       .then((r) => r);
     await completeInside;
 
-    // The revoke starts while complete is parked: its external teardown runs
-    // (deleting conn_a), then its tombstone transaction queues on the row
-    // lock held by complete.
+    // The revoke starts while complete is parked: its external teardown
+    // runs (deleting conn_a), then its tombstone lands.
     const deletePromise = request(makeApp())
       .delete("/abilities/googlecalendar/entitlement")
       .set("X-Convos-AuthToken", await token(accountId))
@@ -698,6 +736,70 @@ describe("DELETE /v2/abilities/:abilityId/entitlement — concurrency and partia
     expect(completeRes.status).toBe(403);
     expect(completeRes.body).toEqual({ code: "connection_not_owned" });
     expect(deleteRes.status).toBe(204);
+    expect(deleted).toEqual(["conn_a"]);
+
+    const row = await prisma.abilityEntitlement.findUnique({
+      where: {
+        accountId_abilityId: { accountId, abilityId: "googlecalendar" },
+      },
+    });
+    expect(row!.status).toBe("revoked");
+    expect(row!.revokedAt).not.toBeNull();
+    expect(row!.externalConnectionId).toBeNull();
+  });
+
+  test("a STALE ownership read is refused by the in-transaction tombstone re-check", async () => {
+    const accountId = await makeAccount();
+    await prisma.abilityEntitlement.create({
+      data: { accountId, abilityId: "googlecalendar", status: "pending_auth" },
+    });
+    const deleted: string[] = [];
+    let releaseComplete!: () => void;
+    const completeGate = new Promise<void>((resolve) => {
+      releaseComplete = resolve;
+    });
+    let signalStaleRead!: () => void;
+    const staleRead = new Promise<void>((resolve) => {
+      signalStaleRead = resolve;
+    });
+    const state: StatefulStubState = {
+      connections: [
+        { id: "conn_a", userId: accountId, slug: "googlecalendar" },
+      ],
+      deleted,
+    };
+    state.afterListSnapshot = async (call) => {
+      if (call === 1) {
+        // Complete's ownership read already computed its snapshot -- the
+        // credential looks alive. Park the RESPONSE until the concurrent
+        // revoke has fully committed, so complete proceeds on a stale read.
+        signalStaleRead();
+        await completeGate;
+      }
+    };
+    installStatefulComposioStub(state);
+
+    const completePromise = request(makeApp())
+      .post("/abilities/googlecalendar/entitlement/complete")
+      .set("X-Convos-AuthToken", await token(accountId))
+      .send({ connectionRequestId: "conn_a" })
+      .then((r) => r);
+    await staleRead;
+
+    // The revoke runs to full completion (teardown, tombstone, straggler
+    // sweep) while complete holds its stale "credential alive" snapshot.
+    const deleteRes = await request(makeApp())
+      .delete("/abilities/googlecalendar/entitlement")
+      .set("X-Convos-AuthToken", await token(accountId));
+    expect(deleteRes.status).toBe(204);
+    releaseComplete();
+
+    const completeRes = await completePromise;
+    // The transaction's re-check saw a tombstone the pre-read did not: a
+    // revoke landed between verification and write, so activating from the
+    // stale read would resurrect a deleted credential. Refused.
+    expect(completeRes.status).toBe(403);
+    expect(completeRes.body).toEqual({ code: "connection_not_owned" });
     expect(deleted).toEqual(["conn_a"]);
 
     const row = await prisma.abilityEntitlement.findUnique({
