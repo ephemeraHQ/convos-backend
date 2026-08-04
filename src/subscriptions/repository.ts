@@ -525,9 +525,11 @@ export const upsertFromVerify = async (
       // already maps a past expiresDate to `expired`, so stored ≈ effective at
       // this instant. The single-ledger contract is grant-then-forfeit: a
       // fresh verify grants the period and an expiry webhook claws back the
-      // unused portion (pinned by account-credits.test.ts "past-ended active
-      // subscription … wallet credits persist until forfeit"). Switching this
-      // to the effective check would break that pinned semantic for nothing.
+      // unused portion (pinned by account-credits.test.ts "past-ended
+      // auto-renewing active subscription: keeps Plus tier framing (renewal
+      // pending)", whose balance assertion shows the granted wallet credits
+      // persist until forfeit). Switching this to the effective check would
+      // break that pinned semantic for nothing.
       if (!isStaleVerify && isEntitledSubscriptionStatus(subscription.status)) {
         // Renewal observed via verify: if the period start advanced past the
         // LOCKED current one, forfeit the ending period's unused allotment (no
