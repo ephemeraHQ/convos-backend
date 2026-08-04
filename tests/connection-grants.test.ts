@@ -252,6 +252,37 @@ describe("Connection grants API", () => {
     }
   });
 
+  test("boot window: a case-variant legacy toolkit is served canonical, matching the ready path", async () => {
+    const mine = await makeAccount();
+    await prisma.connectionGrant.create({
+      data: {
+        ownerAccountId: mine,
+        ownerInboxId: "owner-inbox",
+        granteeInboxId: "agent-inbox",
+        conversationId: "conv-boot-case",
+        toolkit: "GoogleCalendar",
+        bundleIds: ["calendar.events"],
+      },
+    });
+    __setEntitlementReadReadinessForTests(false);
+    try {
+      const res = await fetch(`${baseURL}/api/v2/connections/grants`, {
+        headers: { "X-Convos-AuthToken": await token(mine) },
+      });
+      expect(res.status).toBe(200);
+      const { grants } = await asJson<{ grants: Array<{ toolkit: string }> }>(
+        res,
+      );
+      expect(grants).toHaveLength(1);
+      // A client keying UI state by toolkit must not see the string change
+      // across the cutover: the ready path serves the canonical lowercase
+      // abilityId, so the fallback does too.
+      expect(grants[0].toolkit).toBe("googlecalendar");
+    } finally {
+      __setEntitlementReadReadinessForTests(true);
+    }
+  });
+
   test("re-issuing with a different toolkit casing updates the same grant (no second semantic row)", async () => {
     const accountId = await makeAccount();
     const first = await issueConnectionGrant({

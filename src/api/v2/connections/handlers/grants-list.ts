@@ -1,4 +1,5 @@
 import type { Request, Response } from "express";
+import { normalizeAbilityId } from "@/api/v2/abilities/ability-id";
 import { isEntitlementReadModelReady } from "@/api/v2/abilities/read-readiness";
 import { prisma } from "@/utils/prisma";
 
@@ -48,7 +49,15 @@ export async function grantsListHandler(req: Request, res: Response) {
         createdAt: true,
       },
     });
-    res.status(200).json({ grants });
+    // Serve the canonical toolkit id here too: the ready path serves the
+    // entitlement's canonical lowercase abilityId, and a client keying UI
+    // state by toolkit must not see the string change across the cutover.
+    res.status(200).json({
+      grants: grants.map((grant) => ({
+        ...grant,
+        toolkit: normalizeAbilityId(grant.toolkit),
+      })),
+    });
     return;
   }
 

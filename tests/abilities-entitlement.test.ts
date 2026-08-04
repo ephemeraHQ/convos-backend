@@ -571,3 +571,261 @@ describe("DELETE /v2/abilities/:abilityId/entitlement", () => {
     expect(res.status).toBe(204);
   });
 });
+
+describe("DELETE /v2/abilities/:abilityId/entitlement — concurrency and partial failure", () => {
+  type LiveConnection = { id: string; userId: string; slug: string };
+  type StatefulStubState = {
+    connections: LiveConnection[];
+    deleted: string[];
+    /** Awaited at the top of every connectedAccounts.list call. */
+    onList?: (call: number) => Promise<void> | void;
+    /** Runs after a list call computed its snapshot (mutations here are
+     * visible to LATER calls only). */
+    afterListSnapshot?: (call: number) => void;
+    onDelete?: (id: string) => void;
+  };
+
+  // The shared installComposioStub serves a fixed inventory; these races need
+  // one whose list reflects deletions and whose calls can be gated.
+  function installStatefulComposioStub(state: StatefulStubState) {
+    let listCalls = 0;
+    const stub = {
+      authConfigs: {
+        list: () => Promise.resolve({ items: [], totalPages: 1 }),
+      },
+      connectedAccounts: {
+        link: () => Promise.reject(new Error("unused in these tests")),
+        list: async (query: { userIds?: string[] }) => {
+          listCalls += 1;
+          const call = listCalls;
+          await state.onList?.(call);
+          const wanted = query.userIds ?? [];
+          const items = state.connections
+            .filter((c) => wanted.includes(c.userId))
+            .map((c) => ({
+              id: c.id,
+              status: "ACTIVE",
+              toolkit: { slug: c.slug },
+            }));
+          state.afterListSnapshot?.(call);
+          return { items, totalPages: 1, nextCursor: null };
+        },
+        delete: (id: string) => {
+          state.deleted.push(id);
+          state.connections = state.connections.filter((c) => c.id !== id);
+          state.onDelete?.(id);
+          return Promise.resolve({});
+        },
+      },
+    };
+    __resetComposioServiceForTests(
+      new ComposioService({
+        composio: stub as unknown as ConstructorParameters<
+          typeof ComposioService
+        >[0]["composio"],
+      }),
+    );
+  }
+
+  test("a complete racing a revoke cannot resurrect an active row over the deleted credential", async () => {
+    const accountId = await makeAccount();
+    await prisma.abilityEntitlement.create({
+      data: {
+        accountId,
+        abilityId: "googlecalendar",
+        status: "active",
+        externalConnectionId: "conn_a",
+      },
+    });
+    const deleted: string[] = [];
+    let releaseComplete!: () => void;
+    const completeGate = new Promise<void>((resolve) => {
+      releaseComplete = resolve;
+    });
+    let signalCompleteInside!: () => void;
+    const completeInside = new Promise<void>((resolve) => {
+      signalCompleteInside = resolve;
+    });
+    let signalTeardownDone!: () => void;
+    const teardownDone = new Promise<void>((resolve) => {
+      signalTeardownDone = resolve;
+    });
+    installStatefulComposioStub({
+      connections: [
+        { id: "conn_a", userId: accountId, slug: "googlecalendar" },
+      ],
+      deleted,
+      onList: async (call) => {
+        if (call === 1) {
+          // Complete's in-transaction ownership read: the entitlement row
+          // lock is already held. Park it until the concurrent revoke has
+          // finished its external teardown.
+          signalCompleteInside();
+          await completeGate;
+        }
+      },
+      onDelete: (id) => {
+        if (id === "conn_a") signalTeardownDone();
+      },
+    });
+
+    // Complete first: its transaction takes the row lock, then its ownership
+    // read parks on the gate.
+    const completePromise = request(makeApp())
+      .post("/abilities/googlecalendar/entitlement/complete")
+      .set("X-Convos-AuthToken", await token(accountId))
+      .send({ connectionRequestId: "conn_a" })
+      .then((r) => r);
+    await completeInside;
+
+    // The revoke starts while complete is parked: its external teardown runs
+    // (deleting conn_a), then its tombstone transaction queues on the row
+    // lock held by complete.
+    const deletePromise = request(makeApp())
+      .delete("/abilities/googlecalendar/entitlement")
+      .set("X-Convos-AuthToken", await token(accountId))
+      .then((r) => r);
+    await teardownDone;
+    releaseComplete();
+
+    const [completeRes, deleteRes] = await Promise.all([
+      completePromise,
+      deletePromise,
+    ]);
+    // Complete observed the concurrent teardown (its ownership read ran
+    // after the credential died) and refused; the revoke then landed its
+    // tombstone. No interleaving leaves an active row over a dead credential.
+    expect(completeRes.status).toBe(403);
+    expect(completeRes.body).toEqual({ code: "connection_not_owned" });
+    expect(deleteRes.status).toBe(204);
+    expect(deleted).toEqual(["conn_a"]);
+
+    const row = await prisma.abilityEntitlement.findUnique({
+      where: {
+        accountId_abilityId: { accountId, abilityId: "googlecalendar" },
+      },
+    });
+    expect(row!.status).toBe("revoked");
+    expect(row!.revokedAt).not.toBeNull();
+    expect(row!.externalConnectionId).toBeNull();
+  });
+
+  test("a credential appearing mid-revoke (a concurrent bind completing OAuth) is swept before the 204", async () => {
+    const accountId = await makeAccount();
+    await issueConnectionGrant({
+      accountId,
+      ownerInboxId: "owner-inbox",
+      granteeInboxId: "agent-inbox",
+      conversationId: "conv-race-bind",
+      toolkit: "googlecalendar",
+      bundleIds: ["calendar.events"],
+    });
+    const deleted: string[] = [];
+    const state: StatefulStubState = {
+      connections: [
+        { id: "conn_a", userId: accountId, slug: "googlecalendar" },
+      ],
+      deleted,
+    };
+    state.afterListSnapshot = (call) => {
+      if (call === 1) {
+        // A concurrent bind's OAuth completes right after the teardown took
+        // its inventory snapshot: the new credential is invisible to the
+        // first pass.
+        state.connections.push({
+          id: "conn_new",
+          userId: accountId,
+          slug: "googlecalendar",
+        });
+      }
+    };
+    installStatefulComposioStub(state);
+
+    const res = await request(makeApp())
+      .delete("/abilities/googlecalendar/entitlement")
+      .set("X-Convos-AuthToken", await token(accountId));
+    expect(res.status).toBe(204);
+    // The post-tombstone re-list caught the credential the snapshot missed.
+    expect(deleted).toEqual(["conn_a", "conn_new"]);
+
+    const row = await prisma.abilityEntitlement.findUnique({
+      where: {
+        accountId_abilityId: { accountId, abilityId: "googlecalendar" },
+      },
+      include: { extensions: true },
+    });
+    expect(row!.status).toBe("revoked");
+    expect(row!.extensions).toHaveLength(0);
+  });
+
+  test("external teardown succeeded but the transaction failed: the retried DELETE converges", async () => {
+    const accountId = await makeAccount();
+    await issueConnectionGrant({
+      accountId,
+      ownerInboxId: "owner-inbox",
+      granteeInboxId: "agent-inbox",
+      conversationId: "conv-partial-failure",
+      toolkit: "googlecalendar",
+      bundleIds: ["calendar.events"],
+    });
+    const deleted: string[] = [];
+    installStatefulComposioStub({
+      connections: [
+        { id: "conn_a", userId: accountId, slug: "googlecalendar" },
+      ],
+      deleted,
+    });
+
+    // Manual patch, not vi.spyOn — see the pattern note in tests/abilities.test.ts.
+    const client = prisma as unknown as {
+      $transaction: (...args: never[]) => Promise<unknown>;
+    };
+    const original = client.$transaction.bind(prisma);
+    client.$transaction = () =>
+      Promise.reject(new Error("induced transaction failure"));
+    let first;
+    try {
+      first = await request(makeApp())
+        .delete("/abilities/googlecalendar/entitlement")
+        .set("X-Convos-AuthToken", await token(accountId));
+    } finally {
+      client.$transaction = original;
+    }
+
+    // The divergent window the teardown-first ordering accepts: the external
+    // credential is gone while the local row is still active. The row is not
+    // tombstoned over a credential whose deletion DID happen — the caller
+    // got a 5xx and retries.
+    expect(first.status).toBe(500);
+    expect(deleted).toEqual(["conn_a"]);
+    const mid = await prisma.abilityEntitlement.findUnique({
+      where: {
+        accountId_abilityId: { accountId, abilityId: "googlecalendar" },
+      },
+    });
+    expect(mid!.status).toBe("active");
+    expect(mid!.revokedAt).toBeNull();
+
+    // The retry converges: nothing external left to delete, local teardown
+    // lands, tombstone kept.
+    const retry = await request(makeApp())
+      .delete("/abilities/googlecalendar/entitlement")
+      .set("X-Convos-AuthToken", await token(accountId));
+    expect(retry.status).toBe(204);
+    expect(deleted).toEqual(["conn_a"]);
+    const row = await prisma.abilityEntitlement.findUnique({
+      where: {
+        accountId_abilityId: { accountId, abilityId: "googlecalendar" },
+      },
+      include: { extensions: true },
+    });
+    expect(row!.status).toBe("revoked");
+    expect(row!.revokedAt).not.toBeNull();
+    expect(row!.extensions).toHaveLength(0);
+
+    const grants = await prisma.connectionGrant.findMany({
+      where: { ownerAccountId: accountId },
+    });
+    expect(grants.every((g) => g.revokedAt !== null)).toBe(true);
+  });
+});

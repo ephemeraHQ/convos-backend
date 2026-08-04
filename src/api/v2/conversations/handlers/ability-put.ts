@@ -40,6 +40,17 @@ const bodySchema = z.object({
   // Who is extending, as the caller's inbox id in this conversation. Optional
   // (server cannot derive it); when present it powers the check's onBehalfOf
   // owner selector and the "extended by" display.
+  //
+  // Trust model: the value is client-attested and cannot be verified here —
+  // the backend has no registry of member inbox ids (XMTP identity is not
+  // provable on this surface), the same model as the V1 grant's
+  // ownerInboxId. It is safe because it is only ever a SELECTOR and display
+  // value: execution's credential always resolves from ownerAccountId — the
+  // authenticated account behind the extension's own entitlement row — so a
+  // spoofed inbox id routes nothing through anyone else's credential (proof:
+  // "exec resolves the credential from the extension owner's account" in
+  // tests/composio-exec.test.ts). Worst case is self-inflicted
+  // misattribution, or ambiguity exec answers with ambiguous_grant.
   extendedByInboxId: z.string().min(1).max(256).optional(),
 });
 

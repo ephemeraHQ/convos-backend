@@ -725,23 +725,54 @@ export async function runAbilityEntitlementsBackfillOnce() {
 
       // Materialize the full inventory outside the transaction: the DB
       // transaction below must never wait on Composio HTTP. The lease is
-      // renewed while the scan runs; losing it (a peer stole an expired
-      // lease) aborts this attempt — the thief is doing the same work.
+      // renewed on a wall-clock timer — independent of item yields, so a
+      // stalled page request (or an empty inventory whose first page is
+      // slow) cannot silently let the lease expire mid-scan. Losing it (a
+      // peer stole an expired lease) aborts this attempt — the thief is
+      // doing the same work on a fresher snapshot.
       const inventory: ConnectedAccountSummary[] = [];
-      let leaseRenewedAt = Date.now();
-      for await (const connection of listAllConnectedAccounts(
-        composio.getClient(),
-      )) {
-        inventory.push(connection);
-        if (Date.now() - leaseRenewedAt >= BACKFILL_LEASE_RENEW_MS) {
-          if (!(await tryAcquireBackfillLease(leaseToken))) {
-            logger.warn(
-              "[abilities-backfill] inventory lease lost mid-scan; aborting this attempt",
-            );
-            return;
-          }
-          leaseRenewedAt = Date.now();
+      const lease = { lost: false, renewInFlight: false };
+      const renewTimer = setInterval(() => {
+        if (lease.renewInFlight || lease.lost) return;
+        lease.renewInFlight = true;
+        tryAcquireBackfillLease(leaseToken)
+          .then((renewed) => {
+            if (!renewed) lease.lost = true;
+          })
+          .catch(() => {
+            // A transient renewal failure is not a loss; the next tick
+            // retries and the pre-transaction ownership check is the gate.
+          })
+          .finally(() => {
+            lease.renewInFlight = false;
+          });
+      }, BACKFILL_LEASE_RENEW_MS);
+      try {
+        for await (const connection of listAllConnectedAccounts(
+          composio.getClient(),
+        )) {
+          inventory.push(connection);
+          if (lease.lost) break;
         }
+      } finally {
+        clearInterval(renewTimer);
+      }
+      if (lease.lost) {
+        logger.warn(
+          "[abilities-backfill] inventory lease lost mid-scan; aborting this attempt",
+        );
+        return;
+      }
+
+      // Ownership re-check right before the transaction: if the lease was
+      // stolen after the scan (however briefly), the thief is converging a
+      // fresher inventory — committing this snapshot could overwrite it and
+      // mark the pass complete with stale data.
+      if (!(await tryAcquireBackfillLease(leaseToken))) {
+        logger.warn(
+          "[abilities-backfill] inventory lease lost before commit; aborting this attempt",
+        );
+        return;
       }
 
       completed = await prisma.$transaction(

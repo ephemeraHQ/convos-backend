@@ -927,6 +927,95 @@ describe("POST /v2/composio/exec — grant authorization (DB)", () => {
       expect((await asJson<{ code: string }>(res)).code).toBe("no_grant");
     });
   });
+
+  describe("extendedByInboxId spoofing (attribution, never credential routing)", () => {
+    // The extender inbox id is client-attested and unverifiable server-side
+    // (see conversationAbilityPutBodySchema's trust-model note). These tests
+    // pin WHY that is safe: the executing credential always resolves from
+    // ownerAccountId — the authenticated account behind the extension's own
+    // entitlement — so a spoofed inbox id can misattribute, but can never
+    // route execution through another member's credential.
+
+    test("a grant spoofing the victim's inbox id executes with the ATTACKER's own credential", async () => {
+      const attacker = await makeAccount();
+      const victim = await makeAccount();
+      // The attacker attests the victim's inbox id as the extender. The
+      // victim has a live Composio credential but granted nothing here.
+      await seedGrant({
+        ownerAccountId: attacker,
+        ownerInboxId: "victim-inbox",
+        granteeInboxId: AGENT_INBOX,
+        conversationId: CONVERSATION,
+        toolkit: "googlecalendar",
+        actions: [],
+      });
+      let seen: { userId: string; connectedAccountId?: string } | null = null;
+      installComposioStub({
+        execute: (_slug, body) => {
+          seen = body;
+          return Promise.resolve({ data: { ok: true } });
+        },
+        connections: [
+          { id: "conn_attacker", userId: attacker, slug: "googlecalendar" },
+          { id: "conn_victim", userId: victim, slug: "googlecalendar" },
+        ],
+      });
+      const res = await exec(
+        { ...VALID_BODY, onBehalfOf: "victim-inbox" },
+        { headers: workerHeaders() },
+      );
+      expect(res.status).toBe(200);
+      // The selector matched the spoofed row, but the credential is resolved
+      // from the row's OWNER account — the attacker's own — never from the
+      // inbox id. The victim's credential is untouched.
+      expect(seen).toMatchObject({
+        userId: attacker,
+        connectedAccountId: "conn_attacker",
+      });
+    });
+
+    test("when the victim really granted too, the spoof degrades to ambiguous_grant — never the victim's credential", async () => {
+      const attacker = await makeAccount();
+      const victim = await makeAccount();
+      await seedGrant({
+        ownerAccountId: victim,
+        ownerInboxId: "victim-inbox",
+        granteeInboxId: AGENT_INBOX,
+        conversationId: CONVERSATION,
+        toolkit: "googlecalendar",
+        actions: [],
+      });
+      await seedGrant({
+        ownerAccountId: attacker,
+        ownerInboxId: "victim-inbox",
+        granteeInboxId: AGENT_INBOX,
+        conversationId: CONVERSATION,
+        toolkit: "googlecalendar",
+        actions: [],
+      });
+      let executed = false;
+      installComposioStub({
+        execute: () => {
+          executed = true;
+          return Promise.resolve({ data: { ok: true } });
+        },
+        connections: [
+          { id: "conn_victim", userId: victim, slug: "googlecalendar" },
+        ],
+      });
+      const res = await exec(
+        { ...VALID_BODY, onBehalfOf: "victim-inbox" },
+        { headers: workerHeaders() },
+      );
+      // Two owner accounts behind one selector: exec refuses rather than
+      // pick either credential.
+      expect(res.status).toBe(409);
+      expect((await asJson<{ code: string }>(res)).code).toBe(
+        "ambiguous_grant",
+      );
+      expect(executed).toBe(false);
+    });
+  });
 });
 
 // --- DB-backed: the entitlement tables are the authoritative store ---

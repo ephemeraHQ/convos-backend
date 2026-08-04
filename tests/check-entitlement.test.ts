@@ -1,5 +1,9 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
-import { checkEntitlement } from "@/api/v2/abilities/check-entitlement";
+import {
+  checkEntitlement,
+  enumerateConversationEntitlements,
+} from "@/api/v2/abilities/check-entitlement";
+import { __setEntitlementReadReadinessForTests } from "@/api/v2/abilities/read-readiness";
 import logger from "@/utils/logger";
 import { prisma } from "@/utils/prisma";
 
@@ -110,5 +114,65 @@ describe("checkEntitlement — account path (DB)", () => {
       action: "GOOGLECALENDAR_CALENDARS_DELETE",
     });
     expect(result).toEqual({ allowed: false, code: "no_grant" });
+  });
+});
+
+describe("checkEntitlement — revoked parent defense in depth (conversation path, DB)", () => {
+  const caller = {
+    kind: "conversation" as const,
+    conversationId: "conv-revoked-parent",
+    agentInboxId: "agent-revoked-parent",
+  };
+
+  function checkConversation() {
+    return checkEntitlement({
+      caller,
+      abilityId: "googlecalendar",
+      catalog: null,
+      log: logger,
+    });
+  }
+
+  test("a surviving extension under a revoked parent neither authorizes nor enumerates", async () => {
+    const accountId = await makeAccount();
+    __setEntitlementReadReadinessForTests(true);
+    try {
+      const entitlement = await prisma.abilityEntitlement.create({
+        data: { accountId, abilityId: "googlecalendar", status: "active" },
+      });
+      await prisma.conversationAbility.create({
+        data: {
+          entitlementId: entitlement.id,
+          conversationId: caller.conversationId,
+          agentInboxId: caller.agentInboxId,
+          bundleIds: ["calendar.events"],
+          extendedByInboxId: "owner-inbox",
+        },
+      });
+      const before = await checkConversation();
+      expect(before.allowed).toBe(true);
+
+      // Divergent state defense in depth: revocation deletes extensions in
+      // the same transaction that tombstones the parent, so a surviving row
+      // can only come from divergence — it must never authorize or be
+      // advertised.
+      await prisma.abilityEntitlement.update({
+        where: { id: entitlement.id },
+        data: { status: "revoked", revokedAt: new Date() },
+      });
+      const after = await checkConversation();
+      expect(after).toEqual({ allowed: false, code: "no_grant" });
+
+      const enumerated = await enumerateConversationEntitlements({
+        caller: {
+          conversationId: caller.conversationId,
+          agentInboxId: caller.agentInboxId,
+        },
+        log: logger,
+      });
+      expect(enumerated).toEqual({ ready: true, abilities: [] });
+    } finally {
+      __setEntitlementReadReadinessForTests(null);
+    }
   });
 });

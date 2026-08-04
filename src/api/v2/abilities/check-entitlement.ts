@@ -135,8 +135,13 @@ async function checkForConversation(
         agentInboxId: caller.agentInboxId,
         // Stored ability ids are canonical lowercase (writes normalize; the
         // reconciliation sweep merged historical case variants before this
-        // read path was declared ready).
-        entitlement: { is: { abilityId } },
+        // read path was declared ready). Revocation deletes extensions in the
+        // same transaction that tombstones the parent, so a surviving row
+        // under a revoked parent is divergent state — excluded here as
+        // defense in depth (never authorize from a tombstoned entitlement).
+        entitlement: {
+          is: { abilityId, status: { not: "revoked" }, revokedAt: null },
+        },
         OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
       },
       include: {
@@ -190,13 +195,14 @@ async function checkForConversation(
  * unresolvable bundles. `log` is optional so enumerate's repeated per-action
  * replays do not duplicate exec's per-request diagnostics.
  */
-function rowAppliesToAction(
-  abilityId: string,
-  row: MatchableRow,
-  action: string | undefined,
-  onBehalfOf: string | undefined,
-  log?: Logger,
-): boolean {
+function rowAppliesToAction(args: {
+  abilityId: string;
+  row: MatchableRow;
+  action: string | undefined;
+  onBehalfOf: string | undefined;
+  log?: Logger;
+}): boolean {
+  const { abilityId, row, action, onBehalfOf, log } = args;
   if (onBehalfOf !== undefined && row.extendedByInboxId !== onBehalfOf) {
     return false;
   }
@@ -231,7 +237,7 @@ async function decideForConversation(
   const { action, onBehalfOf, log } = args;
 
   const applicable = rows.filter((row) =>
-    rowAppliesToAction(abilityId, row, action, onBehalfOf, log),
+    rowAppliesToAction({ abilityId, row, action, onBehalfOf, log }),
   );
 
   if (applicable.length === 0) {
@@ -416,6 +422,9 @@ export async function enumerateConversationEntitlements(args: {
     where: {
       conversationId: args.caller.conversationId,
       agentInboxId: args.caller.agentInboxId,
+      // Same defense in depth as the check path: a surviving extension under
+      // a revoked parent (divergent state) must never be advertised.
+      entitlement: { is: { status: { not: "revoked" }, revokedAt: null } },
       OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
     },
     include: {
@@ -509,7 +518,12 @@ function advertisableOwner(
   const rivals = siblingRows.filter(
     (sibling) =>
       sibling.ownerAccountId !== row.ownerAccountId &&
-      rowAppliesToAction(abilityId, sibling, undefined, selector),
+      rowAppliesToAction({
+        abilityId,
+        row: sibling,
+        action: undefined,
+        onBehalfOf: selector,
+      }),
   );
 
   if (wholeToolkit) {
@@ -530,7 +544,13 @@ function advertisableOwner(
 
   const executable = scope.filter((action) =>
     rivals.every(
-      (rival) => !rowAppliesToAction(abilityId, rival, action, selector),
+      (rival) =>
+        !rowAppliesToAction({
+          abilityId,
+          row: rival,
+          action,
+          onBehalfOf: selector,
+        }),
     ),
   );
   if (executable.length === 0) {

@@ -184,17 +184,33 @@ export function getServedAbilityVersion(abilityId: string): number {
 }
 
 /**
- * The served catalog version: the manual base plus the sum of served ability
- * versions. Computed so it bumps on its own whenever an ability's composite
- * version moves (manifest edits, service-side bundle/copy changes) and
- * whenever an ability launches (unhiding adds its version to the sum).
+ * The served catalog version: a deterministic fingerprint of the manual base
+ * plus every served ability's (id, composite version) pair. Computed so it
+ * moves on its own whenever an ability's composite version changes (manifest
+ * edits, service-side bundle/copy changes), an ability launches or is
+ * removed, or the base is bumped. A fingerprint rather than a sum: with a
+ * sum, removing an ability while bumping the base can arithmetically cancel
+ * out, and clients comparing the value would miss the change. Clients treat
+ * the value as opaque (compare, never order).
  */
 export function getCatalogVersion(): number {
-  return ABILITY_MANIFESTS.filter(isServable).reduce(
-    (sum: number, m: AbilityManifest): number =>
-      sum + m.version + (getServiceConfig(m.id)?.version ?? 0),
-    CATALOG_VERSION,
-  );
+  const payload = [
+    `base:${CATALOG_VERSION}`,
+    ...ABILITY_MANIFESTS.filter(isServable)
+      .map(
+        (m: AbilityManifest): string =>
+          `${m.id}:${m.version + (getServiceConfig(m.id)?.version ?? 0)}`,
+      )
+      .sort(),
+  ].join("\n");
+  // FNV-1a, folded into a positive int above the base so existing "newer
+  // than the base" client checks keep holding.
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < payload.length; i += 1) {
+    hash ^= payload.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return CATALOG_VERSION + 1 + ((hash >>> 0) % 1_000_000_007);
 }
 
 // A missing/bundle-less service entry is static configuration, not a

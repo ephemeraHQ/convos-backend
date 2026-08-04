@@ -71,55 +71,94 @@ export async function entitlementCompleteHandler(req: Request, res: Response) {
   }
 
   try {
-    const owned = await service.getIfOwned({
-      connectionId: parsed.data.connectionRequestId,
-      userId: accountId,
-    });
-    if (!owned) {
+    // The ownership verification and the activation write run inside one
+    // transaction that first takes the entitlement's row lock (when a row
+    // exists): a concurrent DELETE's tombstone update takes the same lock, so
+    // the two serialize instead of interleaving — a revoke that committed
+    // first is observed here (its teardown already deleted the credential, so
+    // getIfOwned answers null and nothing is resurrected with a dead
+    // credential); one that started later waits, then its tombstone and
+    // extension delete win over this activation. The external read inside the
+    // transaction is deliberate: the lock must span verify-then-write, and
+    // the transaction timeout is raised accordingly.
+    type Outcome =
+      | { kind: "not_owned" }
+      | { kind: "mismatch" }
+      | { kind: "incomplete"; status: string }
+      | {
+          kind: "active";
+          connectionId: string;
+          prior: {
+            status: string;
+            revokedAt: Date | null;
+            externalConnectionId: string | null;
+          } | null;
+        };
+    const outcome = await prisma.$transaction(
+      async (tx): Promise<Outcome> => {
+        await tx.$queryRaw`SELECT "id" FROM "AbilityEntitlement" WHERE "accountId" = ${accountId}::uuid AND "abilityId" = ${abilityId} FOR UPDATE`;
+
+        const owned = await service.getIfOwned({
+          connectionId: parsed.data.connectionRequestId,
+          userId: accountId,
+        });
+        if (!owned) {
+          return { kind: "not_owned" };
+        }
+        if (owned.toolkit.slug.toLowerCase() !== abilityId) {
+          // A real connection of the caller's, but for a different toolkit
+          // than the ability being completed — reject rather than mis-bind.
+          return { kind: "mismatch" };
+        }
+        const connectionStatus = toEntitlementStatus(owned.status, req.log);
+        if (connectionStatus !== "active") {
+          return { kind: "incomplete", status: connectionStatus };
+        }
+
+        const prior = await tx.abilityEntitlement.findUnique({
+          where: { accountId_abilityId: { accountId, abilityId } },
+        });
+        await tx.abilityEntitlement.upsert({
+          where: { accountId_abilityId: { accountId, abilityId } },
+          create: {
+            accountId,
+            abilityId,
+            status: "active",
+            externalConnectionId: owned.id,
+            abilityVersion: getServedAbilityVersion(abilityId),
+          },
+          update: {
+            status: "active",
+            externalConnectionId: owned.id,
+            revokedAt: null,
+          },
+        });
+        return { kind: "active", connectionId: owned.id, prior };
+      },
+      { timeout: 30_000 },
+    );
+
+    if (outcome.kind === "not_owned") {
       res.status(403).json({ code: "connection_not_owned" });
       return;
     }
-    if (owned.toolkit.slug.toLowerCase() !== abilityId) {
-      // A real connection of the caller's, but for a different toolkit than
-      // the ability being completed — reject rather than mis-bind.
+    if (outcome.kind === "mismatch") {
       res.status(409).json({ code: "ability_mismatch" });
       return;
     }
-    const connectionStatus = toEntitlementStatus(owned.status, req.log);
-    if (connectionStatus !== "active") {
+    if (outcome.kind === "incomplete") {
       req.log.info(
-        { accountId, abilityId, composioStatus: owned.status },
+        { accountId, abilityId, status: outcome.status },
         "[Abilities] complete: connection not active yet — auth_incomplete",
       );
-      res
-        .status(409)
-        .json({ code: "auth_incomplete", status: connectionStatus });
+      res.status(409).json({ code: "auth_incomplete", status: outcome.status });
       return;
     }
 
-    const prior = await prisma.abilityEntitlement.findUnique({
-      where: { accountId_abilityId: { accountId, abilityId } },
-    });
-    await prisma.abilityEntitlement.upsert({
-      where: { accountId_abilityId: { accountId, abilityId } },
-      create: {
-        accountId,
-        abilityId,
-        status: "active",
-        externalConnectionId: owned.id,
-        abilityVersion: getServedAbilityVersion(abilityId),
-      },
-      update: {
-        status: "active",
-        externalConnectionId: owned.id,
-        revokedAt: null,
-      },
-    });
-
-    // A DELETE racing this complete can tear the verified connection down
-    // (and tombstone the row) between getIfOwned and the upsert — the write
-    // above would then resurrect an active row backed by a deleted
-    // credential. Re-verify after persisting; on failure, a guarded restore
+    // Residual window the row lock cannot cover: a DELETE that committed
+    // before this transaction took the lock deletes stragglers AFTER its own
+    // commit — its sweep can tear this credential down right after the
+    // activation above. Re-verify post-commit; on failure a guarded restore
     // (matching exactly what this handler wrote, so a delete that already
     // re-tombstoned is never clobbered) puts the prior state back.
     const still = await service.getIfOwned({
@@ -132,13 +171,13 @@ export async function entitlementCompleteHandler(req: Request, res: Response) {
           accountId,
           abilityId,
           status: "active",
-          externalConnectionId: owned.id,
+          externalConnectionId: outcome.connectionId,
         },
-        data: prior
+        data: outcome.prior
           ? {
-              status: prior.status,
-              revokedAt: prior.revokedAt,
-              externalConnectionId: prior.externalConnectionId,
+              status: outcome.prior.status,
+              revokedAt: outcome.prior.revokedAt,
+              externalConnectionId: outcome.prior.externalConnectionId,
             }
           : { status: "expired", externalConnectionId: null },
       });
