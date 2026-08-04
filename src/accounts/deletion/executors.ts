@@ -220,14 +220,34 @@ const executeComposioUser: DeletionExecutor = async (payload) => {
  */
 const executePosthogPerson: DeletionExecutor = async (payload) => {
   const parsed = posthogPayloadSchema.parse(payload);
-  if (!POSTHOG_PROJECT_TOKEN) return;
+  if (!POSTHOG_PROJECT_TOKEN) {
+    // Analytics disabled entirely: nothing was ever captured for this
+    // account. Complete with an explicit skip note (not silently).
+    logger.info(
+      { distinctId: parsed.distinctId, reason: "analytics_disabled" },
+      "deletion.purge.posthog_person_skipped",
+    );
+    return;
+  }
   const personalApiKey = process.env.POSTHOG_PERSONAL_API_KEY?.trim() ?? "";
   const projectId = process.env.POSTHOG_PROJECT_ID?.trim() ?? "";
   if (!personalApiKey || !projectId) {
-    throw new AppError(
-      503,
-      "PostHog person deletion not configured (POSTHOG_PERSONAL_API_KEY / POSTHOG_PROJECT_ID)",
+    // Deliberate skip, not a failure. PostHog persons hold only
+    // pseudonymous identifiers (the accountId UUID, HKDF-derived device
+    // hashes) plus behavioral counters — no direct PII — and the
+    // accountId→human mapping is destroyed with the Account row in the
+    // teardown transaction, so what remains is an orphaned pseudonymous
+    // profile. Hard-purging it requires parking a human-scoped personal
+    // API key in the task environment, which costs more in attack surface
+    // than the residue it removes. Completing (with an explicit skip
+    // note) lets DeletionRecord reach `completed` without those
+    // credentials; when POSTHOG_PERSONAL_API_KEY + POSTHOG_PROJECT_ID are
+    // set, this task purges the person exactly as before.
+    logger.info(
+      { distinctId: parsed.distinctId, reason: "purge_api_not_configured" },
+      "deletion.purge.posthog_person_skipped",
     );
+    return;
   }
   const base = `${POSTHOG_API_HOST.replace(/\/+$/, "")}/api/projects/${projectId}`;
   const headers = { Authorization: `Bearer ${personalApiKey}` };
