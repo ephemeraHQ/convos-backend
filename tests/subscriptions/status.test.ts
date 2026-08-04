@@ -3,8 +3,11 @@ import { SubscriptionStatus } from "@prisma/client";
 import { describe, expect, test } from "vitest";
 import {
   deriveSubscriptionStatusFromTransaction,
+  DISPLAY_RENEWAL_GRACE_MS,
   effectiveSubscriptionStatus,
+  effectiveSubscriptionStatusForDisplay,
   isEntitledSubscription,
+  isEntitledSubscriptionForDisplay,
 } from "@/subscriptions/status";
 
 const now = new Date("2026-05-15T00:00:00.000Z");
@@ -73,5 +76,131 @@ describe("effectiveSubscriptionStatus", () => {
       SubscriptionStatus.active,
     );
     expect(isEntitledSubscription(subscription, now)).toBe(true);
+  });
+});
+
+describe("effectiveSubscriptionStatusForDisplay (CON-799)", () => {
+  // The bug: an auto-renewing Plus subscriber whose renewal webhook was
+  // late/dropped (currentPeriodEnd slipped into the past while status is still
+  // `active`) was framed as free-tier/Basic. Display entitlement must keep them
+  // entitled until an explicit terminal signal, while the strict money variant
+  // (effectiveSubscriptionStatus) still time-expires them.
+  test("auto-renewing active sub past its period stays entitled for display", () => {
+    const subscription = {
+      status: SubscriptionStatus.active,
+      currentPeriodEnd: new Date("2026-05-14T23:59:59.000Z"),
+      gracePeriodEnd: null,
+      willRenew: true,
+    };
+
+    // Strict/money view still time-expires it (grant backfill must not mint).
+    expect(effectiveSubscriptionStatus(subscription, now)).toBe(
+      SubscriptionStatus.expired,
+    );
+    expect(isEntitledSubscription(subscription, now)).toBe(false);
+
+    // Display view keeps the stored entitled status → tier framing, not Basic.
+    expect(effectiveSubscriptionStatusForDisplay(subscription, now)).toBe(
+      SubscriptionStatus.active,
+    );
+    expect(isEntitledSubscriptionForDisplay(subscription, now)).toBe(true);
+  });
+
+  test("auto-renewing trial past its period stays entitled for display", () => {
+    const subscription = {
+      status: SubscriptionStatus.trial,
+      currentPeriodEnd: new Date("2026-05-14T23:59:59.000Z"),
+      gracePeriodEnd: null,
+      willRenew: true,
+    };
+
+    expect(effectiveSubscriptionStatusForDisplay(subscription, now)).toBe(
+      SubscriptionStatus.trial,
+    );
+    expect(isEntitledSubscriptionForDisplay(subscription, now)).toBe(true);
+  });
+
+  test("cancelled (willRenew=false) active sub past its period is expired for display too", () => {
+    const subscription = {
+      status: SubscriptionStatus.active,
+      currentPeriodEnd: new Date("2026-05-14T23:59:59.000Z"),
+      gracePeriodEnd: null,
+      willRenew: false,
+    };
+
+    expect(effectiveSubscriptionStatusForDisplay(subscription, now)).toBe(
+      SubscriptionStatus.expired,
+    );
+    expect(isEntitledSubscriptionForDisplay(subscription, now)).toBe(false);
+  });
+
+  test("provider-expired sub is terminal for display regardless of willRenew", () => {
+    const subscription = {
+      status: SubscriptionStatus.expired,
+      currentPeriodEnd: new Date("2026-05-14T23:59:59.000Z"),
+      gracePeriodEnd: null,
+      willRenew: true,
+    };
+
+    expect(effectiveSubscriptionStatusForDisplay(subscription, now)).toBe(
+      SubscriptionStatus.expired,
+    );
+    expect(isEntitledSubscriptionForDisplay(subscription, now)).toBe(false);
+  });
+
+  // The deferral is bounded: a genuine renewal-webhook gap resolves within
+  // hours, so past DISPLAY_RENEWAL_GRACE_MS (7 days) a stale `willRenew=true`
+  // row is lapsed, not renewal-pending. This is what neutralizes rows whose
+  // terminal (cancel/expiry) webhook we permanently missed — e.g. every event
+  // fired before 2026-07-29, when the prod App Store Server Notifications URL
+  // was first configured; Apple does not resend those. Without the bound they
+  // would display Plus forever.
+  test("auto-renewing active sub lapsed beyond the display grace window is expired for display", () => {
+    const subscription = {
+      status: SubscriptionStatus.active,
+      currentPeriodEnd: new Date("2026-05-05T00:00:00.000Z"), // 10 days < now
+      gracePeriodEnd: null,
+      willRenew: true,
+    };
+
+    expect(effectiveSubscriptionStatusForDisplay(subscription, now)).toBe(
+      SubscriptionStatus.expired,
+    );
+    expect(isEntitledSubscriptionForDisplay(subscription, now)).toBe(false);
+  });
+
+  test("auto-renewing active sub just inside the display grace bound stays entitled; just past it does not", () => {
+    const periodEnd = new Date("2026-05-10T00:00:00.000Z");
+    const subscription = {
+      status: SubscriptionStatus.active,
+      currentPeriodEnd: periodEnd,
+      gracePeriodEnd: null,
+      willRenew: true,
+    };
+    const justInside = new Date(
+      periodEnd.getTime() + DISPLAY_RENEWAL_GRACE_MS - 1,
+    );
+    const atBound = new Date(periodEnd.getTime() + DISPLAY_RENEWAL_GRACE_MS);
+
+    expect(
+      effectiveSubscriptionStatusForDisplay(subscription, justInside),
+    ).toBe(SubscriptionStatus.active);
+    expect(effectiveSubscriptionStatusForDisplay(subscription, atBound)).toBe(
+      SubscriptionStatus.expired,
+    );
+  });
+
+  test("within-period auto-renewing sub is entitled for display (unchanged)", () => {
+    const subscription = {
+      status: SubscriptionStatus.active,
+      currentPeriodEnd: new Date("2026-06-01T00:00:00.000Z"),
+      gracePeriodEnd: null,
+      willRenew: true,
+    };
+
+    expect(effectiveSubscriptionStatusForDisplay(subscription, now)).toBe(
+      SubscriptionStatus.active,
+    );
+    expect(isEntitledSubscriptionForDisplay(subscription, now)).toBe(true);
   });
 });

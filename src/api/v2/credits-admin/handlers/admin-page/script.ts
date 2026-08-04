@@ -328,6 +328,7 @@ export const clientScript = (): string => `
         +"<tr><th>Tier</th><td>"+esc(sub.tier)+"</td></tr>"
         +"<tr><th>Stored status</th><td>"+esc(sub.storedStatus)+"</td></tr>"
         +"<tr><th>Effective status</th><td>"+esc(sub.effectiveStatus)+"</td></tr>"
+        +"<tr><th>Display status (user-facing)</th><td>"+esc(sub.displayEffectiveStatus)+(sub.displayIsEntitled!==j.isEntitled?' <span class="muted-note">(differs from effective: renewal-pending display grace)</span>':"")+"</td></tr>"
         +"<tr><th>Period</th><td>"+fmtDate(sub.currentPeriodStart)+" → "+fmtDate(sub.currentPeriodEnd)+"</td></tr>"
         +"<tr><th>Environment</th><td>"+esc(sub.environment)+"</td></tr>"
         +"<tr><th>Allotment (per period)</th><td>"+fmtCredits(sub.perPeriodCredits)+" credits</td></tr>"

@@ -13,7 +13,7 @@ import {
   subGrantKey,
 } from "@/subscriptions/grants";
 import {
-  effectiveSubscriptionStatus,
+  effectiveSubscriptionStatusForDisplay,
   ENTITLED_SUBSCRIPTION_STATUSES,
   isEntitledSubscription,
   isEntitledSubscriptionStatus,
@@ -525,9 +525,11 @@ export const upsertFromVerify = async (
       // already maps a past expiresDate to `expired`, so stored ≈ effective at
       // this instant. The single-ledger contract is grant-then-forfeit: a
       // fresh verify grants the period and an expiry webhook claws back the
-      // unused portion (pinned by account-credits.test.ts "past-ended active
-      // subscription … wallet credits persist until forfeit"). Switching this
-      // to the effective check would break that pinned semantic for nothing.
+      // unused portion (pinned by account-credits.test.ts "past-ended
+      // auto-renewing active subscription: keeps Plus tier framing (renewal
+      // pending)", whose balance assertion shows the granted wallet credits
+      // persist until forfeit). Switching this to the effective check would
+      // break that pinned semantic for nothing.
       if (!isStaleVerify && isEntitledSubscriptionStatus(subscription.status)) {
         // Renewal observed via verify: if the period start advanced past the
         // LOCKED current one, forfeit the ending period's unused allotment (no
@@ -1076,7 +1078,11 @@ export type UserSubscriptionDto = {
 export const serializeUserSubscription = (
   subscription: Subscription,
 ): UserSubscriptionDto => {
-  const status = effectiveSubscriptionStatus(subscription);
+  // Display-facing status so the iOS plan badge (backend-authoritative) keeps
+  // showing the tier for an auto-renewing subscriber whose renewal webhook is
+  // late/dropped, instead of dropping to "Basic" (CON-799). A genuinely
+  // cancelled-and-lapsed or provider-expired sub still serializes as expired.
+  const status = effectiveSubscriptionStatusForDisplay(subscription);
   return {
     provider: subscription.provider,
     tier: requireSubscriptionTier(subscription.tier),

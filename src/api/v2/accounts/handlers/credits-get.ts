@@ -4,7 +4,7 @@ import { config } from "@/payments/credits/config";
 import { startOfNextUtcDay } from "@/payments/daily-refill/utc";
 import { sumPeriodConsumes } from "@/payments/spendable";
 import { findCurrentByAccountId } from "@/subscriptions/repository";
-import { isEntitledSubscription } from "@/subscriptions/status";
+import { isEntitledSubscriptionForDisplay } from "@/subscriptions/status";
 import { tierGrant } from "@/subscriptions/tier-config";
 import { requireSubscriptionTier } from "@/subscriptions/tiers";
 
@@ -21,8 +21,10 @@ const MONTH_LABEL_FORMATTER = new Intl.DateTimeFormat("en-US", {
  * Single-ledger model: `balance` is always the one wallet
  * (`UserCredits.balance`), for subscribers and non-subscribers alike. The
  * display fields differ only in framing:
- *   - With an entitled Subscription (effective status in trial/active/grace/
- *     billingRetry per `isEntitledSubscription`): `monthlyGrant` = the period
+ *   - With an entitled Subscription (display-effective status in trial/active/
+ *     grace/billingRetry per `isEntitledSubscriptionForDisplay` — which keeps
+ *     an auto-renewing sub entitled while a late/dropped renewal webhook leaves
+ *     its `currentPeriodEnd` in the recent past): `monthlyGrant` = the period
  *     allotment from tier × period config (the `sub_grant` we wrote on
  *     subscribe/renewal); `monthlyGrantUsed = min(periodConsumes, monthlyGrant)`
  *     where `periodConsumes` is |consume deltas| since `currentPeriodStart`.
@@ -85,7 +87,7 @@ export async function creditsGetHandler(req: Request, res: Response) {
     const positiveBalance = balance < 0n ? 0n : balance;
     const balanceCredits = Number(positiveBalance);
 
-    if (!subscription || !isEntitledSubscription(subscription)) {
+    if (!subscription || !isEntitledSubscriptionForDisplay(subscription)) {
       const cap = config.freeTierDailyCapCredits;
       // cap = 0 → the refill kill-switch is on; there is no daily grant and no
       // refresh coming, so advertise neither (used clamps to 0 with cap 0) and
