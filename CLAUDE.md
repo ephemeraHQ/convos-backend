@@ -58,9 +58,12 @@ SIWE_ALLOWED_CHAIN_IDS=1
 NONCE_HMAC_SECRET=<any stable secret>
 ```
 
-Leaving the `.env.example` defaults produces a failure that reads as a cookie
-problem rather than a config one: `/auth/nonce` returns 200, then `/auth/token`
-returns 401 "Invalid nonce".
+Leaving the `.env.example` defaults gets you past `/auth/nonce` (200) and then
+401 `"Invalid SIWE"` from `/auth/token` — the SIWE verification in
+`generate-token.ts` step 3c. Read the error, because the neighbouring failure
+looks almost identical and has nothing to do with config: 401 `"Invalid nonce"`
+comes from steps 3a/3b, meaning the nonce cookie never came back or was already
+consumed. Over a tunnel that is usually the cookie, not the SIWE domain.
 
 **A physical device needs HTTPS.** Expose this backend through ngrok and give
 the app that URL as `CONVOS_API_BASE_URL` — `localhost` means the phone itself,
