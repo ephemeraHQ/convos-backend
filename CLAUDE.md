@@ -43,6 +43,37 @@ via `grantSubscriptionPeriod` / `forfeitSubscriptionPeriod`). Never write
 Read the full law before writing money code: **`src/payments/AGENTS.md`**.
 Repo-wide agent guidance: `AGENTS.md`.
 
+## End-to-End Local Testing
+
+Pointing the iOS app at this backend works, and the two settings that decide
+whether auth succeeds are not the ones `.env.example` ships.
+
+**SIWE must match what the app signs.** Local and dev iOS builds sign for
+`dev.convos.org`, so the backend needs:
+
+```
+SIWE_DOMAIN=dev.convos.org
+SIWE_URI=https://dev.convos.org
+SIWE_ALLOWED_CHAIN_IDS=1
+NONCE_HMAC_SECRET=<any stable secret>
+```
+
+Leaving the `.env.example` defaults gets you past `/auth/nonce` (200) and then
+401 `"Invalid SIWE"` from `/auth/token` — the SIWE verification in
+`generate-token.ts` step 3c. Read the error, because the neighbouring failure
+looks almost identical and has nothing to do with config: 401 `"Invalid nonce"`
+comes from steps 3a/3b, meaning the nonce cookie never came back or was already
+consumed. Over a tunnel that is usually the cookie, not the SIWE domain.
+
+**A physical device needs HTTPS.** Expose this backend through ngrok and give
+the app that URL as `CONVOS_API_BASE_URL` — `localhost` means the phone itself,
+and a LAN IP has no certificate. The simulator can use either. `trust proxy`
+has to be on for the nonce cookie to survive the tunnel.
+
+The app talks only to this service; the assistants Worker sits behind it and is
+never contacted directly. See `CLAUDE.md` in convos-ios for the app-side
+configuration, and `AGENTS.md` in convos-assistants for the Worker side.
+
 ## PR checklist
 
 - [ ] Any change touching `src/api/v2/**` request schemas: backwards-compatible
