@@ -83,3 +83,73 @@ describe("agents/join body schema — idempotencyKey", () => {
     expect(parsed.success).toBe(false);
   });
 });
+
+describe("agents/join body schema — ownerProfileName", () => {
+  test("legacy join body without ownerProfileName still validates", () => {
+    assertLegacyShapeValidates(
+      bodySchema,
+      { conversationId: "deadbeefcafe1234", name: "My Agent" },
+      "legacy join body (no ownerProfileName)",
+    );
+  });
+
+  test("ownerProfileName is optional, accepted, and trimmed", () => {
+    const parsed = bodySchema.safeParse({
+      conversationId: "deadbeefcafe1234",
+      ownerProfileName: "  Saul ",
+    });
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.ownerProfileName).toBe("Saul");
+    }
+  });
+
+  test("blank ownerProfileName collapses to absent", () => {
+    const parsed = bodySchema.safeParse({
+      conversationId: "deadbeefcafe1234",
+      ownerProfileName: "   ",
+    });
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.ownerProfileName).toBeUndefined();
+    }
+  });
+
+  test("an over-long ownerProfileName is rejected", () => {
+    const parsed = bodySchema.safeParse({
+      conversationId: "deadbeefcafe1234",
+      ownerProfileName: "x".repeat(65),
+    });
+    expect(parsed.success).toBe(false);
+  });
+
+  test("a non-string ownerProfileName is rejected", () => {
+    const parsed = bodySchema.safeParse({
+      conversationId: "deadbeefcafe1234",
+      ownerProfileName: 42,
+    });
+    expect(parsed.success).toBe(false);
+  });
+
+  test("a whitespace-only name collapses to absent instead of shadowing composition", () => {
+    const parsed = bodySchema.safeParse({
+      conversationId: "deadbeefcafe1234",
+      name: "   ",
+    });
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.name).toBeUndefined();
+    }
+  });
+
+  test("name is trimmed", () => {
+    const parsed = bodySchema.safeParse({
+      conversationId: "deadbeefcafe1234",
+      name: "  My Agent ",
+    });
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.name).toBe("My Agent");
+    }
+  });
+});

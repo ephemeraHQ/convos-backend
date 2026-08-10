@@ -1013,6 +1013,95 @@ describe("agents join (assistant API)", () => {
       expect(capturedBody!.ownerAccountId).toBe(DEFAULT_TEST_ACCOUNT_ID);
     });
 
+    // Configures the dispatch mock for a registration that lands, and returns
+    // a getter for the captured dispatch body.
+    const captureDispatchBody = (instanceId: string) => {
+      let capturedBody: Record<string, unknown> | null = null;
+      mockFetchImpl = (_url, init) => {
+        if (init?.method === "POST") {
+          capturedBody = JSON.parse(init.body as string) as Record<
+            string,
+            unknown
+          >;
+          return Promise.resolve(jsonResponse(200, { instanceId }));
+        }
+        return Promise.resolve(
+          jsonResponse(200, {
+            instanceId,
+            joinStatus: "pending_acceptance",
+            inboxId: `inbox-${instanceId}`,
+          }),
+        );
+      };
+      return () => capturedBody;
+    };
+
+    test("a bare join composes the agent name from ownerProfileName", async () => {
+      const dispatchBody = captureDispatchBody("inst-owner-name");
+
+      const res = await post({
+        conversationId: "abcdef1234567890",
+        ownerProfileName: "Saul",
+      });
+      expect(res.status).toBe(200);
+      expect(dispatchBody()).not.toBeNull();
+      expect(dispatchBody()!.name).toBe("Saul's agent");
+      expect(dispatchBody()!.template).toBeNull();
+    });
+
+    test("an explicit name wins over ownerProfileName on a bare join", async () => {
+      const dispatchBody = captureDispatchBody("inst-explicit-name");
+
+      const res = await post({
+        conversationId: "abcdef1234567890",
+        name: "Custom Bot",
+        ownerProfileName: "Saul",
+      });
+      expect(res.status).toBe(200);
+      expect(dispatchBody()!.name).toBe("Custom Bot");
+    });
+
+    test("a whitespace-only name falls back to the composed ownerProfileName default", async () => {
+      const dispatchBody = captureDispatchBody("inst-ws-name");
+
+      const res = await post({
+        conversationId: "abcdef1234567890",
+        name: "   ",
+        ownerProfileName: "Saul",
+      });
+      expect(res.status).toBe(200);
+      expect(dispatchBody()!.name).toBe("Saul's agent");
+    });
+
+    test("blank ownerProfileName is treated as absent on a bare join", async () => {
+      const dispatchBody = captureDispatchBody("inst-blank-name");
+
+      const res = await post({
+        conversationId: "abcdef1234567890",
+        ownerProfileName: "   ",
+      });
+      expect(res.status).toBe(200);
+      expect(dispatchBody()).not.toBeNull();
+      expect(dispatchBody()!).not.toHaveProperty("name");
+    });
+
+    test("a template join carries the name inside the template, never top-level", async () => {
+      __setTemplateFinderForTests(() => Promise.resolve(baseTemplate()));
+      const dispatchBody = captureDispatchBody("inst-tpl-name");
+
+      const res = await post({
+        conversationId: "abcdef1234567890",
+        templateId: "22222222-2222-4222-8222-222222222222",
+        ownerProfileName: "Saul",
+      });
+      expect(res.status).toBe(200);
+      expect(dispatchBody()).not.toBeNull();
+      expect(dispatchBody()!).not.toHaveProperty("name");
+      expect(
+        (dispatchBody()!.template as { agentName?: string }).agentName,
+      ).toBe("Brewski");
+    });
+
     test("idempotencyKey is forwarded to the dispatch body, lowercased", async () => {
       let capturedBody: Record<string, unknown> | null = null;
       mockFetchImpl = (url, init) => {

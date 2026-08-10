@@ -18,11 +18,14 @@ export const authRateLimitMiddleware = rateLimit({
 });
 
 // Rate limiting for the agent-provisioning endpoint (POST /api/v2/agents/join).
-// Each request kicks off a container-boot workflow upstream — expensive,
-// hence the tight 10/5min cap.
+// Each request kicks off a container-boot workflow upstream — expensive, so
+// the cap stays tight relative to other endpoints — but clients that
+// auto-attach a default agent at conversation creation provision in bursts
+// (cache fill plus retries), so the window leaves headroom above steady-state
+// one-at-a-time joins.
 export const agentJoinLimiter = rateLimit({
   windowMs: 5 * 60 * 1000, // 5 minutes
-  limit: 10,
+  limit: 30,
   legacyHeaders: false,
   standardHeaders: "draft-8",
   message: { error: "Too many agent join requests, please try again later" },
