@@ -48,8 +48,12 @@ export const DB_CONNECT_PROBE_TIMEOUT_MS = 10_000;
 export const DB_DISCONNECT_TIMEOUT_MS = 2_000;
 
 export type WaitDeps = {
-  /** Resolves when the database answered; rejects otherwise. */
-  probe: () => Promise<void>;
+  /**
+   * Resolves when the database answered; rejects otherwise.
+   * `timeoutMs` is the caller's ceiling for THIS attempt — already clamped to
+   * whatever is left of the budget — so a probe can never outlive the deadline.
+   */
+  probe: (timeoutMs: number) => Promise<void>;
   /** Monotonic-ish milliseconds. Injected so tests use a virtual clock. */
   now: () => number;
   sleep: (ms: number) => Promise<void>;
@@ -71,7 +75,13 @@ export async function waitForDatabase(
   for (;;) {
     attempt += 1;
     try {
-      await deps.probe();
+      // Clamped to what is left of the budget, so the deadline holds even
+      // though the loop can only re-check it once the probe settles.
+      const attemptTimeoutMs = Math.max(
+        1,
+        Math.min(DB_CONNECT_PROBE_TIMEOUT_MS, deadline - deps.now()),
+      );
+      await deps.probe(attemptTimeoutMs);
       deps.log(`[db-wait] database reachable after ${attempt} attempt(s)`);
       return attempt;
     } catch (error) {
@@ -157,10 +167,10 @@ async function main(): Promise<void> {
   const prisma = new PrismaClient();
   try {
     await waitForDatabase(budgetSeconds, {
-      probe: async () => {
+      probe: async (timeoutMs: number) => {
         await withTimeout(
           prisma.$queryRaw`SELECT 1`,
-          DB_CONNECT_PROBE_TIMEOUT_MS,
+          timeoutMs,
           "[db-wait] probe",
         );
       },

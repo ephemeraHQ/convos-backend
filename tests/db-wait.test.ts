@@ -1,5 +1,6 @@
 import { describe, expect, test } from "vitest";
 import {
+  DB_CONNECT_PROBE_TIMEOUT_MS,
   DB_CONNECT_RETRY_DELAY_MS,
   DEFAULT_DB_CONNECT_BUDGET_SECONDS,
   MAX_DB_CONNECT_BUDGET_SECONDS,
@@ -70,6 +71,47 @@ describe("waitForDatabase", () => {
     await expect(waitForDatabase(1, deps)).rejects.toThrow(/not reachable/);
     // Budget is shorter than one retry delay, so it must fail immediately.
     expect(clockAt()).toBe(0);
+  });
+});
+
+describe("waitForDatabase per-attempt timeout", () => {
+  test("caps each probe at the smaller of the probe cap and the remaining budget", async () => {
+    const seen: number[] = [];
+    let clock = 0;
+    const deps: WaitDeps = {
+      probe: (timeoutMs: number) => {
+        seen.push(timeoutMs);
+        return Promise.reject(new Error("down"));
+      },
+      now: () => clock,
+      sleep: (ms: number) => {
+        clock += ms;
+        return Promise.resolve();
+      },
+      log: () => undefined,
+    };
+
+    // 5s budget: the first attempt must not be handed the full 10s cap, or the
+    // budget stops being a ceiling at all.
+    await expect(waitForDatabase(5, deps)).rejects.toThrow(/not reachable/);
+    expect(seen[0]).toBe(5_000);
+    expect(Math.max(...seen)).toBeLessThanOrEqual(5_000);
+  });
+
+  test("uses the probe cap when the budget is the larger of the two", async () => {
+    const seen: number[] = [];
+    const deps: WaitDeps = {
+      probe: (timeoutMs: number) => {
+        seen.push(timeoutMs);
+        return Promise.resolve();
+      },
+      now: () => 0,
+      sleep: () => Promise.resolve(),
+      log: () => undefined,
+    };
+
+    await expect(waitForDatabase(90, deps)).resolves.toBe(1);
+    expect(seen[0]).toBe(DB_CONNECT_PROBE_TIMEOUT_MS);
   });
 });
 
