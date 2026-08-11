@@ -30,6 +30,22 @@ export const DEFAULT_DB_CONNECT_BUDGET_SECONDS = 90;
 export const DB_CONNECT_RETRY_DELAY_MS = 2_000;
 /** Upper bound on the budget: past this the wait stops being fail-fast at all. */
 export const MAX_DB_CONNECT_BUDGET_SECONDS = 3_600;
+/**
+ * Per-attempt cap. The budget alone does not bound a single probe: the loop can
+ * only check the deadline once `probe()` settles, and a probe's own ceiling is
+ * Prisma's `connect_timeout` (5s by default, but settable to anything in
+ * DATABASE_URL). Without this cap one connection attempt could outlive the
+ * whole budget and reintroduce the stall this module exists to prevent.
+ */
+export const DB_CONNECT_PROBE_TIMEOUT_MS = 10_000;
+/**
+ * Capping the probe alone is not enough: `$disconnect()` waits for the
+ * connection attempt still in flight, so an unreachable host with a long
+ * `connect_timeout` would stall the entrypoint inside the cleanup instead of
+ * inside the probe. Measured: 2m with `connect_timeout=120`, despite a 3s
+ * budget. The process is exiting either way, so a clean close is not worth it.
+ */
+export const DB_DISCONNECT_TIMEOUT_MS = 2_000;
 
 export type WaitDeps = {
   /** Resolves when the database answered; rejects otherwise. */
@@ -80,6 +96,37 @@ export async function waitForDatabase(
   }
 }
 
+/**
+ * Reject if `promise` has not settled within `ms`.
+ * The loser's rejection is deliberately absorbed: once the timer has won the
+ * race, a late `$queryRaw` failure would otherwise surface as an unhandled
+ * rejection, which is fatal on Node 24.
+ */
+export async function withTimeout<T>(
+  promise: PromiseLike<T>,
+  ms: number,
+  label: string,
+): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const guarded = Promise.resolve(promise);
+  guarded.catch(() => undefined);
+  try {
+    return await Promise.race([
+      guarded,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => {
+          reject(new Error(`${label} timed out after ${ms}ms`));
+        }, ms);
+      }),
+    ]);
+  } finally {
+    // Also stops the timer holding the event loop open on the happy path.
+    if (timer !== undefined) {
+      clearTimeout(timer);
+    }
+  }
+}
+
 /** Positive integer seconds from DB_CONNECT_BUDGET_SECONDS, else the default. */
 export function parseBudgetSeconds(raw: string | undefined): number {
   if (raw === undefined || raw.trim() === "") {
@@ -111,7 +158,11 @@ async function main(): Promise<void> {
   try {
     await waitForDatabase(budgetSeconds, {
       probe: async () => {
-        await prisma.$queryRaw`SELECT 1`;
+        await withTimeout(
+          prisma.$queryRaw`SELECT 1`,
+          DB_CONNECT_PROBE_TIMEOUT_MS,
+          "[db-wait] probe",
+        );
       },
       now: () => Date.now(),
       sleep: (ms: number) => new Promise((resolve) => setTimeout(resolve, ms)),
@@ -120,7 +171,11 @@ async function main(): Promise<void> {
       },
     });
   } finally {
-    await prisma.$disconnect();
+    await withTimeout(
+      prisma.$disconnect(),
+      DB_DISCONNECT_TIMEOUT_MS,
+      "[db-wait] disconnect",
+    ).catch(() => undefined);
   }
 }
 

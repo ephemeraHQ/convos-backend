@@ -80,6 +80,9 @@ export LOG_FORMAT=json
 # endpoint" is exactly the behaviour worth proving. Expect noisy export errors.
 
 SERVER_PID=""
+# Captured before the seed runs. The seed forces app_attest_enabled to "false",
+# so a plain delete on exit would discard a value the database already had.
+PRIOR_ATTEST=""
 
 cleanup() {
   local status=$?
@@ -96,16 +99,31 @@ DELETE FROM "Account" WHERE id = '11111111-1111-4111-8111-111111111111';
 DELETE FROM "InviteCode" WHERE code IN ('PREVIEW1','PREVIEW2','PREVIEW3');
 DELETE FROM "RuntimeConfig" WHERE key IN ('preview_seeded','app_attest_enabled');
 SQL
+  # Put back a value the database already had, rather than leaving the key
+  # absent. Absent is fail-SAFE (getRuntimeConfig defaults it to "true", so App
+  # Check stays on), but it is still not the state we were handed.
+  if [ -n "$PRIOR_ATTEST" ]; then
+    psql "$DATABASE_URL" -q -v ON_ERROR_STOP=1 >/dev/null 2>&1 <<SQL || true
+INSERT INTO "RuntimeConfig" (key, value, "updatedAt")
+VALUES ('app_attest_enabled', '${PRIOR_ATTEST}', now())
+ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value;
+SQL
+  fi
+
   # Verify rather than trust: a swallowed psql failure that leaves
   # app_attest_enabled=false behind would silently disable App Check for every
   # later run against this database, and a green job would hide it. Only ever
   # escalates — an already-failing run keeps its original status.
-  local leftover
-  leftover="$(psql "$DATABASE_URL" -tAc \
-    "SELECT count(*) FROM \"RuntimeConfig\" WHERE key IN ('preview_seeded','app_attest_enabled')" \
-    2>/dev/null)" || leftover="unknown"
-  if [ "$leftover" != "0" ]; then
-    echo "::error::preview-boot-check: cleanup failed to remove the seeded rows (leftover=${leftover}); app_attest_enabled may still be 'false' in this database" >&2
+  local marker_left attest_now expected_attest
+  marker_left="$(psql "$DATABASE_URL" -tAc \
+    "SELECT count(*) FROM \"RuntimeConfig\" WHERE key = 'preview_seeded'" \
+    2>/dev/null)" || marker_left="unknown"
+  attest_now="$(psql "$DATABASE_URL" -tAc \
+    "SELECT coalesce((SELECT value FROM \"RuntimeConfig\" WHERE key = 'app_attest_enabled'), '<absent>')" \
+    2>/dev/null)" || attest_now="unknown"
+  expected_attest="${PRIOR_ATTEST:-<absent>}"
+  if [ "$marker_left" != "0" ] || [ "$attest_now" != "$expected_attest" ]; then
+    echo "::error::preview-boot-check: cleanup did not restore the database (preview_seeded rows left=${marker_left}, app_attest_enabled='${attest_now}', expected '${expected_attest}')" >&2
     if [ "$status" -eq 0 ]; then
       status=1
     fi
@@ -130,6 +148,12 @@ assert_status() {
   fi
   echo "  ok: ${desc} -> ${actual}"
 }
+
+PRIOR_ATTEST="$(psql "$DATABASE_URL" -tAc \
+  "SELECT value FROM \"RuntimeConfig\" WHERE key = 'app_attest_enabled'" 2>/dev/null || true)"
+if [ -n "$PRIOR_ATTEST" ]; then
+  echo "preview-boot-check: app_attest_enabled was '${PRIOR_ATTEST}'; will restore it on exit"
+fi
 
 echo "preview-boot-check: starting dev/entrypoint.sh (APP_DIR=$APP_DIR PORT=$PORT)"
 ./dev/entrypoint.sh &

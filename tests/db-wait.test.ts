@@ -5,6 +5,7 @@ import {
   MAX_DB_CONNECT_BUDGET_SECONDS,
   parseBudgetSeconds,
   waitForDatabase,
+  withTimeout,
   type WaitDeps,
 } from "@/db-wait";
 
@@ -69,6 +70,39 @@ describe("waitForDatabase", () => {
     await expect(waitForDatabase(1, deps)).rejects.toThrow(/not reachable/);
     // Budget is shorter than one retry delay, so it must fail immediately.
     expect(clockAt()).toBe(0);
+  });
+});
+
+describe("withTimeout", () => {
+  test("passes a value through when the promise settles in time", async () => {
+    await expect(withTimeout(Promise.resolve("ok"), 1_000, "p")).resolves.toBe(
+      "ok",
+    );
+  });
+
+  test("propagates the promise's own rejection", async () => {
+    await expect(
+      withTimeout(Promise.reject(new Error("boom")), 1_000, "p"),
+    ).rejects.toThrow(/boom/);
+  });
+
+  test("rejects when the promise outlives the cap", async () => {
+    // The real hazard: a connection attempt that hangs far past the budget.
+    const never = new Promise<string>(() => undefined);
+    await expect(withTimeout(never, 10, "[db-wait] probe")).rejects.toThrow(
+      /\[db-wait\] probe timed out after 10ms/,
+    );
+  });
+
+  test("absorbs a late rejection so Node does not die on it", async () => {
+    const late = new Promise<string>((_, reject) => {
+      setTimeout(() => {
+        reject(new Error("late failure"));
+      }, 30);
+    });
+    await expect(withTimeout(late, 5, "p")).rejects.toThrow(/timed out/);
+    // Give the loser time to reject; an unhandled rejection would fail the run.
+    await new Promise((resolve) => setTimeout(resolve, 60));
   });
 });
 
