@@ -3,7 +3,9 @@ import { tsconfigPathsPlugin } from "esbuild-plugin-tsconfig-paths";
 import { defineConfig } from "tsup";
 
 export default defineConfig({
-  entry: ["src/index.ts", "src/instrumentation.ts"],
+  // db-wait.ts is a standalone CLI run by dev/entrypoint.sh before the server
+  // starts; it needs its own bundle, not to be inlined into index.js.
+  entry: ["src/index.ts", "src/instrumentation.ts", "src/db-wait.ts"],
   outDir: "dist",
   format: ["esm"],
   target: "node24",
