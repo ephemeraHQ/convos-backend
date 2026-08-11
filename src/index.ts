@@ -21,6 +21,7 @@ import { errorHandlerMiddleware } from "./middleware/errorHandler";
 import { globalJsonMiddleware } from "./middleware/json";
 import { noRouteMiddleware } from "./middleware/noRoute";
 import { pinoMiddleware } from "./middleware/pino";
+import { previewTokenMiddleware } from "./middleware/previewToken";
 import { rateLimitMiddleware } from "./middleware/rateLimit";
 import healthcheckRouter from "./routes/healthcheck";
 import { wellKnownRouter } from "./routes/well-known";
@@ -59,6 +60,16 @@ app.use("/api/v2/telemetry", bodySizeGuard(TELEMETRY_MAX_BODY_BYTES));
 app.use(globalJsonMiddleware);
 app.use(cookieParser()); // Parse cookies (required for SIWE nonce flow)
 app.use(pinoMiddleware);
+
+// Preview access gate (CON-825). Inert unless PREVIEW=1, so dev/prod are
+// unaffected by the same image. Mounted here for two reasons: it must come
+// AFTER pinoMiddleware because it logs through `req.log`, and BEFORE
+// rateLimitMiddleware because it is a fixed-cost hash compare with no I/O —
+// running it first keeps unauthenticated internet noise out of the rate
+// limiter's keyed store, off the router, and away from every handler. Global
+// rather than per-route so a newly added unauthenticated endpoint cannot
+// escape the gate; the existing per-route auth still runs after it.
+app.use(previewTokenMiddleware);
 
 // Rate limiting should be before routes but after logging
 app.use(rateLimitMiddleware);
