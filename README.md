@@ -3,7 +3,7 @@
 > [!CAUTION]
 > This repo is no longer maintained.
 
-Convos backend development has moved to the [convos-assistants](https://github.com/xmtplabs/convos-assistants) monorepo, where this code now lives under `backend/`. Open issues and pull requests there.
+Convos backend development has moved.
 
 The documentation below is provided for historical reference only.
 
