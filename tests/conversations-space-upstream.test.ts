@@ -14,7 +14,7 @@ import {
   vi,
 } from "vitest";
 import { __setAssistantConfigOverridesForTests } from "@/api/v2/agents/handlers/assistant-config";
-import { conversationsDebugRouter } from "@/api/v2/conversations/conversations.router";
+import { conversationsRouter } from "@/api/v2/conversations/conversations.router";
 import { authMiddleware } from "@/middleware/auth";
 import { pinoMiddleware } from "@/middleware/pino";
 import { createJwtToken, validateJWTKeys } from "@/utils/jwt";
@@ -91,7 +91,7 @@ function buildApp(options?: {
   app.use(
     "/api/v2/conversations",
     options?.auth ? authMiddleware : accountMiddleware,
-    conversationsDebugRouter,
+    conversationsRouter,
   );
   return app;
 }

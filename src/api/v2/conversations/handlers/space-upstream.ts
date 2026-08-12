@@ -133,8 +133,8 @@ function translateUpstreamError(raw: unknown): PublicError {
   if (!parsed.success) return ERRORS.SPACE_UPSTREAM_FAILED;
 
   const { code, error: message } = parsed.data;
+  if (!(code in UPSTREAM_ERRORS)) return ERRORS.SPACE_UPSTREAM_FAILED;
   const publicError = UPSTREAM_ERRORS[code as keyof typeof UPSTREAM_ERRORS];
-  if (!publicError) return ERRORS.SPACE_UPSTREAM_FAILED;
   return code === "space_upstream_refused"
     ? { ...publicError, message }
     : publicError;
@@ -143,9 +143,9 @@ function translateUpstreamError(raw: unknown): PublicError {
 /**
  * Handler for POST /api/v2/conversations/:conversationId/debug/space-upstream
  *
- * Relays an authenticated, non-production Space PR proposal to the assistant
- * Worker. The client never receives the shared Worker credential; it receives
- * the standard v2 success or coded-error envelope instead.
+ * Relays an authenticated Space PR proposal to the assistant Worker. The
+ * client never receives the shared Worker credential; it receives the standard
+ * v2 success or coded-error envelope instead.
  */
 export async function spaceUpstreamHandler(req: Request, res: Response) {
   const parsedParams = paramsSchema.safeParse(req.params);

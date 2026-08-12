@@ -18,9 +18,8 @@ import { spaceUpstreamHandler } from "./handlers/space-upstream";
 // requireAccount itself. conversationId is the opaque XMTP string (no
 // Conversation table).
 export const conversationsRouter = Router();
-export const conversationsDebugRouter = Router();
 
-conversationsDebugRouter.post(
+conversationsRouter.post(
   "/:conversationId/debug/space-upstream",
   spaceUpstreamLimiter,
   requireAccount,
