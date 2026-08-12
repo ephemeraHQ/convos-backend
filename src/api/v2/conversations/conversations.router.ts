@@ -1,6 +1,9 @@
 import { Router } from "express";
 import { requireAccount } from "@/middleware/auth";
-import { agentParticipationLimiter } from "@/middleware/rateLimit";
+import {
+  agentParticipationLimiter,
+  spaceUpstreamLimiter,
+} from "@/middleware/rateLimit";
 import { conversationAbilitiesGetHandler } from "./handlers/abilities-get";
 import { conversationAbilityDeleteHandler } from "./handlers/ability-delete";
 import { conversationAbilityPutHandler } from "./handlers/ability-put";
@@ -8,12 +11,20 @@ import {
   getParticipationHandler,
   participationHandler,
 } from "./handlers/participation";
+import { spaceUpstreamHandler } from "./handlers/space-upstream";
 
 // /v2/conversations — conversation-scoped surfaces. Mounted behind
 // authMiddleware in src/api/v2/index.ts; every route here applies
 // requireAccount itself. conversationId is the opaque XMTP string (no
 // Conversation table).
 export const conversationsRouter = Router();
+
+conversationsRouter.post(
+  "/:conversationId/debug/space-upstream",
+  spaceUpstreamLimiter,
+  requireAccount,
+  spaceUpstreamHandler,
+);
 
 // How much the agents in this conversation may speak. `requireAccount` for the
 // same reason as /agents/join: an account-less JWT is an authorization failure,
