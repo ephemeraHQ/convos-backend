@@ -126,10 +126,11 @@ async function withReadiness<T>(
 }
 
 beforeAll(async () => {
-  await new Promise<void>((resolve) => {
+  await new Promise<void>((resolve, reject) => {
     server = app.listen(4017, () => {
       resolve();
     });
+    server.once("error", reject);
   });
 });
 
