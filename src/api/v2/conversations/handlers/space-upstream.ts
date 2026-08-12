@@ -4,18 +4,23 @@ import {
   getAssistantApiKey,
   getAssistantApiUrl,
 } from "@/api/v2/agents/handlers/assistant-config";
-import { joinStatusQuerySchema } from "@/api/v2/agents/handlers/join-status";
 import { resolveVariantWorkerOrigin } from "@/api/v2/agents/lib/variant-routing";
 
-export const SPACE_UPSTREAM_FETCH_TIMEOUT_MS = 50_000;
+const SPACE_UPSTREAM_FETCH_TIMEOUT_MS = 50_000;
 const ERROR_BODY_LOG_LIMIT = 200;
 
 const conversationIdSchema = z
   .string()
-  .regex(/^[0-9A-Za-z_-]{1,128}$/, "Invalid conversationId");
+  .trim()
+  .min(1, "conversationId is required")
+  .max(256);
 
 const paramsSchema = z.object({
   conversationId: conversationIdSchema,
+});
+
+const querySchema = z.object({
+  variantId: z.string().trim().min(1).max(64).optional(),
 });
 
 const resultCountsSchema = {
@@ -24,145 +29,139 @@ const resultCountsSchema = {
   refusedCount: z.number().int().nonnegative(),
 };
 
-export const spaceUpstreamResultSchema = z.discriminatedUnion("outcome", [
-  z
-    .object({
-      conversationId: conversationIdSchema,
-      outcome: z.literal("pull_request"),
-      prUrl: z.string().url(),
-      prNumber: z.number().int().positive(),
-      branch: z.string().min(1),
-      commitSha: z.string().min(1),
-      forkCommitSha: z.string().min(1),
-      ...resultCountsSchema,
-    })
-    .strict(),
-  z
-    .object({
-      conversationId: conversationIdSchema,
-      outcome: z.literal("unchanged"),
-      forkCommitSha: z.string().min(1),
-      ...resultCountsSchema,
-    })
-    .strict(),
+const spaceUpstreamResultSchema = z.discriminatedUnion("outcome", [
+  z.object({
+    conversationId: conversationIdSchema,
+    outcome: z.literal("pull_request"),
+    prUrl: z.string().url(),
+    prNumber: z.number().int().positive(),
+    branch: z.string().min(1),
+    commitSha: z.string().min(1),
+    forkCommitSha: z.string().min(1),
+    ...resultCountsSchema,
+  }),
+  z.object({
+    conversationId: conversationIdSchema,
+    outcome: z.literal("unchanged"),
+    forkCommitSha: z.string().min(1),
+    ...resultCountsSchema,
+  }),
 ]);
 
-const upstreamErrorSchema = z
-  .object({
-    error: z.string().min(1).max(500),
-    code: z.string().min(1).max(64),
-  })
-  .strict();
+const upstreamErrorSchema = z.object({
+  error: z.string().min(1).max(500),
+  code: z.string().min(1).max(64),
+});
 
 type PublicError = {
   status: number;
-  code: string;
   error: string;
+  message: string;
 };
 
 const ERRORS = {
   INVALID_REQUEST: {
     status: 400,
-    code: "INVALID_REQUEST",
-    error: "Invalid Space PR proposal request",
+    error: "INVALID_REQUEST",
+    message: "Invalid Space PR proposal request",
   },
   VARIANT_UNAVAILABLE: {
     status: 409,
-    code: "VARIANT_UNAVAILABLE",
-    error: "The selected agent variant is unavailable",
+    error: "VARIANT_UNAVAILABLE",
+    message: "The selected agent variant is unavailable",
   },
   SPACE_NOT_FOUND: {
     status: 404,
-    code: "SPACE_NOT_FOUND",
-    error: "No Space was found for this conversation",
+    error: "SPACE_NOT_FOUND",
+    message: "No Space was found for this conversation",
   },
   SPACE_REPOSITORY_UNAVAILABLE: {
     status: 409,
-    code: "SPACE_REPOSITORY_UNAVAILABLE",
-    error: "This Space does not have a repository",
+    error: "SPACE_REPOSITORY_UNAVAILABLE",
+    message: "This Space does not have a repository",
   },
   SPACE_UPSTREAM_NOT_ARMED: {
     status: 503,
-    code: "SPACE_UPSTREAM_NOT_ARMED",
-    error: "The selected Space deployment is not armed for PR proposals",
+    error: "SPACE_UPSTREAM_NOT_ARMED",
+    message: "The selected Space deployment is not armed for PR proposals",
   },
   SPACE_UPSTREAM_UNAVAILABLE: {
     status: 503,
-    code: "SPACE_UPSTREAM_UNAVAILABLE",
-    error: "Space PR proposals are unavailable",
+    error: "SPACE_UPSTREAM_UNAVAILABLE",
+    message: "Space PR proposals are unavailable",
   },
   SPACE_UPSTREAM_REFUSED: {
     status: 422,
-    code: "SPACE_UPSTREAM_REFUSED",
-    error: "The Space changes could not be proposed safely",
+    error: "SPACE_UPSTREAM_REFUSED",
+    message: "The Space changes could not be proposed safely",
   },
   SPACE_UPSTREAM_GITHUB_FAILED: {
     status: 502,
-    code: "SPACE_UPSTREAM_GITHUB_FAILED",
-    error: "GitHub rejected the Space PR proposal; please try again",
+    error: "SPACE_UPSTREAM_GITHUB_FAILED",
+    message: "GitHub rejected the Space PR proposal; please try again",
   },
   SPACE_UPSTREAM_FAILED: {
     status: 502,
-    code: "SPACE_UPSTREAM_FAILED",
-    error: "The Space PR proposal failed",
+    error: "SPACE_UPSTREAM_FAILED",
+    message: "The Space PR proposal failed",
   },
   SPACE_UPSTREAM_TIMEOUT: {
     status: 504,
-    code: "SPACE_UPSTREAM_TIMEOUT",
-    error: "The Space PR proposal timed out",
+    error: "SPACE_UPSTREAM_TIMEOUT",
+    message: "The Space PR proposal timed out",
   },
+} as const satisfies Record<string, PublicError>;
+
+const UPSTREAM_ERRORS = {
+  space_upstream_not_armed: ERRORS.SPACE_UPSTREAM_NOT_ARMED,
+  space_not_found: ERRORS.SPACE_NOT_FOUND,
+  space_repository_unavailable: ERRORS.SPACE_REPOSITORY_UNAVAILABLE,
+  space_repository_provider_unavailable: ERRORS.SPACE_UPSTREAM_UNAVAILABLE,
+  space_upstream_refused: ERRORS.SPACE_UPSTREAM_REFUSED,
+  space_upstream_github_failed: ERRORS.SPACE_UPSTREAM_GITHUB_FAILED,
+  space_upstream_failed: ERRORS.SPACE_UPSTREAM_FAILED,
+  space_upstream_timeout: ERRORS.SPACE_UPSTREAM_TIMEOUT,
 } as const satisfies Record<string, PublicError>;
 
 function sendError(res: Response, value: PublicError): void {
   const { status, ...body } = value;
-  res.status(status).json(body);
+  res.status(status).json({ success: false, ...body });
 }
 
-function translateUpstreamError(status: number, raw: unknown): PublicError {
+function translateUpstreamError(raw: unknown): PublicError {
   const parsed = upstreamErrorSchema.safeParse(raw);
   if (!parsed.success) return ERRORS.SPACE_UPSTREAM_FAILED;
 
-  const { code, error } = parsed.data;
-  if (status === 403 && code === "space_upstream_not_armed") {
-    return ERRORS.SPACE_UPSTREAM_NOT_ARMED;
-  }
-  if (status === 404 && code === "space_not_found") {
-    return ERRORS.SPACE_NOT_FOUND;
-  }
-  if (status === 409 && code === "space_repository_unavailable") {
-    return ERRORS.SPACE_REPOSITORY_UNAVAILABLE;
-  }
-  if (status === 503 && code === "space_repository_provider_unavailable") {
-    return ERRORS.SPACE_UPSTREAM_UNAVAILABLE;
-  }
-  if (status === 422 && code === "space_upstream_refused") {
-    return { ...ERRORS.SPACE_UPSTREAM_REFUSED, error };
-  }
-  if (status === 502 && code === "space_upstream_github_failed") {
-    return ERRORS.SPACE_UPSTREAM_GITHUB_FAILED;
-  }
-  if (status === 502 && code === "space_upstream_failed") {
-    return ERRORS.SPACE_UPSTREAM_FAILED;
-  }
-  if (status === 504 && code === "space_upstream_timeout") {
-    return ERRORS.SPACE_UPSTREAM_TIMEOUT;
-  }
-  return ERRORS.SPACE_UPSTREAM_FAILED;
+  const { code, error: message } = parsed.data;
+  const publicError = UPSTREAM_ERRORS[code as keyof typeof UPSTREAM_ERRORS];
+  if (!publicError) return ERRORS.SPACE_UPSTREAM_FAILED;
+  return code === "space_upstream_refused"
+    ? { ...publicError, message }
+    : publicError;
 }
 
+/**
+ * Handler for POST /api/v2/conversations/:conversationId/debug/space-upstream
+ *
+ * Relays an authenticated, non-production Space PR proposal to the assistant
+ * Worker. The client never receives the shared Worker credential; it receives
+ * the standard v2 success or coded-error envelope instead.
+ */
 export async function spaceUpstreamHandler(req: Request, res: Response) {
   const parsedParams = paramsSchema.safeParse(req.params);
-  const parsedQuery = joinStatusQuerySchema.safeParse(req.query);
+  const parsedQuery = querySchema.safeParse(req.query);
   if (!parsedParams.success || !parsedQuery.success) {
     sendError(res, ERRORS.INVALID_REQUEST);
     return;
   }
 
-  const conversationId = parsedParams.data.conversationId.toLowerCase();
+  const conversationId = parsedParams.data.conversationId;
   const variantId = parsedQuery.data.variantId;
 
   let assistantOrigin: string;
   if (variantId !== undefined) {
+    // This mutation can create a GitHub branch and PR from variant-specific
+    // code, so it must not silently fall back to the default Worker.
     const resolvedOrigin = await resolveVariantWorkerOrigin(variantId);
     if (!resolvedOrigin) {
       sendError(res, ERRORS.VARIANT_UNAVAILABLE);
@@ -173,9 +172,9 @@ export async function spaceUpstreamHandler(req: Request, res: Response) {
     assistantOrigin = getAssistantApiUrl();
   }
 
-  const assistantApiKey = getAssistantApiKey().trim();
-  const assistantBaseUrl = assistantOrigin.trim().replace(/\/+$/, "");
-  if (!assistantApiKey || !assistantBaseUrl) {
+  const assistantApiKey = getAssistantApiKey();
+  const assistantBaseUrl = assistantOrigin.replace(/\/+$/, "");
+  if (!assistantApiKey) {
     req.log.error("Space upstream Worker is not configured");
     sendError(res, ERRORS.SPACE_UPSTREAM_UNAVAILABLE);
     return;
@@ -205,7 +204,7 @@ export async function spaceUpstreamHandler(req: Request, res: Response) {
       } catch {
         raw = null;
       }
-      sendError(res, translateUpstreamError(upstream.status, raw));
+      sendError(res, translateUpstreamError(raw));
       return;
     }
 
@@ -225,7 +224,7 @@ export async function spaceUpstreamHandler(req: Request, res: Response) {
       return;
     }
 
-    res.status(200).json(result.data);
+    res.status(200).json({ success: true, ...result.data });
   } catch (error) {
     if (error instanceof DOMException && error.name === "TimeoutError") {
       req.log.error("Space upstream Worker request timed out");

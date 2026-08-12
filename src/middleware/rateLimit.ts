@@ -62,12 +62,12 @@ export const agentParticipationLimiter = rateLimit({
 export const spaceUpstreamLimiter = rateLimit({
   windowMs: 5 * 60 * 1000,
   limit: 10,
-  keyGenerator: (req) => req.ip || "unknown",
   legacyHeaders: false,
   standardHeaders: "draft-8",
   message: {
-    code: "RATE_LIMITED",
-    error: "Too many Space PR proposals; retry shortly",
+    success: false,
+    error: "RATE_LIMITED",
+    message: "Too many Space PR proposals; retry shortly",
   },
 });
 

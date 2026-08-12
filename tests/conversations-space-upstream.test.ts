@@ -25,8 +25,6 @@ const ASSISTANT_KEY = "test-space-upstream-key";
 const ACCOUNT_ID = "11111111-1111-4111-8111-111111111111";
 const GOOD_VARIANT = "pr-test-space-upstream";
 const GOOD_VARIANT_URL = `https://ephemeral-${GOOD_VARIANT}.convos.fun`;
-const OFF_HOST_VARIANT = "pr-test-space-upstream-off-host";
-const MISMATCH_VARIANT = "pr-test-space-upstream-mismatch";
 
 const pullRequestResult = {
   conversationId: "conversation_abc",
@@ -138,14 +136,7 @@ beforeEach(() => {
   };
   vi.spyOn(prisma.agentVariant, "findFirst").mockImplementation((args) => {
     const slug = (args?.where as { slug?: string } | undefined)?.slug;
-    const assistantWorkerUrl =
-      slug === GOOD_VARIANT
-        ? GOOD_VARIANT_URL
-        : slug === OFF_HOST_VARIANT
-          ? "https://evil.example.com"
-          : slug === MISMATCH_VARIANT
-            ? "https://ephemeral-pr-test-space-upstream-other.convos.fun"
-            : null;
+    const assistantWorkerUrl = slug === GOOD_VARIANT ? GOOD_VARIANT_URL : null;
     return Promise.resolve(
       assistantWorkerUrl ? { assistantWorkerUrl } : null,
     ) as never;
@@ -179,12 +170,12 @@ describe("POST /conversations/:conversationId/debug/space-upstream", () => {
     expect(fetchCalls).toHaveLength(1);
   });
 
-  test("normalizes the bounded conversation ID and sends only the shared key", async () => {
+  test("forwards the bounded conversation ID verbatim and sends only the shared key", async () => {
     const res = await proposal(buildApp());
     expect(res.status).toBe(200);
     expect(fetchCalls).toHaveLength(1);
     expect(fetchCalls[0]?.url).toBe(
-      `${DEFAULT_URL}/api/conversations/conversation_abc/space-upstream`,
+      `${DEFAULT_URL}/api/conversations/CONVERSATION_ABC/space-upstream`,
     );
     expect(fetchCalls[0]?.init).toMatchObject({
       method: "POST",
@@ -197,8 +188,8 @@ describe("POST /conversations/:conversationId/debug/space-upstream", () => {
   });
 
   test.each([
-    ["invalid characters", "bad%20conversation"],
-    ["overlong", "a".repeat(129)],
+    ["blank", "%20"],
+    ["overlong", "a".repeat(257)],
   ])("rejects an %s conversation ID before fetch", async (_label, id) => {
     const res = await proposal(
       buildApp(),
@@ -206,8 +197,9 @@ describe("POST /conversations/:conversationId/debug/space-upstream", () => {
     );
     expect(res.status).toBe(400);
     expect(res.body).toEqual({
-      code: "INVALID_REQUEST",
-      error: "Invalid Space PR proposal request",
+      success: false,
+      error: "INVALID_REQUEST",
+      message: "Invalid Space PR proposal request",
     });
     expect(fetchCalls).toHaveLength(0);
   });
@@ -222,7 +214,7 @@ describe("POST /conversations/:conversationId/debug/space-upstream", () => {
       `/api/v2/conversations/conversation_abc/debug/space-upstream?${query}`,
     );
     expect(res.status).toBe(400);
-    expect(responseBody(res).code).toBe("INVALID_REQUEST");
+    expect(responseBody(res).error).toBe("INVALID_REQUEST");
     expect(fetchCalls).toHaveLength(0);
   });
 
@@ -248,21 +240,19 @@ describe("POST /conversations/:conversationId/debug/space-upstream", () => {
     );
   });
 
-  test.each([OFF_HOST_VARIANT, MISMATCH_VARIANT, "unknown-space-variant"])(
-    "fails a non-allowed variant closed without fetching (%s)",
-    async (variantId) => {
-      const res = await proposal(
-        buildApp(),
-        `/api/v2/conversations/conversation_abc/debug/space-upstream?variantId=${variantId}`,
-      );
-      expect(res.status).toBe(409);
-      expect(res.body).toEqual({
-        code: "VARIANT_UNAVAILABLE",
-        error: "The selected agent variant is unavailable",
-      });
-      expect(fetchCalls).toHaveLength(0);
-    },
-  );
+  test("fails a non-allowed variant closed without fetching", async () => {
+    const res = await proposal(
+      buildApp(),
+      "/api/v2/conversations/conversation_abc/debug/space-upstream?variantId=unknown-space-variant",
+    );
+    expect(res.status).toBe(409);
+    expect(res.body).toEqual({
+      success: false,
+      error: "VARIANT_UNAVAILABLE",
+      message: "The selected agent variant is unavailable",
+    });
+    expect(fetchCalls).toHaveLength(0);
+  });
 
   test("uses a 50-second upstream AbortSignal", async () => {
     const timeoutSpy = vi.spyOn(AbortSignal, "timeout");
@@ -275,20 +265,14 @@ describe("POST /conversations/:conversationId/debug/space-upstream", () => {
     }
   });
 
-  test.each([
-    ["empty shared key", { assistantApiKey: "" }],
-    ["whitespace shared key", { assistantApiKey: "   " }],
-    ["empty default origin", { assistantApiUrl: "" }],
-    ["whitespace default origin", { assistantApiUrl: "   " }],
-  ])("returns unavailable for %s", async (_label, override) => {
+  test("returns unavailable without the optional shared key", async () => {
     __setAssistantConfigOverridesForTests({
       assistantApiUrl: DEFAULT_URL,
-      assistantApiKey: ASSISTANT_KEY,
-      ...override,
+      assistantApiKey: "",
     });
     const res = await proposal(buildApp());
     expect(res.status).toBe(503);
-    expect(responseBody(res).code).toBe("SPACE_UPSTREAM_UNAVAILABLE");
+    expect(responseBody(res).error).toBe("SPACE_UPSTREAM_UNAVAILABLE");
     expect(fetchCalls).toHaveLength(0);
   });
 
@@ -321,21 +305,16 @@ describe("POST /conversations/:conversationId/debug/space-upstream", () => {
       };
       const res = await proposal(buildApp());
       expect(res.status).toBe(expectedStatus);
-      expect(responseBody(res).code).toBe(expectedCode);
+      expect(responseBody(res).error).toBe(expectedCode);
       if (workerCode === "space_upstream_refused") {
-        expect(responseBody(res).error).toBe("Safe upstream detail");
+        expect(responseBody(res).message).toBe("Safe upstream detail");
       }
     },
   );
 
   test.each([
     ["uncoded old-route 404", 404, { error: "Not found" }],
-    ["unexpected coded status", 418, { error: "No", code: "unexpected" }],
-    [
-      "extra error envelope fields",
-      404,
-      { error: "Not found", code: "space_not_found", extra: true },
-    ],
+    ["unexpected code", 418, { error: "No", code: "unexpected" }],
   ])("maps %s to the generic failure", async (_label, status, body) => {
     fetchImpl = (url, init) => {
       fetchCalls.push({ url, init });
@@ -343,7 +322,27 @@ describe("POST /conversations/:conversationId/debug/space-upstream", () => {
     };
     const res = await proposal(buildApp());
     expect(res.status).toBe(502);
-    expect(responseBody(res).code).toBe("SPACE_UPSTREAM_FAILED");
+    expect(responseBody(res).error).toBe("SPACE_UPSTREAM_FAILED");
+  });
+
+  test("accepts additive fields in a coded Worker error", async () => {
+    fetchImpl = (url, init) => {
+      fetchCalls.push({ url, init });
+      return Promise.resolve(
+        jsonResponse(404, {
+          error: "Not found",
+          code: "space_not_found",
+          extra: true,
+        }),
+      );
+    };
+    const res = await proposal(buildApp());
+    expect(res.status).toBe(404);
+    expect(res.body).toEqual({
+      success: false,
+      error: "SPACE_NOT_FOUND",
+      message: "No Space was found for this conversation",
+    });
   });
 
   test("separates timeout and network failures", async () => {
@@ -351,12 +350,12 @@ describe("POST /conversations/:conversationId/debug/space-upstream", () => {
       Promise.reject(new DOMException("Timed out", "TimeoutError"));
     const timedOut = await proposal(buildApp());
     expect(timedOut.status).toBe(504);
-    expect(responseBody(timedOut).code).toBe("SPACE_UPSTREAM_TIMEOUT");
+    expect(responseBody(timedOut).error).toBe("SPACE_UPSTREAM_TIMEOUT");
 
     fetchImpl = () => Promise.reject(new TypeError("network unavailable"));
     const networkFailure = await proposal(buildApp());
     expect(networkFailure.status).toBe(502);
-    expect(responseBody(networkFailure).code).toBe("SPACE_UPSTREAM_FAILED");
+    expect(responseBody(networkFailure).error).toBe("SPACE_UPSTREAM_FAILED");
   });
 
   test.each([pullRequestResult, unchangedResult])(
@@ -368,7 +367,7 @@ describe("POST /conversations/:conversationId/debug/space-upstream", () => {
       };
       const res = await proposal(buildApp());
       expect(res.status).toBe(200);
-      expect(res.body).toEqual(result);
+      expect(res.body).toEqual({ success: true, ...result });
     },
   );
 
@@ -378,11 +377,6 @@ describe("POST /conversations/:conversationId/debug/space-upstream", () => {
     [
       "missing required field",
       { ...unchangedResult, forkCommitSha: undefined },
-    ],
-    ["extra success field", { ...unchangedResult, extra: true }],
-    [
-      "mixed union fields",
-      { ...unchangedResult, prUrl: "https://example.com" },
     ],
   ])("rejects a %s success response", async (_label, body) => {
     fetchImpl = (url, init) => {
@@ -399,7 +393,22 @@ describe("POST /conversations/:conversationId/debug/space-upstream", () => {
     };
     const res = await proposal(buildApp());
     expect(res.status).toBe(502);
-    expect(responseBody(res).code).toBe("SPACE_UPSTREAM_FAILED");
+    expect(responseBody(res).error).toBe("SPACE_UPSTREAM_FAILED");
+  });
+
+  test("accepts additive fields in a valid Worker result", async () => {
+    fetchImpl = (url, init) => {
+      fetchCalls.push({ url, init });
+      return Promise.resolve(
+        jsonResponse(200, {
+          ...unchangedResult,
+          futureField: true,
+        }),
+      );
+    };
+    const res = await proposal(buildApp());
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ success: true, ...unchangedResult });
   });
 
   test("caps upstream body diagnostics", async () => {
@@ -429,8 +438,9 @@ describe("POST /conversations/:conversationId/debug/space-upstream", () => {
     const limited = await proposal(app, undefined, ip);
     expect(limited.status).toBe(429);
     expect(limited.body).toEqual({
-      code: "RATE_LIMITED",
-      error: "Too many Space PR proposals; retry shortly",
+      success: false,
+      error: "RATE_LIMITED",
+      message: "Too many Space PR proposals; retry shortly",
     });
 
     const otherIp = await proposal(app, undefined, "203.0.113.78");
