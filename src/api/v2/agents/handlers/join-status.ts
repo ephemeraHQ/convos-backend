@@ -19,7 +19,7 @@ const paramsSchema = z.object({
 // Optional dev-only variant routing hint. A malformed value (array, blank,
 // over-long) parses away to undefined and the poll falls back to the default
 // worker rather than 400ing — the status read still works.
-const querySchema = z.object({
+export const joinStatusQuerySchema = z.object({
   variantId: z.string().trim().min(1).max(64).optional(),
 });
 
@@ -85,7 +85,7 @@ export async function joinStatusHandler(req: Request, res: Response) {
   // the right runtime. Re-resolve the variant's ephemeral origin (dev-only, live +
   // allowlisted); anything else falls back to the default worker.
   let assistantBaseUrl = assistantApiUrl.replace(/\/+$/, "");
-  const variantId = querySchema.safeParse(req.query).data?.variantId;
+  const variantId = joinStatusQuerySchema.safeParse(req.query).data?.variantId;
   if (variantId && XMTP_ENV !== "production") {
     const origin = await resolveVariantWorkerOrigin(variantId);
     if (origin) assistantBaseUrl = origin;

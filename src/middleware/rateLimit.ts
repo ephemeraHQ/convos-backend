@@ -57,6 +57,20 @@ export const agentParticipationLimiter = rateLimit({
   },
 });
 
+// Space-to-starter proposals can update a GitHub branch and draft pull request,
+// so keep retries bounded independently of the cheaper participation controls.
+export const spaceUpstreamLimiter = rateLimit({
+  windowMs: 5 * 60 * 1000,
+  limit: 10,
+  keyGenerator: (req) => req.ip || "unknown",
+  legacyHeaders: false,
+  standardHeaders: "draft-8",
+  message: {
+    code: "RATE_LIMITED",
+    error: "Too many Space PR proposals; retry shortly",
+  },
+});
+
 // Rate limiting for asset renewal endpoint (10 batch requests per hour per device)
 export const assetRenewalLimiter = rateLimit({
   windowMs: 60 * 60 * 1000, // 1 hour

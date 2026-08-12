@@ -40,7 +40,10 @@ import { composioRouter } from "./composio/composio.router";
 import { connectionsRouter } from "./connections/connections.router";
 import { actionsGetHandler } from "./connections/handlers/actions-get";
 import { servicesGetHandler } from "./connections/handlers/services-get";
-import { conversationsRouter } from "./conversations/conversations.router";
+import {
+  conversationsDebugRouter,
+  conversationsRouter,
+} from "./conversations/conversations.router";
 import { creditsAdminRouter } from "./credits-admin/credits-admin.router";
 import { dailyRefillRouter } from "./credits/daily.router";
 import { devRouter } from "./dev/dev.router";
@@ -61,6 +64,7 @@ const v2Router = Router();
 // /dev is a non-production test surface; keep it gated.
 if (process.env.XMTP_ENV !== "production") {
   v2Router.use("/dev", devAuthMiddleware, devRouter);
+  v2Router.use("/conversations", authMiddleware, conversationsDebugRouter);
 }
 
 v2Router.use("/agent-prompt-hints", agentPromptHintsRouter);
