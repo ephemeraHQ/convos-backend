@@ -1,3 +1,12 @@
+![Status](https://img.shields.io/badge/Deprecated-brown)
+
+> [!CAUTION]
+> This repo is no longer maintained.
+
+Convos backend development has moved to the [convos-assistants](https://github.com/xmtplabs/convos-assistants) monorepo, where this code now lives under `backend/`. Open issues and pull requests there.
+
+The documentation below is provided for historical reference only.
+
 # Convos Backend
 
 This is the official repository for Convos backend service.
