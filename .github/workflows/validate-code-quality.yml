@@ -65,3 +65,11 @@ jobs:
           XMTP_NOTIFICATION_SECRET: ${{ secrets.XMTP_NOTIFICATION_SECRET }}
           FIREBASE_SERVICE_ACCOUNT: "{}"
           LOG_FORMAT: json # Disable pino-pretty to avoid worker thread hanging tests
+
+      - name: Build the release bundle
+        run: pnpm build
+
+      - name: Preview slim-secret boot contract
+        run: ./scripts/preview-boot-check.sh
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
