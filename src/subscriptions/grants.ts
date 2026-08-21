@@ -1,9 +1,18 @@
-import { LedgerReason, type Prisma, type Subscription } from "@prisma/client";
+import {
+  BillingProvider,
+  LedgerReason,
+  type Prisma,
+  type Subscription,
+} from "@prisma/client";
 import { applyDeltaWithTx, lockUserCreditsBalance } from "@/payments/ledger";
 import { tierGrant } from "@/subscriptions/tier-config";
 import { requireSubscriptionTier } from "@/subscriptions/tiers";
+import logger from "@/utils/logger";
 
 type TxClient = Prisma.TransactionClient;
+
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**
  * Single-ledger subscription money-in / money-out.
@@ -38,6 +47,40 @@ export const subForfeitKey = (
   subscriptionId: string,
   periodStart: Date,
 ): string => `sub_forfeit_${subscriptionId}_${periodEpoch(periodStart)}`;
+
+// --- Auto-reclaim AdminAudit key schema -------------------------------------
+// ONE schema, defined here, used by BOTH sides: the writer (auto-reclaim's
+// transfer transaction) builds keys with `autoReclaimAuditKey`, and the grant
+// choke point below parses them with `previousHolderFromAuditKey`. Keeping
+// build + parse adjacent prevents silent format drift from bypassing the
+// previous-holder double-mint guard. Segments (underscore-separated; Apple OTX
+// is numeric so the delimiter is unambiguous):
+//   auto_reclaim_apple_<OTX>_<previousHolderAccountId>_<timestampMs>
+
+/** `startsWith` prefix matching every auto-reclaim audit key for one OTX. */
+export const autoReclaimAuditKeyPrefix = (
+  originalTransactionId: string,
+): string => `auto_reclaim_apple_${originalTransactionId}_`;
+
+/** Audit idempotencyKey for one executed transfer. */
+export const autoReclaimAuditKey = (
+  originalTransactionId: string,
+  previousHolderAccountId: string,
+  atMs: number,
+): string =>
+  `${autoReclaimAuditKeyPrefix(originalTransactionId)}${previousHolderAccountId}_${atMs}`;
+
+/**
+ * Extract the previous holder account id from an auto-reclaim audit key, or
+ * null when the key does not match the schema above.
+ */
+export const previousHolderFromAuditKey = (
+  idempotencyKey: string,
+): string | null => {
+  const previousAccountId = idempotencyKey.split("_")[4];
+  if (!previousAccountId || !UUID_RE.test(previousAccountId)) return null;
+  return previousAccountId;
+};
 
 const findLedgerRow = (
   tx: TxClient,
@@ -103,6 +146,7 @@ const sumPeriodGrants = async (
 export type GrantSubscriptionPeriodResult =
   | { kind: "granted"; credits: number; subscription: Subscription }
   | { kind: "replayed" }
+  | { kind: "skipped_already_funded_to_previous_holder" }
   | { kind: "skipped_nonpositive" };
 
 /**
@@ -144,6 +188,65 @@ export const grantSubscriptionPeriod = async (
   const prior = await findLedgerRow(tx, subscription.accountId, idempotencyKey);
   if (prior) {
     return { kind: "replayed" };
+  }
+
+  if (
+    subscription.provider === BillingProvider.apple &&
+    subscription.originalTransactionId !== null
+  ) {
+    // Sequencing safety of this check-then-grant: for the CURRENT holder to be
+    // granted at all, the transfer that made them the holder must already have
+    // COMMITTED (the caller read subscription.accountId from committed state),
+    // and that same committed transaction wrote the audit row — so this read
+    // always sees every transfer that produced the current owner. The only
+    // residual is an in-flight grant on the PREVIOUS holder's wallet racing
+    // this one (different UserCredits locks) — adjudicated on PR #399 as equal
+    // to the accepted one-period drift of the manual re-home path.
+    const transferAudits = await tx.adminAudit.findMany({
+      where: {
+        action: "auto_reclaim_transfer",
+        idempotencyKey: {
+          startsWith: autoReclaimAuditKeyPrefix(
+            subscription.originalTransactionId,
+          ),
+        },
+      },
+      select: { idempotencyKey: true },
+    });
+    for (const audit of transferAudits) {
+      const previousAccountId = previousHolderFromAuditKey(
+        audit.idempotencyKey,
+      );
+      if (previousAccountId === null) {
+        logger.warn(
+          {
+            subscriptionId: subscription.id,
+            idempotencyKey: audit.idempotencyKey,
+          },
+          "subscription.transfer.invalid_audit_key",
+        );
+        continue;
+      }
+      if (previousAccountId === subscription.accountId) continue;
+      const previousHolderGrant = await findLedgerRow(
+        tx,
+        previousAccountId,
+        idempotencyKey,
+      );
+      if (previousHolderGrant) {
+        // This event is emitted inside the caller's transaction and may remain
+        // in logs even if a later operation causes that transaction to roll back.
+        logger.info(
+          {
+            subscriptionId: subscription.id,
+            periodStart,
+            previousAccountId,
+          },
+          "subscription.transfer.grant_skipped",
+        );
+        return { kind: "skipped_already_funded_to_previous_holder" };
+      }
+    }
   }
 
   await applyDeltaWithTx(tx, {

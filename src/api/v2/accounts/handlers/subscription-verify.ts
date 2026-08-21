@@ -5,6 +5,10 @@ import {
 import type { Request, Response } from "express";
 import { z } from "zod";
 import {
+  attemptAutoReclaim,
+  type AppleOwnershipProof,
+} from "@/subscriptions/auto-reclaim";
+import {
   acknowledgePurchase,
   fetchSubscriptionPurchaseV2,
   type SubscriptionPurchaseV2,
@@ -197,7 +201,10 @@ const handleAppleBranch = async (
   res: Response,
   accountId: string,
   body: z.infer<typeof appleBodySchema>,
-): Promise<VerifyInput | null> => {
+): Promise<{
+  input: AppleVerifyInput;
+  ownership: AppleOwnershipProof;
+} | null> => {
   let decoded: JWSTransactionDecodedPayload;
   try {
     decoded = await verifyAndDecodeTransaction(body.jwsRepresentation);
@@ -254,12 +261,18 @@ const handleAppleBranch = async (
   }
 
   try {
-    return buildAppleInput(
-      accountId,
-      appAccountToken,
-      decoded,
-      body.jwsRepresentation,
-    );
+    return {
+      input: buildAppleInput(
+        accountId,
+        appAccountToken,
+        decoded,
+        body.jwsRepresentation,
+      ),
+      ownership: {
+        inAppOwnershipType: decoded.inAppOwnershipType,
+        signedDate: decoded.signedDate,
+      },
+    };
   } catch (err) {
     if (err instanceof AppError) {
       res.status(err.statusCode).json({ error: err.message });
@@ -378,11 +391,13 @@ export async function subscriptionVerifyHandler(req: Request, res: Response) {
 
   let input: VerifyInput;
   let playPurchase: SubscriptionPurchaseV2 | null = null;
+  let appleOwnership: AppleOwnershipProof | null = null;
 
   if (parsed.data.platform === "apple") {
     const built = await handleAppleBranch(req, res, accountId, parsed.data);
     if (!built) return;
-    input = built;
+    input = built.input;
+    appleOwnership = built.ownership;
   } else {
     const built = await handlePlayBranch(req, res, accountId, parsed.data);
     if (!built) return;
@@ -393,15 +408,13 @@ export async function subscriptionVerifyHandler(req: Request, res: Response) {
   // Strict ownership is enforced inside upsertFromVerify's transaction
   // (atomic with the upsert). A re-verify from a different signed-in account
   // is rejected to block session-stealing where a leaked receipt/token could
-  // be replayed under a different caller's account. Cross-account transfer
-  // is a support operation, not a code path.
+  // be replayed under a different caller's account. The Apple mismatch catch
+  // below permits only the separately guarded dormant-holder reclaim path.
   try {
     const { subscription } = await upsertFromVerify(input);
 
-    // Subscription credit allotments are derived from the Subscription row +
-    // per-tier config at read time (see GET /v2/accounts/me/credits). We do
-    // NOT write a grant() ledger row on verify. grant() is reserved for
-    // additive credits — top-ups, NUX trial, manual ops, promo.
+    // The repository has already materialized any eligible period grant in
+    // the ledger transactionally with the subscription/receipt update.
     req.log.info(
       {
         accountId,
@@ -443,6 +456,106 @@ export async function subscriptionVerifyHandler(req: Request, res: Response) {
         },
         "subscription.verify.account_mismatch",
       );
+
+      if (input.provider === BillingProvider.apple && appleOwnership !== null) {
+        let reclaim: Awaited<ReturnType<typeof attemptAutoReclaim>> | null =
+          null;
+        try {
+          reclaim = await attemptAutoReclaim({
+            input,
+            decoded: appleOwnership,
+            expectedHolderAccountId: error.existingAccountId,
+          });
+        } catch (reclaimError) {
+          req.log.error(
+            {
+              error: reclaimError,
+              stack:
+                reclaimError instanceof Error ? reclaimError.stack : undefined,
+              accountId,
+              existingAccountId: error.existingAccountId,
+              originalTransactionId: input.originalTransactionId,
+              provider: input.provider,
+            },
+            "subscription.transfer.auto_error",
+          );
+        }
+
+        if (reclaim !== null) {
+          if (!reclaim.eligible) {
+            req.log.warn(
+              {
+                accountId,
+                existingAccountId: error.existingAccountId,
+                subscriptionId: error.subscriptionId,
+                originalTransactionId: input.originalTransactionId,
+                ownershipType: appleOwnership.inAppOwnershipType,
+                reason: reclaim.reason,
+              },
+              "subscription.transfer.auto_ineligible",
+            );
+          } else {
+            req.log.info(
+              {
+                accountId,
+                previousAccountId: reclaim.previousAccountId,
+                subscriptionId: reclaim.subscriptionId,
+                originalTransactionId: input.originalTransactionId,
+                transactionId: input.transactionId,
+                provider: input.provider,
+                productId: input.productId,
+                tier: input.tier,
+                period: input.period,
+                status: input.status,
+                environment: input.environment,
+                ownershipType: appleOwnership.inAppOwnershipType,
+              },
+              "subscription.transfer.auto",
+            );
+
+            try {
+              const retry = await upsertFromVerify(input);
+              const subscription = retry.subscription;
+              req.log.info(
+                {
+                  accountId,
+                  subscriptionId: subscription.id,
+                  provider: subscription.provider,
+                  productId: subscription.productId,
+                  tier: subscription.tier,
+                  period: subscription.period,
+                  status: subscription.status,
+                },
+                "subscription.verify.applied",
+              );
+              res.status(200).json({
+                subscription: serializeUserSubscription(subscription),
+              });
+              return;
+            } catch (retryError) {
+              if (!(retryError instanceof SubscriptionAccountMismatchError)) {
+                req.log.error(
+                  {
+                    error: retryError,
+                    stack:
+                      retryError instanceof Error
+                        ? retryError.stack
+                        : undefined,
+                    accountId,
+                    provider: input.provider,
+                  },
+                  "Failed to persist verified subscription",
+                );
+                res
+                  .status(500)
+                  .json({ error: "Failed to verify subscription" });
+                return;
+              }
+            }
+          }
+        }
+      }
+
       res.status(409).json({
         error: "Subscription belongs to a different account. Contact support.",
         code: "subscription_account_mismatch",

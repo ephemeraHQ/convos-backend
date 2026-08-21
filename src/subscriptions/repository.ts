@@ -163,6 +163,7 @@ export class SubscriptionAccountMismatchError extends Error {
     public readonly existingAccountId: string,
     public readonly attemptedAccountId: string,
     public readonly providerSubscriptionId: string,
+    public readonly subscriptionId?: string,
   ) {
     super("Subscription belongs to a different account");
     this.name = "SubscriptionAccountMismatchError";
@@ -398,6 +399,7 @@ export const upsertFromVerify = async (
           existing.accountId,
           input.accountId,
           externalId,
+          existing.id,
         );
       }
 
@@ -439,6 +441,24 @@ export const upsertFromVerify = async (
         // below would P2002 and resolve via the outer conflict handler.
         const replayed = existingReceipt.subscription;
         if (replayed) {
+          // Defense-in-depth against a READ COMMITTED cross-statement window:
+          // the ownership check above reads the row via findExistingForVerify,
+          // but `replayed` is a SEPARATE (later) read through the receipt
+          // include — and, in the account-recreation shape, can even resolve a
+          // row the OTX lookup never saw. If the snapshot's owner is not the
+          // caller, surface the SAME mismatch the pre-check throws (409): never
+          // materialize a grant onto another account's row, and never hand the
+          // old holder a 200 for a row that just moved (auto-reclaim race).
+          // Under the normal no-transfer flow replayed.accountId always equals
+          // input.accountId here, so this never fires.
+          if (replayed.accountId !== input.accountId) {
+            throw new SubscriptionAccountMismatchError(
+              replayed.accountId,
+              input.accountId,
+              externalId,
+              replayed.id,
+            );
+          }
           const isStaleReplay =
             input.currentPeriodEnd < replayed.currentPeriodEnd;
           if (!isStaleReplay && isEntitledSubscription(replayed)) {
@@ -600,6 +620,7 @@ export const upsertFromVerify = async (
             current.accountId,
             input.accountId,
             externalId,
+            current.id,
           );
         }
         return { subscription: current, receiptCreated: false };
@@ -636,6 +657,7 @@ export const upsertFromVerify = async (
               holder.accountId,
               input.accountId,
               externalId,
+              holder.id,
             );
           }
           return { subscription: holder, receiptCreated: false };
