@@ -16,7 +16,7 @@ export const auditQuerySchema = z.object({
 
 export const auditRecentQuerySchema = z.object({
   cursor: z.string().trim().min(1).max(512).optional(),
-  action: z.enum(["all", "grant", "adjust"]).default("all"),
+  action: z.enum(["all", "grant", "adjust", "reconcile"]).default("all"),
 });
 
 export const ledgerQuerySchema = z.object({

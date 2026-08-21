@@ -33,6 +33,7 @@ export const consoleView = (): string => `
         <span class="facet active" data-action="all">All</span>
         <span class="facet" data-action="grant">Grants</span>
         <span class="facet" data-action="adjust">Adjusts</span>
+        <span class="facet" data-action="reconcile">Reconciles</span>
       </div>
       <div id="ctl-balance" class="mode-ctl hidden">
         <input id="bal-min" type="number" placeholder="Min credits">

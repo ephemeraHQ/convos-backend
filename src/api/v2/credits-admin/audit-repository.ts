@@ -1,17 +1,26 @@
 import type { AdminAudit, Prisma } from "@prisma/client";
 import { prisma } from "@/utils/prisma";
 
-export type AdminAuditAction = "grant" | "adjust";
+// "reconcile" rows are written by the subscription reconcile job
+// (src/subscriptions/reconcile/service.ts) in apply mode, not by an admin
+// endpoint; deltaCredits records the net credits it moved (often 0 for pure
+// status flips).
+export type AdminAuditAction = "grant" | "adjust" | "reconcile";
 
-export const writeAdminAudit = async (args: {
-  accountId: string;
-  actorEmail: string;
-  action: AdminAuditAction;
-  deltaCredits: bigint;
-  reason: string;
-  idempotencyKey: string;
-}): Promise<void> => {
-  await prisma.adminAudit.upsert({
+export const writeAdminAudit = async (
+  args: {
+    accountId: string;
+    actorEmail: string;
+    action: AdminAuditAction;
+    deltaCredits: bigint;
+    reason: string;
+    idempotencyKey: string;
+  },
+  // Optional tx client so callers can commit the audit row atomically with
+  // the writes it describes (the reconcile job does).
+  tx: Pick<Prisma.TransactionClient, "adminAudit"> = prisma,
+): Promise<void> => {
+  await tx.adminAudit.upsert({
     where: {
       accountId_idempotencyKey: {
         accountId: args.accountId,
